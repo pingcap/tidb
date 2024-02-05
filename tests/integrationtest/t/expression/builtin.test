@@ -1,0 +1,1580 @@
+# TestWeightString
+drop table if exists t;
+create table t (id int, a varchar(20) collate utf8mb4_general_ci);
+insert into t values (0, 'aAÁàãăâ'),(1, 'a'),(2, 'a  '),(3, '中'),(4, '中 ');
+select hex(weight_string(a)) from t order by id;
+select hex(weight_string(a as char(1))) from t order by id;
+select hex(weight_string(a as char(3))) from t order by id;
+select hex(weight_string(a as binary(1))) from t order by id;
+select hex(weight_string(a as binary(5))) from t order by id;
+select hex(weight_string(NULL));
+select hex(weight_string(7));
+select hex(weight_string(cast(7 as decimal(5))));
+select hex(weight_string(cast(20190821 as date)));
+select hex(weight_string(cast(20190821 as date) as binary(5)));
+select hex(weight_string(7.0));
+select hex(weight_string(7 AS BINARY(2)));
+select hex(weight_string('中 ' collate utf8mb4_general_ci));
+select hex(weight_string('中 ' collate utf8mb4_bin));
+select hex(weight_string('中 ' collate utf8mb4_unicode_ci));
+select collation(a collate utf8mb4_general_ci) from t order by id;
+select collation('中 ' collate utf8mb4_general_ci);
+select hex(weight_string(a collate utf8mb4_bin)) from t order by id;
+-- error 1253
+select weight_string(a collate utf8_general_ci) from t order by id;
+-- error 1253
+select weight_string('中' collate utf8_bin);
+
+# TestMathBuiltin
+select degrees(0), degrees(1);
+select degrees(2), degrees(5);
+select sin(0), sin(1.5707963267949);
+select sin(1), sin(100);
+select sin('abcd');
+select cos(0), cos(3.1415926535898);
+select cos('abcd');
+select tan(0.00), tan(PI()/4);
+select tan('abcd');
+select log2(0.0);
+select log2(4);
+select log2('8.0abcd');
+select log2(-1);
+select log2(NULL);
+select log10(0.0);
+select log10(100);
+select log10('1000.0abcd');
+select log10(-1);
+select log10(NULL);
+select log(0.0);
+select log(100);
+select log('100.0abcd');
+select log(-1);
+select log(NULL);
+select log(NULL, NULL);
+select log(1, 100);
+select log(0.5, 0.25);
+select log(-1, 0.25);
+select atan(0), atan(-1), atan(1), atan(1,2);
+select atan('tidb');
+select asin(0), asin(-2), asin(2), asin(1);
+select asin('tidb');
+select acos(0), acos(-2), acos(2), acos(1);
+select acos('tidb');
+select pi();
+select floor(0), floor(null), floor(1.23), floor(-1.23), floor(1);
+select floor('tidb'), floor('1tidb'), floor('tidb1');
+SELECT floor(t.c_datetime) FROM (select CAST('2017-07-19 00:00:00' AS DATETIME) AS c_datetime) AS t;
+SELECT floor(t.c_time) FROM (select CAST('12:34:56' AS TIME) AS c_time) AS t;
+SELECT floor(t.c_time) FROM (select CAST('00:34:00' AS TIME) AS c_time) AS t;
+SELECT floor(t.c_time) FROM (select CAST('00:00:00' AS TIME) AS c_time) AS t;
+SELECT floor(t.c_decimal) FROM (SELECT CAST('-10.01' AS DECIMAL(10,2)) AS c_decimal) AS t;
+SELECT floor(t.c_decimal) FROM (SELECT CAST('-10.01' AS DECIMAL(10,1)) AS c_decimal) AS t;
+select ceil(0), ceil(null), ceil(1.23), ceil(-1.23), ceil(1);
+select ceiling(0), ceiling(null), ceiling(1.23), ceiling(-1.23), ceiling(1);
+select ceil('tidb'), ceil('1tidb'), ceil('tidb1'), ceiling('tidb'), ceiling('1tidb'), ceiling('tidb1');
+select ceil(t.c_datetime), ceiling(t.c_datetime) from (select cast('2017-07-20 00:00:00' as datetime) as c_datetime) as t;
+select ceil(t.c_time), ceiling(t.c_time) from (select cast('12:34:56' as time) as c_time) as t;
+select ceil(t.c_time), ceiling(t.c_time) from (select cast('00:34:00' as time) as c_time) as t;
+select ceil(t.c_time), ceiling(t.c_time) from (select cast('00:00:00' as time) as c_time) as t;
+select ceil(t.c_decimal), ceiling(t.c_decimal) from (select cast('-10.01' as decimal(10,2)) as c_decimal) as t;
+select ceil(t.c_decimal), ceiling(t.c_decimal) from (select cast('-10.01' as decimal(10,1)) as c_decimal) as t;
+select floor(18446744073709551615), ceil(18446744073709551615);
+select floor(18446744073709551615.1233), ceil(18446744073709551615.1233);
+select floor(-18446744073709551617), ceil(-18446744073709551617), floor(-18446744073709551617.11), ceil(-18446744073709551617.11);
+drop table if exists t;
+create table t(a decimal(40,20) UNSIGNED);
+insert into t values(2.99999999900000000000), (12), (0);
+select a, ceil(a) from t where ceil(a) > 1;
+select a, ceil(a) from t;
+select ceil(-29464);
+select a, floor(a) from t where floor(a) > 1;
+select a, floor(a) from t;
+select floor(-29464);
+drop table if exists t;
+create table t(a decimal(40,20), b bigint);
+insert into t values(-2.99999990000000000000, -1);
+select floor(a), floor(a), floor(a) from t;
+select b, floor(b) from t;
+select cot(1), cot(-1), cot(NULL);
+select cot('1tidb');
+-- error 1690
+select cot(0);
+select exp(0), exp(1), exp(-1), exp(1.2), exp(NULL);
+select exp('tidb'), exp('1tidb');
+-- error 1690
+select exp(1000000);
+drop table if exists t;
+create table t(a float);
+insert into t values(1000000);
+-- error 1690
+select exp(a) from t;
+SELECT CONV('a', 16, 2);
+SELECT CONV('6E', 18, 8);
+SELECT CONV(-17, 10, -18);
+SELECT CONV(10+'10'+'10'+X'0a', 10, 10);
+SELECT CONV('a', 1, 10);
+SELECT CONV('a', 37, 10);
+SELECT CONV(0x0020, 2, 2);
+SELECT CONV(0b10, 16, 2);
+SELECT CONV(0b10, 16, 8);
+drop table if exists bit;
+create table bit(b bit(10));
+INSERT INTO bit (b) VALUES
+			(0b0000010101),
+			(0b0000010101),
+			(NULL),
+			(0b0000000001),
+			(0b0000000000),
+			(0b1111111111),
+			(0b1111111111),
+			(0b1111111111),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000100000);
+select conv(b, 2, 2) from `bit`;
+SELECT ABS(-1);
+SELECT ABS('abc');
+SELECT ABS(18446744073709551615);
+SELECT ABS(123.4);
+SELECT ABS(-123.4);
+SELECT ABS(1234E-1);
+SELECT ABS(-9223372036854775807);
+SELECT ABS(NULL);
+-- error 1690
+SELECT ABS(-9223372036854775808);
+SELECT ROUND(2.5), ROUND(-2.5), ROUND(25E-1);
+SELECT ROUND(2.5, NULL), ROUND(NULL, 4), ROUND(NULL, NULL), ROUND(NULL);
+SELECT ROUND('123.4'), ROUND('123e-2');
+SELECT ROUND(-9223372036854775808);
+SELECT ROUND(123.456, 0), ROUND(123.456, 1), ROUND(123.456, 2), ROUND(123.456, 3), ROUND(123.456, 4), ROUND(123.456, -1), ROUND(123.456, -2), ROUND(123.456, -3), ROUND(123.456, -4);
+SELECT ROUND(123456E-3, 0), ROUND(123456E-3, 1), ROUND(123456E-3, 2), ROUND(123456E-3, 3), ROUND(123456E-3, 4), ROUND(123456E-3, -1), ROUND(123456E-3, -2), ROUND(123456E-3, -3), ROUND(123456E-3, -4);
+SELECT ROUND(1e14, 1), ROUND(1e15, 1), ROUND(1e308, 1);
+SELECT ROUND(1e-14, 1), ROUND(1e-15, 1), ROUND(1e-308, 1);
+SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);
+SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);
+SELECT truncate(9223372036854775807, -7), truncate(9223372036854775808, -10), truncate(cast(-1 as unsigned), -10);
+select truncate(42, -9223372036854775808);
+select truncate(42, 9223372036854775808);
+select truncate(42, -2147483648);
+select truncate(42, 2147483648);
+select truncate(42, 18446744073709551615);
+select truncate(42, 4294967295);
+select truncate(42, -0);
+select truncate(42, -307);
+select truncate(42, -308);
+select truncate(42, -309);
+drop table if exists t;
+create table t (a bigint unsigned);
+insert into t values (18446744073709551615), (4294967295), (9223372036854775808), (2147483648);
+select truncate(42, a) from t;
+drop table if exists t;
+create table t(a date, b datetime, c timestamp, d varchar(20));
+insert into t select "1234-12-29", "1234-12-29 16:24:13.9912", "2014-12-29 16:19:28", "12.34567";
+select truncate(a, -1), truncate(a, 1), truncate(a, -2), truncate(a, 2) from t;
+select truncate(b, -1), truncate(b, 1), truncate(b, -2), truncate(b, 2) from t;
+select truncate(c, -1), truncate(c, 1), truncate(c, -2), truncate(c, 2) from t;
+select truncate(d, -1), truncate(d, 1), truncate(d, -2), truncate(d, 2) from t;
+select truncate(json_array(), 1), truncate("cascasc", 1);
+SELECT POW('12', 2), POW(1.2e1, '2.0'), POW(12, 2.0);
+SELECT POW(null, 2), POW(2, null), POW(null, null);
+SELECT POW(0, 0);
+SELECT POW(0, 0.1), POW(0, 0.5), POW(0, 1);
+-- error 1690
+SELECT POW(0, -1);
+SELECT SIGN('12'), SIGN(1.2e1), SIGN(12), SIGN(0.0000012);
+SELECT SIGN('-12'), SIGN(-1.2e1), SIGN(-12), SIGN(-0.0000012);
+SELECT SIGN('0'), SIGN('-0'), SIGN(0);
+SELECT SIGN(NULL);
+SELECT SIGN(-9223372036854775808), SIGN(9223372036854775808);
+SELECT SQRT(-10), SQRT(144), SQRT(4.84), SQRT(0.04), SQRT(0);
+SELECT crc32(0), crc32(-0), crc32('0'), crc32('abc'), crc32('ABC'), crc32(NULL), crc32(''), crc32('hello world!');
+SELECT radians(1.0), radians(pi()), radians(pi()/2), radians(180), radians(1.009);
+drop table if exists t;
+create table t(a int);
+insert into t values(1),(2),(3);
+-- sorted_result
+select rand(1) from t;
+select rand(a) from t;
+select rand(1), rand(2), rand(3);
+set @@rand_seed1=10000000,@@rand_seed2=1000000;
+select rand();
+select rand(1);
+select rand();
+
+# TestBuiltin
+drop table if exists t;
+create table t (a int, b int, index idx_b (b));
+insert t values (1, 1);
+insert t values (2, 2);
+insert t values (3, 2);
+select * from t where b is true;
+select all + a from t where a = 1;
+select * from t where a is false;
+select * from t where a is not true;
+select 1 is true, 0 is true, null is true, "aaa" is true, "" is true, -12.00 is true, 0.0 is true, 0.0000001 is true;
+select 1 is false, 0 is false, null is false, "aaa" is false, "" is false, -12.00 is false, 0.0 is false, 0.0000001 is false;
+select 1 from dual where sec_to_time(2/10) is true;
+select 1 from dual where sec_to_time(2/10) is false;
+select 1 from dual where timediff((7/'2014-07-07 02:30:02'),'2012-01-16') is true;
+select 1 from dual where timediff((7/'2014-07-07 02:30:02'),'2012-01-16') is false;
+select 1 from dual where time(0.0001) is true;
+select 1 from dual where time(0.0001) is false;
+select * from t where b in (a);
+select * from t where b not in (a);
+select cast(1 as decimal(3,2));
+select cast('1991-09-05 11:11:11' as datetime);
+select cast(cast('1991-09-05 11:11:11' as datetime) as char);
+select cast('11:11:11' as time);
+select * from t where a > cast(2 as decimal);
+select cast(-1 as unsigned);
+drop table if exists t;
+create table t(a decimal(3, 1), b double, c datetime, d time, e int);
+insert into t value(12.3, 1.23, '2017-01-01 12:12:12', '12:12:12', 123);
+select cast(a as json), cast(b as json), cast(c as json), cast(d as json), cast(e as json) from t;
+select cast(10101000000 as time);
+select cast(10101001000 as time);
+select cast(10000000000 as time);
+select cast(20171222020005 as time);
+select cast(8380000 as time);
+select cast(8390000 as time);
+select cast(8386000 as time);
+select cast(8385960 as time);
+select cast(cast('2017-01-01 01:01:11.12' as date) as datetime(2));
+select cast(20170118.999 as datetime);
+select convert(a2.a, unsigned int) from (select cast('"9223372036854775808"' as json) as a) as a2;
+create table tb5(a bigint(64) unsigned, b double);
+insert into tb5 (a, b) values (9223372036854776000, 9223372036854776000);
+insert into tb5 (a, b) select * from (select cast(a as json) as a1, b from tb5) as t where t.a1 = t.b;
+drop table tb5;
+create table tb5(a float(53));
+insert into tb5(a) values (13835058055282163712);
+select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t;
+drop table tb5;
+select cast(0xffffffffffffffff as signed);
+select cast(0x9999999999999999999999999999999999999999999 as signed);
+create table tb5(a bigint);
+set sql_mode='';
+insert into tb5(a) values (0xfffffffffffffffffffffffff);
+select * from tb5;
+drop table tb5;
+create table tb5(a double);
+insert into tb5 (a) values (18446744073709551616);
+insert into tb5 (a) values (184467440737095516160);
+select cast(a as unsigned) from tb5;
+drop table tb5;
+create table tb5(a bigint(64) unsigned, b decimal(64, 10));
+insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);
+insert into tb5 (select * from tb5 where a = b);
+select * from tb5;
+drop table tb5;
+create table tb5(a bigint(64) unsigned, b double(64, 10));
+insert into tb5 (a, b) values (13835058000000000000, 13835058000000000000);
+insert into tb5 (select * from tb5 where a = b);
+select * from tb5;
+drop table tb5;
+create table tb5(a double, b float);
+insert into tb5 (a, b) values (184467440737095516160, 184467440737095516160);
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
+select * from tb5 where cast(a as unsigned int)=0;
+select * from tb5 where cast(b as unsigned int)=0;
+--disable_warnings
+drop table tb5;
+create table tb5(a double, b bigint unsigned);
+insert into tb5 (a, b) values (18446744073709551616, 18446744073709551615);
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
+select * from tb5 where cast(a as unsigned int)=b;
+--disable_warnings
+drop table tb5;
+create table tb5(a json, b bigint unsigned);
+insert into tb5 (a, b) values ('184467440737095516160', 18446744073709551615);
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
+select * from tb5 where cast(a as unsigned int)=b;
+select * from tb5 where cast(b as unsigned int)=0;
+--disable_warnings
+drop table tb5;
+create table tb5(a json, b bigint unsigned);
+insert into tb5 (a, b) values ('92233720368547758080', 18446744073709551615);
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
+select * from tb5 where cast(a as signed int)=b;
+--disable_warnings
+drop table tb5;
+create table tb5(a bigint(64) unsigned,b varchar(50));
+insert into tb5(a, b) values (9223372036854775808, '9223372036854775808');
+insert into tb5(select * from tb5 where a = b);
+select * from tb5;
+drop table tb5;
+drop table if exists tb5;
+create table tb5 (a decimal(65), b bigint(64) unsigned);
+insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);
+select cast(b as decimal(64)) from tb5 union all select b from tb5;
+drop table tb5;
+drop table if exists tb5;
+create table tb5 (a bigint(64) unsigned, b double(64, 10));
+insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);
+select a from tb5 where a = b union all select b from tb5;
+drop table tb5;
+select cast("170102034" as datetime);
+select cast("1701020304" as datetime);
+select cast("1701020304." as datetime);
+select cast("1701020304.1" as datetime);
+--enable_warnings
+select cast("1701020304.111" as datetime);
+--disable_warnings
+select cast("17011" as datetime);
+select cast("150101." as datetime);
+--enable_warnings
+select cast("150101.a" as datetime);
+select cast("150101.1a" as datetime);
+select cast("150101.1a1" as datetime);
+select cast("1101010101.111" as datetime);
+select cast("1101010101.11aaaaa" as datetime);
+select cast("1101010101.a1aaaaa" as datetime);
+--disable_warnings
+select cast("1101010101.11" as datetime);
+select @@warning_count;
+--enable_warnings
+select cast("1101010101.111" as datetime);
+--disable_warnings
+select cast("970101.111" as datetime);
+select @@warning_count;
+select cast("970101.11111" as datetime);
+select @@warning_count;
+--enable_warnings
+select cast("970101.111a1" as datetime);
+--disable_warnings
+drop table if exists t;
+create table t (a int, b int, c int, d char(10), e datetime, f float, g decimal(10, 3));
+insert t values (1, 0, null, null, null, null, null);
+select ISNULL(a), ISNULL(b), ISNULL(c), ISNULL(d), ISNULL(e), ISNULL(f), ISNULL(g) from t;
+select cast('-24 100:00:00' as time);
+select cast('12:00:00.000000' as datetime);
+select cast('-34 100:00:00' as time);
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (ix TIME);
+SET SQL_MODE='';
+--enable_warnings
+select cast('10009010' as time);
+insert into t select cast('10009010' as time);
+select cast('239010' as time);
+insert into t select cast('239010' as time);
+select cast('233070' as time);
+insert into t select cast('233070' as time);
+select cast('23:90:10' as time);
+insert into t select cast('23:90:10' as time);
+select cast('23:30:70' as time);
+insert into t select cast('23:30:70' as time);
+select cast('239010.2' as time);
+insert into t select cast('239010.2' as time);
+select cast('233070.8' as time);
+insert into t select cast('233070.8' as time);
+--disable_warnings
+set sql_mode = 'STRICT_TRANS_TABLES';
+--enable_warnings
+select cast('10009010' as time);
+--disable_warnings
+-- error 1292
+insert into t select cast('10009010' as time);
+--enable_warnings
+select cast('239010' as time);
+--disable_warnings
+-- error 1292
+insert into t select cast('239010' as time);
+--enable_warnings
+select cast('233070' as time);
+--disable_warnings
+-- error 1292
+insert into t select cast('233070' as time);
+--enable_warnings
+select cast('23:90:10' as time);
+--disable_warnings
+-- error 1292
+insert into t select cast('23:90:10' as time);
+--enable_warnings
+select cast('23:30:70' as time);
+--disable_warnings
+-- error 1292
+insert into t select cast('23:30:70' as time);
+--enable_warnings
+select cast('239010.2' as time);
+--disable_warnings
+-- error 1292
+insert into t select cast('239010.2' as time);
+--enable_warnings
+select cast('233070.8' as time);
+--disable_warnings
+-- error 1292
+insert into t select cast('233070.8' as time);
+select cast('18446744073709551616' as unsigned);
+select cast('18446744073709551616' as signed);
+select cast('9223372036854775808' as signed);
+select cast('9223372036854775809' as signed);
+select cast('9223372036854775807' as signed);
+select cast('18446744073709551615' as signed);
+select cast('18446744073709551614' as signed);
+select cast(18446744073709551615 as unsigned);
+select cast(18446744073709551616 as unsigned);
+select cast(18446744073709551616 as signed);
+select cast(18446744073709551617 as signed);
+select cast(18446744073709551615 as signed);
+select cast(18446744073709551614 as signed);
+select cast(-18446744073709551616 as signed);
+select cast(18446744073709551614.9 as unsigned);
+select cast(18446744073709551614.4 as unsigned);
+select cast(-9223372036854775809 as signed);
+select cast(-9223372036854775809 as unsigned);
+select cast(-9223372036854775808 as unsigned);
+select cast('-9223372036854775809' as unsigned);
+select cast('-9223372036854775807' as unsigned);
+select cast('-2' as unsigned);
+select cast(cast(1-2 as unsigned) as signed integer);
+select cast(1 as signed int);
+select cast(1 as double);
+select cast(cast(12345 as unsigned) as double);
+select cast(1.1 as double);
+select cast(-1.1 as double);
+select cast('123.321' as double);
+select cast('12345678901234567890' as double) = 1.2345678901234567e19;
+select cast(-1 as double);
+select cast(null as double);
+select cast(12345678901234567890 as double) = 1.2345678901234567e19;
+select cast(cast(-1 as unsigned) as double) = 1.8446744073709552e19;
+select cast(1e100 as double) = 1e100;
+select cast(123456789012345678901234567890 as double) = 1.2345678901234568e29;
+select cast(0x12345678 as double);
+select cast(1 as float);
+select cast(cast(12345 as unsigned) as float);
+select cast(1.1 as float) = 1.1;
+select cast(-1.1 as float) = -1.1;
+select cast('123.321' as float) =123.321;
+select cast('12345678901234567890' as float) = 1.2345678901234567e19;
+select cast(-1 as float);
+select cast(null as float);
+select cast(12345678901234567890 as float) = 1.2345678901234567e19;
+select cast(cast(-1 as unsigned) as float) = 1.8446744073709552e19;
+select cast(1e100 as float(40)) = 1e100;
+select cast(123456789012345678901234567890 as float(40)) = 1.2345678901234568e29;
+select cast(0x12345678 as float(40)) = 305419896;
+select cast(1 as real);
+select cast(cast(12345 as unsigned) as real);
+select cast(1.1 as real) = 1.1;
+select cast(-1.1 as real) = -1.1;
+select cast('123.321' as real) =123.321;
+select cast('12345678901234567890' as real) = 1.2345678901234567e19;
+select cast(-1 as real);
+select cast(null as real);
+select cast(12345678901234567890 as real) = 1.2345678901234567e19;
+select cast(cast(-1 as unsigned) as real) = 1.8446744073709552e19;
+select cast(1e100 as real) = 1e100;
+select cast(123456789012345678901234567890 as real) = 1.2345678901234568e29;
+select cast(0x12345678 as real) = 305419896;
+drop table if exists t1;
+create table t1(s1 time);
+insert into t1 values('11:11:11');
+select cast(s1 as decimal(7, 2)) from t1;
+select cast(s1 as decimal(8, 2)) from t1;
+-- error 1690
+insert into t1 values(cast('111111.00' as decimal(7, 2)));
+select CAST(0x8fffffffffffffff as signed) a,
+	CAST(0xfffffffffffffffe as signed) b,
+	CAST(0xffffffffffffffff as unsigned) c;
+select cast("1:2:3" as TIME) = "1:02:03";
+drop table if exists t;
+create table t(a time(6));
+insert into t value('12:59:59.999999');
+select cast(a as signed) from t;
+select -9223372036854775809;
+select --9223372036854775809;
+select -9223372036854775808;
+drop table if exists t;
+create table t(a bigint(30));
+-- error 1264
+insert into t values(-9223372036854775809);
+-- error 1427
+select cast(12.1 as decimal(3, 4));
+-- error 1426
+SELECT CAST(1 AS DATETIME(7));
+select unhex('4D7953514C');
+select unhex(hex('string'));
+select unhex('ggg');
+select unhex(-1);
+select hex(unhex('1267'));
+select hex(unhex(1267));
+drop table if exists t;
+create table t(a binary(8));
+insert into t values('test');
+select hex(a) from t;
+select unhex(a) from t;
+select from_unixtime(1451606400);
+select from_unixtime(14516064000/10);
+select from_unixtime('14516064000'/10);
+select from_unixtime(cast(1451606400 as double));
+select from_unixtime(cast(cast(1451606400 as double) as DECIMAL));
+select from_unixtime(cast(cast(1451606400 as double) as DECIMAL(65,1)));
+select from_unixtime(1451606400.123456);
+select from_unixtime(1451606400.1234567);
+select from_unixtime(1451606400.999999);
+select from_unixtime(1511247196661);
+select from_unixtime('1451606400.123');
+drop table if exists t;
+create table t(a int);
+insert into t value(1451606400);
+select from_unixtime(a) from t;
+select strcmp('abc', 'def');
+select strcmp('abc', 'aba');
+select strcmp('abc', 'abc');
+select substr(null, 1, 2);
+select substr('123', null, 2);
+select substr('123', 1, null);
+drop table if exists t;
+create table t (a varchar(255), b int);
+insert t values ('str1', 1);
+select * from t where a = case b when 1 then 'str1' when 2 then 'str2' end;
+select * from t where a = case b when 1 then 'str2' when 2 then 'str3' end;
+insert t values ('str2', 2);
+select * from t where a = case b when 2 then 'str2' when 3 then 'str3' end;
+insert t values ('str3', 3);
+select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str3' end;
+select * from t where a = case b when 4 then 'str4' when 5 then 'str5' else 'str6' end;
+select * from t where a = case  when b then 'str3' when 1 then 'str1' else 'str2' end;
+delete from t;
+insert t values ('str2', 0);
+select * from t where a = case  when b then 'str3' when 0 then 'str1' else 'str2' end;
+insert t values ('str1', null);
+select * from t where a = case b when null then 'str3' when 10 then 'str1' else 'str2' end;
+select * from t where a = case null when b then 'str3' when 10 then 'str1' else 'str2' end;
+insert t values (null, 4);
+select * from t where b < case a when null then 0 when 'str2' then 0 else 9 end;
+select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end;
+SELECT -Max(+23) * -+Cast(--10 AS SIGNED) * -CASE
+                                               WHEN 0 > 85 THEN NULL
+                                               WHEN NOT
+              CASE +55
+                WHEN +( +82 ) + -89 * -69 THEN +Count(-88)
+                WHEN +CASE 57
+                        WHEN +89 THEN -89 * Count(*)
+                        WHEN 17 THEN NULL
+                      END THEN ( -10 )
+              END IS NULL THEN NULL
+                                               ELSE 83 + 48
+                                             END AS col0;
+drop table if exists t1;
+create table t1(c1 int not null);
+insert into t1 values(1);
+select (case when null then c1 end) is null from t1;
+select (case when null then c1 end) is not null from t1;
+--enable_warnings
+select case when b=0 then 1 else 1/b end from t;
+select if(b=0, 1, 1/b) from t;
+select ifnull(b, b/0) from t;
+select case when 1 then 1 else 1/0 end;
+select if(1,1,1/0);
+select ifnull(1, 1/0);
+--disable_warnings
+delete from t;
+insert t values ('str2', 0);
+--enable_warnings
+select case when b < 1 then 1 else 1/0 end from t;
+select case when b < 1 then 1 when 1/0 then b else 1/0 end from t;
+select if(b < 1 , 1, 1/0) from t;
+select ifnull(b, 1/0) from t;
+select COALESCE(1, b, b/0) from t;
+select 0 and b/0 from t;
+select 1 or b/0 from t;
+select 1 or 1/0;
+select 0 and 1/0;
+select COALESCE(1, 1/0);
+select interval(1,0,1,2,1/0);
+--disable_warnings
+select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end;
+select case 2.0 when 3.0 then 2.0 when 4.0 then 3.0 else 5.0 end;
+select case cast('2011-01-01' as date) when cast('2011-01-01' as date) then cast('2011-02-02' as date) end;
+select case cast('2012-01-01' as date) when cast('2011-01-01' as date) then cast('2011-02-02' as date) else cast('2011-03-03' as date) end;
+select case cast('10:10:10' as time) when cast('10:10:10' as time) then cast('11:11:11' as time) end;
+select case cast('10:10:13' as time) when cast('10:10:10' as time) then cast('11:11:11' as time) else cast('22:22:22' as time) end;
+select cast(1234 as char(3));
+--enable_warnings
+select cast(1234 as char(0));
+--disable_warnings
+select CAST( - 8 AS DECIMAL ) * + 52 + 87 < - 86;
+select char(97, 100, 256, 89);
+select char(97, null, 100, 256, 89);
+select char(97, null, 100, 256, 89 using utf8);
+select char(97, null, 100, 256, 89 using ascii);
+-- error 1115
+select char(97, null, 100, 256, 89 using tidb);
+drop table if exists t;
+CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);
+INSERT INTO t values ('2000-01-01', '2000-01-01 12:12:12', '2000-01-01 12:12:12', '12:12:12', '2000');
+INSERT INTO t values ('2000-02-01', '2000-02-01 12:12:12', '2000-02-01 12:12:12', '13:12:12', 2000);
+INSERT INTO t values ('2000-03-01', '2000-03-01', '2000-03-01 12:12:12', '1 12:12:12', 2000);
+INSERT INTO t SET c1 = '2000-04-01', c2 = '2000-04-01', c3 = '2000-04-01 12:12:12', c4 = '-1 13:12:12', c5 = 2000;
+SELECT c4 FROM t where c4 < '-13:12:12';
+SELECT 1 DIV - - 28 + ( - SUM( - + 25 ) ) * - CASE - 18 WHEN 44 THEN NULL ELSE - 41 + 32 + + - 70 - + COUNT( - 95 ) * 15 END + 92;
+drop table if exists t;
+create table t (a char(10), b varchar(10), c binary(10), d varbinary(10));
+insert into t values ('text','text','text','text');
+select a regexp 'xt' from t;
+select b regexp 'xt' from t;
+select b regexp binary 'Xt' from t;
+select c regexp 'Xt' from t;
+select d regexp 'Xt' from t;
+select a rlike 'xt' from t;
+select a rlike binary 'Xt' from t;
+select b rlike 'xt' from t;
+select c rlike 'Xt' from t;
+select d rlike 'Xt' from t;
+select 'a' regexp 'A', 'a' regexp binary 'A';
+drop table if exists t;
+create table t (a varchar(255), b int);
+insert into t values('a', 0);
+select * from t where a like 'a';
+delete from t where b = 0;
+insert into t values('b', 1);
+select * from t where a like 'a';
+delete from t where b = 1;
+insert into t values('Aa', 2);
+select * from t where a like 'aA';
+delete from t where b = 2;
+insert into t values('aAab', 3);
+select * from t where a like 'aA%';
+delete from t where b = 3;
+insert into t values('Aaab', 4);
+select * from t where a like 'aA_';
+delete from t where b = 4;
+insert into t values('Aab', 5);
+select * from t where a like 'Aa_';
+delete from t where b = 5;
+insert into t values('', 6);
+select * from t where a like '';
+delete from t where b = 6;
+insert into t values('a', 7);
+select * from t where a like '';
+delete from t where b = 7;
+drop table if exists t;
+create table t (a varchar(255), b int);
+insert into t values('a', 0);
+select * from t where a regexp '^$';
+delete from t where b = 0;
+insert into t values('a', 1);
+select * from t where a regexp 'a';
+delete from t where b = 1;
+insert into t values('b', 2);
+select * from t where a regexp 'a';
+delete from t where b = 2;
+insert into t values('aA', 3);
+select * from t where a regexp 'aA';
+delete from t where b = 3;
+insert into t values('a', 4);
+select * from t where a regexp '.';
+delete from t where b = 4;
+insert into t values('ab', 5);
+select * from t where a regexp '^.$';
+delete from t where b = 5;
+insert into t values('b', 6);
+select * from t where a regexp '..';
+delete from t where b = 6;
+insert into t values('aab', 7);
+select * from t where a regexp '.ab';
+delete from t where b = 7;
+insert into t values('abcd', 8);
+select * from t where a regexp 'ab.';
+delete from t where b = 8;
+insert into t values('abcd', 9);
+select * from t where a regexp '.*';
+delete from t where b = 9;
+select cast(1 as signed) + cast(9223372036854775807 as unsigned);
+select cast(9223372036854775807 as unsigned) + cast(1 as signed);
+-- error 1690
+select cast(9223372036854775807 as signed) + cast(9223372036854775809 as unsigned);
+-- error 1690
+select cast(9223372036854775809 as unsigned) + cast(9223372036854775807 as signed);
+-- error 1690
+select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsigned);
+-- error 1690
+select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);
+select 1 / '2007' div 1;
+set sql_mode=default
+
+# TestFuncREPEAT
+DROP TABLE IF EXISTS table_string;
+CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);
+INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);
+SELECT REPEAT(a, g), REPEAT(b, g), REPEAT(c, g), REPEAT(d, g), REPEAT(e, g), REPEAT(f, g) FROM table_string;
+SELECT REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g) FROM table_string;
+SELECT REPEAT(a, NULL), REPEAT(b, NULL), REPEAT(c, NULL), REPEAT(d, NULL), REPEAT(e, NULL), REPEAT(f, NULL) FROM table_string;
+SELECT REPEAT(a, 2), REPEAT(b, 2), REPEAT(c, 2), REPEAT(d, 2), REPEAT(e, 2), REPEAT(f, 2) FROM table_string;
+SELECT REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2) FROM table_string;
+SELECT REPEAT(a, -1), REPEAT(b, -2), REPEAT(c, -2), REPEAT(d, -2), REPEAT(e, -2), REPEAT(f, -2) FROM table_string;
+SELECT REPEAT(a, 0), REPEAT(b, 0), REPEAT(c, 0), REPEAT(d, 0), REPEAT(e, 0), REPEAT(f, 0) FROM table_string;
+SELECT REPEAT(a, 16777217), REPEAT(b, 16777217), REPEAT(c, 16777217), REPEAT(d, 16777217), REPEAT(e, 16777217), REPEAT(f, 16777217) FROM table_string;
+
+# TestFuncLpadAndRpad
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a BINARY(10), b CHAR(10));
+INSERT INTO t SELECT "中文", "abc";
+SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;
+SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;
+
+# TestStringBuiltin
+drop table if exists t;
+create table t(a int, b double, c datetime, d time, e char(20), f bit(10));
+insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101);
+select length(a), length(b), length(c), length(d), length(e), length(f), length(null) from t;
+drop table if exists t;
+create table t(a char(20));
+insert into t values("tidb  "), (concat("a  ", "b  "));
+select a, length(a) from t;
+drop table if exists t;
+create table t(a int, b double, c datetime, d time, e char(20));
+insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef");
+select concat(a, b, c, d, e) from t;
+select concat(null);
+select concat(null, a, b) from t;
+drop table if exists t;
+create table t(a int, b double, c datetime, d time, e char(20));
+insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef");
+select concat_ws('|', a, b, c, d, e) from t;
+select concat_ws(null, null);
+select concat_ws(null, a, b) from t;
+select concat_ws(',', 'a', 'b');
+select concat_ws(',','First name',NULL,'Last Name');
+drop table if exists t;
+create table t(a tinyint(2), b varchar(10));
+insert into t values (1, 'a'), (12, 'a'), (126, 'a'), (127, 'a');
+select concat_ws('#', a, b) from t;
+drop table if exists t;
+create table t(a binary(3));
+insert into t values('a');
+select concat_ws(',', a, 'test') = 'a\0\0,test' from t;
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010);
+select ascii(a), ascii(b), ascii(c), ascii(d), ascii(e), ascii(f) from t;
+select ascii('123'), ascii(123), ascii(''), ascii('你好'), ascii(NULL);
+drop table if exists t;
+create table t(a int, b double, c datetime, d time, e char(20), f binary(3), g binary(3));
+insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 'aa', 'BB');
+select lower(a), lower(b), lower(c), lower(d), lower(e), lower(f), lower(g), lower(null) from t;
+select upper(a), upper(b), upper(c), upper(d), upper(e), upper(f), upper(g), upper(null) from t;
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time);
+insert into t values("123", 123, 12.34, "2017-01-01 12:01:01", "12:01:01");
+select strcmp(a, "123"), strcmp(b, "123"), strcmp(c, "12.34"), strcmp(d, "2017-01-01 12:01:01"), strcmp(e, "12:01:01") from t;
+select strcmp("1", "123"), strcmp("123", "1"), strcmp("123", "45"), strcmp("123", null), strcmp(null, "123");
+select strcmp("", "123"), strcmp("123", ""), strcmp("", ""), strcmp("", null), strcmp(null, "");
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time);
+insert into t values('abcde', 1234, 12.34, "2017-01-01 12:01:01", "12:01:01");
+select left(a, 2), left(b, 2), left(c, 2), left(d, 2), left(e, 2) from t;
+select left("abc", 0), left("abc", -1), left(NULL, 1), left("abc", NULL);
+select left("abc", "a"), left("abc", 1.9), left("abc", 1.2);
+select left("中文abc", 2), left("中文abc", 3), left("中文abc", 4);
+select right(a, 3), right(b, 3), right(c, 3), right(d, 3), right(e, 3) from t;
+select right("abcde", 0), right("abcde", -1), right("abcde", 100), right(NULL, 1), right("abcde", NULL);
+select right("abcde", "a"), right("abcde", 1.9), right("abcde", 1.2);
+select right("中文abc", 2), right("中文abc", 4), right("中文abc", 5);
+drop table if exists t;
+create table t(a binary(10));
+insert into t select "中文abc";
+select left(a, 3), left(a, 6), left(a, 7) from t;
+select right(a, 2), right(a, 7) from t;
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select ord(a), ord(b), ord(c), ord(d), ord(e), ord(f), ord(g), ord(h), ord(i) from t;
+select ord('123'), ord(123), ord(''), ord('你好'), ord(NULL), ord('👍');
+select ord(X''), ord(X'6161'), ord(X'e4bd'), ord(X'e4bda0'), ord(_ascii'你'), ord(_latin1'你');
+select space(0), space(2), space(-1), space(1.1), space(1.9);
+select space("abc"), space("2"), space("1.1"), space(''), space(null);
+drop table if exists t;
+create table t(a char(20), b int, c double, d datetime, e time);
+insert into t values('www.mysql.com', 1234, 12.34, "2017-01-01 12:01:01", "12:01:01");
+select replace(a, 'mysql', 'pingcap'), replace(b, 2, 55), replace(c, 34, 0), replace(d, '-', '/'), replace(e, '01', '22') from t;
+select replace('aaa', 'a', ''), replace(null, 'a', 'b'), replace('a', null, 'b'), replace('a', 'b', null);
+drop table if exists t;
+create table t(a int, b double, c datetime, d time, e char(20), f bit(10), g binary(20), h blob(10));
+insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101, "512", "abc");
+select to_base64(a), to_base64(b), to_base64(c), to_base64(d), to_base64(e), to_base64(f), to_base64(g), to_base64(h), to_base64(null) from t;
+select hex(from_base64("abcd")), hex(from_base64("asc"));
+select hex(from_base64("MQ==")), hex(from_base64(1234));
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time);
+insert into t values('Sakila', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01");
+select substr(a, 3), substr(b, 2, 3), substr(c, -3), substr(d, -8), substr(e, -3, 100) from t;
+select substr('Sakila', 100), substr('Sakila', -100), substr('Sakila', -5, 3), substr('Sakila', 2, -1);
+select substr('foobarbar' from 4), substr('Sakila' from -4 for 2);
+select substr(null, 2, 3), substr('foo', null, 3), substr('foo', 2, null);
+select substr('中文abc', 2), substr('中文abc', 3), substr("中文abc", 1, 2);
+drop table if exists t;
+create table t(a binary(10));
+insert into t select "中文abc";
+select substr(a, 4), substr(a, 1, 3), substr(a, 1, 6) from t;
+select substr("string", -1), substr("string", -2), substr("中文", -1), substr("中文", -2) from t;
+drop table if exists t;
+create table t(a int, b double, c datetime, d time, e char(20), f bit(10), g binary(20), h varbinary(20));
+insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101, "g", "h");
+select bit_length(a), bit_length(b), bit_length(c), bit_length(d), bit_length(e), bit_length(f), bit_length(g), bit_length(h), bit_length(null) from t;
+drop table if exists t;
+create table t(a char(20), b int, c double, d datetime, e time);
+insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01");
+select substring_index(a, '.', 2), substring_index(b, '.', 2), substring_index(c, '.', -1), substring_index(d, '-', 1), substring_index(e, ':', -2) from t;
+select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100);
+select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1);
+select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null);
+select substring_index('xyz', 'abc', 9223372036854775808);
+select substring_index("aaa.bbb.ccc.ddd.eee",'.',18446744073709551613);
+select substring_index("aaa.bbb.ccc.ddd.eee",'.',-18446744073709551613);
+select substring_index('aaa.bbb.ccc.ddd.eee', '.', 18446744073709551615 - 1 + id) from (select 1 as id) as t1;
+select substring_index('aaa.bbb.ccc.ddd.eee', '.', -18446744073709551615 - 1 + id) from (select 1 as id) as t1;
+set tidb_enable_vectorized_expression = 0;
+select substring_index("aaa.bbb.ccc.ddd.eee",'.',18446744073709551613);
+select substring_index("aaa.bbb.ccc.ddd.eee",'.',-18446744073709551613);
+select substring_index('aaa.bbb.ccc.ddd.eee', '.', 18446744073709551615 - 1 + id) from (select 1 as id) as t1;
+select substring_index('aaa.bbb.ccc.ddd.eee', '.', -18446744073709551615 - 1 + id) from (select 1 as id) as t1;
+set tidb_enable_vectorized_expression = 1;
+drop table if exists t;
+create table t(a char(20), b int, c double, d datetime, e time, f decimal(5, 2), g bit(4));
+insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01", 123.45, 0b1100);
+select hex(a), hex(b), hex(c), hex(d), hex(e), hex(f), hex(g) from t;
+select hex('abc'), hex('你好'), hex(12), hex(12.3), hex(12.8);
+select hex(-1), hex(-12.3), hex(-12.8), hex(0x12), hex(null);
+drop table if exists t;
+CREATE TABLE t(i int primary key auto_increment, a binary, b binary(0), c binary(20), d binary(255)) character set utf8 collate utf8_bin;
+insert into t(a, b, c, d) values ('a', NULL, 'a','a');
+select i, hex(a), hex(b), hex(c), hex(d) from t;
+select unhex('4D7953514C'), unhex('313233'), unhex(313233), unhex('');
+select unhex('string'), unhex('你好'), unhex(123.4), unhex(null);
+select hex(ltrim('   bar   ')), hex(ltrim('bar')), hex(ltrim('')), hex(ltrim(null));
+select hex(rtrim('   bar   ')), hex(rtrim('bar')), hex(rtrim('')), hex(rtrim(null));
+select hex(ltrim("\t   bar   ")), hex(ltrim("   \tbar")), hex(ltrim("\n  bar")), hex(ltrim("\r  bar"));
+select hex(rtrim("   bar   \t")), hex(rtrim("bar\t   ")), hex(rtrim("bar   \n")), hex(rtrim("bar   \r"));
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a BINARY(6));
+INSERT INTO t VALUES("中文");
+SELECT hex(a), hex(REVERSE(a)), hex(REVERSE("中文")), hex(REVERSE("123 ")) FROM t;
+SELECT hex(REVERSE(123)), hex(REVERSE(12.09)) FROM t;
+select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx');
+select hex(trim('\t   bar\n   ')), hex(trim('   \rbar   \t'));
+select hex(trim(leading from '   bar')), hex(trim('x' from 'xxxbarxxx')), hex(trim('x' from 'bar')), hex(trim('' from '   bar   '));
+select hex(trim('')), hex(trim('x' from ''));
+select hex(trim(null from 'bar')), hex(trim('x' from null)), hex(trim(null)), hex(trim(leading null from 'bar'));
+drop table if exists t;
+create table t(a char(20), b int, c double, d datetime, e time, f binary(5));
+insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01", "HelLo");
+select locate(".ping", a), locate(".ping", a, 5) from t;
+select locate("234", b), locate("235", b, 10) from t;
+select locate(".45", c), locate(".35", b) from t;
+select locate("El", f), locate("ll", f), locate("lL", f), locate("Lo", f), locate("lo", f) from t;
+select locate("01 12", d) from t;
+select locate("文", "中文字符串", 2);
+select locate("文", "中文字符串", 3);
+select locate("文", "中文字符串");
+select bin(-1);
+select bin(5);
+select bin("中文");
+select character_length(null), character_length("Hello"), character_length("a中b文c"),
+	character_length(123), character_length(12.3456);
+select char_length(null), char_length("Hello"), char_length("a中b文c"), char_length(123),char_length(12.3456);
+select char_length(null), char_length("Hello"), char_length("a 中 b 文 c"), char_length("НОЧЬ НА ОКРАИНЕ МОСКВЫ");
+select char_length(null), char_length(binary("Hello")), char_length(binary("a 中 b 文 c")), char_length(binary("НОЧЬ НА ОКРАИНЕ МОСКВЫ"));
+select elt(0, "abc", "def"), elt(2, "hello", "中文", "tidb"), elt(4, "hello", "中文",
+	"tidb");
+select instr("中国", "国"), instr("中国", ""), instr("abc", ""), instr("", ""), instr("", "abc");
+select instr("中国", null), instr(null, ""), instr(null, null);
+drop table if exists t;
+create table t(a binary(20), b char(20));
+insert into t values("中国", cast("国" as binary)), ("中国", ""), ("abc", ""), ("", ""), ("", "abc");
+select instr(a, b) from t;
+select oct("aaaa"), oct("-1.9"),  oct("-9999999999999999999999999"), oct("9999999999999999999999999");
+select oct(-1.9), oct(1.9), oct(-1), oct(1), oct(-9999999999999999999999999), oct(9999999999999999999999999);
+select find_in_set("", ""), find_in_set("", ","), find_in_set("中文", "字符串,中文"), find_in_set("b,", "a,b,c,d");
+select find_in_set(NULL, ""), find_in_set("", NULL), find_in_set(1, "2,3,1");
+select make_set(0, "12"), make_set(3, "aa", "11"), make_set(3, NULL, "中文"), make_set(NULL, "aa");
+select quote("aaaa"), quote(""), quote("\"\""), quote("\n\n");
+select quote(0121), quote(0000), quote("中文"), quote(NULL);
+select quote(null) is NULL;
+select quote(null) is NOT NULL;
+select length(quote(null));
+select quote(null) REGEXP binary 'null';
+select quote(null) REGEXP binary 'NULL';
+select quote(null) REGEXP 'NULL';
+select quote(null) REGEXP 'null';
+select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");
+-- error 1115
+select convert("123" using "866");
+select hex(insert("中文", 1, 1, cast("aaa" as binary))), hex(insert("ba", -1, 1, "aaa")), hex(insert("ba", 1, 100, "aaa")), hex(insert("ba", 100, 1, "aaa"));
+select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);
+SELECT INSERT("bb", 0, 1, NULL), INSERT("bb", 0, NULL, "aaa");
+SELECT INSERT("中文", 0, 1, NULL), INSERT("中文", 0, NULL, "aaa");
+select export_set(7, "1", "0", ",", 65);
+select export_set(7, "1", "0", ",", -1);
+select export_set(7, "1", "0", ",");
+select export_set(7, "1", "0");
+select export_set(NULL, "1", "0", ",", 65);
+select export_set(7, "1", "0", ",", 1);
+select format(12332.1, 4), format(12332.2, 0), format(12332.2, 2,'en_US');
+select format(NULL, 4), format(12332.2, NULL);
+--enable_warnings
+select format(12332.2, 2,'es_EC');
+--disable_warnings
+select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);
+select field("1", 2, 1), field(1, "0", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);
+select field("1", 2, 1), field(1, "abc", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);
+select field("abc", "a", 1), field(1.3, "1.3", 1.5);
+drop table if exists t;
+create table t(a decimal(11, 8), b decimal(11,8));
+insert into t values('114.57011441','38.04620115'), ('-38.04620119', '38.04620115');
+select a,b,concat_ws(',',a,b) from t;
+drop table if exists t1;
+CREATE TABLE t1 (c1 INT UNSIGNED NOT NULL );
+INSERT INTO t1 VALUES (0);
+SELECT c1 FROM t1 WHERE c1 <> CAST(POW(-'0', 1) AS BINARY);
+SELECT c1 FROM t1 WHERE c1 = CAST('-000' AS BINARY);
+
+# TestInvalidStrings
+drop table if exists t;
+create table t (a binary(5));
+insert into t values (0x1e240), ('ABCDE');
+set tidb_enable_vectorized_expression = on;
+select convert(t.a using utf8) from t;
+select convert(0x1e240 using utf8);
+set tidb_enable_vectorized_expression = off;
+select convert(t.a using utf8) from t;
+select convert(0x1e240 using utf8);
+set tidb_enable_vectorized_expression = default;
+
+# TestOpBuiltin
+select 1 && 1, 1 && 0, 0 && 1, 0 && 0, 2 && -1, null && 1, '1a' && 'a';
+select ~123, ~-123, ~null;
+select !1, !123, !0, !null;
+select 1 xor 1, 1 xor 0, 0 xor 1, 0 xor 0, 2 xor -1, null xor 1, '1a' xor 'a';
+select 123 & 321, -123 & 321, null & 1;
+select 123 | 321, -123 | 321, null | 1;
+select 123 ^ 321, -123 ^ 321, null ^ 1;
+select 123 << 2, -123 << 2, null << 1;
+select 123 >> 2, -123 >> 2, null >> 1;
+select 1 || 1, 1 || 0, 0 || 1, 0 || 0, 2 || -1, null || 1, '1a' || 'a';
+select +1, +0, +(-9), +(-0.001), +0.999, +null, +"aaa";
+drop table if exists f;
+create table f(a decimal(65,0));
+insert into f value (-17000000000000000000);
+select a from f;
+
+# TestControlBuiltin
+select ifnull(1, 2);
+select ifnull(null, 2);
+select ifnull(1, null);
+select ifnull(null, null);
+drop table if exists t1;
+create table t1(a bigint not null);
+select ifnull(max(a),0) from t1;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a decimal(20,4));
+create table t2(a decimal(20,4));
+insert into t1 select 1.2345;
+insert into t2 select 1.2345;
+select sum(ifnull(a, 0)) from (
+	select ifnull(a, 0) as a from t1
+	union all
+	select ifnull(a, 0) as a from t2
+	) t;
+select IF(0,"ERROR","this"),IF(1,"is","ERROR"),IF(NULL,"ERROR","a"),IF(1,2,3)|0,IF(1,2.0,3.0)+0;
+drop table if exists t1;
+CREATE TABLE t1 (st varchar(255) NOT NULL, u int(11) NOT NULL);
+INSERT INTO t1 VALUES ('a',1),('A',1),('aa',1),('AA',1),('a',1),('aaa',0),('BBB',0);
+select if(1,st,st) s from t1 order by s;
+select if(u=1,st,st) s from t1 order by s;
+drop table if exists t1;
+CREATE TABLE t1 (a varchar(255), b time, c int);
+INSERT INTO t1 VALUE('abc', '12:00:00', 0);
+INSERT INTO t1 VALUE('1abc', '00:00:00', 1);
+INSERT INTO t1 VALUE('0abc', '12:59:59', 0);
+select if(a, b, c), if(b, a, c), if(c, a, b) from t1;
+select if(1, 1.0, 1);
+select if(1, 1, 1.0);
+select if(count(*), cast('2000-01-01' as date), cast('2011-01-01' as date)) from t1;
+select if(count(*)=0, cast('2000-01-01' as date), cast('2011-01-01' as date)) from t1;
+select if(count(*), cast('[]' as json), cast('{}' as json)) from t1;
+select if(count(*)=0, cast('[]' as json), cast('{}' as json)) from t1;
+SELECT 79 + + + CASE -87 WHEN -30 THEN COALESCE(COUNT(*), +COALESCE(+15, -33, -12 ) + +72) WHEN +COALESCE(+AVG(DISTINCT(60)), 21) THEN NULL ELSE NULL END AS col0;
+SELECT -63 + COALESCE ( - 83, - 61 + - + 72 * - CAST( NULL AS SIGNED ) + + 3 );
+
+# TestArithmeticBuiltin
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));
+INSERT INTO t(a, b) VALUES(1.09, 1.999), (-1.1, -0.1);
+SELECT a+b FROM t;
+SELECT b+12, b+0.01, b+0.00001, b+12.00001 FROM t;
+SELECT 1+12, 21+0.01, 89+"11", 12+"a", 12+NULL, NULL+1, NULL+NULL;
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);
+INSERT INTO t SELECT 1<<63, 1<<63;
+-- error 1690
+SELECT a+b FROM t;
+-- error 1690
+select cast(-3 as signed) + cast(2 as unsigned);
+-- error 1690
+select cast(2 as unsigned) + cast(-3 as signed);
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));
+INSERT INTO t(a, b) VALUES(1.09, 1.999), (-1.1, -0.1);
+SELECT a-b FROM t;
+SELECT b-12, b-0.01, b-0.00001, b-12.00001 FROM t;
+SELECT 1-12, 21-0.01, 89-"11", 12-"a", 12-NULL, NULL-1, NULL-NULL;
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);
+INSERT INTO t SELECT 1, 4;
+-- error 1690
+SELECT a-b FROM t;
+-- error 1690
+select cast(1 as unsigned) - cast(4 as unsigned);
+-- error 1690
+select cast(-1 as signed) - cast(-1 as unsigned);
+-- error 1690
+select cast(1 as signed) - cast(-1 as unsigned);
+-- error 1690
+select cast(-1 as unsigned) - cast(-1 as signed);
+-- error 1690
+select cast(-9223372036854775808 as unsigned) - (-9223372036854775808);
+-- error 1690
+select cast(12 as unsigned) - (14);
+-- error 1690
+select cast(9223372036854775807 as signed) - cast(-1 as signed);
+-- error 1690
+select cast(-9223372036854775808 as signed) - cast(1 as signed);
+-- error 1690
+select cast(12 as signed) - cast(-9223372036854775808 as signed);
+create table tb5(a int(10));
+insert into tb5 (a) values (10);
+# TODO: fix https://github.com/pingcap/tidb/issues/47692
+#-- error 1690
+# select * from tb5 where a - -9223372036854775808;
+drop table tb5;
+select cast(-9223372036854775808 as unsigned) - (-9223372036854775807);
+select cast(-3 as unsigned) - cast(-1 as signed);
+select 1.11 - 1.11;
+select cast(-1 as unsigned) - cast(-12 as unsigned);
+select cast(-1 as unsigned) - cast(0 as unsigned);
+select 1234567890 * 1234567890;
+-- error 1690
+select 1234567890 * 12345671890;
+select cast(1234567890 as unsigned int) * 12345671890;
+select 123344532434234234267890.0 * 1234567118923479823749823749.230;
+-- error 1690
+select 123344532434234234267890.0 * 12345671189234798237498232384982309489238402830480239849238048239084749.230;
+-- error 1690
+select 1.797693134862315708145274237317043567981e+308 * 1.1;
+-- error 1690
+select 1.797693134862315708145274237317043567981e+308 * -1.1;
+select 0.0 * -1;
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));
+INSERT INTO t(a, b) VALUES(-1.09, 1.999);
+--enable_warnings
+SELECT a/b, a/12, a/-0.01, b/12, b/-0.01, b/0.000, NULL/b, b/NULL, NULL/NULL FROM t;
+--disable_warnings
+-- error 1690
+select 1e200/1e-200;
+SELECT 13 DIV 12, 13 DIV 0.01, -13 DIV 2, 13 DIV NULL, NULL DIV 13, NULL DIV NULL;
+SELECT 2.4 div 1.1, 2.4 div 1.2, 2.4 div 1.3;
+--enable_warnings
+SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;
+--disable_warnings
+-- error 1690
+select 1e300 DIV 1.5;
+drop table if exists t;
+CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));
+INSERT INTO t VALUE('abc', '12:00:00', 12, 0, 5, '2017-08-05 18:19:03', 'b');
+select c_varchar div nonzero, c_time div nonzero, c_time div zero, c_timestamp div nonzero, c_timestamp div zero, c_varchar div zero from t;
+select c_enum div nonzero from t;
+select c_enum div zero from t;
+--enable_warnings
+select nonzero div zero from t;
+--disable_warnings
+select c_time div c_enum, c_timestamp div c_time, c_timestamp div c_enum from t;
+--enable_warnings
+select c_int_unsigned div nonzero, nonzero div c_int_unsigned, c_int_unsigned div zero from t;
+--disable_warnings
+SELECT CAST(1 AS UNSIGNED) MOD -9223372036854775808, -9223372036854775808 MOD CAST(1 AS UNSIGNED);
+SELECT 13 MOD 12, 13 MOD 0.01, -13 MOD 2, 13 MOD NULL, NULL MOD 13, NULL DIV NULL;
+SELECT 2.4 MOD 1.1, 2.4 MOD 1.2, 2.4 mod 1.30;
+drop table if exists t;
+CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_timestamp timestamp, c_enum enum('a','b','c'));
+INSERT INTO t VALUE('abc', '12:00:00', 12, 0, '2017-08-05 18:19:03', 'b');
+select c_varchar MOD nonzero, c_time MOD nonzero, c_timestamp MOD nonzero, c_enum MOD nonzero from t;
+select c_time MOD c_enum, c_timestamp MOD c_time, c_timestamp MOD c_enum from t;
+--enable_warnings
+select c_enum MOD zero from t;
+--disable_warnings
+SET SQL_MODE='ERROR_FOR_DIVISION_BY_ZERO,STRICT_ALL_TABLES';
+drop table if exists t;
+CREATE TABLE t (v int);
+--enable_warnings
+INSERT IGNORE INTO t VALUE(12 MOD 0);
+--disable_warnings
+select v from t;
+select 0.000 % 0.11234500000000000000;
+-- error 1365
+INSERT INTO t VALUE(12 MOD 0);
+select sum(1.2e2) * 0.1;
+drop table if exists t;
+create table t(a double);
+insert into t value(1.2);
+select sum(a) * 0.1 from t;
+drop table if exists t;
+create table t(a double);
+insert into t value(1.2);
+# TODO: fix https://github.com/pingcap/tidb/issues/47692
+# --enable_warnings
+select * from t where a/0 > 1;
+--disable_warnings
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a BIGINT, b DECIMAL(6, 2));
+INSERT INTO t VALUES(0, 1.12), (1, 1.21);
+SELECT a/b FROM t;
+
+# TestNullifWithIsNull
+# issue 23157: make sure if Nullif expr is correct combined with IsNull expr.
+drop table if exists t;
+create table t(a int not null);
+insert into t values(1),(2);
+select * from t where nullif(a,a) is null;
+
+# TestAggregationBuiltin
+drop table if exists t;
+create table t(a decimal(7, 6));
+insert into t values(1.123456), (1.123456);
+select avg(a) from t;
+drop table t;
+CREATE TABLE `t` (	`a` int, KEY `idx_a` (`a`));
+select avg(a) from t;
+select max(a), min(a) from t;
+select distinct a from t;
+select sum(a) from t;
+select count(a) from t;
+select bit_or(a) from t;
+select bit_xor(a) from t;
+select bit_and(a) from t;
+select count(1) from (select count(1) from t) as t1;
+
+# TestAggregationBuiltinBitOr
+drop table if exists t;
+create table t(a bigint);
+insert into t values(null);
+select bit_or(a) from t;
+insert into t values(1);
+select bit_or(a) from t;
+insert into t values(2);
+select bit_or(a) from t;
+insert into t values(4);
+select bit_or(a) from t;
+select a, bit_or(a) from t group by a order by a;
+insert into t values(-1);
+select bit_or(a) from t;
+
+# TestAggregationBuiltinBitXor
+drop table if exists t;
+create table t(a bigint);
+insert into t values(null);
+select bit_xor(a) from t;
+insert into t values(1);
+select bit_xor(a) from t;
+insert into t values(2);
+select bit_xor(a) from t;
+insert into t values(3);
+select bit_xor(a) from t;
+insert into t values(3);
+select bit_xor(a) from t;
+select a, bit_xor(a) from t group by a order by a;
+
+# TestAggregationBuiltinBitAnd
+drop table if exists t;
+create table t(a bigint);
+insert into t values(null);
+select bit_and(a) from t;
+insert into t values(7);
+select bit_and(a) from t;
+insert into t values(5);
+select bit_and(a) from t;
+insert into t values(3);
+select bit_and(a) from t;
+insert into t values(2);
+select bit_and(a) from t;
+select a, bit_and(a) from t group by a order by a desc;
+
+# TestAggregationBuiltinGroupConcat
+drop table if exists t, d;
+create table t(a varchar(100));
+create table d(a varchar(100));
+insert into t values('hello'), ('hello');
+select group_concat(a) from t;
+set @@group_concat_max_len=7;
+--enable_warnings
+select group_concat(a) from t;
+--disable_warnings
+-- error 1260
+insert into d select group_concat(a) from t;
+set sql_mode='';
+--enable_warnings
+insert into d select group_concat(a) from t;
+--disable_warnings
+select * from d;
+set group_concat_max_len=default;
+set sql_mode=default;
+
+# TestOtherBuiltin
+drop table if exists t;
+create table t(a int, b double, c varchar(20), d datetime, e time);
+insert into t value(1, 2, 'string', '2017-01-01 12:12:12', '12:12:12');
+select 1 in (a, b, c), 'string' in (a, b, c), '2017-01-01 12:12:12' in (c, d, e), '12:12:12' in (c, d, e) from t;
+select 1 in (null, c), 2 in (null, c) from t;
+select 0 in (a, b, c), 0 in (a, b, c), 3 in (a, b, c), 4 in (a, b, c) from t;
+select (0,1) in ((0,1), (0,2)), (0,1) in ((0,0), (0,2));
+select bit_count(121), bit_count(-1), bit_count(null), bit_count("1231aaa");
+drop table if exists t;
+create table t(a int primary key, b time, c double, d varchar(10));
+insert into t values(1, '01:01:01', 1.1, "1"), (2, '02:02:02', 2.2, "2");
+insert into t(a, b) values(1, '12:12:12') on duplicate key update a = values(b);
+select a from t order by a;
+insert into t values(2, '12:12:12', 1.1, "3.3") on duplicate key update a = values(c) + values(d);
+select a from t order by a;
+set @varname = "Abc";
+select @varname, @VARNAME;
+drop table t;
+CREATE TABLE `t` (`id` varchar(32) NOT NULL, `count` decimal(18,2), PRIMARY KEY (`id`));
+INSERT INTO t (id,count)VALUES('abc',2) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count);
+select count from t where id = 'abc';
+INSERT INTO t (id,count)VALUES('abc',265.0) ON DUPLICATE KEY UPDATE count=if(VALUES(count) > count,VALUES(count),count);
+select count from t where id = 'abc';
+drop table if exists t;
+create table test(id int not null, val text, primary key(id));
+insert into test values(1,'hello');
+select * from test;
+insert into test values(1, NULL) on duplicate key update val = VALUES(val);
+select * from test;
+drop table if exists test;
+create table test(
+		id int not null,
+		a text,
+		b blob,
+		c varchar(20),
+		d int,
+		e float,
+		f DECIMAL(6,4),
+		g JSON,
+		primary key(id));
+insert into test values(1,'txt hello', 'blb hello', 'vc hello', 1, 1.1, 1.0, '{"key1": "value1", "key2": "value2"}');
+insert into test values(1, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+	on duplicate key update
+	a = values(a),
+	b = values(b),
+	c = values(c),
+	d = values(d),
+	e = values(e),
+	f = values(f),
+	g = values(g);
+select * from test;
+
+# TestDateBuiltin
+DROP TABLE IF EXISTS t;
+create table t (d date);
+insert into t values ('1997-01-02');
+insert into t values ('1998-01-02');
+select * from t where d < date '1998-01-01';
+select date'20171212';
+select date'2017/12/12';
+select date'2017/12-12';
+set sql_mode = '';
+select date '0000-00-00';
+set sql_mode = 'NO_ZERO_IN_DATE';
+select date '0000-00-00';
+set sql_mode = 'NO_ZERO_DATE';
+-- error 1292
+select date '0000-00-00';
+set sql_mode = '';
+select date '2007-10-00';
+set sql_mode = 'NO_ZERO_IN_DATE';
+-- error 1292
+select date '2007-10-00';
+set sql_mode = 'NO_ZERO_DATE';
+select date '2007-10-00';
+set sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE';
+-- error 1292
+select date '2007-10-00';
+-- error 1292
+select date '0000-00-00';
+select date'1998~01~02';
+select date'731124', date '011124';
+-- error 1292
+select date '0000-00-00 00:00:00';
+-- error 1292
+select date '2017-99-99';
+-- error 1292
+select date '2017-2-31';
+-- error 1292
+select date '201712-31';
+-- error 1292
+select date 'abcdefg';
+set sql_mode = default;
+
+# TestApproximatePercentile
+drop table if exists t;
+create table t (a bit(10));
+insert into t values(b'1111');
+select approx_percentile(a, 10) from t;
+
+# TestFuncNameConst
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a CHAR(20), b VARCHAR(20), c BIGINT);
+INSERT INTO t (b, c) values('hello', 1);
+SELECT name_const('test_int', 1), name_const('test_float', 3.1415);
+SELECT name_const('test_string', 'hello'), name_const('test_nil', null);
+SELECT name_const('test_string', 1) + c FROM t;
+SELECT concat('hello', name_const('test_string', 'world')) FROM t;
+SELECT NAME_CONST('come', -1);
+SELECT NAME_CONST('come', -1.0);
+-- error 1210
+select name_const(a,b) from t;
+-- error 1210
+select name_const(a,"hello") from t;
+-- error 1210
+select name_const("hello", b) from t;
+-- error 1210
+select name_const("hello", 1+1) from t;
+-- error 1210
+select name_const(concat('a', 'b'), 555) from t;
+-- error 1582
+select name_const(555) from t;
+select name_const("hello", 1);
+
+# TestTranslate
+drop table if exists t;
+create table if not exists `translate`(id int);
+create table t(str varchar(100), i int);
+insert into t set str='ABC', i=0;
+insert into t set str='AABC', i=1;
+insert into t set str='A.B.C', i=2;
+insert into t set str='aaaaabbbbb', i=3;
+insert into t set str='abc', i=4;
+insert into t set str='aaa', i=5;
+insert into t set str=NULL, i=6;
+set @@tidb_enable_vectorized_expression=true;
+select translate(str, 'AAa', 'Zz') from t;
+select translate(str, NULL, 'Zz') from t;
+select translate(str, 'AAa', NULL) from t;
+select translate(str, 'AAa', '') from t;
+select translate(str, '', 'Zzz') from t;
+set @@tidb_enable_vectorized_expression=false;
+select translate(str, 'AAa', 'Zz') from t;
+select translate(str, NULL, 'Zz') from t;
+select translate(str, 'AAa', NULL) from t;
+select translate(str, 'AAa', '') from t;
+select translate(str, '', 'Zzz') from t;
+select translate(i, '0123456', 'abcdefg') from t;
+set tidb_enable_vectorized_expression=default;
+
+# TestEncryptionBuiltin
+drop table if exists t;
+create table t(a char(41), b char(41), c char(41));
+insert into t values(NULL, '', 'abc');
+select password(a) from t;
+select password(b) from t;
+select password(c) from t;
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select md5(a), md5(b), md5(c), md5(d), md5(e), md5(f), md5(g), md5(h), md5(i) from t;
+select md5('123'), md5(123), md5(''), md5('你好'), md5(NULL), md5('👍');
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sha1(a), sha1(b), sha1(c), sha1(d), sha1(e), sha1(f), sha1(g), sha1(h), sha1(i) from t;
+select sha1('123'), sha1(123), sha1(''), sha1('你好'), sha1(NULL);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sha(a), sha(b), sha(c), sha(d), sha(e), sha(f), sha(g), sha(h), sha(i) from t;
+select sha('123'), sha(123), sha(''), sha('你好'), sha(NULL);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sha2(a, 224), sha2(b, 0), sha2(c, 512), sha2(d, 256), sha2(e, 384), sha2(f, 0), sha2(g, 512), sha2(h, 256), sha2(i, 224) from t;
+select sha2('123', 512), sha2(123, 512), sha2('', 512), sha2('你好', 224), sha2(NULL, 256), sha2('foo', 123);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sm3(a), sm3(b), sm3(c), sm3(d), sm3(e), sm3(f), sm3(g), sm3(h), sm3(i) from t;
+select sm3('123'), sm3(123), sm3(''), sm3('你好'), sm3(NULL);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sm3(a), sm3(b), sm3(c), sm3(d), sm3(e), sm3(f), sm3(g), sm3(h), sm3(i) from t;
+select sm3('123'), sm3(123), sm3(''), sm3('你好'), sm3(NULL);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+SET block_encryption_mode='aes-128-ecb';
+select HEX(AES_ENCRYPT(a, 'key')), HEX(AES_ENCRYPT(b, 'key')), HEX(AES_ENCRYPT(c, 'key')), HEX(AES_ENCRYPT(d, 'key')), HEX(AES_ENCRYPT(e, 'key')), HEX(AES_ENCRYPT(f, 'key')), HEX(AES_ENCRYPT(g, 'key')), HEX(AES_ENCRYPT(h, 'key')), HEX(AES_ENCRYPT(i, 'key')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar')), HEX(AES_ENCRYPT(123, 'foobar')), HEX(AES_ENCRYPT('', 'foobar')), HEX(AES_ENCRYPT('你好', 'foobar')), AES_ENCRYPT(NULL, 'foobar');
+select HEX(AES_ENCRYPT(a, 'key', 'iv')), HEX(AES_ENCRYPT(b, 'key', 'iv')) from t;
+show warnings;
+SET block_encryption_mode='aes-128-cbc';
+select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-128-ofb';
+select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-192-ofb';
+select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-256-ofb';
+select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-128-ecb';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar'), 'bar');
+select AES_DECRYPT(UNHEX('45ABDD5C4802EFA6771A94C43F805208'), 'foobar'), AES_DECRYPT(UNHEX('791F1AEB6A6B796E6352BF381895CA0E'), 'foobar'), AES_DECRYPT(UNHEX('D0147E2EB856186F146D9F6DE33F9546'), 'foobar'), AES_DECRYPT(NULL, 'foobar'), AES_DECRYPT('SOME_THING_STRANGE', 'foobar');
+SET block_encryption_mode='aes-128-cbc';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456');
+select AES_DECRYPT(UNHEX('80D5646F07B4654B05A02D9085759770'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('B3C14BA15030D2D7E99376DBE011E752'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('0CD2936EE4FEC7A8CDF6208438B2BC05'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-128-ofb';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456');
+select AES_DECRYPT(UNHEX('48E38A'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX(''), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('9D6C199101C3'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), HEX(AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456'));
+SET block_encryption_mode='aes-192-ofb';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456');
+select AES_DECRYPT(UNHEX('3A76B0'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX(''), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('EFF92304268E'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), HEX(AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456'));
+SET block_encryption_mode='aes-256-ofb';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456');
+select AES_DECRYPT(UNHEX('E842C5'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX(''), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('3DCD5646767D'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), HEX(AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456'));
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a VARCHAR(1000));
+INSERT INTO t1 VALUES('12345'), ('23456');
+SELECT HEX(COMPRESS(a)) FROM t1;
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2(a VARCHAR(1000), b VARBINARY(1000));
+INSERT INTO t2 (a, b) SELECT a, COMPRESS(a) from t1;
+SELECT a, HEX(b) FROM t2;
+SELECT UNCOMPRESS(COMPRESS('123'));
+SELECT UNCOMPRESS(UNHEX('03000000789C3334320600012D0097'));
+SELECT UNCOMPRESS(UNHEX('03000000789C32343206040000FFFF012D0097'));
+INSERT INTO t2 VALUES ('12345', UNHEX('05000000789C3334323631050002F80100'));
+SELECT UNCOMPRESS(a), UNCOMPRESS(b) FROM t2;
+SELECT UNCOMPRESSED_LENGTH(COMPRESS('123'));
+SELECT UNCOMPRESSED_LENGTH(UNHEX('03000000789C3334320600012D0097'));
+SELECT UNCOMPRESSED_LENGTH(UNHEX('03000000789C32343206040000FFFF012D0097'));
+SELECT UNCOMPRESSED_LENGTH('');
+SELECT UNCOMPRESSED_LENGTH(UNHEX('0100'));
+SELECT UNCOMPRESSED_LENGTH(a), UNCOMPRESSED_LENGTH(b) FROM t2;
+-- error 1690
+SELECT RANDOM_BYTES(0);
+-- error 1690
+SELECT RANDOM_BYTES(-5);
+-- error 1690
+SELECT RANDOM_BYTES(1025);
+-- error 1690
+SELECT RANDOM_BYTES(4000);
+SELECT length(RANDOM_BYTES('1'));
+SELECT length(RANDOM_BYTES(1024));
+SELECT RANDOM_BYTES(NULL);
+SET GLOBAL validate_password.dictionary='password';
+SET GLOBAL validate_password.enable = 1;
+SELECT validate_password_strength('root');
+SELECT validate_password_strength('toor');
+SELECT validate_password_strength('ROOT');
+SELECT validate_password_strength('TOOR');
+SELECT validate_password_strength('fooHoHo%1');
+SELECT validate_password_strength('pass');
+SELECT validate_password_strength('password');
+SELECT validate_password_strength('password0000');
+SELECT validate_password_strength('password1A#');
+SELECT validate_password_strength('PA12wrd!#');
+SELECT VALIDATE_PASSWORD_STRENGTH(REPEAT("aA1#", 26));
+SELECT validate_password_strength(null);
+SELECT validate_password_strength('null');
+SELECT VALIDATE_PASSWORD_STRENGTH( 0x6E616E646F73617135234552 );
+SELECT VALIDATE_PASSWORD_STRENGTH(CAST(0xd2 AS BINARY(10)));
+SET GLOBAL validate_password.dictionary=default;
+SET GLOBAL validate_password.enable = default;
+SET block_encryption_mode=default;
+
+# TestMiscellaneousBuiltin
+select uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
+    uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
+    uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
+    uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
+    uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}';
+select sleep(1);
+select sleep(0);
+select sleep('a');
+show warnings;
+-- error 1210
+select sleep(-1);
+SELECT INET_ATON('10.0.5.9');
+SELECT INET_NTOA(167773449);
+SELECT HEX(INET6_ATON('fdfe::5a55:caff:fefa:9089'));
+SELECT HEX(INET6_ATON('10.0.5.9'));
+SELECT INET6_NTOA(INET6_ATON('fdfe::5a55:caff:fefa:9089'));
+SELECT INET6_NTOA(INET6_ATON('10.0.5.9'));
+SELECT INET6_NTOA(UNHEX('FDFE0000000000005A55CAFFFEFA9089'));
+SELECT INET6_NTOA(UNHEX('0A000509'));
+SELECT IS_IPV4('10.0.5.9'), IS_IPV4('10.0.5.256');
+SELECT IS_IPV4_COMPAT(INET6_ATON('::10.0.5.9'));
+SELECT IS_IPV4_COMPAT(INET6_ATON('::ffff:10.0.5.9'));
+SELECT
+	  IS_IPV4_COMPAT(INET6_ATON('::192.168.0.1')),
+	  IS_IPV4_COMPAT(INET6_ATON('::c0a8:0001')),
+	  IS_IPV4_COMPAT(INET6_ATON('::c0a8:1'));
+SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));
+SELECT IS_IPV4_MAPPED(INET6_ATON('::ffff:10.0.5.9'));
+SELECT
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:192.168.0.1')),
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:0001')),
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:1'));
+SELECT IS_IPV6('10.0.5.9'), IS_IPV6('::1');
+drop table if exists t1;
+create table t1(
+        a int,
+        b int not null,
+        c int not null default 0,
+        d int default 0,
+        unique key(b,c),
+        unique key(b,d)
+);
+insert into t1 (a,b) values(1,10),(1,20),(2,30),(2,40);
+select any_value(a), sum(b) from t1;
+select a,any_value(b),sum(c) from t1 group by a order by a;
+SELECT GET_LOCK('test_lock1', 10);
+SELECT GET_LOCK('test_lock2', 10);
+SELECT IS_USED_LOCK('test_lock1') = CONNECTION_ID();
+SELECT IS_USED_LOCK('foobar');
+SELECT IS_FREE_LOCK('test_lock1');
+SELECT IS_FREE_LOCK('foobar');
+SELECT RELEASE_LOCK('test_lock2');
+SELECT RELEASE_LOCK('test_lock1');
+SELECT RELEASE_LOCK('test_lock3');
+SELECT RELEASE_ALL_LOCKS();
+
+# Issue #49566
+drop table if exists t;
+create table t (col bit(37) NOT NULL);
+insert into t (col) values(x'05d3a46d88'), (x'04dba3570c'), (x'0ed284dfee'), (x'12657141bf');
+select hex(col), hex(reverse(col)) from t order by reverse(col);
+# Issue #50855
+drop table if exists t2;
+create table t2 (col bit(45) NOT NULL);
+insert into t2 (col) values (x'09a1441d083c');
+select hex(r) from (select REVERSE(col) as r from t2 group by REVERSE(col)) as t;
+select hex(r) from (select distinct REVERSE(col) as r from t2) as t;
+# Issue #50850
+drop table if exists t3;
+create table t3 (col1 double NOT NULL, col2 bit(8) NOT NULL);
+insert into t3 (col1, col2) values (2306.9705216860984, x'31'), (6779.239615471537, x'65'), (7601.530447792593, x'd5'), (7058.842877388801, x'a5'), (615.6011553350702, x'34'), (5613.036187642952, x'01'), (7047.649466854864, x'a6'), (8632.659024782468, x'5d'), (9546.629394674586, x'ff'), (2972.7118048537704, x'b1');
+select hex(r) as r0 from (select ELT(2, col1, col2) as r from t3 group by ELT(2, col1, col2)) as t order by r0;
+select hex(r) as r0 from (select distinct ELT(2, col1, col2) as r from t3) as t order by r0;
+drop table t, t2, t3;
