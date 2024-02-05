@@ -801,7 +801,7 @@ func PostProcess(
 		return err
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum.MergeGroup(), se, logger)
+	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), se, logger)
 }
 
 type autoIDRequirement struct {

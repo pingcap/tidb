@@ -232,9 +232,6 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 			KVs:  c.SumKVS(),
 			Size: c.SumSize(),
 		}
-		if s.tableImporter.IsGlobalSort() && id == verification.DataKVGroupAsIndexID {
-			dataKVCount = c.SumKVS()
-		}
 	}
 	subtaskMeta.Result = Result{
 		LoadedRowCnt: dataKVCount,

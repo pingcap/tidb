@@ -131,8 +131,8 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	for id, cksum := range subtaskMeta.Checksum {
 		callLog.Info(
-			"group checksum",
-			zap.Int64("id", id),
+			"kv group checksum",
+			zap.Int64("groupId", id),
 			zap.Uint64("size", cksum.Size),
 			zap.Uint64("kvs", cksum.KVs),
 			zap.Uint64("checksum", cksum.Sum),
@@ -146,6 +146,6 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergeGroup(), se, logger)
+		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
 	})
 }

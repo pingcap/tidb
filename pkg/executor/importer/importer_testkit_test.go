@@ -225,11 +225,11 @@ func TestPostProcess(t *testing.T) {
 
 	// verify checksum failed
 	localChecksum := verify.NewKVGroupChecksumForAdd()
-	localChecksum.AddRawGroup(verify.DataKVGroupAsIndexID, 1, 2, 1)
+	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 2, 1)
 	require.ErrorIs(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger), common.ErrChecksumMismatch)
 	// success
 	localChecksum = verify.NewKVGroupChecksumForAdd()
-	localChecksum.AddRawGroup(verify.DataKVGroupAsIndexID, 1, 1, 1)
+	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 1, 1)
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
 	// get KV store failed
 	importer.GetKVStore = func(path string, tls kvconfig.Security) (kv.Storage, error) {
@@ -328,7 +328,7 @@ func TestProcessChunkWith(t *testing.T) {
 		require.Len(t, progress.GetColSize(), 3)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(74, 2, 15625182175392723123), *checksumMap[verify.DataKVGroupAsIndexID])
+		require.Equal(t, verify.MakeKVChecksum(74, 2, 15625182175392723123), *checksumMap[verify.DataKVGroupID])
 	})
 
 	t.Run("query chunk", func(t *testing.T) {
@@ -360,7 +360,7 @@ func TestProcessChunkWith(t *testing.T) {
 		require.Len(t, progress.GetColSize(), 3)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(111, 3, 14231358899564314836), *checksumMap[verify.DataKVGroupAsIndexID])
+		require.Equal(t, verify.MakeKVChecksum(111, 3, 14231358899564314836), *checksumMap[verify.DataKVGroupID])
 	})
 }
 

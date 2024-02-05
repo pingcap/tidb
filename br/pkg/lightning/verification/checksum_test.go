@@ -25,7 +25,7 @@ import (
 )
 
 func TestChecksum(t *testing.T) {
-	checksum := verification.NewKVChecksum(0)
+	checksum := verification.NewKVChecksum()
 	require.Equal(t, uint64(0), checksum.Sum())
 
 	// checksum on nothing
@@ -99,7 +99,7 @@ func TestGroupChecksum(t *testing.T) {
 	inner := c.GetInnerChecksums()
 	require.Equal(t, 2, len(inner))
 	require.Equal(t, uint64(1), inner[1].SumKVS())
-	require.Equal(t, uint64(1), inner[verification.DataKVGroupAsIndexID].SumKVS())
+	require.Equal(t, uint64(1), inner[verification.DataKVGroupID].SumKVS())
 
 	keyspaceCodec := &mockCodec{keyspace: []byte("keyspace")}
 	keyspaceC := verification.NewKVGroupChecksumWithKeyspace(keyspaceCodec)
@@ -116,7 +116,7 @@ func TestGroupChecksum(t *testing.T) {
 	require.Equal(t, 3, len(inner))
 	require.Equal(t, uint64(2), inner[1].SumKVS())
 	require.Equal(t, uint64(1), inner[2].SumKVS())
-	require.Equal(t, uint64(1), inner[verification.DataKVGroupAsIndexID].SumKVS())
+	require.Equal(t, uint64(1), inner[verification.DataKVGroupID].SumKVS())
 
 	dataKVCnt, indexKVCnt := c.DataAndIndexSumKVS()
 	require.Equal(t, uint64(1), dataKVCnt)
@@ -126,7 +126,7 @@ func TestGroupChecksum(t *testing.T) {
 	require.Equal(t, uint64(6), dataSize)
 	require.Equal(t, uint64(22), indexSize)
 
-	merged := c.MergeGroup()
+	merged := c.MergedChecksum()
 	require.Equal(t, uint64(4), merged.SumKVS())
 	require.Equal(t, uint64(28), merged.SumSize())
 }

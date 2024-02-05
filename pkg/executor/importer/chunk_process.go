@@ -169,6 +169,7 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 // chunkEncoder encodes data from readFn and sends encoded data to sendFn.
 type chunkEncoder struct {
 	readFn encodeReaderFn
+	offset int64
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error
 
 	chunkName string
@@ -186,6 +187,7 @@ type chunkEncoder struct {
 func newChunkEncoder(
 	chunkName string,
 	readFn encodeReaderFn,
+	offset int64,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
 	logger *zap.Logger,
 	encoder KVEncoder,
@@ -194,6 +196,7 @@ func newChunkEncoder(
 	return &chunkEncoder{
 		chunkName:     chunkName,
 		readFn:        readFn,
+		offset:        offset,
 		sendFn:        sendFn,
 		logger:        logger,
 		encoder:       encoder,
@@ -209,7 +212,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		rowCount                                int
 		rowBatch                                = make([]*kv.Pairs, 0, MinDeliverRowCnt)
 		rowBatchByteSize                        uint64
-		currOffset, prevOffset                  int64
+		currOffset                              int64
 	)
 	metrics, _ := metric.GetCommonMetric(ctx)
 	if metrics != nil {
@@ -224,8 +227,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 
 		if currOffset >= 0 && metrics != nil {
-			delta := currOffset - prevOffset
-			prevOffset = currOffset
+			delta := currOffset - p.offset
+			p.offset = currOffset
 			// if we're using split_file, this metric might larger than total
 			// source file size, as the offset we're using is the reader offset,
 			// not parser offset, and we'll buffer data.
@@ -378,6 +381,7 @@ func NewFileChunkProcessor(
 		enc: newChunkEncoder(
 			chunk.GetKey(),
 			parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
+			chunk.Chunk.Offset,
 			deliver.sendEncodedData,
 			chunkLogger,
 			encoder,
@@ -522,6 +526,7 @@ func newQueryChunkProcessor(
 		enc: newChunkEncoder(
 			chunkName,
 			queryRowEncodeReader(rowCh),
+			-1,
 			deliver.sendEncodedData,
 			chunkLogger,
 			encoder,

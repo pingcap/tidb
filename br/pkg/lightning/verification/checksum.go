@@ -35,11 +35,9 @@ type KVChecksum struct {
 	checksum  uint64
 }
 
-// NewKVChecksum creates a new KVChecksum with the given checksum.
-func NewKVChecksum(checksum uint64) *KVChecksum {
-	return &KVChecksum{
-		checksum: checksum,
-	}
+// NewKVChecksum creates a pointer to zero KVChecksum.
+func NewKVChecksum() *KVChecksum {
+	return &KVChecksum{}
 }
 
 // NewKVChecksumWithKeyspace creates a new KVChecksum with the given checksum and keyspace.
@@ -135,29 +133,30 @@ type KVGroupChecksum struct {
 	codec tikv.Codec
 }
 
-// DataKVGroupAsIndexID represents the index ID for data KV group.
-const DataKVGroupAsIndexID = -1
+// DataKVGroupID represents the ID for data KV group, as index id starts from 1,
+// so we use -1 to represent data kv group.
+const DataKVGroupID = -1
 
 // NewKVGroupChecksumWithKeyspace creates a new KVGroupChecksum with the given
 // keyspace.
 func NewKVGroupChecksumWithKeyspace(k tikv.Codec) *KVGroupChecksum {
 	m := make(map[int64]*KVChecksum, 8)
-	m[DataKVGroupAsIndexID] = NewKVChecksumWithKeyspace(k)
+	m[DataKVGroupID] = NewKVChecksumWithKeyspace(k)
 	return &KVGroupChecksum{m: m, codec: k}
 }
 
-// NewKVGroupChecksumForAdd creates a new KVGroupChecksum and it can't be used
+// NewKVGroupChecksumForAdd creates a new KVGroupChecksum, and it can't be used
 // with UpdateOneDataKV or UpdateOneIndexKV.
 func NewKVGroupChecksumForAdd() *KVGroupChecksum {
 	m := make(map[int64]*KVChecksum, 8)
-	m[DataKVGroupAsIndexID] = NewKVChecksum(0)
+	m[DataKVGroupID] = NewKVChecksum()
 	return &KVGroupChecksum{m: m}
 }
 
 // UpdateOneDataKV updates the checksum with a single data(record) key-value
 // pair. It will not check the key-value pair's key is a real data key again.
 func (c *KVGroupChecksum) UpdateOneDataKV(kv common.KvPair) {
-	c.m[DataKVGroupAsIndexID].UpdateOne(kv)
+	c.m[DataKVGroupID].UpdateOne(kv)
 }
 
 // UpdateOneIndexKV updates the checksum with a single index key-value pair. It
@@ -175,30 +174,28 @@ func (c *KVGroupChecksum) UpdateOneIndexKV(indexID int64, kv common.KvPair) {
 // Add adds the checksum of another KVGroupChecksum.
 func (c *KVGroupChecksum) Add(other *KVGroupChecksum) {
 	for id, cksum := range other.m {
-		thisCksum := c.m[id]
-		if thisCksum == nil {
-			if c.codec == nil {
-				thisCksum = NewKVChecksum(0)
-			} else {
-				thisCksum = NewKVChecksumWithKeyspace(c.codec)
-			}
-			c.m[id] = thisCksum
-		}
+		thisCksum := c.getOrCreateOneGroup(id)
 		thisCksum.Add(cksum)
 	}
 }
 
+func (c *KVGroupChecksum) getOrCreateOneGroup(id int64) *KVChecksum {
+	cksum, ok := c.m[id]
+	if ok {
+		return cksum
+	}
+	if c.codec == nil {
+		cksum = NewKVChecksum()
+	} else {
+		cksum = NewKVChecksumWithKeyspace(c.codec)
+	}
+	c.m[id] = cksum
+	return cksum
+}
+
 // AddRawGroup adds the raw information of a KV group.
 func (c *KVGroupChecksum) AddRawGroup(id int64, bytes, kvs, checksum uint64) {
-	oneGroup, ok := c.m[id]
-	if !ok {
-		if c.codec == nil {
-			oneGroup = NewKVChecksum(0)
-		} else {
-			oneGroup = NewKVChecksumWithKeyspace(c.codec)
-		}
-		c.m[id] = oneGroup
-	}
+	oneGroup := c.getOrCreateOneGroup(id)
 	tmp := MakeKVChecksum(bytes, kvs, checksum)
 	oneGroup.Add(&tmp)
 }
@@ -206,7 +203,7 @@ func (c *KVGroupChecksum) AddRawGroup(id int64, bytes, kvs, checksum uint64) {
 // DataAndIndexSumSize returns the total size of data KV pairs and index KV pairs.
 func (c *KVGroupChecksum) DataAndIndexSumSize() (dataSize, indexSize uint64) {
 	for id, cksum := range c.m {
-		if id == DataKVGroupAsIndexID {
+		if id == DataKVGroupID {
 			dataSize = cksum.SumSize()
 		} else {
 			indexSize += cksum.SumSize()
@@ -218,7 +215,7 @@ func (c *KVGroupChecksum) DataAndIndexSumSize() (dataSize, indexSize uint64) {
 // DataAndIndexSumKVS returns the total number of data KV pairs and index KV pairs.
 func (c *KVGroupChecksum) DataAndIndexSumKVS() (dataKVS, indexKVS uint64) {
 	for id, cksum := range c.m {
-		if id == DataKVGroupAsIndexID {
+		if id == DataKVGroupID {
 			dataKVS = cksum.SumKVS()
 		} else {
 			indexKVS += cksum.SumKVS()
@@ -242,9 +239,9 @@ func (c *KVGroupChecksum) GetInnerChecksums() map[int64]*KVChecksum {
 	return m
 }
 
-// MergeGroup merges all groups of this checksum into a single KVChecksum.
-func (c *KVGroupChecksum) MergeGroup() KVChecksum {
-	merged := NewKVChecksum(0)
+// MergedChecksum merges all groups of this checksum into a single KVChecksum.
+func (c *KVGroupChecksum) MergedChecksum() KVChecksum {
+	merged := NewKVChecksum()
 	for _, cksum := range c.m {
 		merged.Add(cksum)
 	}
