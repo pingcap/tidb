@@ -41,8 +41,16 @@ import (
 )
 
 const (
+<<<<<<< HEAD
 	flagOnline   = "online"
 	flagNoSchema = "no-schema"
+=======
+	flagOnline              = "online"
+	flagNoSchema            = "no-schema"
+	flagLoadStats           = "load-stats"
+	flagGranularity         = "granularity"
+	flagConcurrencyPerStore = "tikv-max-restore-concurrency"
+>>>>>>> 5a6d859abd8 (br: add restore stats config (#50649))
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -185,6 +193,7 @@ type RestoreConfig struct {
 	RestoreCommonConfig
 
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
+	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
@@ -228,6 +237,7 @@ type RestoreConfig struct {
 // DefineRestoreFlags defines common flags for the restore tidb command.
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
+	flags.Bool(flagLoadStats, true, "Run load stats at end of snapshot restore task")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -299,6 +309,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 
 	// parse common config if needed
 	if !skipCommonConfig {
@@ -306,6 +317,15 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		if err != nil {
 			return errors.Trace(err)
 		}
+=======
+	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = cfg.Config.ParseFromFlags(flags)
+	if err != nil {
+		return errors.Trace(err)
+>>>>>>> 5a6d859abd8 (br: add restore stats config (#50649))
 	}
 
 	err = cfg.RestoreCommonConfig.ParseFromFlags(flags)
@@ -1021,12 +1041,24 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
 
+<<<<<<< HEAD
 	// pipeline checksum and load stats
 	if cfg.Checksum && !client.IsIncremental() {
 		afterTableCheckesumedCh := client.GoValidateChecksum(
 			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
 		postHandleCh = afterTableLoadStatsCh
+=======
+	// pipeline checksum
+	if cfg.Checksum {
+		postHandleCh = client.GoValidateChecksum(
+			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
+	}
+
+	// pipeline load stats
+	if cfg.LoadStats {
+		postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, postHandleCh, errCh, cfg.StatsConcurrency)
+>>>>>>> 5a6d859abd8 (br: add restore stats config (#50649))
 	}
 
 	// pipeline wait Tiflash synced
