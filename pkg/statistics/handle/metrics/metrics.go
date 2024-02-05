@@ -21,7 +21,7 @@ import (
 
 // statistics metrics vars
 var (
-	StatsHealthyGauges         []prometheus.Gauge
+	StatsHealthyGauges []prometheus.Gauge
 
 	DumpHistoricalStatsSuccessCounter prometheus.Counter
 	DumpHistoricalStatsFailedCounter  prometheus.Counter
