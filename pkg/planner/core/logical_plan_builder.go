@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -4472,6 +4473,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		usePartitionStats = true
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	}
+	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
 
 	allowPseudoTblTriggerLoading := false
 	// In OptObjectiveDeterminate mode, we need to ignore the real-time stats.
