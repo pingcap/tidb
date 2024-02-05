@@ -152,7 +152,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 		schema = tne.curDB
 	}
 	table := t.Name
-	isView := tne.is.TableIsView(schema, table)
+	isView := infoschema.TableIsView(tne.is, schema, table)
 	if !isView {
 		return false, nil
 	}

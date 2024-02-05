@@ -4217,8 +4217,22 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	}
 	tableInfo := p.Table.TableInfo
-	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	// we use the latest IS to support IMPORT INTO dst FROM SELECT * FROM src AS OF TIMESTAMP '2020-01-01 00:00:00'
+	// Note: we need to get p.Table when preprocessing, at that time, IS of session
+	// transaction is used, if the session ctx is already in snapshot read using tidb_snapshot, we might
+	// not get the schema or get a stale schema of the target table, so we don't
+	// support set 'tidb_snapshot' first and then import into the target table.
+	//
+	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
+	// tableInfo.ID matches with the latest schema.
+	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tableInPlan, ok := latestIS.TableByID(tableInfo.ID)
 	if !ok {
+		// adaptor.handleNoDelayExecutor has a similar check, but we want to give
+		// a more specific error message here.
+		if b.ctx.GetSessionVars().SnapshotTS != 0 {
+			return nil, errors.New("can not execute IMPORT statement when 'tidb_snapshot' is set")
+		}
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}

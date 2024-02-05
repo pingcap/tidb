@@ -872,8 +872,9 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	err := ctx.GetSessionVars().SetSystemVar("time_zone", "+00:00")
+	err := ctx.GetSessionVars().SetSystemVar("time_zone", "UTC")
 	require.NoError(t, err)
+	ctx.GetSessionVars().StmtCtx.SetTimeZone(time.UTC)
 	err = ctx.GetSessionVars().SetSystemVar("timestamp", "1234")
 	require.NoError(t, err)
 	fc := funcs[ast.Now]
@@ -1131,7 +1132,7 @@ func TestSubTimeSig(t *testing.T) {
 func TestSysDate(t *testing.T) {
 	fc := funcs[ast.Sysdate]
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.SetTimeZone(timeutil.SystemLocation())
+	ctx.ResetSessionAndStmtTimeZone(timeutil.SystemLocation())
 	timezones := []string{"1234", "0"}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
@@ -1254,12 +1255,7 @@ func TestFromUnixTime(t *testing.T) {
 		{false, 5000000000, 0, "", "2128-06-11 08:53:20"},
 		{true, 32536771199, 32536771199.99999, "", "3001-01-18 23:59:59.999990"},
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	originTZ := sc.TimeZone()
-	sc.SetTimeZone(time.UTC)
-	defer func() {
-		sc.SetTimeZone(originTZ)
-	}()
+	ctx.ResetSessionAndStmtTimeZone(time.UTC)
 	fc := funcs[ast.FromUnixTime]
 	for _, c := range tbl {
 		var timestamp types.Datum
@@ -1329,7 +1325,7 @@ func TestCurrentTime(t *testing.T) {
 	ctx := createContext(t)
 	tfStr := time.TimeOnly
 
-	last := time.Now()
+	last := time.Now().In(ctx.GetSessionVars().Location())
 	fc := funcs[ast.CurrentTime]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NoError(t, err)
@@ -1843,7 +1839,7 @@ func TestUnixTimestamp(t *testing.T) {
 	require.Equal(t, true, d.IsNull())
 
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
-	ctx.GetSessionVars().TimeZone = time.UTC
+	ctx.ResetSessionAndStmtTimeZone(time.UTC)
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(ctx.GetSessionVars().StmtCtx.TypeFlags().WithIgnoreZeroInDate(true))
 	tests := []struct {
 		inputDecimal int
@@ -2987,9 +2983,10 @@ func TestWithTimeZone(t *testing.T) {
 	ctx := createContext(t)
 	sv := ctx.GetSessionVars()
 	originTZ := sv.Location()
-	sv.TimeZone, _ = time.LoadLocation("Asia/Tokyo")
+	tz, _ := time.LoadLocation("Asia/Tokyo")
+	ctx.ResetSessionAndStmtTimeZone(tz)
 	defer func() {
-		sv.TimeZone = originTZ
+		ctx.ResetSessionAndStmtTimeZone(originTZ)
 	}()
 
 	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
@@ -3029,7 +3026,7 @@ func TestWithTimeZone(t *testing.T) {
 
 func TestTidbParseTso(t *testing.T) {
 	ctx := createContext(t)
-	ctx.GetSessionVars().TimeZone = time.UTC
+	ctx.ResetSessionAndStmtTimeZone(time.UTC)
 	tests := []struct {
 		param  any
 		expect string
@@ -3112,7 +3109,7 @@ func TestTiDBBoundedStaleness(t *testing.T) {
 	t2 := time.Now()
 	t2Str := t2.Format(types.TimeFormat)
 	timeZone := time.Local
-	ctx.GetSessionVars().TimeZone = timeZone
+	ctx.ResetSessionAndStmtTimeZone(timeZone)
 	tests := []struct {
 		leftTime     any
 		rightTime    any
