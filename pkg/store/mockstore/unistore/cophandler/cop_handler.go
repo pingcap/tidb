@@ -433,6 +433,7 @@ func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Cont
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().StmtCtx = sc
+	sctx.GetSessionVars().TimeZone = tz
 	return sctx
 }
 

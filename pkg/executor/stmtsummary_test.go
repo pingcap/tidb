@@ -57,7 +57,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 
 	ctx := context.Background()
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone, _ = time.LoadLocation("Asia/Shanghai")
+	tz, _ := time.LoadLocation("Asia/Shanghai")
+	sctx.ResetSessionAndStmtTimeZone(tz)
 
 	var results [][]types.Datum
 	for {
@@ -99,7 +100,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
 
 	ctx := context.Background()
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone, _ = time.LoadLocation("Asia/Shanghai")
+	tz, _ := time.LoadLocation("Asia/Shanghai")
+	sctx.ResetSessionAndStmtTimeZone(tz)
 
 	var results [][]types.Datum
 	for {
@@ -167,7 +169,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 
 	ctx := context.Background()
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone, _ = time.LoadLocation("Asia/Shanghai")
+	tz, _ := time.LoadLocation("Asia/Shanghai")
+	sctx.ResetSessionAndStmtTimeZone(tz)
 
 	var results [][]types.Datum
 	for {
