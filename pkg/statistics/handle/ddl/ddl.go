@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -100,21 +99,11 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		if err != nil {
 			return err
 		}
-		modifiedTbls := make([]*statistics.Table, 0, len(ids))
 		for _, id := range ids {
 			if err := h.statsWriter.InsertColStats2KV(id, newColumnInfo); err != nil {
 				return err
 			}
-			// Let the sync load can load the stats immediately.
-			statsTbl, ok := h.statsHandler.Get(id)
-			for _, colInfo := range newColumnInfo {
-				if ok && !statsTbl.Pseudo {
-					statsTbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, true)
-				}
-			}
-			modifiedTbls = append(modifiedTbls, statsTbl)
 		}
-		h.statsHandler.UpdateStatsCache(modifiedTbls, nil)
 	case model.ActionModifyColumn:
 		newTableInfo, modifiedColumnInfo := t.GetModifyColumnInfo()
 
@@ -122,21 +111,11 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		if err != nil {
 			return err
 		}
-		modifiedTbls := make([]*statistics.Table, 0, len(ids))
 		for _, id := range ids {
 			if err := h.statsWriter.InsertColStats2KV(id, modifiedColumnInfo); err != nil {
 				return err
 			}
-			// Let the sync load can load the stats immediately.
-			statsTbl, ok := h.statsHandler.Get(id)
-			for _, colInfo := range modifiedColumnInfo {
-				if ok && !statsTbl.Pseudo {
-					statsTbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, true)
-				}
-			}
-			modifiedTbls = append(modifiedTbls, statsTbl)
 		}
-		h.statsHandler.UpdateStatsCache(modifiedTbls, nil)
 	case model.ActionAddTablePartition:
 		globalTableInfo, addedPartitionInfo := t.GetAddPartitionInfo()
 		for _, def := range addedPartitionInfo.Definitions {
