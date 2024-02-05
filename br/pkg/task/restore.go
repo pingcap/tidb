@@ -43,6 +43,7 @@ import (
 const (
 	flagOnline              = "online"
 	flagNoSchema            = "no-schema"
+	flagLoadStats           = "load-stats"
 	flagGranularity         = "granularity"
 	flagConcurrencyPerStore = "tikv-max-restore-concurrency"
 
@@ -206,6 +207,7 @@ type RestoreConfig struct {
 	RestoreCommonConfig
 
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
+	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
@@ -250,6 +252,7 @@ type RestoreConfig struct {
 // DefineRestoreFlags defines common flags for the restore tidb command.
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
+	flags.Bool(flagLoadStats, true, "Run load stats at end of snapshot restore task")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -318,6 +321,10 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1036,12 +1043,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
 
-	// pipeline checksum and load stats
+	// pipeline checksum
 	if cfg.Checksum {
-		afterTableCheckesumedCh := client.GoValidateChecksum(
-			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, afterTableCheckesumedCh, errCh, cfg.StatsConcurrency)
-		postHandleCh = afterTableLoadStatsCh
+		postHandleCh = client.GoValidateChecksum(
+			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
+	}
+
+	// pipeline load stats
+	if cfg.LoadStats {
+		postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, postHandleCh, errCh, cfg.StatsConcurrency)
 	}
 
 	// pipeline wait Tiflash synced
