@@ -20,6 +20,10 @@ import (
 )
 
 const (
+	// Fix33031 controls whether to disallow plan cache for partitioned
+	// tables (both prepared statments and non-prepared statements)
+	// See #33031
+	Fix33031 uint64 = 33031
 	// Fix44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
 	Fix44262 uint64 = 44262
 	// Fix44389 controls whether to consider non-point ranges of some CNF item when building ranges.

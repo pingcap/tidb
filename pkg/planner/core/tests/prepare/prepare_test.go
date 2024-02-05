@@ -531,7 +531,6 @@ func TestPrepareCacheForPartition(t *testing.T) {
 	// both prunable and non-prunable
 	tk.MustExec("use test")
 	for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
-		//for _, pruneMode := range []string{ /*string(variable.Static),*/ string(variable.Dynamic)} {
 		planCacheUsed := "0"
 		if pruneMode == string(variable.Dynamic) {
 			planCacheUsed = "1"
