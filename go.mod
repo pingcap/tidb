@@ -94,9 +94,15 @@ require (
 	github.com/stretchr/testify v1.8.2
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20231211100325-d44bb7f9cb9e
 	github.com/tikv/pd/client v0.0.0-20231211083919-fe6fd1721aa6
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20240202121323-8b3b01e8d770
+	github.com/tikv/pd/client v0.0.0-20240126020320-567c7d43a008
+	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
+>>>>>>> 1621e0fde21 (driver: convert ErrQueryInterrupted to actual error types (#50517))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
