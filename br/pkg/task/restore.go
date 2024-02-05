@@ -100,22 +100,17 @@ const (
 	TxnRestoreCmd   = "Txn Restore"
 )
 
-type ConfigSet[T uint | uint64] struct {
-	value  T
-	hasSet bool
-}
-
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
-	Online              bool            `json:"online" toml:"online"`
-	Granularity         string          `json:"granularity" toml:"granularity"`
-	ConcurrencyPerStore ConfigSet[uint] `json:"tikv-max-restore-concurrency" toml:"tikv-max-restore-concurrency"`
+	Online              bool                    `json:"online" toml:"online"`
+	Granularity         string                  `json:"granularity" toml:"granularity"`
+	ConcurrencyPerStore pconfig.ConfigSet[uint] `json:"tikv-max-restore-concurrency" toml:"tikv-max-restore-concurrency"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
 	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
-	MergeSmallRegionSizeBytes ConfigSet[uint64] `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
-	MergeSmallRegionKeyCount  ConfigSet[uint64] `json:"merge-region-key-count" toml:"merge-region-key-count"`
+	MergeSmallRegionSizeBytes pconfig.ConfigSet[uint64] `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
+	MergeSmallRegionKeyCount  pconfig.ConfigSet[uint64] `json:"merge-region-key-count" toml:"merge-region-key-count"`
 
 	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
@@ -126,18 +121,21 @@ type RestoreCommonConfig struct {
 // adjust adjusts the abnormal config value in the current config.
 // useful when not starting BR from CLI (e.g. from BRIE in SQL).
 func (cfg *RestoreCommonConfig) adjust() {
-	if !cfg.MergeSmallRegionKeyCount.hasSet {
-		cfg.MergeSmallRegionKeyCount.value = conn.DefaultMergeRegionKeyCount
+	if !cfg.MergeSmallRegionKeyCount.HasSet {
+		cfg.MergeSmallRegionKeyCount.Value = conn.DefaultMergeRegionKeyCount
 	}
-	if !cfg.MergeSmallRegionSizeBytes.hasSet {
-		cfg.MergeSmallRegionSizeBytes.value = conn.DefaultMergeRegionSizeBytes
+	cfg.MergeSmallRegionKeyCount.Name = FlagMergeRegionKeyCount
+	if !cfg.MergeSmallRegionSizeBytes.HasSet {
+		cfg.MergeSmallRegionSizeBytes.Value = conn.DefaultMergeRegionSizeBytes
 	}
+	cfg.MergeSmallRegionSizeBytes.Name = FlagMergeRegionSizeBytes
 	if len(cfg.Granularity) == 0 {
 		cfg.Granularity = string(restore.FineGrained)
 	}
-	if cfg.ConcurrencyPerStore.hasSet {
-		cfg.ConcurrencyPerStore.value = conn.DefaultImportNumGoroutines
+	if cfg.ConcurrencyPerStore.HasSet {
+		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
 	}
+	cfg.ConcurrencyPerStore.Name = flagConcurrencyPerStore
 }
 
 // DefineRestoreCommonFlags defines common flags for the restore command.
@@ -183,23 +181,23 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.ConcurrencyPerStore.value, err = flags.GetUint(flagConcurrencyPerStore)
+	cfg.ConcurrencyPerStore.Value, err = flags.GetUint(flagConcurrencyPerStore)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.ConcurrencyPerStore.hasSet = flags.Changed(flagConcurrencyPerStore)
+	cfg.ConcurrencyPerStore.HasSet = flags.Changed(flagConcurrencyPerStore)
 
-	cfg.MergeSmallRegionKeyCount.value, err = flags.GetUint64(FlagMergeRegionKeyCount)
+	cfg.MergeSmallRegionKeyCount.Value, err = flags.GetUint64(FlagMergeRegionKeyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.MergeSmallRegionKeyCount.hasSet = flags.Changed(FlagMergeRegionKeyCount)
+	cfg.MergeSmallRegionKeyCount.HasSet = flags.Changed(FlagMergeRegionKeyCount)
 
-	cfg.MergeSmallRegionSizeBytes.value, err = flags.GetUint64(FlagMergeRegionSizeBytes)
+	cfg.MergeSmallRegionSizeBytes.Value, err = flags.GetUint64(FlagMergeRegionSizeBytes)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.MergeSmallRegionSizeBytes.hasSet = flags.Changed(FlagMergeRegionSizeBytes)
+	cfg.MergeSmallRegionSizeBytes.HasSet = flags.Changed(FlagMergeRegionSizeBytes)
 
 	if flags.Lookup(flagWithSysTable) != nil {
 		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
@@ -719,16 +717,17 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 	codec := mgr.GetStorage().GetCodec()
 
-	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
-	mergeRegionCount := cfg.MergeSmallRegionKeyCount
-	importNumGoroutines := cfg.ConcurrencyPerStore
-
-	if !mergeRegionSize.hasSet || !mergeRegionCount.hasSet || !importNumGoroutines.hasSet {
-		// according to https://github.com/pingcap/tidb/issues/34167.
-		// we should get the real config from tikv to adapt the dynamic region.
-		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize.value, mergeRegionCount.value, importNumGoroutines.value = mgr.GetTiKVConfigs(ctx, httpCli)
+	// need retrive these configs from tikv if not set in command.
+	kvConfigs := &pconfig.KVConfig{
+		ImportGoroutines:    cfg.ConcurrencyPerStore,
+		MergeRegionSize:     cfg.MergeSmallRegionSizeBytes,
+		MergeRegionKeyCount: cfg.MergeSmallRegionKeyCount,
 	}
+
+	// according to https://github.com/pingcap/tidb/issues/34167.
+	// we should get the real config from tikv to adapt the dynamic region.
+	httpCli := httputil.NewClient(mgr.GetTLSConfig())
+	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
 
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(
@@ -739,7 +738,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		false,
 	)
 	// using tikv config to set the concurrency-per-store for client.
-	client.SetConcurrencyPerStore(importNumGoroutines.value)
+	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -998,7 +997,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, mergeRegionSize.value, mergeRegionCount.value, errCh)
+		ctx, tableStream, tableFileMap, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, errCh)
 
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)

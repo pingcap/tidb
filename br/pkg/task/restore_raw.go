@@ -7,6 +7,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -73,13 +74,19 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer mgr.Close()
 
-	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
-	mergeRegionCount := cfg.MergeSmallRegionKeyCount
-	if !mergeRegionSize.hasSet || !mergeRegionSize.hasSet {
+	// need retrive these configs from tikv if not set in command.
+	kvConfigs := &kvconfig.KVConfig{
+		MergeRegionSize:     cfg.MergeSmallRegionSizeBytes,
+		MergeRegionKeyCount: cfg.MergeSmallRegionKeyCount,
+	}
+
+	if !kvConfigs.MergeRegionSize.HasSet || !kvConfigs.MergeRegionKeyCount.HasSet {
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
+		kvConfigs.MergeRegionSize.ParseFn = kvconfig.ParseMergeRegionSizeFromConfig
+		kvConfigs.MergeRegionKeyCount.ParseFn = kvconfig.ParseMergeRegionKeysFromConfig
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize.value, mergeRegionCount.value, _ = mgr.GetTiKVConfigs(ctx, httpCli)
+		mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
 	}
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
@@ -133,7 +140,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	summary.CollectInt("restore files", len(files))
 
 	ranges, _, err := restore.MergeFileRanges(
-		files, mergeRegionSize.value, mergeRegionCount.value)
+		files, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
 	if err != nil {
 		return errors.Trace(err)
 	}

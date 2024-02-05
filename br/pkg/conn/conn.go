@@ -5,8 +5,8 @@ package conn
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +20,7 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -292,77 +293,56 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 	return oracle.ComposeTS(p, l), nil
 }
 
-func ParseImportThreadsFromConfig(resp *http.Response) (uint, error) {
-	type importer struct {
-		Threads uint `json:"num-threads"`
+// ProcessTiKVConfigs handle the tikv config for region split size, region split keys, and import goroutines in place.
+// It retrieves the config from all alive tikv stores and returns the minimum values.
+// If retrieving the config fails, it returns the default config values.
+func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, client *http.Client) {
+	mergeRegionSize := cfg.MergeRegionSize
+	mergeRegionKeyCount := cfg.MergeRegionKeyCount
+	importGoroutines := cfg.ImportGoroutines
+
+	if mergeRegionSize.HasSet && mergeRegionKeyCount.HasSet && importGoroutines.HasSet {
+		log.Info("no need to retrieve the config from tikv if user has set the config")
+		return
 	}
 
-	type config struct {
-		Import importer `json:"import"`
-	}
-	c := &config{}
-	e := json.NewDecoder(resp.Body).Decode(c)
-	if e != nil {
-		return 0, e
-	}
-
-	return c.Import.Threads, nil
-}
-
-func ParseMergeRegionSizeAndCountFromConfig(resp *http.Response) (uint64, uint64, error) {
-	type coprocessor struct {
-		RegionSplitKeys uint64 `json:"region-split-keys"`
-		RegionSplitSize string `json:"region-split-size"`
-	}
-
-	type config struct {
-		Cop coprocessor `json:"coprocessor"`
-	}
-	c := &config{}
-	e := json.NewDecoder(resp.Body).Decode(c)
-	if e != nil {
-		return 0, 0, e
-	}
-	rs, e := units.RAMInBytes(c.Cop.RegionSplitSize)
-	if e != nil {
-		return 0, 0, e
-	}
-	urs := uint64(rs)
-	return urs, c.Cop.RegionSplitKeys, nil
-}
-
-// GetTiKVConfigs returns the tikv config
-// `coprocessor.region-split-size` and `coprocessor.region-split-key` and `import.num-threads`.
-// returns the default config when failed.
-func (mgr *Mgr) GetTiKVConfigs(ctx context.Context, client *http.Client) (uint64, uint64, uint) {
-	regionSplitSize := DefaultMergeRegionSizeBytes
-	regionSplitKeys := DefaultMergeRegionKeyCount
-	importGoroutines := DefaultImportNumGoroutines
 	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
-		rs, rk, e := ParseMergeRegionSizeAndCountFromConfig(resp)
-		if e != nil {
-			return e
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
 		}
-		if regionSplitSize == DefaultMergeRegionSizeBytes || rs < regionSplitSize {
-			regionSplitSize = rs
-			regionSplitKeys = rk
+		if !mergeRegionSize.HasSet || !mergeRegionKeyCount.HasSet {
+			size, keys, e := kvconfig.ParseMergeRegionSizeFromConfig(respBytes)
+			if e != nil {
+				log.Warn("Failed to parse region split size and keys from config", logutil.ShortError(e))
+				return e
+			}
+			if mergeRegionKeyCount.Value == DefaultMergeRegionKeyCount || keys < mergeRegionKeyCount.Value {
+				mergeRegionSize.Value = size
+				mergeRegionKeyCount.Value = keys
+			}
 		}
-		n, e := ParseImportThreadsFromConfig(resp)
-		if e != nil {
-			log.Warn("meet error when parsing import num-threads, ignore it", logutil.ShortError(e))
-			return e
+		if !importGoroutines.HasSet {
+			threads, e := kvconfig.ParseImportThreadsFromConfig(respBytes)
+			if e != nil {
+				log.Warn("Failed to parse import num-threads from config", logutil.ShortError(e))
+				return e
+			}
+			// We use 8 times the default value because it's an IO-bound case.
+			if importGoroutines.Value == DefaultImportNumGoroutines || (threads > 0 && threads*8 < importGoroutines.Value) {
+				importGoroutines.Value = threads * 8
+			}
 		}
-		// we use 8 times of the default value because it's an IO-bound cases.
-		if n > 0 && n*8 < importGoroutines {
-			importGoroutines = n * 8
-		}
+		// replace the value
+		cfg.MergeRegionSize = mergeRegionSize
+		cfg.MergeRegionKeyCount = mergeRegionKeyCount
+		cfg.ImportGoroutines = importGoroutines
 		return nil
 	})
+
 	if err != nil {
-		log.Warn("meet error when getting config from TiKV; using default", logutil.ShortError(err))
-		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount, DefaultImportNumGoroutines
+		log.Warn("Failed to get config from TiKV; using default", logutil.ShortError(err))
 	}
-	return regionSplitSize, regionSplitKeys, importGoroutines
 }
 
 // GetConfigFromTiKV get configs from all alive tikv stores.

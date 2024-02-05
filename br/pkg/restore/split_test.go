@@ -723,6 +723,20 @@ func TestChooseSplitKeysBySize(t *testing.T) {
 	require.EqualValues(t, size, 0)
 }
 
+func TestPickupRangesForRegions(t *testing.T) {
+	cases := []struct {
+		ranges     []rtree.Range
+		regions    []*split.RegionInfo
+		rangesMap  map[uint64][]rtree.Range
+		regionsMap map[uint64][]*split.RegionInfo
+	}{}
+
+	for _, ca := range cases {
+		rangesMap, regionsMap := restore.PickupRangesForRegions(ca.ranges, ca.regions)
+		require.Equal()
+	}
+}
+
 func TestNeedSplit(t *testing.T) {
 	testNeedSplit(t, false)
 	testNeedSplit(t, true)

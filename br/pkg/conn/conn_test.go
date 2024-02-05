@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -363,7 +364,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, import\": {\"num-threads\": 128}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, \"import\": {\"num-threads\": 128}}",
 			},
 			importNumGoroutines: 1024,
 			// one tikv detected in this case and we update with new size and keys.
@@ -394,13 +395,13 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, import\": {\"num-threads\": 128}}",
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}, import\": {\"num-threads\": 12}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, \"import\": {\"num-threads\": 128}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}, \"import\": {\"num-threads\": 12}}",
 			},
 			// two tikv detected in this case and we choose the small one.
 			importNumGoroutines: 96,
-			regionSplitSize:     900 * units.MiB,
-			regionSplitKeys:     12000000,
+			regionSplitSize:     1 * units.GiB,
+			regionSplitKeys:     10000000,
 		},
 	}
 
@@ -427,10 +428,15 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		httpCli := mockServer.Client()
 		mgr := &Mgr{PdController: &pdutil.PdController{}}
 		mgr.PdController.SetPDClient(pdCli)
-		rs, rk, threads := mgr.GetTiKVConfigs(ctx, httpCli)
-		require.Equal(t, ca.regionSplitSize, rs)
-		require.Equal(t, ca.importNumGoroutines, threads)
-		require.Equal(t, ca.regionSplitKeys, rk)
+		kvConfigs := &kvconfig.KVConfig{
+			ImportGoroutines:    kvconfig.ConfigSet[uint]{Value: DefaultImportNumGoroutines, HasSet: false},
+			MergeRegionSize:     kvconfig.ConfigSet[uint64]{Value: DefaultMergeRegionSizeBytes, HasSet: false},
+			MergeRegionKeyCount: kvconfig.ConfigSet[uint64]{Value: DefaultMergeRegionKeyCount, HasSet: false},
+		}
+		mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
+		require.EqualValues(t, ca.regionSplitSize, kvConfigs.MergeRegionSize.Value)
+		require.EqualValues(t, ca.regionSplitKeys, kvConfigs.MergeRegionKeyCount.Value)
+		require.EqualValues(t, ca.importNumGoroutines, kvConfigs.ImportGoroutines.Value)
 		mockServer.Close()
 	}
 }
