@@ -1,0 +1,842 @@
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t;
+create table t(a int check(a > 0), b int, c int, check(c > 0), check (b > c));
+alter table t drop column a;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `b` int(11) DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`c` > 0)),
+CONSTRAINT `t_chk_2` CHECK ((`b` > `c`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t drop column b;
+Error 3959 (HY000): Check constraint 't_chk_2' uses column 'b', hence column cannot be dropped or renamed.
+alter table t rename column c to c1;
+Error 3959 (HY000): Check constraint 't_chk_1' uses column 'c', hence column cannot be dropped or renamed.
+drop table if exists t;
+create table t(a int check(a > 0), b int check(b < 10) not enforced, c int);
+alter table t alter constraint t_chk_1 not enforced;
+insert into t values(-1, 1, 0);
+alter table t alter constraint t_chk_2 enforced;
+insert into t values(-1, 11, 0);
+Error 3819 (HY000): Check constraint 't_chk_2' is violated.
+alter table t add check(c = 0);
+insert into t values(-1, 1, 1);
+Error 3819 (HY000): Check constraint 't_chk_3' is violated.
+alter table t alter constraint t_chk_3 not enforced;
+insert into t values(-1, 1, 0);
+drop table if exists t;
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + NOW() > '2011-11-21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: now.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIMESTAMP() > '2011-11-21 01:02:03'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_timestamp.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIMESTAMP > '2011-11-21 01:02:03'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_timestamp.
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + CURDATE() > '2011-11-21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: curdate.
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + CURTIME() > '23:11:21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: curtime.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_DATE() > '2011-11-21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_date.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_DATE > '2011-11-21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_date.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIME() > '01:02:03'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_time.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIME > '01:02:03'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_time.
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + LOCALTIME() > '23:11:21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: localtime.
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + LOCALTIME > '23:11:21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: localtime.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + LOCALTIMESTAMP() > '2011-11-21 01:02:03'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: localtimestamp.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + LOCALTIMESTAMP > '2011-11-21 01:02:03'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: localtimestamp.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + UNIX_TIMESTAMP() > '2011-11-21 01:02:03'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: unix_timestamp.
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + UTC_DATE() > '2011-11-21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: utc_date.
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + UTC_TIMESTAMP() > '2011-11-21 01:02:03'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: utc_timestamp.
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + UTC_TIME() > '23:11:21'));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: utc_time.
+CREATE TABLE t1 (f1 INT CHECK (f1 + CONNECTION_ID() < 929));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: connection_id.
+CREATE TABLE t1 (a VARCHAR(32) CHECK (CURRENT_USER() != a));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_user.
+CREATE TABLE t1 (a VARCHAR(32) CHECK (CURRENT_USER != a));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_user.
+CREATE TABLE t1 (a VARCHAR(32) CHECK (SESSION_USER() != a));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: session_user.
+CREATE TABLE t1 (a VARCHAR(32) CHECK (VERSION() != a));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: version.
+CREATE TABLE t1 (a VARCHAR(1024), b INT CHECK (b + FOUND_ROWS() > 2000));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: found_rows.
+CREATE TABLE t1 (a INT CHECK ((a + LAST_INSERT_ID()) < 929));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: last_insert_id.
+CREATE TABLE t1 (a VARCHAR(32) CHECK (SYSTEM_USER() != a));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: system_user.
+CREATE TABLE t1 (a VARCHAR(32) CHECK (USER() != a));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: user.
+CREATE TABLE t1 (f1 FLOAT CHECK (f1 + RAND() < 929.929));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: rand.
+CREATE TABLE t1 (a INT CHECK (a + ROW_COUNT() > 1000));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: row_count.
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024) CHECK (GET_LOCK(b,10) != 0));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: get_lock.
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024) CHECK (IS_FREE_LOCK(b) != 0));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: is_free_lock.
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024) CHECK (IS_USED_LOCK(b) != 0));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: is_used_lock.
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024) CHECK (RELEASE_LOCK(b) != 0));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: release_lock.
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024), CHECK (RELEASE_ALL_LOCKS() != 0));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: release_all_locks.
+CREATE TABLE t1 (f1 VARCHAR(1024), f2 VARCHAR(1024) CHECK (LOAD_FILE(f2) != NULL));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: load_file.
+CREATE TABLE t1 (id CHAR(40) CHECK(UUID() != id));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: uuid.
+CREATE TABLE t1 (id INT CHECK(UUID_SHORT() != id));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: uuid_short.
+CREATE TABLE t1 (id INT CHECK(SLEEP(id) != 0));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: sleep.
+set @a = 1;
+CREATE TABLE t1 (f1 int CHECK (f1 > @a));
+Error 3816 (HY000): An expression of a check constraint 't1_chk_1' cannot refer to a user or system variable.
+CREATE TABLE t1 (f1 int CHECK (f1 > @@session.tidb_mem_quota_query));
+Error 3816 (HY000): An expression of a check constraint 't1_chk_1' cannot refer to a user or system variable.
+CREATE TABLE t1 (f1 int CHECK (f1 > @@global.tidb_mem_quota_query));
+Error 3816 (HY000): An expression of a check constraint 't1_chk_1' cannot refer to a user or system variable.
+CREATE TABLE t1 (f1 int primary key auto_increment, f2 int, CHECK (f1 != f2));
+Error 3818 (HY000): Check constraint 't1_chk_1' cannot refer to an auto-increment column.
+CREATE TABLE t1 (f1 INT CHECK (f1 = default(f1)));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: default.
+CREATE TABLE t1 (id INT CHECK (id != (SELECT 1)));
+Error 3815 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function.
+CREATE TABLE t1 (a int check(a in (SELECT COALESCE(NULL, 1, 1))));
+Error 3815 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function.
+drop table if exists t;
+create table t1(f1 TIMESTAMP, f2 DATETIME, f3 INT, f4 VARCHAR(32), f5 FLOAT, f6 CHAR(40), f7 INT PRIMARY KEY AUTO_INCREMENT);
+ALTER TABLE t1 ADD CHECK (f1 + NOW() > '2011-11-21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: now.
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_TIMESTAMP() > '2011-11-21 01:02:03');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_timestamp.
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_TIMESTAMP > '2011-11-21 01:02:03');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_timestamp.
+ALTER TABLE t1 ADD CHECK (f2 + CURDATE() > '2011-11-21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: curdate.
+ALTER TABLE t1 ADD CHECK (f2 + CURTIME() > '23:11:21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: curtime.
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_DATE() > '2011-11-21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_date.
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_DATE > '2011-11-21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_date.
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_TIME() > '01:02:03');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_time.
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_TIME > '01:02:03');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_time.
+ALTER TABLE t1 ADD CHECK (f2 + LOCALTIME() > '23:11:21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: localtime.
+ALTER TABLE t1 ADD CHECK (f2 + LOCALTIME > '23:11:21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: localtime.
+ALTER TABLE t1 ADD CHECK (f1 + LOCALTIMESTAMP() > '2011-11-21 01:02:03');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: localtimestamp.
+ALTER TABLE t1 ADD CHECK (f1 + LOCALTIMESTAMP > '2011-11-21 01:02:03');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: localtimestamp.
+ALTER TABLE t1 ADD CHECK (f1 + UNIX_TIMESTAMP() > '2011-11-21 01:02:03');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: unix_timestamp.
+ALTER TABLE t1 ADD CHECK (f2 + UTC_DATE() > '2011-11-21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: utc_date.
+ALTER TABLE t1 ADD CHECK (f1 + UTC_TIMESTAMP() > '2011-11-21 01:02:03');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: utc_timestamp.
+ALTER TABLE t1 ADD CHECK (f2 + UTC_TIME() > '23:11:21');
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: utc_time.
+ALTER TABLE t1 ADD CHECK (f3 + CONNECTION_ID() < 929);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: connection_id.
+ALTER TABLE t1 ADD CHECK (CURRENT_USER() != f4);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_user.
+ALTER TABLE t1 ADD CHECK (CURRENT_USER != f4);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: current_user.
+ALTER TABLE t1 ADD CHECK (SESSION_USER() != f4);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: session_user.
+ALTER TABLE t1 ADD CHECK (VERSION() != f4);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: version.
+ALTER TABLE t1 ADD CHECK (f3 + FOUND_ROWS() > 2000);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: found_rows.
+ALTER TABLE t1 ADD CHECK ((f3 + LAST_INSERT_ID()) < 929);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: last_insert_id.
+ALTER TABLE t1 ADD CHECK (SYSTEM_USER() != f4);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: system_user.
+ALTER TABLE t1 ADD CHECK (USER() != f4);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: user.
+ALTER TABLE t1 ADD CHECK (f5 + RAND() < 929.929);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: rand.
+ALTER TABLE t1 ADD CHECK (f3 + ROW_COUNT() > 1000);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: row_count.
+ALTER TABLE t1 ADD CHECK (GET_LOCK(f4,10) != 0);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: get_lock.
+ALTER TABLE t1 ADD CHECK (IS_FREE_LOCK(f4) != 0);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: is_free_lock.
+ALTER TABLE t1 ADD CHECK (IS_USED_LOCK(f4) != 0);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: is_used_lock.
+ALTER TABLE t1 ADD CHECK (RELEASE_LOCK(f4) != 0);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: release_lock.
+ALTER TABLE t1 ADD CHECK (RELEASE_ALL_LOCKS() != 0);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: release_all_locks.
+ALTER TABLE t1 ADD CHECK (LOAD_FILE(f4) != NULL);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: load_file.
+ALTER TABLE t1 ADD CHECK(UUID() != f6);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: uuid.
+ALTER TABLE t1 ADD CHECK(UUID_SHORT() != f3);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: uuid_short.
+ALTER TABLE t1 ADD CHECK(SLEEP(f3) != 0);
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: sleep.
+set @a = 1;
+ALTER TABLE t1 ADD CHECK (f3 > @a);
+Error 3816 (HY000): An expression of a check constraint 't1_chk_1' cannot refer to a user or system variable.
+ALTER TABLE t1 ADD CHECK (f3 > @@session.tidb_mem_quota_query);
+Error 3816 (HY000): An expression of a check constraint 't1_chk_1' cannot refer to a user or system variable.
+ALTER TABLE t1 ADD CHECK (f3 > @@global.tidb_mem_quota_query);
+Error 3816 (HY000): An expression of a check constraint 't1_chk_1' cannot refer to a user or system variable.
+ALTER TABLE t1 ADD CHECK (f7 != f3);
+Error 3818 (HY000): Check constraint 't1_chk_1' cannot refer to an auto-increment column.
+ALTER TABLE t1 ADD CHECK (f1 = default(f1));
+Error 3814 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function: default.
+ALTER TABLE t1 ADD CHECK (f3 != (SELECT 1));
+Error 3815 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function.
+ALTER TABLE t1 ADD check (f3 in (SELECT COALESCE(NULL, 1, 1)));
+Error 3815 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function.
+drop table if exists t, s;
+create table t(a int check(a > 10), b int constraint bbb check(b > 5), c int, check(c < 0));
+create table s like t;
+show create table s;
+Table	Create Table
+s	CREATE TABLE `s` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
+CONSTRAINT `s_chk_1` CHECK ((`c` < 0)),
+CONSTRAINT `s_chk_2` CHECK ((`a` > 10)),
+CONSTRAINT `s_chk_3` CHECK ((`b` > 5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert into s(a) values(1);
+Error 3819 (HY000): Check constraint 's_chk_2' is violated.
+insert into s(b) values(2);
+Error 3819 (HY000): Check constraint 's_chk_3' is violated.
+insert into s(c) values(3);
+Error 3819 (HY000): Check constraint 's_chk_1' is violated.
+alter table s add check(a > 0);
+alter table s add constraint aaa check(a > 0);
+show create table s;
+Table	Create Table
+s	CREATE TABLE `s` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
+CONSTRAINT `s_chk_1` CHECK ((`c` < 0)),
+CONSTRAINT `s_chk_2` CHECK ((`a` > 10)),
+CONSTRAINT `s_chk_3` CHECK ((`b` > 5)),
+CONSTRAINT `s_chk_4` CHECK ((`a` > 0)),
+CONSTRAINT `aaa` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a int check(a > 10));
+insert into t values(1),(11),(15);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+insert ignore into t values(1),(11),(15);
+show warnings;
+Level	Code	Message
+Warning	3819	Check constraint 't_chk_1' is violated.
+select a from t;
+a
+11
+15
+update ignore t set a = a-2;
+show warnings;
+Level	Code	Message
+Warning	3819	Check constraint 't_chk_1' is violated.
+select a from t;
+a
+11
+13
+drop table if exists t, s, t1, t2;
+create table t(a int, b int, index(a), index(a, b));
+create table s(a int, check (a > 0), foreign key (a) references t(a) on update cascade);
+Error 3823 (HY000): Column 'a' cannot be used in a check constraint 's_chk_1': needed in a foreign key constraint referential action.
+create table s(a int, b int,  check (a > 0), foreign key (a, b) references t(a, b) on update cascade);
+Error 3823 (HY000): Column 'a' cannot be used in a check constraint 's_chk_1': needed in a foreign key constraint referential action.
+create table t1(a int, foreign key (a) references t(a) on update cascade);
+alter table t1 add check ( a > 0 );
+Error 3823 (HY000): Column 'a' cannot be used in a check constraint 't1_chk_1': needed in a foreign key constraint referential action.
+create table t2(a int, b int, foreign key (a, b) references t(a, b) on update cascade);
+alter table t2 add check ( a > 0 );
+Error 3823 (HY000): Column 'a' cannot be used in a check constraint 't2_chk_1': needed in a foreign key constraint referential action.
+drop table t, t1, t2;
+drop table if exists t;
+create table t(a int, check(a));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(1));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check('1'));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int check(a));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(1+1));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(1/2));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(a + 1/2));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int check(a + 1/2));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(true + 1));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(abs(1)));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(length(a)));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(length(1)));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(floor(1.1)));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(mod(3, 2)));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check('true'));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_1'.
+create table t(a int, check(true));
+alter table t add check(a);
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(1);
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check('1');
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(1/2);
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(a + 1/2);
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(true + 1);
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(abs(1));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(length(a));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(length(1));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(length(1));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check(mod(3, 2));
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+alter table t add check('true');
+Error 3812 (HY000): An expression of non-boolean type specified to a check constraint 't_chk_2'.
+drop table if exists t;
+create table t(a int);
+alter table t add check(b > 0);
+Error 1054 (42S22): Unknown column 'b' in 'check constraint t_chk_1 expression'
+drop table if exists t;
+create table t(a json, b varchar(20));
+alter table t add check (JSON_VALID(a));
+alter table t add check (REGEXP_LIKE(b,'@'));
+drop table if exists t;
+create table t(a int constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0));
+drop table t;
+create table t(a int, constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0));
+drop table t;
+create table t(a int constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0));
+Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long
+create table t(a int, constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0));
+Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int check(a > 0));
+Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_chk_1' is too long
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int, check(a > 0));
+Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_chk_1' is too long
+create table t(a int);
+alter table t add constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0);
+Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long
+alter table t add constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0);
+drop table t;
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int);
+alter table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa add check(a > 0);
+Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_chk_1' is too long
+drop table if exists t;
+create table t(a int);
+alter table t add constraint `cafe` check(a > 0);
+alter table t add constraint `CAFE` check(a > 0);
+Error 3822 (HY000): Duplicate check constraint name 'cafe'.
+alter table t add constraint `café` check(a > 0);
+drop table if exists t, s;
+create table t(a int check(a > 0));
+insert into t values(1);
+create table s(a int);
+insert into s values(-1);
+insert into t values(-1);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+insert into t values(1);
+insert into t(a) values(-1);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+insert into t(a) values(1);
+insert into t set a = -1;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+insert into t set a = 1;
+insert into t(a) select -1;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+insert into t(a) select 1;
+insert into t(a) select a from s;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+insert into t(a) select a + 2 from s;
+update t set a = -1;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+update t set a = 1;
+update t set a = a-1;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+update t set a = a+1;
+update t set a = -1 where a > 0;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+update t set a = 1 where a > 0;
+update t set a = (select a from s where a < 0) where a > 0;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+update t set a = (select a + 2 from s where a < 0) where a > 0;
+update t as a, s as b set a.a=b.a;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+update t as a, s as b set a.a=b.a + 2;
+replace into t(a) values(-1);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+replace into t(a) values(1);
+replace into t(a) select -1;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+replace into t(a) select 1;
+replace into t set a = -1;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+replace into t set a = 1;
+drop table if exists t;
+create table t( a int, b int as (a+1), CHECK (b > 0));
+insert into t(a) values(0);
+insert into t(a) values(-2);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL,
+CONSTRAINT `t_chk_1` CHECK ((`b` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t alter constraint t_chk_1 not enforced;
+insert into t(a) values(-2);
+alter table t drop constraint t_chk_1;
+drop table t;
+create table t(a int, b int as (a+1));
+alter table t add check(b > 0);
+insert into t(a) values(0);
+insert into t(a) values(-2);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+alter table t alter constraint t_chk_1 not enforced;
+insert into t(a) values(-2);
+alter table t drop constraint t_chk_1;
+alter table t add check(b > 0);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+drop table if exists t;
+create table t(a int, CHECK (a < -999));
+drop temporary table if exists t;
+create temporary table t(a int, CHECK (a > 0));
+insert into t(a) values(1);
+insert into t(a) values(-2);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+drop temporary table t;
+create temporary table t(a int, CHECK (a > 0) not enforced);
+insert into t values(-1);
+create global temporary table tt(a int, check(a > 0)) on commit delete rows;
+insert into tt(a) values(1);
+insert into tt(a) values(-2);
+Error 3819 (HY000): Check constraint 'tt_chk_1' is violated.
+alter table tt alter constraint tt_chk_1 not enforced;
+insert into tt(a) values(-2);
+alter table tt drop constraint tt_chk_1;
+drop temporary table t;
+drop global temporary table tt;
+drop table if exists t;
+create table t(a int CHECK (a != 0));
+prepare stmt from 'insert into t values(?)';
+set @a = 1;
+execute stmt using @a;
+set @a = 0;
+execute stmt using @a;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+deallocate prepare stmt;
+drop table if exists t, s;
+create table t(a int primary key, b int, check (b > 0));
+insert into t values(1, 1);
+insert into t values(1, -10) on duplicate key update b = -1;
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+insert ignore into t values(1, -10) on duplicate key update b = -1;
+select * from t;
+a	b
+1	1
+create table s(a int primary key, check (a > 0));
+insert into s values(1);
+insert into s values(1) on duplicate key update a = -1;
+Error 3819 (HY000): Check constraint 's_chk_1' is violated.
+insert ignore into s values(1) on duplicate key update a = -1;
+select * from s;
+a
+1
+drop table if exists t1, t2;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
+insert into t1 values (2, 2);
+Error 3819 (HY000): Check constraint 't1_chk_1' is violated.
+insert into t1 values (9, 2);
+Error 3819 (HY000): Check constraint 't1_chk_2' is violated.
+insert into t1 values (14, -4);
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
+insert into t1(c1) values (9);
+Error 3819 (HY000): Check constraint 't1_chk_2' is violated.
+insert into t1(c2) values (-3);
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
+insert into t1 values (14, 4);
+insert into t1 values (null, 4);
+insert into t1 values (13, null);
+insert into t1 values (null, null);
+insert into t1(c1) values (null);
+insert into t1(c2) values (null);
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+insert into t2(c1, c2) values (11, 1);
+Error 3819 (HY000): Check constraint 't2_chk_3' is violated.
+insert into t2(c1, c2) values (12, 7);
+drop table if exists t1, t2;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
+insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
+update t1 set c2 = -c2;
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
+update t1 set c2 = c1;
+Error 3819 (HY000): Check constraint 't1_chk_1' is violated.
+update t1 set c1 = c1 - 10;
+Error 3819 (HY000): Check constraint 't1_chk_2' is violated.
+update t1 set c2 = -10 where c2 = 12;
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
+update t2 set c2 = c2 - 10;
+Error 3819 (HY000): Check constraint 't2_chk_3' is violated.
+update t2 set c2 = c2 - 5;
+drop table if exists t1, t2;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0)) partition by hash(c2) partitions 5;
+insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
+update t1 set c2 = -c2;
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
+update t1 set c2 = c1;
+Error 3819 (HY000): Check constraint 't1_chk_1' is violated.
+update t1 set c1 = c1 - 10;
+Error 3819 (HY000): Check constraint 't1_chk_2' is violated.
+update t1 set c2 = -10 where c2 = 12;
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;
+insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
+update t2 set c2 = c2 - 10;
+Error 3819 (HY000): Check constraint 't2_chk_3' is violated.
+update t2 set c2 = c2 - 5;
+drop table if exists t;
+create table t(a int check (a>1), b int, constraint my_constr check(a<10));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+CONSTRAINT `t_chk_1` CHECK ((`a` > 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add constraint my_constr2 check (a<b) not enforced;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+CONSTRAINT `t_chk_1` CHECK ((`a` > 1)),
+CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t drop constraint t_chk_1;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+DROP TABLE IF EXISTS t0, t1, t2;
+CREATE TABLE t0(c1 NUMERIC CHECK(true));
+CREATE TABLE t1(c1 NUMERIC, CHECK(true));
+CREATE TABLE t2(c1 NUMERIC);
+ALTER TABLE t2 ADD CONSTRAINT CHECK(true);
+DROP TABLE IF EXISTS t0, t1, t2;
+CREATE TABLE t0(c1 NUMERIC CHECK(false));
+CREATE TABLE t1(c1 NUMERIC, CHECK(false));
+CREATE TABLE t2(c1 NUMERIC);
+ALTER TABLE t2 ADD CONSTRAINT CHECK(false);
+create table t(a int check(a > 0));
+show warnings;
+Level	Code	Message
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+set @@global.tidb_enable_check_constraint = 1;
+create table t(a int check(a > 0));
+show warnings;
+Level	Code	Message
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add constraint chk check(true);
+show warnings;
+Level	Code	Message
+alter table t alter constraint chk not enforced;
+show warnings;
+Level	Code	Message
+alter table t drop constraint chk;
+show warnings;
+Level	Code	Message
+set @@global.tidb_enable_check_constraint = 0;
+alter table t drop constraint t_chk_1;
+show warnings;
+Level	Code	Message
+Warning	1105	the switch of check constraint is off
+alter table t alter constraint t_chk_1 not enforced;
+show warnings;
+Level	Code	Message
+Warning	1105	the switch of check constraint is off
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t;
+create table t(a int not null check(a>0));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(a bigint key constraint my_constr check(a<10), b int constraint check(b > 1) not enforced);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` bigint(20) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+CONSTRAINT `t_chk_1` CHECK ((`b` > 1)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(a int constraint check(a > 1) not enforced, constraint my_constr check(a < 10));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+CONSTRAINT `t_chk_1` CHECK ((`a` > 1)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(a int not null check(b>0));
+Error 3813 (HY000): Column check constraint 't_chk_1' references other column.
+create table t(a int not null check(b>a));
+Error 3813 (HY000): Column check constraint 't_chk_1' references other column.
+create table t(a int not null check(a>0), b int, constraint check(c>b));
+Error 3820 (HY000): Check constraint 't_chk_1' refers to non-existing column 'c'.
+create table t(a int not null check(a>0), b int, constraint check(a>b));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` > `b`)),
+CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(a int not null check(a > '12345'));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(a int not null primary key check(a > '12345'));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(a varchar(10) not null primary key check(a > '12345'));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` varchar(10) NOT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,
+CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+drop table if exists t;
+create table t(a int not null check(a>0));
+alter table t add constraint haha check(a<10);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0)),
+CONSTRAINT `haha` CHECK ((`a` < 10))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add constraint check(a<11) not enforced;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0)),
+CONSTRAINT `haha` CHECK ((`a` < 10)),
+CONSTRAINT `t_chk_2` CHECK ((`a` < 11)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add constraint haha check(a);
+Error 3822 (HY000): Duplicate check constraint name 'haha'.
+alter table t add constraint check(b);
+Error 1054 (42S22): Unknown column 'b' in 'check constraint t_chk_3 expression'
+alter table t add constraint check(a*2 < a+1) not enforced;
+drop table t;
+create table t(a int);
+insert into t values(1), (2), (3);
+alter table t add constraint check(a < 2);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+alter table t add constraint check(a < 2) not enforced;
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+create table t(a int not null check(a>0), b int, constraint haha check(a < b), check(a<b+1));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `haha` CHECK ((`a` < `b`)),
+CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1)),
+CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t drop constraint not_exist_constraint;
+Error 3940 (HY000): Constraint 'not_exist_constraint' does not exist.
+alter table t drop constraint haha;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1)),
+CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t drop constraint t_chk_2;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(a int check(a > 0));
+insert into t values(0);
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
+alter table t drop constraint t_chk_1;
+insert into t values(0);
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+create table t(a int not null check(a>0) not enforced, b int, constraint haha check(a < b));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `haha` CHECK ((`a` < `b`)),
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t alter constraint unknown not enforced;
+Error 3940 (HY000): Constraint 'unknown' does not exist.
+alter table t alter constraint haha not enforced;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t alter constraint t_chk_1 enforced;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
+CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert into t values(1, 0);
+alter table t alter constraint haha enforced;
+Error 3819 (HY000): Check constraint 'haha' is violated.
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+CREATE TABLE `t` (`a` int(11) DEFAULT NULL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert t values(1);
+select * from t;
+a
+1
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+alter table t ADD CONSTRAINT chk CHECK (a > 1) NOT ENFORCED;
+ALTER TABLE t ALTER CONSTRAINT chk ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `chk` CHECK ((`a` > 1)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t drop CONSTRAINT chk;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t;
+create table t(a int, check((test.t.a > 1)));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK (((`a` > 1)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add constraint chk check((test.t.a < 100));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK (((`a` > 1))),
+CONSTRAINT `chk` CHECK (((`a` < 100)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 0;

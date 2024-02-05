@@ -1,0 +1,688 @@
+set @@global.tidb_enable_check_constraint = 1;
+
+# TestDropColumnWithCheckConstraints
+drop table if exists t;
+create table t(a int check(a > 0), b int, c int, check(c > 0), check (b > c));
+alter table t drop column a;
+show create table t;
+-- error 3959
+alter table t drop column b;
+-- error 3959
+alter table t rename column c to c1;
+
+# TestCheckConstraintsNotEnforcedWorks
+drop table if exists t;
+create table t(a int check(a > 0), b int check(b < 10) not enforced, c int);
+alter table t alter constraint t_chk_1 not enforced;
+insert into t values(-1, 1, 0);
+alter table t alter constraint t_chk_2 enforced;
+-- error 3819
+insert into t values(-1, 11, 0);
+alter table t add check(c = 0);
+-- error 3819
+insert into t values(-1, 1, 1);
+alter table t alter constraint t_chk_3 not enforced;
+insert into t values(-1, 1, 0);
+
+# TestUnsupportedCheckConstraintsExprWhenCreateTable
+drop table if exists t;
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + NOW() > '2011-11-21'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIMESTAMP() > '2011-11-21 01:02:03'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIMESTAMP > '2011-11-21 01:02:03'));
+-- error 3814
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + CURDATE() > '2011-11-21'));
+-- error 3814
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + CURTIME() > '23:11:21'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_DATE() > '2011-11-21'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_DATE > '2011-11-21'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIME() > '01:02:03'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + CURRENT_TIME > '01:02:03'));
+-- error 3814
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + LOCALTIME() > '23:11:21'));
+-- error 3814
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + LOCALTIME > '23:11:21'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + LOCALTIMESTAMP() > '2011-11-21 01:02:03'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + LOCALTIMESTAMP > '2011-11-21 01:02:03'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + UNIX_TIMESTAMP() > '2011-11-21 01:02:03'));
+-- error 3814
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + UTC_DATE() > '2011-11-21'));
+-- error 3814
+CREATE TABLE t1 (f1 TIMESTAMP CHECK (f1 + UTC_TIMESTAMP() > '2011-11-21 01:02:03'));
+-- error 3814
+CREATE TABLE t1 (f1 DATETIME CHECK (f1 + UTC_TIME() > '23:11:21'));
+-- error 3814
+CREATE TABLE t1 (f1 INT CHECK (f1 + CONNECTION_ID() < 929));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(32) CHECK (CURRENT_USER() != a));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(32) CHECK (CURRENT_USER != a));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(32) CHECK (SESSION_USER() != a));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(32) CHECK (VERSION() != a));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(1024), b INT CHECK (b + FOUND_ROWS() > 2000));
+-- error 3814
+CREATE TABLE t1 (a INT CHECK ((a + LAST_INSERT_ID()) < 929));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(32) CHECK (SYSTEM_USER() != a));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(32) CHECK (USER() != a));
+-- error 3814
+CREATE TABLE t1 (f1 FLOAT CHECK (f1 + RAND() < 929.929));
+-- error 3814
+CREATE TABLE t1 (a INT CHECK (a + ROW_COUNT() > 1000));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024) CHECK (GET_LOCK(b,10) != 0));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024) CHECK (IS_FREE_LOCK(b) != 0));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024) CHECK (IS_USED_LOCK(b) != 0));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024) CHECK (RELEASE_LOCK(b) != 0));
+-- error 3814
+CREATE TABLE t1 (a VARCHAR(1024), b VARCHAR(1024), CHECK (RELEASE_ALL_LOCKS() != 0));
+-- error 3814
+CREATE TABLE t1 (f1 VARCHAR(1024), f2 VARCHAR(1024) CHECK (LOAD_FILE(f2) != NULL));
+-- error 3814
+CREATE TABLE t1 (id CHAR(40) CHECK(UUID() != id));
+-- error 3814
+CREATE TABLE t1 (id INT CHECK(UUID_SHORT() != id));
+-- error 3814
+CREATE TABLE t1 (id INT CHECK(SLEEP(id) != 0));
+set @a = 1;
+-- error 3816
+CREATE TABLE t1 (f1 int CHECK (f1 > @a));
+-- error 3816
+CREATE TABLE t1 (f1 int CHECK (f1 > @@session.tidb_mem_quota_query));
+-- error 3816
+CREATE TABLE t1 (f1 int CHECK (f1 > @@global.tidb_mem_quota_query));
+-- error 3818
+CREATE TABLE t1 (f1 int primary key auto_increment, f2 int, CHECK (f1 != f2));
+-- error 3814
+CREATE TABLE t1 (f1 INT CHECK (f1 = default(f1)));
+-- error 3815
+CREATE TABLE t1 (id INT CHECK (id != (SELECT 1)));
+-- error 3815
+CREATE TABLE t1 (a int check(a in (SELECT COALESCE(NULL, 1, 1))));
+
+# TestUnsupportedCheckConstraintsExprWhenAlterTable
+drop table if exists t;
+create table t1(f1 TIMESTAMP, f2 DATETIME, f3 INT, f4 VARCHAR(32), f5 FLOAT, f6 CHAR(40), f7 INT PRIMARY KEY AUTO_INCREMENT);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + NOW() > '2011-11-21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_TIMESTAMP() > '2011-11-21 01:02:03');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_TIMESTAMP > '2011-11-21 01:02:03');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f2 + CURDATE() > '2011-11-21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f2 + CURTIME() > '23:11:21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_DATE() > '2011-11-21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_DATE > '2011-11-21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_TIME() > '01:02:03');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + CURRENT_TIME > '01:02:03');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f2 + LOCALTIME() > '23:11:21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f2 + LOCALTIME > '23:11:21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + LOCALTIMESTAMP() > '2011-11-21 01:02:03');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + LOCALTIMESTAMP > '2011-11-21 01:02:03');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + UNIX_TIMESTAMP() > '2011-11-21 01:02:03');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f2 + UTC_DATE() > '2011-11-21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 + UTC_TIMESTAMP() > '2011-11-21 01:02:03');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f2 + UTC_TIME() > '23:11:21');
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f3 + CONNECTION_ID() < 929);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (CURRENT_USER() != f4);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (CURRENT_USER != f4);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (SESSION_USER() != f4);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (VERSION() != f4);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f3 + FOUND_ROWS() > 2000);
+-- error 3814
+ALTER TABLE t1 ADD CHECK ((f3 + LAST_INSERT_ID()) < 929);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (SYSTEM_USER() != f4);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (USER() != f4);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f5 + RAND() < 929.929);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f3 + ROW_COUNT() > 1000);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (GET_LOCK(f4,10) != 0);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (IS_FREE_LOCK(f4) != 0);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (IS_USED_LOCK(f4) != 0);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (RELEASE_LOCK(f4) != 0);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (RELEASE_ALL_LOCKS() != 0);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (LOAD_FILE(f4) != NULL);
+-- error 3814
+ALTER TABLE t1 ADD CHECK(UUID() != f6);
+-- error 3814
+ALTER TABLE t1 ADD CHECK(UUID_SHORT() != f3);
+-- error 3814
+ALTER TABLE t1 ADD CHECK(SLEEP(f3) != 0);
+set @a = 1;
+-- error 3816
+ALTER TABLE t1 ADD CHECK (f3 > @a);
+-- error 3816
+ALTER TABLE t1 ADD CHECK (f3 > @@session.tidb_mem_quota_query);
+-- error 3816
+ALTER TABLE t1 ADD CHECK (f3 > @@global.tidb_mem_quota_query);
+-- error 3818
+ALTER TABLE t1 ADD CHECK (f7 != f3);
+-- error 3814
+ALTER TABLE t1 ADD CHECK (f1 = default(f1));
+-- error 3815
+ALTER TABLE t1 ADD CHECK (f3 != (SELECT 1));
+-- error 3815
+ALTER TABLE t1 ADD check (f3 in (SELECT COALESCE(NULL, 1, 1)));
+
+# TestNameInCreateTableLike
+drop table if exists t, s;
+create table t(a int check(a > 10), b int constraint bbb check(b > 5), c int, check(c < 0));
+create table s like t;
+show create table s;
+-- error 3819
+insert into s(a) values(1);
+-- error 3819
+insert into s(b) values(2);
+-- error 3819
+insert into s(c) values(3);
+alter table s add check(a > 0);
+alter table s add constraint aaa check(a > 0);
+show create table s;
+
+# TestInsertUpdateIgnoreWarningMessage
+drop table if exists t;
+create table t(a int check(a > 10));
+-- error 3819
+insert into t values(1),(11),(15);
+insert ignore into t values(1),(11),(15);
+show warnings;
+select a from t;
+update ignore t set a = a-2;
+show warnings;
+select a from t;
+
+# TestCheckConstraintForeignKey
+drop table if exists t, s, t1, t2;
+create table t(a int, b int, index(a), index(a, b));
+-- error 3823
+create table s(a int, check (a > 0), foreign key (a) references t(a) on update cascade);
+-- error 3823
+create table s(a int, b int,  check (a > 0), foreign key (a, b) references t(a, b) on update cascade);
+create table t1(a int, foreign key (a) references t(a) on update cascade);
+-- error 3823
+alter table t1 add check ( a > 0 );
+create table t2(a int, b int, foreign key (a, b) references t(a, b) on update cascade);
+-- error 3823
+alter table t2 add check ( a > 0 );
+drop table t, t1, t2;
+
+# TestCheckConstrainNonBoolExpr
+drop table if exists t;
+-- error 3812
+create table t(a int, check(a));
+-- error 3812
+create table t(a int, check(1));
+-- error 3812
+create table t(a int, check('1'));
+-- error 3812
+create table t(a int check(a));
+-- error 3812
+create table t(a int, check(1+1));
+-- error 3812
+create table t(a int, check(1/2));
+-- error 3812
+create table t(a int, check(a + 1/2));
+-- error 3812
+create table t(a int check(a + 1/2));
+-- error 3812
+create table t(a int, check(true + 1));
+-- error 3812
+create table t(a int, check(abs(1)));
+-- error 3812
+create table t(a int, check(length(a)));
+-- error 3812
+create table t(a int, check(length(1)));
+-- error 3812
+create table t(a int, check(floor(1.1)));
+-- error 3812
+create table t(a int, check(mod(3, 2)));
+-- error 3812
+create table t(a int, check('true'));
+create table t(a int, check(true));
+-- error 3812
+alter table t add check(a);
+-- error 3812
+alter table t add check(1);
+-- error 3812
+alter table t add check('1');
+-- error 3812
+alter table t add check(1/2);
+-- error 3812
+alter table t add check(a + 1/2);
+-- error 3812
+alter table t add check(true + 1);
+-- error 3812
+alter table t add check(abs(1));
+-- error 3812
+alter table t add check(length(a));
+-- error 3812
+alter table t add check(length(1));
+-- error 3812
+alter table t add check(length(1));
+-- error 3812
+alter table t add check(mod(3, 2));
+-- error 3812
+alter table t add check('true');
+
+# TestAlterAddCheckConstrainColumnBadErr
+drop table if exists t;
+create table t(a int);
+-- error 1054
+alter table t add check(b > 0);
+
+# TestCheckConstraintBoolExpr
+drop table if exists t;
+create table t(a json, b varchar(20));
+alter table t add check (JSON_VALID(a));
+alter table t add check (REGEXP_LIKE(b,'@'));
+
+# TestCheckConstraintNameMaxLength
+drop table if exists t;
+create table t(a int constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0));
+drop table t;
+create table t(a int, constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0));
+drop table t;
+-- error 1059
+create table t(a int constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0));
+-- error 1059
+create table t(a int, constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0));
+-- error 1059
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int check(a > 0));
+-- error 1059
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int, check(a > 0));
+create table t(a int);
+-- error 1059
+alter table t add constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0);
+alter table t add constraint aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa check(a > 0);
+drop table t;
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int);
+-- error 1059
+alter table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa add check(a > 0);
+
+# TestCheckConstraintNameCaseAndAccentSensitivity
+drop table if exists t;
+create table t(a int);
+alter table t add constraint `cafe` check(a > 0);
+-- error 3822
+alter table t add constraint `CAFE` check(a > 0);
+alter table t add constraint `café` check(a > 0);
+
+# TestCheckConstraintEvaluated
+drop table if exists t, s;
+create table t(a int check(a > 0));
+insert into t values(1);
+create table s(a int);
+insert into s values(-1);
+-- error 3819
+insert into t values(-1);
+insert into t values(1);
+-- error 3819
+insert into t(a) values(-1);
+insert into t(a) values(1);
+-- error 3819
+insert into t set a = -1;
+insert into t set a = 1;
+-- error 3819
+insert into t(a) select -1;
+insert into t(a) select 1;
+-- error 3819
+insert into t(a) select a from s;
+insert into t(a) select a + 2 from s;
+-- error 3819
+update t set a = -1;
+update t set a = 1;
+-- error 3819
+update t set a = a-1;
+update t set a = a+1;
+-- error 3819
+update t set a = -1 where a > 0;
+update t set a = 1 where a > 0;
+-- error 3819
+update t set a = (select a from s where a < 0) where a > 0;
+update t set a = (select a + 2 from s where a < 0) where a > 0;
+-- error 3819
+update t as a, s as b set a.a=b.a;
+update t as a, s as b set a.a=b.a + 2;
+-- error 3819
+replace into t(a) values(-1);
+replace into t(a) values(1);
+-- error 3819
+replace into t(a) select -1;
+replace into t(a) select 1;
+-- error 3819
+replace into t set a = -1;
+replace into t set a = 1;
+
+# TestGenerateColumnCheckConstraint
+drop table if exists t;
+create table t( a int, b int as (a+1), CHECK (b > 0));
+insert into t(a) values(0);
+-- error 3819
+insert into t(a) values(-2);
+show create table t;
+alter table t alter constraint t_chk_1 not enforced;
+insert into t(a) values(-2);
+alter table t drop constraint t_chk_1;
+drop table t;
+create table t(a int, b int as (a+1));
+alter table t add check(b > 0);
+insert into t(a) values(0);
+-- error 3819
+insert into t(a) values(-2);
+alter table t alter constraint t_chk_1 not enforced;
+insert into t(a) values(-2);
+alter table t drop constraint t_chk_1;
+-- error 3819
+alter table t add check(b > 0);
+
+# TestTemporaryTableCheckConstraint
+drop table if exists t;
+create table t(a int, CHECK (a < -999));
+drop temporary table if exists t;
+create temporary table t(a int, CHECK (a > 0));
+insert into t(a) values(1);
+-- error 3819
+insert into t(a) values(-2);
+drop temporary table t;
+create temporary table t(a int, CHECK (a > 0) not enforced);
+insert into t values(-1);
+create global temporary table tt(a int, check(a > 0)) on commit delete rows;
+insert into tt(a) values(1);
+-- error 3819
+insert into tt(a) values(-2);
+alter table tt alter constraint tt_chk_1 not enforced;
+insert into tt(a) values(-2);
+alter table tt drop constraint tt_chk_1;
+drop temporary table t;
+drop global temporary table tt;
+
+# TestCheckConstraintWithPrepareInsertCheckConstraint
+drop table if exists t;
+create table t(a int CHECK (a != 0));
+prepare stmt from 'insert into t values(?)';
+set @a = 1;
+execute stmt using @a;
+set @a = 0;
+-- error 3819
+execute stmt using @a;
+deallocate prepare stmt;
+
+# TestCheckConstraintOnDuplicateKeyUpdate
+drop table if exists t, s;
+create table t(a int primary key, b int, check (b > 0));
+insert into t values(1, 1);
+-- error 3819
+insert into t values(1, -10) on duplicate key update b = -1;
+insert ignore into t values(1, -10) on duplicate key update b = -1;
+select * from t;
+create table s(a int primary key, check (a > 0));
+insert into s values(1);
+-- error 3819
+insert into s values(1) on duplicate key update a = -1;
+insert ignore into s values(1) on duplicate key update a = -1;
+select * from s;
+
+# TestCheckConstraintOnInsert
+drop table if exists t1, t2;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
+-- error 3819
+insert into t1 values (2, 2);
+-- error 3819
+insert into t1 values (9, 2);
+-- error 3819
+insert into t1 values (14, -4);
+-- error 3819
+insert into t1(c1) values (9);
+-- error 3819
+insert into t1(c2) values (-3);
+insert into t1 values (14, 4);
+insert into t1 values (null, 4);
+insert into t1 values (13, null);
+insert into t1 values (null, null);
+insert into t1(c1) values (null);
+insert into t1(c2) values (null);
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+-- error 3819
+insert into t2(c1, c2) values (11, 1);
+insert into t2(c1, c2) values (12, 7);
+
+# TestCheckConstraintOnUpdate
+drop table if exists t1, t2;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
+insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
+-- error 3819
+update t1 set c2 = -c2;
+-- error 3819
+update t1 set c2 = c1;
+-- error 3819
+update t1 set c1 = c1 - 10;
+-- error 3819
+update t1 set c2 = -10 where c2 = 12;
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
+-- error 3819
+update t2 set c2 = c2 - 10;
+update t2 set c2 = c2 - 5;
+
+# TestCheckConstraintOnUpdateWithPartition
+drop table if exists t1, t2;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0)) partition by hash(c2) partitions 5;
+insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
+-- error 3819
+update t1 set c2 = -c2;
+-- error 3819
+update t1 set c2 = c1;
+-- error 3819
+update t1 set c1 = c1 - 10;
+-- error 3819
+update t1 set c2 = -10 where c2 = 12;
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;
+insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
+-- error 3819
+update t2 set c2 = c2 - 10;
+update t2 set c2 = c2 - 5;
+
+# TestShowCheckConstraint
+drop table if exists t;
+create table t(a int check (a>1), b int, constraint my_constr check(a<10));
+show create table t;
+alter table t add constraint my_constr2 check (a<b) not enforced;
+show create table t;
+alter table t drop constraint t_chk_1;
+show create table t;
+drop table if exists t;
+
+# TestIssue44689
+DROP TABLE IF EXISTS t0, t1, t2;
+CREATE TABLE t0(c1 NUMERIC CHECK(true));
+CREATE TABLE t1(c1 NUMERIC, CHECK(true));
+CREATE TABLE t2(c1 NUMERIC);
+ALTER TABLE t2 ADD CONSTRAINT CHECK(true);
+DROP TABLE IF EXISTS t0, t1, t2;
+CREATE TABLE t0(c1 NUMERIC CHECK(false));
+CREATE TABLE t1(c1 NUMERIC, CHECK(false));
+CREATE TABLE t2(c1 NUMERIC);
+ALTER TABLE t2 ADD CONSTRAINT CHECK(false);
+
+# TestCheckConstraintSwitch
+create table t(a int check(a > 0));
+show warnings;
+show create table t;
+drop table t;
+set @@global.tidb_enable_check_constraint = 1;
+create table t(a int check(a > 0));
+show warnings;
+show create table t;
+alter table t add constraint chk check(true);
+show warnings;
+alter table t alter constraint chk not enforced;
+show warnings;
+alter table t drop constraint chk;
+show warnings;
+set @@global.tidb_enable_check_constraint = 0;
+alter table t drop constraint t_chk_1;
+show warnings;
+alter table t alter constraint t_chk_1 not enforced;
+show warnings;
+show create table t;
+set @@global.tidb_enable_check_constraint = 1;
+
+# TestCreateTableWithCheckConstraints
+drop table if exists t;
+create table t(a int not null check(a>0));
+show create table t;
+drop table t;
+create table t(a bigint key constraint my_constr check(a<10), b int constraint check(b > 1) not enforced);
+show create table t;
+drop table t;
+create table t(a int constraint check(a > 1) not enforced, constraint my_constr check(a < 10));
+show create table t;
+drop table t;
+-- error 3813
+create table t(a int not null check(b>0));
+-- error 3813
+create table t(a int not null check(b>a));
+-- error 3820
+create table t(a int not null check(a>0), b int, constraint check(c>b));
+create table t(a int not null check(a>0), b int, constraint check(a>b));
+show create table t;
+drop table t;
+create table t(a int not null check(a > '12345'));
+show create table t;
+drop table t;
+create table t(a int not null primary key check(a > '12345'));
+show create table t;
+drop table t;
+create table t(a varchar(10) not null primary key check(a > '12345'));
+show create table t;
+drop table t;
+
+# TestAlterTableAddCheckConstraints
+drop table if exists t;
+create table t(a int not null check(a>0));
+alter table t add constraint haha check(a<10);
+show create table t;
+alter table t add constraint check(a<11) not enforced;
+show create table t;
+-- error 3822
+alter table t add constraint haha check(a);
+-- error 1054
+alter table t add constraint check(b);
+alter table t add constraint check(a*2 < a+1) not enforced;
+drop table t;
+create table t(a int);
+insert into t values(1), (2), (3);
+-- error 3819
+alter table t add constraint check(a < 2);
+alter table t add constraint check(a < 2) not enforced;
+
+# TestAlterTableDropCheckConstraints
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+create table t(a int not null check(a>0), b int, constraint haha check(a < b), check(a<b+1));
+show create table t;
+-- error 3940
+alter table t drop constraint not_exist_constraint;
+alter table t drop constraint haha;
+show create table t;
+alter table t drop constraint t_chk_2;
+show create table t;
+drop table t;
+create table t(a int check(a > 0));
+-- error 3819
+insert into t values(0);
+alter table t drop constraint t_chk_1;
+insert into t values(0);
+
+# TestAlterTableAlterCheckConstraints
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+create table t(a int not null check(a>0) not enforced, b int, constraint haha check(a < b));
+show create table t;
+-- error 3940
+alter table t alter constraint unknown not enforced;
+alter table t alter constraint haha not enforced;
+show create table t;
+alter table t alter constraint t_chk_1 enforced;
+show create table t;
+# Alter table alter constraint will violate check.
+# Here a=1, b=0 doesn't satisfy "a < b" constraint.
+# Since "a<b" is not enforced, so the insert will success.
+insert into t values(1, 0);
+-- error 3819
+alter table t alter constraint haha enforced;
+
+# Related issue TiDB#47567, #47631 and #47632.
+# TestCheckConstraintIssue47567
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+CREATE TABLE `t` (`a` int(11) DEFAULT NULL);
+show create table t;
+insert t values(1);
+select * from t;
+-- error 3819
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+-- error 3819
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+alter table t ADD CONSTRAINT chk CHECK (a > 1) NOT ENFORCED;
+-- error 3819
+ALTER TABLE t ALTER CONSTRAINT chk ENFORCED;
+show create table t;
+alter table t drop CONSTRAINT chk;
+show create table t;
+
+# Related issue TiDB#50972, constraint expression should ignore schema and table name when restore
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t;
+create table t(a int, check((test.t.a > 1)));
+show create table t;
+alter table t add constraint chk check((test.t.a < 100));
+show create table t;
+drop table if exists t;
+
+set @@global.tidb_enable_check_constraint = 0;
