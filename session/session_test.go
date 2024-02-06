@@ -2806,6 +2806,16 @@ func (s *testSessionSerialSuite) TestBatchCommit(c *C) {
 	tk.MustExec("insert into t values (7)")
 	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
 
+	tk.MustExec("delete from t")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	tk.MustExec("explain analyze insert into t values (5)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("explain analyze insert into t values (6)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("explain analyze insert into t values (7)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+
 	// The session is still in transaction.
 	tk.MustExec("insert into t values (8)")
 	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
