@@ -16,14 +16,15 @@ package integrationtests
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,24 +83,24 @@ func TestHARandomShutdownInDifferentStep(t *testing.T) {
 	submitTaskAndCheckSuccessForHA(c.Ctx, t, "😊", c.TestContext)
 }
 
-func TestHAReplacedButRunning(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
-	defer ctrl.Finish()
+func TestHAMultipleOwner(t *testing.T) {
+	c := testutil.NewDXFContextWithRandomNodes(t, 4, 8)
+	prevCount := c.NodeCount()
+	additionalOwnerCnt := c.Rand.Intn(2) + 1
+	for i := 0; i < additionalOwnerCnt; i++ {
+		c.ScaleOutBy(fmt.Sprintf("tidb-%d", i), true)
+	}
+	require.Equal(t, prevCount+additionalOwnerCnt, c.NodeCount())
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBPartitionThenResume", "10*return(true)"))
-	submitTaskAndCheckSuccessForHA(ctx, t, "😊", testContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBPartitionThenResume"))
-	distContext.Close()
+	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	var wg util.WaitGroupWrapper
+	for i := 0; i < 10; i++ {
+		taskKey := fmt.Sprintf("key%d", i)
+		wg.Run(func() {
+			submitTaskAndCheckSuccessForHA(c.Ctx, t, taskKey, c.TestContext)
+		})
+	}
+	wg.Wait()
 }
 
-func TestHAReplacedButRunningManyNodes(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
-	defer ctrl.Finish()
-
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBPartitionThenResume", "30*return(true)"))
-	submitTaskAndCheckSuccessForHA(ctx, t, "😊", testContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBPartitionThenResume"))
-	distContext.Close()
-}
+// TODO add a case of real network partition, each owner should see different set of live nodes

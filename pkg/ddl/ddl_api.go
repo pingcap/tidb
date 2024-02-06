@@ -2304,7 +2304,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			return errors.Trace(err)
 		}
 		if s.Partition != nil {
-			if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
+			if err := checkPartitionFuncType(ctx, s.Partition.Expr, s.Table.Schema, tbInfo); err != nil {
 				return errors.Trace(err)
 			}
 			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
@@ -7081,7 +7081,7 @@ func ExtractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		return nil, 0, nil
 	}
 	//View can be renamed only in the same schema. Compatible with mysql
-	if is.TableIsView(oldIdent.Schema, oldIdent.Name) {
+	if infoschema.TableIsView(is, oldIdent.Schema, oldIdent.Name) {
 		if oldIdent.Schema != newIdent.Schema {
 			return nil, 0, infoschema.ErrForbidSchemaChange.GenWithStackByArgs(oldIdent.Schema, newIdent.Schema)
 		}

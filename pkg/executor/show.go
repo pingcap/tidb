@@ -430,7 +430,7 @@ func moveInfoSchemaToFront(dbs []string) {
 }
 
 func (e *ShowExec) fetchShowDatabases() error {
-	dbs := e.is.AllSchemaNames()
+	dbs := infoschema.AllSchemaNames(e.is)
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	slices.Sort(dbs)
 	var (
