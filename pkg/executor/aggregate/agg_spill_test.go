@@ -381,6 +381,7 @@ func TestGetCorrectResult(t *testing.T) {
 	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
 	finished.Store(true)
 	wg.Wait()
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers", `return(false)`)
 }
 
 func TestFallBackAction(t *testing.T) {
