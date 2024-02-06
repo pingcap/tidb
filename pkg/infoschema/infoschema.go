@@ -42,15 +42,17 @@ type InfoSchema interface {
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
-	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
-	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	TableByID(id int64) (table.Table, bool)
-	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemas() []*model.DBInfo
-	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	InfoSchemaMisc
+}
+
+type InfoSchemaMisc interface {
+	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
+	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
 	// AllPlacementBundles is used to get all placement bundles
@@ -85,6 +87,17 @@ type schemaTables struct {
 const bucketCount = 512
 
 type infoSchema struct {
+	infoSchemaMisc
+	schemaMap map[string]*schemaTables
+
+	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
+	sortedTablesBuckets []sortedTables
+
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
+	schemaMetaVersion int64
+}
+
+type infoSchemaMisc struct {
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
 
@@ -96,16 +109,8 @@ type infoSchema struct {
 	resourceGroupMutex sync.RWMutex
 	resourceGroupMap   map[string]*model.ResourceGroupInfo
 
-	schemaMap map[string]*schemaTables
-
-	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
-	sortedTablesBuckets []sortedTables
-
 	// temporaryTables stores the temporary table ids
 	temporaryTableIDs map[int64]struct{}
-
-	// schemaMetaVersion is the version of schema, and we should check version when change schema.
-	schemaMetaVersion int64
 
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
@@ -283,7 +288,8 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
+// AllocByID returns the Allocators of a table.
+func allocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return autoid.Allocators{}, false
@@ -342,12 +348,12 @@ func (is *infoSchema) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
 }
 
-func (is *infoSchema) Clone() (result []*model.DBInfo) {
-	for _, v := range is.schemaMap {
-		result = append(result, v.dbInfo.Clone())
-	}
-	return
-}
+// func (is *infoSchema) Clone() (result []*model.DBInfo) {
+// 	for _, v := range is.schemaMap {
+// 		result = append(result, v.dbInfo.Clone())
+// 	}
+// 	return
+// }
 
 // GetSequenceByName gets the sequence by name.
 func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
