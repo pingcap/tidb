@@ -169,7 +169,6 @@ func TestBasic(t *testing.T) {
 	tb, ok = is.TableByID(dbID)
 	require.False(t, ok)
 	require.Nil(t, tb)
-	require.NotNil(t, tb.Allocators(nil))
 
 	tb, err = is.TableByName(dbName, tbName)
 	require.NoError(t, err)

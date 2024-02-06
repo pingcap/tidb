@@ -290,7 +290,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-// AllocByID returns the Allocators of a table.
+// allocByID returns the Allocators of a table.
 func allocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
