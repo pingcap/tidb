@@ -35,7 +35,8 @@ func readAllData(
 	store storage.ExternalStorage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
-	bufPool *membuf.Pool,
+	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
@@ -80,8 +81,8 @@ func readAllData(
 	for readIdx := 0; readIdx < readConn; readIdx++ {
 		readIdx := readIdx
 		eg.Go(func() error {
-			output.memKVBuffers[readIdx] = bufPool.NewBuffer()
-			output.memKVBuffers[readIdx+readConn] = bufPool.NewBuffer()
+			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
+			output.memKVBuffers[readIdx+readConn] = largeBlockBufPool.NewBuffer()
 			smallBlockBuf := output.memKVBuffers[readIdx]
 			largeBlockBuf := output.memKVBuffers[readIdx+readConn]
 

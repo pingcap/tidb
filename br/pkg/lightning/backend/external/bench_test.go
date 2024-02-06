@@ -657,14 +657,18 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	intest.AssertNoError(err)
 	endKey, err := hex.DecodeString("00a00000000000000000")
 	intest.AssertNoError(err)
-	bufPool := membuf.NewPool(
+	smallBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(smallBlockSize),
+	)
+	largeBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 	)
 	output := &memKVsAndBuffers{}
 	now := time.Now()
 
-	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, bufPool, output)
+	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
 	t.Logf("read all data cost: %s", time.Since(now))
 	intest.AssertNoError(err)
 }
@@ -806,14 +810,18 @@ finishCreateFiles:
 	require.Equal(t, 2091, len(dataFiles))
 
 	p := newProfiler(true, true)
-	bufPool := membuf.NewPool(
+	smallBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(smallBlockSize),
+	)
+	largeBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 	)
 	output := &memKVsAndBuffers{}
 	p.beforeTest()
 	now := time.Now()
-	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, bufPool, output)
+	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	elapsed := time.Since(now)

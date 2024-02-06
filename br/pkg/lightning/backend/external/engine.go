@@ -94,14 +94,15 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
-	storage         storage.ExternalStorage
-	dataFiles       []string
-	statsFiles      []string
-	startKey        []byte
-	endKey          []byte
-	splitKeys       [][]byte
-	regionSplitSize int64
-	bufPool         *membuf.Pool
+	storage           storage.ExternalStorage
+	dataFiles         []string
+	statsFiles        []string
+	startKey          []byte
+	endKey            []byte
+	splitKeys         [][]byte
+	regionSplitSize   int64
+	smallBlockBufPool *membuf.Pool
+	largeBlockBufPool *membuf.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
 
@@ -128,7 +129,10 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 12 * units.GiB
+const (
+	memLimit       = 12 * units.GiB
+	smallBlockSize = units.MiB
+)
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
@@ -158,7 +162,12 @@ func NewExternalEngine(
 		endKey:          endKey,
 		splitKeys:       splitKeys,
 		regionSplitSize: regionSplitSize,
-		bufPool: membuf.NewPool(
+		smallBlockBufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(smallBlockSize),
+		),
+		largeBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
@@ -210,8 +219,6 @@ func (e *Engine) getAdjustedConcurrency() int {
 	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
 	return max(adjusted, 1)
 }
-
-var readAllDataConcThreshold = uint64(16)
 
 func getFilesReadConcurrency(
 	ctx context.Context,
@@ -268,7 +275,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		e.statsFiles,
 		startKey,
 		endKey,
-		e.bufPool,
+		e.smallBlockBufPool,
+		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
 	)
 	if err != nil {
@@ -459,9 +467,13 @@ func (e *Engine) SplitRanges(
 
 // Close implements common.Engine.
 func (e *Engine) Close() error {
-	if e.bufPool != nil {
-		e.bufPool.Destroy()
-		e.bufPool = nil
+	if e.smallBlockBufPool != nil {
+		e.smallBlockBufPool.Destroy()
+		e.smallBlockBufPool = nil
+	}
+	if e.largeBlockBufPool != nil {
+		e.largeBlockBufPool.Destroy()
+		e.largeBlockBufPool = nil
 	}
 	e.storage.Close()
 	return nil
@@ -469,11 +481,21 @@ func (e *Engine) Close() error {
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	if e.bufPool != nil {
-		e.bufPool.Destroy()
-		memLimiter := membuf.NewLimiter(memLimit)
-		e.bufPool = membuf.NewPool(
+	memLimiter := membuf.NewLimiter(memLimit)
+	if e.smallBlockBufPool != nil {
+		e.smallBlockBufPool.Destroy()
+		e.smallBlockBufPool = membuf.NewPool(
+			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(smallBlockSize),
+		)
+	}
+	if e.largeBlockBufPool != nil {
+		e.largeBlockBufPool.Destroy()
+		e.largeBlockBufPool = membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 		)
 	}
 	return nil
