@@ -56,7 +56,7 @@ stop_services() {
         stop $svc &
     done
     sleep 2 # give some time for the OS to reap all processes
-    lsof -n -P -i :2379 -i :4000 -i :10080 -i :20161 -i :20162 -i :20163 -i :20181 -i :20182 -i :20183 -i :17000 -i :8125 || true
+    lsof -n -P -i :2379 -i :4000 -i :10080 -i :20161 -i :20162 -i :20163 -i :20181 -i :20182 -i :20183 -i :17000 -i :20292 || true
 }
 
 start_services() {

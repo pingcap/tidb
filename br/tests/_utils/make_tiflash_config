@@ -21,7 +21,6 @@ reserve-space = "1KB"
 EOF
 
 cat > $TEST_DIR/tiflash.toml <<EOF
-https_port = 8125
 listen_host = "0.0.0.0"
 path = "$TEST_DIR/tiflash/data"
 tcp_port_secure = 9002
@@ -38,7 +37,7 @@ log-file = "$TEST_DIR/tiflash-proxy.log"
 
 [logger]
 count = 20
-level = "trace"
+level = "debug"
 log = "$TEST_DIR/tiflash-stdout.log"
 errorlog = "$TEST_DIR/tiflash-stderr.log"
 size = "1000M"
