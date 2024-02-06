@@ -769,76 +769,86 @@ func TestReadAllData(t *testing.T) {
 
 	fileIdx := 0
 	val := make([]byte, 90)
+	eg := errgroup.Group{}
 	for ; fileIdx < 1000; fileIdx++ {
-		fileName := fmt.Sprintf("/test%d", fileIdx)
-		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
-		err := writer.Init(ctx, 5*1024*1024)
-		require.NoError(t, err)
-		key := []byte(fmt.Sprintf("key0%d", fileIdx))
-		err = writer.WriteRow(ctx, key, val)
-		require.NoError(t, err)
+		fileIdx := fileIdx
+		eg.Go(func() error {
+			fileName := fmt.Sprintf("/test%d", fileIdx)
+			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			err := writer.Init(ctx, 5*1024*1024)
+			require.NoError(t, err)
+			key := []byte(fmt.Sprintf("key0%d", fileIdx))
+			err = writer.WriteRow(ctx, key, val)
+			require.NoError(t, err)
 
-		// write some extra data that is greater than readRangeEnd
-		err = writer.WriteRow(ctx, keyAfterRange, val)
-		require.NoError(t, err)
-		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 100*1024))
-		require.NoError(t, err)
+			// write some extra data that is greater than readRangeEnd
+			err = writer.WriteRow(ctx, keyAfterRange, val)
+			require.NoError(t, err)
+			err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 100*1024))
+			require.NoError(t, err)
 
-		err = writer.Close(ctx)
-		require.NoError(t, err)
+			return writer.Close(ctx)
+		})
 	}
+	require.NoError(t, eg.Wait())
 	t.Log("finish writing 1000 files of 100B")
 
 	for ; fileIdx < 2000; fileIdx++ {
-		fileName := fmt.Sprintf("/test%d", fileIdx)
-		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
-		err := writer.Init(ctx, 5*1024*1024)
-		require.NoError(t, err)
-
-		kvSize := 0
-		keyIdx := 0
-		for kvSize < 900*1024 {
-			key := []byte(fmt.Sprintf("key%06d_%d", keyIdx, fileIdx))
-			keyIdx++
-			kvSize += len(key) + len(val)
-			err = writer.WriteRow(ctx, key, val)
+		fileIdx := fileIdx
+		eg.Go(func() error {
+			fileName := fmt.Sprintf("/test%d", fileIdx)
+			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			err := writer.Init(ctx, 5*1024*1024)
 			require.NoError(t, err)
-		}
 
-		// write some extra data that is greater than readRangeEnd
-		err = writer.WriteRow(ctx, keyAfterRange, val)
-		require.NoError(t, err)
-		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 300*1024))
-		require.NoError(t, err)
-		err = writer.Close(ctx)
-		require.NoError(t, err)
+			kvSize := 0
+			keyIdx := 0
+			for kvSize < 900*1024 {
+				key := []byte(fmt.Sprintf("key%06d_%d", keyIdx, fileIdx))
+				keyIdx++
+				kvSize += len(key) + len(val)
+				err = writer.WriteRow(ctx, key, val)
+				require.NoError(t, err)
+			}
+
+			// write some extra data that is greater than readRangeEnd
+			err = writer.WriteRow(ctx, keyAfterRange, val)
+			require.NoError(t, err)
+			err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 300*1024))
+			require.NoError(t, err)
+			return writer.Close(ctx)
+		})
 	}
+	require.NoError(t, eg.Wait())
 	t.Log("finish writing 1000 files of 900KB")
 
 	for ; fileIdx < 2090; fileIdx++ {
-		fileName := fmt.Sprintf("/test%d", fileIdx)
-		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
-		err := writer.Init(ctx, 5*1024*1024)
-		require.NoError(t, err)
-
-		kvSize := 0
-		keyIdx := 0
-		for kvSize < 10*1024*1024 {
-			key := []byte(fmt.Sprintf("key%09d_%d", keyIdx, fileIdx))
-			keyIdx++
-			kvSize += len(key) + len(val)
-			err = writer.WriteRow(ctx, key, val)
+		fileIdx := fileIdx
+		eg.Go(func() error {
+			fileName := fmt.Sprintf("/test%d", fileIdx)
+			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			err := writer.Init(ctx, 5*1024*1024)
 			require.NoError(t, err)
-		}
 
-		// write some extra data that is greater than readRangeEnd
-		err = writer.WriteRow(ctx, keyAfterRange, val)
-		require.NoError(t, err)
-		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 900*1024))
-		require.NoError(t, err)
-		err = writer.Close(ctx)
-		require.NoError(t, err)
+			kvSize := 0
+			keyIdx := 0
+			for kvSize < 10*1024*1024 {
+				key := []byte(fmt.Sprintf("key%09d_%d", keyIdx, fileIdx))
+				keyIdx++
+				kvSize += len(key) + len(val)
+				err = writer.WriteRow(ctx, key, val)
+				require.NoError(t, err)
+			}
+
+			// write some extra data that is greater than readRangeEnd
+			err = writer.WriteRow(ctx, keyAfterRange, val)
+			require.NoError(t, err)
+			err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 900*1024))
+			require.NoError(t, err)
+			return writer.Close(ctx)
+		})
 	}
+	require.NoError(t, eg.Wait())
 	t.Log("finish writing 90 files of 10MB")
 
 	for ; fileIdx < 2091; fileIdx++ {
