@@ -759,14 +759,15 @@ func TestReadAllData(t *testing.T) {
 	// 1000 files read one KV (~100B), 1000 files read ~900KB, 90 files read 10MB,
 	// 1 file read 1G. total read size = 1000*100B + 1000*900KB + 90*10MB + 1*1G = 2.8G
 
+	ctx := context.Background()
 	store := openTestingStorage(t)
+	cleanOldFiles(ctx, store, "/")
+
 	readRangeStart := []byte("key0")
 	readRangeEnd := []byte("key88888888")
 	keyAfterRange := []byte("key9")
 	keyAfterRange2 := []byte("key9")
-
-	ctx := context.Background()
-
+	
 	fileIdx := 0
 	val := make([]byte, 90)
 	eg := errgroup.Group{}
