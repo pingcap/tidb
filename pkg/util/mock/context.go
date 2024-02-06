@@ -73,11 +73,6 @@ func (*wrapTxn) SetOption(_ int, _ any) {}
 // SetDiskFullOpt implements the interface.
 func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 
-// Get implements the interface.
-func (*wrapTxn) Get(_ context.Context, _ kv.Key) ([]byte, error) {
-	return []byte{}, kv.ErrNotExist
-}
-
 // StartTS implements the interface.
 func (*wrapTxn) StartTS() uint64 {
 	return 0
@@ -490,7 +485,6 @@ func NewContext() *Context {
 		values: make(map[fmt.Stringer]any),
 		ctx:    ctx,
 		cancel: cancel,
-		txn:    wrapTxn{},
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
