@@ -533,7 +533,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			// TODO: Check how this would work with ADD/REMOVE Partitioning,
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
-			oldAllocs, _ := b.is.AllocByID(oldTableID)
+			oldAllocs, _ := AllocByID(b.is, oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
 
@@ -1181,12 +1181,14 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 	return &Builder{
 		Requirement: r,
 		is: &infoSchema{
+			infoSchemaMisc: infoSchemaMisc{
+				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+				policyMap:             map[string]*model.PolicyInfo{},
+				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
+				ruleBundleMap:         map[int64]*placement.Bundle{},
+			},
 			schemaMap:             map[string]*schemaTables{},
-			policyMap:             map[string]*model.PolicyInfo{},
-			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-			ruleBundleMap:         map[int64]*placement.Bundle{},
 			sortedTablesBuckets:   make([]sortedTables, bucketCount),
-			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		},
 		dirtyDB:  make(map[string]bool),
 		factory:  factory,

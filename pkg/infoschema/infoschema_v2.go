@@ -274,6 +274,7 @@ func compareBySchema(a, b schemaItem) bool {
 }
 
 type infoschemaV2 struct {
+	infoSchemaMisc
 	r             autoid.Requirement
 	ts            uint64
 	schemaVersion int64

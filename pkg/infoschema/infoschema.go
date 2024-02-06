@@ -41,15 +41,18 @@ type InfoSchema interface {
 	TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
+	TableByID(id int64) (table.Table, bool)
+	AllSchemas() []*model.DBInfo
+	SchemaTables(schema model.CIStr) []table.Table
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	SchemaMetaVersion() int64
+	InfoSchemaMisc 
+}
+
+type InfoSchemaMisc interface {
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
-	TableByID(id int64) (table.Table, bool)
-	AllocByID(id int64) (autoid.Allocators, bool)
-	AllSchemas() []*model.DBInfo
-	Clone() (result []*model.DBInfo)
-	SchemaTables(schema model.CIStr) []table.Table
-	SchemaMetaVersion() int64
-	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	// Clone() (result []*model.DBInfo)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
 	// AllPlacementBundles is used to get all placement bundles
@@ -83,7 +86,7 @@ type schemaTables struct {
 
 const bucketCount = 512
 
-type infoSchema struct {
+type infoSchemaMisc struct {
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
 
@@ -95,20 +98,25 @@ type infoSchema struct {
 	resourceGroupMutex sync.RWMutex
 	resourceGroupMap   map[string]*model.ResourceGroupInfo
 
+	// temporaryTables stores the temporary table ids
+	temporaryTableIDs map[int64]struct{}
+
+	// referredForeignKeyMap records all table's ReferredFKInfo.
+	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
+	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+}
+
+type infoSchema struct {
+	infoSchemaMisc
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
 
-	// temporaryTables stores the temporary table ids
-	temporaryTableIDs map[int64]struct{}
 
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
-
-	// referredForeignKeyMap records all table's ReferredFKInfo.
-	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
-	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
 
 	infoData *InfoSchemaData
 }
@@ -280,7 +288,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
+func  AllocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return autoid.Allocators{}, false
@@ -335,7 +343,7 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 }
 
 // HasTemporaryTable returns whether information schema has temporary table
-func (is *infoSchema) HasTemporaryTable() bool {
+func (is *infoSchemaMisc) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
 }
 
@@ -404,7 +412,7 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 }
 
 // PolicyByName is used to find the policy.
-func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
+func (is *infoSchemaMisc) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	t, r := is.policyMap[name.L]
@@ -412,7 +420,7 @@ func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 }
 
 // ResourceGroupByName is used to find the resource group.
-func (is *infoSchema) ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool) {
+func (is *infoSchemaMisc) ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool) {
 	is.resourceGroupMutex.RLock()
 	defer is.resourceGroupMutex.RUnlock()
 	t, r := is.resourceGroupMap[name.L]
@@ -420,7 +428,7 @@ func (is *infoSchema) ResourceGroupByName(name model.CIStr) (*model.ResourceGrou
 }
 
 // AllResourceGroups returns all resource groups.
-func (is *infoSchema) AllResourceGroups() []*model.ResourceGroupInfo {
+func (is *infoSchemaMisc) AllResourceGroups() []*model.ResourceGroupInfo {
 	is.resourceGroupMutex.RLock()
 	defer is.resourceGroupMutex.RUnlock()
 	groups := make([]*model.ResourceGroupInfo, 0, len(is.resourceGroupMap))
@@ -431,7 +439,7 @@ func (is *infoSchema) AllResourceGroups() []*model.ResourceGroupInfo {
 }
 
 // AllPlacementPolicies returns all placement policies
-func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
+func (is *infoSchemaMisc) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	policies := make([]*model.PolicyInfo, 0, len(is.policyMap))
@@ -441,7 +449,7 @@ func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
 	return policies
 }
 
-func (is *infoSchema) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
+func (is *infoSchemaMisc) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
 	t, r := is.ruleBundleMap[id]
 	return t, r
 }
@@ -540,7 +548,7 @@ func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *mode
 }
 
 // GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+func (is *infoSchemaMisc) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
 	name := SchemaAndTableName{schema: schema, table: table}
 	return is.referredForeignKeyMap[name]
 }
