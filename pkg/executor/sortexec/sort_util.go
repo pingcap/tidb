@@ -133,6 +133,11 @@ type chunkWithMemoryUsage struct {
 	MemoryUsage int64
 }
 
+type rowWithError struct {
+	row chunk.Row
+	err error
+}
+
 func injectParallelSortRandomFail(triggerFactor int32) {
 	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -142,11 +147,6 @@ func injectParallelSortRandomFail(triggerFactor int32) {
 			}
 		}
 	})
-}
-
-type rowWithError struct {
-	row chunk.Row
-	err error
 }
 
 // It's used only when spill is triggered
