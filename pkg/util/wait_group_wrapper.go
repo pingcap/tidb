@@ -105,7 +105,7 @@ func (w *WaitGroupEnhancedWrapper) Run(exec func(), label string) {
 // exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
 // passing `nil` means noop.
 // Note that the registered label shouldn't be duplicated.
-func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r interface{}), label string) {
+func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r any), label string) {
 	w.onStart(label)
 	w.Add(1)
 	go func() {
@@ -176,7 +176,7 @@ func (w *WaitGroupWrapper) RunWithLog(exec func()) {
 // and call done when function return. it will dump current goroutine stack into log if catch any recover result.
 // exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
 // passing `nil` means noop.
-func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interface{})) {
+func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r any)) {
 	w.Add(1)
 	go func() {
 		defer func() {

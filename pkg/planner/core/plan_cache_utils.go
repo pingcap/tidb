@@ -439,11 +439,11 @@ type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
 	StmtDB      string // which DB the statement will be processed over
 	VisitInfos  []visitInfo
-	ColumnInfos interface{}
+	ColumnInfos any
 	// Executor is only used for point get scene.
 	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
 	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
-	Executor interface{}
+	Executor any
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.

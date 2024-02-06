@@ -12,6 +12,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/statistics/handle/usage/indexusage",
         "//pkg/types",
         "//pkg/util/context",
         "//pkg/util/dbterror/plannererrors",

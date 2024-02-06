@@ -17,7 +17,6 @@ package taskexecutor
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -52,7 +51,7 @@ func TestBuildManager(t *testing.T) {
 	require.ErrorContains(t, err, "invalid cpu or memory")
 }
 
-func TestManageTask(t *testing.T) {
+func TestManageTaskExecutor(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -60,38 +59,42 @@ func TestManageTask(t *testing.T) {
 	m, err := NewManager(context.Background(), "test", mockTaskTable)
 	require.NoError(t, err)
 
-	m.addHandlingTask(1)
-	require.Len(t, m.mu.handlingTasks, 1)
+	// add executor 1
+	executor1 := mock.NewMockTaskExecutor(ctrl)
+	executor1.EXPECT().GetTask().Return(&proto.Task{ID: 1})
+	m.addTaskExecutor(executor1)
+	require.Len(t, m.mu.taskExecutors, 1)
 	require.True(t, m.isExecutorStarted(1))
-	m.addHandlingTask(2)
+	require.True(t, ctrl.Satisfied())
+	// add executor 2
+	executor2 := mock.NewMockTaskExecutor(ctrl)
+	executor2.EXPECT().GetTask().Return(&proto.Task{ID: 2})
+	m.addTaskExecutor(executor2)
 	require.True(t, m.isExecutorStarted(2))
-	m.removeHandlingTask(1)
+	require.True(t, ctrl.Satisfied())
+	// delete executor 1
+	executor1.EXPECT().GetTask().Return(&proto.Task{ID: 1})
+	m.delTaskExecutor(executor1)
 	require.False(t, m.isExecutorStarted(1))
+	require.True(t, ctrl.Satisfied())
 
-	ctx1, cancel1 := context.WithCancelCause(context.Background())
-	m.registerCancelFunc(2, cancel1)
+	// cancel executor 2
+	executor2.EXPECT().Cancel()
 	m.cancelTaskExecutors([]*proto.Task{{ID: 2}})
-	require.Equal(t, context.Canceled, ctx1.Err())
-
-	// test cancel.
-	m.addHandlingTask(1)
-	ctx2, cancel2 := context.WithCancelCause(context.Background())
-	m.registerCancelFunc(1, cancel2)
-	ctx3, cancel3 := context.WithCancelCause(context.Background())
-	m.registerCancelFunc(2, cancel3)
-	m.cancelRunningSubtaskOf(1)
-	require.Equal(t, context.Canceled, ctx2.Err())
-	require.NoError(t, ctx3.Err())
-
-	// test pause.
-	m.addHandlingTask(3)
-	ctx4, cancel4 := context.WithCancelCause(context.Background())
-	m.registerCancelFunc(1, cancel4)
+	require.True(t, ctrl.Satisfied())
+	// cancel running subtask of 2
+	executor2.EXPECT().CancelRunningSubtask()
+	m.cancelRunningSubtaskOf(2)
+	require.True(t, ctrl.Satisfied())
+	// handle pause
+	executor1.EXPECT().GetTask().Return(&proto.Task{ID: 1})
+	executor1.EXPECT().Cancel().Times(2)
+	m.addTaskExecutor(executor1)
 	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, "test", int64(1)).Return(nil)
 	require.NoError(t, m.handlePausingTask(1))
-	require.Equal(t, context.Canceled, ctx4.Err())
 	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, "test", int64(1)).Return(errors.New("pause failed"))
 	require.ErrorContains(t, m.handlePausingTask(1), "pause failed")
+	require.True(t, ctrl.Satisfied())
 }
 
 func TestHandleExecutableTasks(t *testing.T) {
@@ -103,17 +106,19 @@ func TestHandleExecutableTasks(t *testing.T) {
 
 	id := "test"
 	taskID := int64(1)
-	task := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
+	task := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", Concurrency: 6}
+	mockInternalExecutor.EXPECT().GetTask().Return(task).AnyTimes()
 
 	m, err := NewManager(ctx, id, mockTaskTable)
 	require.NoError(t, err)
+	m.slotManager.available = 16
 
 	// no task
 	m.handleExecutableTasks(nil)
 
 	// type not found
 	mockTaskTable.EXPECT().FailSubtask(m.ctx, id, taskID, gomock.Any())
-	m.handleExecutableTask(task)
+	m.startTaskExecutor(task)
 	require.True(t, ctrl.Satisfied())
 
 	RegisterTaskType("type",
@@ -126,100 +131,72 @@ func TestHandleExecutableTasks(t *testing.T) {
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(executorErr)
 	mockInternalExecutor.EXPECT().IsRetryableError(executorErr).Return(false)
 	mockTaskTable.EXPECT().FailSubtask(m.ctx, id, taskID, executorErr)
-	m.handleExecutableTask(task)
-	m.removeHandlingTask(taskID)
+	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task}})
 	require.Equal(t, true, ctrl.Satisfied())
 
 	// executor init failed retryable
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(executorErr)
 	mockInternalExecutor.EXPECT().IsRetryableError(executorErr).Return(true)
-	m.handleExecutableTask(task)
-	m.removeHandlingTask(taskID)
+	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task}})
 	require.Equal(t, true, ctrl.Satisfied())
 
+	ch := make(chan struct{})
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutor.EXPECT().Close()
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
-		unfinishedSubtaskStates).Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task, gomock.Any()).Return(nil)
-
-	// StepTwo failed
-	task1 := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepTwo}
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task1, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepTwo,
-		unfinishedSubtaskStates).Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).Return(errors.New("run err"))
-
-	task2 := &proto.Task{ID: taskID, State: proto.TaskStateReverting, Step: proto.StepTwo}
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task2, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepTwo,
-		unfinishedSubtaskStates).Return(true, nil)
-	mockInternalExecutor.EXPECT().Rollback(gomock.Any(), task2).Return(nil)
-
-	task3 := &proto.Task{ID: taskID, State: proto.TaskStateReverted, Step: proto.StepTwo}
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task3, nil)
-
+	mockInternalExecutor.EXPECT().Run(gomock.Any()).DoAndReturn(func(*proto.StepResource) {
+		<-ch
+	})
 	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task}})
+	require.Eventually(t, func() bool {
+		return ctrl.Satisfied()
+	}, 5*time.Second, 100*time.Millisecond)
+	require.Equal(t, 10, m.slotManager.available)
+	require.True(t, m.isExecutorStarted(taskID))
+	close(ch)
+	mockInternalExecutor.EXPECT().Close()
 	m.executorWG.Wait()
 	require.True(t, ctrl.Satisfied())
-
-	// no subtask to run
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutor.EXPECT().Close()
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
-		unfinishedSubtaskStates).Return(false, nil)
-	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task}})
-	m.executorWG.Wait()
-	require.True(t, ctrl.Satisfied())
+	require.Equal(t, 16, m.slotManager.available)
+	require.False(t, m.isExecutorStarted(taskID))
 }
 
 func TestManager(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
-	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
+	mockInternalExecutors := map[int64]*mock.MockTaskExecutor{
+		1: mock.NewMockTaskExecutor(ctrl),
+		2: mock.NewMockTaskExecutor(ctrl),
+		3: mock.NewMockTaskExecutor(ctrl),
+	}
 	RegisterTaskType("type",
 		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
-			return mockInternalExecutor
+			return mockInternalExecutors[task.ID]
 		})
 	id := "test"
 
 	m, err := NewManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
 
-	taskID1 := int64(1)
-	taskID2 := int64(2)
-	taskID3 := int64(3)
-	task1 := &proto.Task{ID: taskID1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
-	task2 := &proto.Task{ID: taskID2, State: proto.TaskStateReverting, Step: proto.StepOne, Type: "type"}
-	task3 := &proto.Task{ID: taskID3, State: proto.TaskStatePausing, Step: proto.StepOne, Type: "type"}
+	task1 := &proto.Task{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type"}
+	task2 := &proto.Task{ID: 2, State: proto.TaskStateReverting, Step: proto.StepOne, Type: "type"}
+	task3 := &proto.Task{ID: 3, State: proto.TaskStatePausing, Step: proto.StepOne, Type: "type"}
 
 	mockTaskTable.EXPECT().InitMeta(m.ctx, "test", "").Return(nil).Times(1)
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
 		Return([]*storage.TaskExecInfo{{Task: task1}, {Task: task2}, {Task: task3}}, nil)
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).Return(nil, nil).AnyTimes()
 	// task1
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil).AnyTimes()
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates).Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates).Return(false, nil)
-	mockInternalExecutor.EXPECT().Close()
+	mockInternalExecutors[task1.ID].EXPECT().GetTask().Return(task1).Times(2)
+	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any())
+	mockInternalExecutors[task1.ID].EXPECT().Close()
 	// task2
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID2).Return(task2, nil).AnyTimes()
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates).Return(true, nil)
-	mockInternalExecutor.EXPECT().Rollback(gomock.Any(), task2).Return(nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates).Return(false, nil)
-	mockInternalExecutor.EXPECT().Close()
+	mockInternalExecutors[task2.ID].EXPECT().GetTask().Return(task2).Times(2)
+	mockInternalExecutors[task2.ID].EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutors[task2.ID].EXPECT().Run(gomock.Any())
+	mockInternalExecutors[task2.ID].EXPECT().Close()
 	// task3
-	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, id, taskID3).Return(nil).AnyTimes()
+	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, id, task3.ID).Return(nil).AnyTimes()
 
 	require.NoError(t, m.InitMeta())
 	require.NoError(t, m.Start())
@@ -247,9 +224,9 @@ func TestManagerHandleTasks(t *testing.T) {
 	// failed to get tasks
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
 		Return(nil, errors.New("mock err"))
-	require.Len(t, m.mu.handlingTasks, 0)
+	require.Len(t, m.mu.taskExecutors, 0)
 	m.handleTasks()
-	require.Len(t, m.mu.handlingTasks, 0)
+	require.Len(t, m.mu.taskExecutors, 0)
 	require.True(t, ctrl.Satisfied())
 
 	// handle pausing tasks
@@ -263,26 +240,17 @@ func TestManagerHandleTasks(t *testing.T) {
 	defer close(ch)
 	task1 := &proto.Task{ID: 1, State: proto.TaskStateRunning, Step: proto.StepOne, Type: "type", Concurrency: 1}
 
+	mockInternalExecutor.EXPECT().GetTask().Return(task1).AnyTimes()
 	// handle pending tasks
-	var task1Ctx context.Context
-	var mu sync.Mutex
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
 		Return([]*storage.TaskExecInfo{{Task: task1}}, nil)
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, task1.ID).Return(task1, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, task1.ID, proto.StepOne,
-		unfinishedSubtaskStates).Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(ctx context.Context, _ *proto.Task, _ *proto.StepResource) error {
-		mu.Lock()
-		task1Ctx = ctx
-		mu.Unlock()
+	mockInternalExecutor.EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 	m.handleTasks()
 	require.Eventually(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return task1Ctx != nil && ctrl.Satisfied()
+		return ctrl.Satisfied()
 	}, 5*time.Second, 100*time.Millisecond)
 	require.True(t, m.isExecutorStarted(task1.ID))
 
@@ -296,15 +264,13 @@ func TestManagerHandleTasks(t *testing.T) {
 	task1.State = proto.TaskStateReverting
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
 		Return([]*storage.TaskExecInfo{{Task: task1}}, nil)
+	mockInternalExecutor.EXPECT().CancelRunningSubtask()
 	m.handleTasks()
 	require.True(t, ctrl.Satisfied())
 	require.True(t, m.isExecutorStarted(task1.ID))
-	require.Error(t, task1Ctx.Err())
-	require.ErrorIs(t, context.Cause(task1Ctx), ErrCancelSubtask)
 
 	// finish task1, executor will be closed
 	task1.State = proto.TaskStateReverted
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, task1.ID).Return(task1, nil)
 	mockInternalExecutor.EXPECT().Close()
 	ch <- nil
 	require.Eventually(t, func() bool {
@@ -319,10 +285,14 @@ func TestSlotManagerInManager(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
-	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
+	mockInternalExecutors := map[int64]*mock.MockTaskExecutor{
+		1: mock.NewMockTaskExecutor(ctrl),
+		2: mock.NewMockTaskExecutor(ctrl),
+		3: mock.NewMockTaskExecutor(ctrl),
+	}
 	RegisterTaskType("type",
 		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
-			return mockInternalExecutor
+			return mockInternalExecutors[task.ID]
 		})
 	id := "test"
 
@@ -331,24 +301,32 @@ func TestSlotManagerInManager(t *testing.T) {
 	m.slotManager.available = 10
 
 	var (
-		taskID1 = int64(1)
-		taskID2 = int64(2)
-
 		task1 = &proto.Task{
-			ID:          taskID1,
+			ID:          1,
 			State:       proto.TaskStateRunning,
 			Concurrency: 10,
 			Step:        proto.StepOne,
 			Type:        "type",
 		}
 		task2 = &proto.Task{
-			ID:          taskID2,
+			ID:          2,
 			State:       proto.TaskStateRunning,
 			Concurrency: 1,
 			Step:        proto.StepOne,
 			Type:        "type",
 		}
+		task3 = &proto.Task{
+			ID:          3,
+			State:       proto.TaskStateRunning,
+			Concurrency: 1,
+			Priority:    -1,
+			Step:        proto.StepOne,
+			Type:        "type",
+		}
 	)
+	mockInternalExecutors[task1.ID].EXPECT().GetTask().Return(task1).AnyTimes()
+	mockInternalExecutors[task2.ID].EXPECT().GetTask().Return(task2).AnyTimes()
+	mockInternalExecutors[task3.ID].EXPECT().GetTask().Return(task3).AnyTimes()
 
 	ch := make(chan error)
 	defer close(ch)
@@ -358,130 +336,87 @@ func TestSlotManagerInManager(t *testing.T) {
 	// 2. task2 alloc failed
 	// 3. task1 run success
 
-	// mock inside handleExecutableTask
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
+	// mock inside startTaskExecutor
+	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
 	// task1 start running
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task, _ *proto.StepResource) error {
+	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 
 	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task1}, {Task: task2}})
 	// task1 alloc resource success
 	require.Eventually(t, func() bool {
-		if m.slotManager.available != 0 || len(m.slotManager.executorTasks) != 1 ||
-			m.slotManager.executorTasks[0].ID != task1.ID {
-			return false
-		}
 		return ctrl.Satisfied()
 	}, 2*time.Second, 300*time.Millisecond)
-	ch <- nil
-
+	require.True(t, m.isExecutorStarted(task1.ID))
+	require.Equal(t, 0, m.slotManager.available)
+	require.Len(t, m.slotManager.executorTasks, 1)
 	// task1 succeed
-	task1.State = proto.TaskStateSucceed
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
-	mockInternalExecutor.EXPECT().Close()
+	ch <- nil
+	mockInternalExecutors[task1.ID].EXPECT().Close()
 	m.executorWG.Wait()
 	require.Equal(t, 10, m.slotManager.available)
-	require.Equal(t, 0, len(m.slotManager.executorTasks))
+	require.False(t, m.isExecutorStarted(task1.ID))
+	require.Len(t, m.slotManager.executorTasks, 0)
 	require.True(t, ctrl.Satisfied())
 
 	// ******** Test task occupation ********
-	task1.State = proto.TaskStateRunning
-	var (
-		taskID3 = int64(3)
-		task3   = &proto.Task{
-			ID:          taskID3,
-			State:       proto.TaskStateRunning,
-			Concurrency: 1,
-			Priority:    -1,
-			Step:        proto.StepOne,
-			Type:        "type",
-		}
-	)
-	// 1. task1 alloc success
-
-	// mock inside handleExecutableTask
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
 	// task1 start running
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task, _ *proto.StepResource) error {
+	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 
 	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task1}, {Task: task2}})
 	// task1 alloc resource success
 	require.Eventually(t, func() bool {
-		if m.slotManager.available != 0 || len(m.slotManager.executorTasks) != 1 ||
-			m.slotManager.executorTasks[0].ID != task1.ID {
-			return false
-		}
 		return ctrl.Satisfied()
 	}, 2*time.Second, 300*time.Millisecond)
+	require.True(t, m.isExecutorStarted(task1.ID))
+	require.Equal(t, 0, m.slotManager.available)
+	require.Len(t, m.slotManager.executorTasks, 1)
 
 	// 2. task1 is preempted by task3, task1 start to pausing
 	// 3. task3 is waiting for task1 to be released, and task2 can't be allocated
 	// the priority of task3 is higher than task2, so task3 is in front of task2
+	mockInternalExecutors[task1.ID].EXPECT().Cancel()
 	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task3}, {Task: task2}})
-	require.Equal(t, 0, m.slotManager.available)
-	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorTasks)
 	require.True(t, ctrl.Satisfied())
-
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
-	mockInternalExecutor.EXPECT().Close()
+	require.Equal(t, 0, m.slotManager.available)
+	require.Len(t, m.slotManager.executorTasks, 1)
+	require.True(t, m.isExecutorStarted(task1.ID))
 
 	// 4. task1 is released, task3 alloc success, start to run
+	mockInternalExecutors[task1.ID].EXPECT().Close()
 	ch <- context.Canceled
 	m.executorWG.Wait()
 	require.Equal(t, 10, m.slotManager.available)
 	require.Len(t, m.slotManager.executorTasks, 0)
+	require.False(t, m.isExecutorStarted(task1.ID))
 	require.True(t, ctrl.Satisfied())
 
-	// mock inside handleExecutableTask
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID3).Return(task3, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID3, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task3, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task, _ *proto.StepResource) error {
+	// 5. available is enough, task3/task2 alloc success,
+	mockInternalExecutors[task2.ID].EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutors[task2.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
-
-	// 5. available is enough, task2 alloc success,
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID2).Return(task2, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task2, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task, _ *proto.StepResource) error {
+	mockInternalExecutors[task3.ID].EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutors[task3.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 
 	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task3}, {Task: task1}, {Task: task2}})
-	time.Sleep(2 * time.Second)
 	require.Eventually(t, func() bool {
-		if m.slotManager.available != 8 || len(m.slotManager.executorTasks) != 2 {
-			return false
-		}
 		return ctrl.Satisfied()
 	}, 2*time.Second, 300*time.Millisecond)
+	require.Equal(t, 8, m.slotManager.available)
+	require.Len(t, m.slotManager.executorTasks, 2)
+	require.True(t, m.isExecutorStarted(task2.ID))
+	require.True(t, m.isExecutorStarted(task3.ID))
 
 	// 6. task3/task2 run success
-	task3.State = proto.TaskStateSucceed
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID3).Return(task3, nil)
-	mockInternalExecutor.EXPECT().Close()
-	task2.State = proto.TaskStateSucceed
-	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID2).Return(task2, nil)
-	mockInternalExecutor.EXPECT().Close()
+	mockInternalExecutors[task2.ID].EXPECT().Close()
+	mockInternalExecutors[task3.ID].EXPECT().Close()
 	ch <- nil
 	ch <- nil
 	m.executorWG.Wait()

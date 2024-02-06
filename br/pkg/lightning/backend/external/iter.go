@@ -74,11 +74,11 @@ func (h mergeHeap[T]) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
 }
 
-func (h *mergeHeap[T]) Push(x interface{}) {
+func (h *mergeHeap[T]) Push(x any) {
 	*h = append(*h, x.(mergeHeapElem[T]))
 }
 
-func (h *mergeHeap[T]) Pop() interface{} {
+func (h *mergeHeap[T]) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]

@@ -90,7 +90,7 @@ func (*Domain) setGlobalResourceControl(enable bool) {
 }
 
 // updatePDClient is used to set the dynamic option into the PD client.
-func (do *Domain) updatePDClient(option pd.DynamicOption, val interface{}) error {
+func (do *Domain) updatePDClient(option pd.DynamicOption, val any) error {
 	store, ok := do.store.(interface{ GetPDClient() pd.Client })
 	if !ok {
 		return nil

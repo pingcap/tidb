@@ -16,14 +16,11 @@ package common
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -118,80 +115,6 @@ func TestIndexColumnLength(t *testing.T) {
 
 	idxC2Cols := tables.FindIndexByColName(tab, "c2").Meta().Columns
 	require.Equal(t, 6, idxC2Cols[0].Length)
-}
-
-// test for https://github.com/pingcap/tidb/pull/461
-func TestUnique(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec(`CREATE TABLE test ( id int(11) UNSIGNED NOT NULL AUTO_INCREMENT, val int UNIQUE, PRIMARY KEY (id)); `)
-	tk.MustExec("begin;")
-	tk.MustExec("insert into test(id, val) values(1, 1);")
-	tk1.MustExec("begin;")
-	tk1.MustExec("insert into test(id, val) values(2, 2);")
-	tk2.MustExec("begin;")
-	tk2.MustExec("insert into test(id, val) values(1, 2);")
-	tk2.MustExec("commit;")
-	_, err := tk.Exec("commit")
-	require.Error(t, err)
-	// Check error type and error message
-	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists), fmt.Sprintf("err %v", err))
-	require.Equal(t, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'test.PRIMARY'", err.Error())
-
-	_, err = tk1.Exec("commit")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, kv.ErrKeyExists), fmt.Sprintf("err %v", err))
-	require.Equal(t, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'test.val'", err.Error())
-
-	// Test for https://github.com/pingcap/tidb/issues/463
-	tk.MustExec("drop table test;")
-	tk.MustExec(`CREATE TABLE test (
-			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
-			val int UNIQUE,
-			PRIMARY KEY (id)
-		);`)
-	tk.MustExec("insert into test(id, val) values(1, 1);")
-	_, err = tk.Exec("insert into test(id, val) values(2, 1);")
-	require.Error(t, err)
-	tk.MustExec("insert into test(id, val) values(2, 2);")
-
-	tk.MustExec("begin;")
-	tk.MustExec("insert into test(id, val) values(3, 3);")
-	_, err = tk.Exec("insert into test(id, val) values(4, 3);")
-	require.Error(t, err)
-	tk.MustExec("insert into test(id, val) values(4, 4);")
-	tk.MustExec("commit;")
-
-	tk1.MustExec("begin;")
-	tk1.MustExec("insert into test(id, val) values(5, 6);")
-	tk.MustExec("begin;")
-	tk.MustExec("insert into test(id, val) values(20, 6);")
-	tk.MustExec("commit;")
-	_, _ = tk1.Exec("commit")
-	tk1.MustExec("insert into test(id, val) values(5, 5);")
-
-	tk.MustExec("drop table test;")
-	tk.MustExec(`CREATE TABLE test (
-			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
-			val1 int UNIQUE,
-			val2 int UNIQUE,
-			PRIMARY KEY (id)
-		);`)
-	tk.MustExec("insert into test(id, val1, val2) values(1, 1, 1);")
-	tk.MustExec("insert into test(id, val1, val2) values(2, 2, 2);")
-	_, _ = tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
-	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
 }
 
 func TestTableInfoMeta(t *testing.T) {

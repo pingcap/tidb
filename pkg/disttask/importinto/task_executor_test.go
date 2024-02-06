@@ -43,12 +43,12 @@ func TestImportTaskExecutor(t *testing.T) {
 		proto.ImportStepWriteAndIngest,
 		proto.ImportStepPostProcess,
 	} {
-		exe, err := executor.GetStepExecutor(ctx, &proto.Task{Step: step, Meta: []byte("{}")}, nil, nil)
+		exe, err := executor.GetStepExecutor(&proto.Task{Step: step, Meta: []byte("{}")}, nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, exe)
 	}
-	_, err := executor.GetStepExecutor(ctx, &proto.Task{Step: proto.StepInit, Meta: []byte("{}")}, nil, nil)
+	_, err := executor.GetStepExecutor(&proto.Task{Step: proto.StepInit, Meta: []byte("{}")}, nil, nil)
 	require.Error(t, err)
-	_, err = executor.GetStepExecutor(ctx, &proto.Task{Step: proto.ImportStepImport, Meta: []byte("")}, nil, nil)
+	_, err = executor.GetStepExecutor(&proto.Task{Step: proto.ImportStepImport, Meta: []byte("")}, nil, nil)
 	require.Error(t, err)
 }

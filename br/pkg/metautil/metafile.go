@@ -252,7 +252,7 @@ func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64
 // This function is compatible with the old backupmeta.
 func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 	var err error
-	ch := make(chan interface{}, MaxBatchSize)
+	ch := make(chan any, MaxBatchSize)
 	errCh := make(chan error)
 	go func() {
 		if err = reader.readDDLs(ctx, func(s []byte) { ch <- s }); err != nil {
@@ -265,7 +265,7 @@ func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 	var ddlBytesArray [][]byte
 	for {
 		itemCount := 0
-		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item interface{}) error {
+		err := receiveBatch(ctx, errCh, ch, MaxBatchSize, func(item any) error {
 			itemCount++
 			if reader.backupMeta.Version == MetaV1 {
 				ddlBytes = item.([]byte)
@@ -313,7 +313,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	ch := make(chan interface{}, MaxBatchSize)
+	ch := make(chan any, MaxBatchSize)
 	schemaCh := make(chan *backuppb.Schema, MaxBatchSize)
 	// Make sure these 2 goroutine avoid to blocked by the errCh.
 	// And the second error in the errCh is not the root cause error.
@@ -409,7 +409,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	for {
 		// table ID -> *Table
 		tableMap := make(map[int64]*Table, MaxBatchSize)
-		err := receiveBatch(cctx, errCh, ch, MaxBatchSize, func(item interface{}) error {
+		err := receiveBatch(cctx, errCh, ch, MaxBatchSize, func(item any) error {
 			table := item.(*Table)
 			if table.Info != nil {
 				if fileMap != nil {
@@ -483,8 +483,8 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 }
 
 func receiveBatch(
-	ctx context.Context, errCh chan error, ch <-chan interface{}, maxBatchSize int,
-	collectItem func(interface{}) error,
+	ctx context.Context, errCh chan error, ch <-chan any, maxBatchSize int,
+	collectItem func(any) error,
 ) error {
 	batchSize := 0
 	for {
@@ -542,7 +542,7 @@ func (op AppendOp) name() string {
 }
 
 // appends item to MetaFile
-func (op AppendOp) appendFile(a *backuppb.MetaFile, b interface{}) (dataFileSize int, size int, itemCount int) {
+func (op AppendOp) appendFile(a *backuppb.MetaFile, b any) (dataFileSize int, size int, itemCount int) {
 	switch op {
 	case AppendMetaFile:
 		metaFile := b.(*backuppb.File)
@@ -591,7 +591,7 @@ func NewSizedMetaFile(sizeLimit int) *sizedMetaFile {
 	}
 }
 
-func (f *sizedMetaFile) append(file interface{}, op AppendOp) bool {
+func (f *sizedMetaFile) append(file any, op AppendOp) bool {
 	// append to root
 	// 	TODO maybe use multi level index
 	dataFileSize, size, itemCount := op.appendFile(f.root, file)
@@ -619,7 +619,7 @@ type MetaWriter struct {
 	// wg waits StartWriterMetas exits
 	wg sync.WaitGroup
 	// internal item channel
-	metasCh chan interface{}
+	metasCh chan any
 	errCh   chan error
 
 	// records the total item of in one write meta job.
@@ -666,7 +666,7 @@ func NewMetaWriter(
 }
 
 func (writer *MetaWriter) reset() {
-	writer.metasCh = make(chan interface{}, MaxBatchSize)
+	writer.metasCh = make(chan any, MaxBatchSize)
 	writer.errCh = make(chan error)
 
 	// reset flushedItemNum for next meta.
@@ -679,7 +679,7 @@ func (writer *MetaWriter) Update(f func(m *backuppb.BackupMeta)) {
 }
 
 // Send sends the item to buffer.
-func (writer *MetaWriter) Send(m interface{}, _ AppendOp) error {
+func (writer *MetaWriter) Send(m any, _ AppendOp) error {
 	select {
 	case writer.metasCh <- m:
 	// receive an error from StartWriteMetasAsync

@@ -259,7 +259,7 @@ func (s *deserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialRe
 func (s *deserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialResult4JsonObjectAgg) (bool, int64) {
 	memDelta := int64(0)
 	dst.bInMap = 0
-	dst.entries = make(map[string]interface{})
+	dst.entries = make(map[string]any)
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
 		byteNum := int64(len(s.pab.Buf))

@@ -162,7 +162,7 @@ type session struct {
 
 	mu struct {
 		sync.RWMutex
-		values map[fmt.Stringer]interface{}
+		values map[fmt.Stringer]any
 	}
 
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
@@ -214,7 +214,7 @@ type session struct {
 	sandBoxMode bool
 }
 
-var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
+var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
@@ -473,7 +473,7 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
 	txnInfo.RelatedTableIDs = make(map[int64]struct{})
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value any) bool {
 		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
@@ -620,7 +620,7 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 type cachedTableRenewLease struct {
-	tables map[int64]interface{}
+	tables map[int64]any
 	lease  []uint64 // Lease for each visited cached tables.
 	exit   chan struct{}
 }
@@ -680,7 +680,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 		return newErr
 	}
 
-	var decodeFunc func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})
+	var decodeFunc func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any)
 	// if it's a record key or an index key, decode it
 	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
 		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
@@ -945,7 +945,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 }
 
 // precondition: is != nil
-func addTableNameInTableIDField(tableIDField interface{}, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
+func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
 	keyTableID, ok := tableIDField.(string)
 	if !ok {
 		return "", false
@@ -1038,7 +1038,7 @@ func (s *session) GetMPPClient() kv.MPPClient {
 func (s *session) String() string {
 	// TODO: how to print binded context in values appropriately?
 	sessVars := s.sessionVars
-	data := map[string]interface{}{
+	data := map[string]any{
 		"id":         sessVars.ConnectionID,
 		"user":       sessVars.User,
 		"currDBName": sessVars.CurrentDB,
@@ -1587,7 +1587,7 @@ func (s *session) ClearDiskFullOpt() {
 	s.diskFullOpt = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
-func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
+func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1678,7 +1678,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
-func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlescape.EscapeSQL(sql, args...)
@@ -1842,7 +1842,7 @@ func (s *session) DisableSandBoxMode() {
 
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
 func ParseWithParams4Test(ctx context.Context, s types.Session,
-	sql string, args ...interface{}) (ast.StmtNode, error) {
+	sql string, args ...any) (ast.StmtNode, error) {
 	return s.(*session).ParseWithParams(ctx, sql, args)
 }
 
@@ -2035,7 +2035,7 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 	return fn(ctx, se)
 }
 
-func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...any) ([]chunk.Row, []*ast.ResultField, error) {
 	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
 		stmt, err := se.ParseWithParams(ctx, sql, params...)
 		if err != nil {
@@ -2536,13 +2536,13 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 	return &s.txn, err
 }
 
-func (s *session) SetValue(key fmt.Stringer, value interface{}) {
+func (s *session) SetValue(key fmt.Stringer, value any) {
 	s.mu.Lock()
 	s.mu.values[key] = value
 	s.mu.Unlock()
 }
 
-func (s *session) Value(key fmt.Stringer) interface{} {
+func (s *session) Value(key fmt.Stringer) any {
 	s.mu.RLock()
 	value := s.mu.values[key]
 	s.mu.RUnlock()
@@ -3051,7 +3051,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
-		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		if config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		}
 	}
 
 	return s, nil
@@ -3580,7 +3582,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
 	}
-	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	s.advisoryLocks = make(map[string]*advisoryLock)
 
@@ -3602,7 +3604,7 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 		if s.statsCollector == nil {
 			s.statsCollector = dom.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
 		}
-		if s.idxUsageCollector == nil {
+		if s.idxUsageCollector == nil && config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
 			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
@@ -3637,7 +3639,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
@@ -3834,7 +3836,7 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 }
 
 // GetStartTSFromSession returns the startTS in the session `se`
-func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
+func GetStartTSFromSession(se any) (startTS, processInfoID uint64) {
 	tmp, ok := se.(*session)
 	if !ok {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
@@ -4362,6 +4364,16 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 		"the `RequestSourceTypeKey` is missing in the context",
 		zap.Bool("internal", s.isInternal()),
 		zap.String("sql", stmtNode.Text()))
+}
+
+// NewStmtIndexUsageCollector creates a new `*indexusage.StmtIndexUsageCollector` based on the internal session index
+// usage collector
+func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector {
+	if s.idxUsageCollector == nil {
+		return nil
+	}
+
+	return indexusage.NewStmtIndexUsageCollector(s.idxUsageCollector)
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.

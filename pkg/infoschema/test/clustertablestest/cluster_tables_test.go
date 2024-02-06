@@ -788,7 +788,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pd.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -799,14 +799,14 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 			StartTimestamp: s.startTime.Unix(),
 		}, nil
 	}))
-	var mockConfig = func() (map[string]interface{}, error) {
-		configuration := map[string]interface{}{
+	var mockConfig = func() (map[string]any, error) {
+		configuration := map[string]any{
 			"key1": "value1",
 			"key2": map[string]string{
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 			},
-			"key3": map[string]interface{}{
+			"key3": map[string]any{
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 				"key4": map[string]string{
@@ -1095,9 +1095,9 @@ func TestQuickBinding(t *testing.T) {
 }
 
 // for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Sql_digest
-func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
+func showBinding(tk *testkit.TestKit, showStmt string) [][]any {
 	rows := tk.MustQuery(showStmt).Sort().Rows()
-	result := make([][]interface{}, len(rows))
+	result := make([][]any, len(rows))
 	for i, r := range rows {
 		result[i] = append(result[i], r[:4]...)
 		result[i] = append(result[i], r[8:10]...)
@@ -1127,7 +1127,7 @@ func TestUniversalBindingFromHistory(t *testing.T) {
 	planDigest = tk.MustQuery(`select plan_digest from information_schema.statements_summary where query_sample_text='select /*+ use_index(t, c) */ b from t where b=1'`).Rows()
 	tk.MustExec(fmt.Sprintf("create global universal binding from history using plan digest '%s'", planDigest[0][0].(string)))
 
-	require.Equal(t, showBinding(tk, `show global bindings`), [][]interface{}{
+	require.Equal(t, showBinding(tk, `show global bindings`), [][]any{
 		{"select `a` from `t` where `a` = ?", "SELECT /*+ use_index(@`sel_1` `t` `b`) no_order_index(@`sel_1` `t` `b`)*/ `a` FROM `t` WHERE `a` = 1", "", "enabled", "history", "f8e294e078ed195998dee6717e71499d6a14b8e0f405952af8d0a5b24d0cae30"},
 		{"select `b` from `t` where `b` = ?", "SELECT /*+ use_index(@`sel_1` `t` `c`) no_order_index(@`sel_1` `t` `c`)*/ `b` FROM `t` WHERE `b` = 1", "", "enabled", "history", "cfb4dd59c4c75ff1ee126236c6bd365f7d04f6120990d922e75aa47ae8bd94eb"},
 	})

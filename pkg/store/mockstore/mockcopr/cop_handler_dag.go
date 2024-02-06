@@ -491,10 +491,10 @@ func (mockClientStream) CloseSend() error { return nil }
 func (mockClientStream) Context() context.Context { return nil }
 
 // SendMsg implements grpc.ClientStream interface
-func (mockClientStream) SendMsg(m interface{}) error { return nil }
+func (mockClientStream) SendMsg(m any) error { return nil }
 
 // RecvMsg implements grpc.ClientStream interface
-func (mockClientStream) RecvMsg(m interface{}) error { return nil }
+func (mockClientStream) RecvMsg(m any) error { return nil }
 
 type mockBathCopErrClient struct {
 	mockClientStream

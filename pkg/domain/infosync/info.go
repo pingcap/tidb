@@ -456,7 +456,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 
 // pdResponseHandler will be injected into the PD HTTP client to handle the response,
 // this is to maintain consistency with the original logic without the PD HTTP client.
-func pdResponseHandler(resp *http.Response, res interface{}) error {
+func pdResponseHandler(resp *http.Response, res any) error {
 	defer func() { terror.Log(resp.Body.Close()) }()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -1208,7 +1208,7 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 }
 
 // StoreInternalSession is the entry function for store an internal session to SessionManager.
-func StoreInternalSession(se interface{}) {
+func StoreInternalSession(se any) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return
@@ -1221,7 +1221,7 @@ func StoreInternalSession(se interface{}) {
 }
 
 // DeleteInternalSession is the entry function for delete an internal session from SessionManager.
-func DeleteInternalSession(se interface{}) {
+func DeleteInternalSession(se any) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return
@@ -1254,7 +1254,7 @@ func GetEtcdClient() *clientv3.Client {
 }
 
 // GetPDScheduleConfig gets the schedule information from pd
-func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+func GetPDScheduleConfig(ctx context.Context) (map[string]any, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1263,7 +1263,7 @@ func GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
 }
 
 // SetPDScheduleConfig sets the schedule information for pd
-func SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+func SetPDScheduleConfig(ctx context.Context, config map[string]any) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
