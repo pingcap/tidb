@@ -597,10 +597,6 @@ func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	schemaTables.tables[tblMeta.Name.L] = tbl
 	is.idx2table[tblMeta.ID] = tbl
 
-	if tblMeta.DBID == 0 {
-		tblMeta.DBID = db.ID
-	}
-
 	return nil
 }
 
