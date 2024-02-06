@@ -47,10 +47,7 @@ type schemaAndTimestamp struct {
 
 // NewCache creates a new InfoCache.
 func NewCache(r autoid.Requirement, capacity int) *InfoCache {
-	infoData, err := NewInfoSchemaData()
-	if err != nil {
-		panic(err)
-	}
+	infoData := NewInfoSchemaData()
 	return &InfoCache{
 		cache: make([]schemaAndTimestamp, 0, capacity),
 		r:     r,

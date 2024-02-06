@@ -212,7 +212,7 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 }
 
 // MockInfoschema only serves for test.
-var MockInfoschema func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion
+var MockInfoschema func(tbList []model.TableInfoEx) sessionctx.InfoschemaMetaVersion
 
 // GetDomainInfoSchema returns the latest information schema in domain
 func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {

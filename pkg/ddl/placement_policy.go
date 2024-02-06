@@ -392,7 +392,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 		}
 		for _, tblInfo := range tables {
 			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-				tblInfos = append(tblInfos, tblInfo)
+				tblInfos = append(tblInfos, tblInfo.TableInfo)
 			}
 			if tblInfo.Partition != nil {
 				for _, part := range tblInfo.Partition.Definitions {
@@ -424,7 +424,7 @@ func CheckPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo
 		}
 
 		for _, tblInfo := range tables {
-			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
+			if err := checkPlacementPolicyNotUsedByTable(tblInfo.TableInfo, policy); err != nil {
 				return err
 			}
 		}

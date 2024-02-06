@@ -120,7 +120,7 @@ type SchemaAndTableName struct {
 }
 
 // MockInfoSchema only serves for test.
-func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
+func MockInfoSchema(tbList []model.TableInfoEx) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
 	result.policyMap = make(map[string]*model.PolicyInfo)
@@ -135,7 +135,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result.schemaMap["test"] = tableNames
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
-		tbl := table.MockTableFromMeta(tb)
+		tbl := table.MockTableFromMeta(tb.TableInfo)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
@@ -149,7 +149,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 }
 
 // MockInfoSchemaWithSchemaVer only serves for test.
-func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
+func MockInfoSchemaWithSchemaVer(tbList []model.TableInfoEx, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
 	result.policyMap = make(map[string]*model.PolicyInfo)
@@ -164,7 +164,7 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result.schemaMap["test"] = tableNames
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
-		tbl := table.MockTableFromMeta(tb)
+		tbl := table.MockTableFromMeta(tb.TableInfo)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
@@ -361,11 +361,11 @@ func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.Sequen
 func init() {
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
-	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
+	infoSchemaTables := make([]model.TableInfoEx, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
 		tableInfo.DBID = dbID
-		infoSchemaTables = append(infoSchemaTables, tableInfo)
+		infoSchemaTables = append(infoSchemaTables, model.TableInfoEx{TableInfo:tableInfo})
 		var ok bool
 		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
 		if !ok {
@@ -388,7 +388,7 @@ func init() {
 	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
-	mock.MockInfoschema = func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion {
+	mock.MockInfoschema = func(tbList []model.TableInfoEx) sessionctx.InfoschemaMetaVersion {
 		return MockInfoSchema(tbList)
 	}
 }

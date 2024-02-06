@@ -1685,13 +1685,27 @@ func (fk *FKInfo) Clone() *FKInfo {
 	return &nfk
 }
 
+type TableInfoEx struct {
+	*TableInfo   
+	Raw []byte
+}
+
+func (ti *TableInfoEx) Clone() TableInfoEx {
+	raw := make([]byte, 0, len(ti.Raw))
+	copy(raw, ti.Raw)
+	return TableInfoEx{
+		TableInfo: ti.TableInfo.Clone(),
+		Raw: raw,
+	}
+}
+
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
 	ID                 int64          `json:"id"`      // Database ID
 	Name               CIStr          `json:"db_name"` // DB name.
 	Charset            string         `json:"charset"`
 	Collate            string         `json:"collate"`
-	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
+	Tables             []TableInfoEx  `json:"-"` // Tables in the DB.
 	State              SchemaState    `json:"state"`
 	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
 }
@@ -1699,7 +1713,7 @@ type DBInfo struct {
 // Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]*TableInfo, len(db.Tables))
+	newInfo.Tables = make([]TableInfoEx, len(db.Tables))
 	for i := range db.Tables {
 		newInfo.Tables[i] = db.Tables[i].Clone()
 	}
@@ -1709,7 +1723,7 @@ func (db *DBInfo) Clone() *DBInfo {
 // Copy shallow copies DBInfo.
 func (db *DBInfo) Copy() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]*TableInfo, len(db.Tables))
+	newInfo.Tables = make([]TableInfoEx, len(db.Tables))
 	copy(newInfo.Tables, db.Tables)
 	return &newInfo
 }

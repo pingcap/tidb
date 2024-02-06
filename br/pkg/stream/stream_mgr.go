@@ -112,7 +112,7 @@ func buildObserveTableRanges(
 			}
 
 			log.Info("observer table schema", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
-			tableRanges := buildObserveTableRange(tableInfo)
+			tableRanges := buildObserveTableRange(tableInfo.TableInfo)
 			ranges = append(ranges, tableRanges...)
 		}
 	}

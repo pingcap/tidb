@@ -41,7 +41,7 @@ var once sync.Once
 func Init() {
 	initOnce := func() {
 		p := parser.New()
-		tbls := make([]*model.TableInfo, 0)
+		tbls := make([]model.TableInfoEx, 0)
 		dbID := autoid.PerformanceSchemaDBID
 		for _, sql := range perfSchemaTables {
 			stmt, err := p.ParseOneStmt(sql, "", "")
@@ -52,7 +52,7 @@ func Init() {
 			if err != nil {
 				panic(err)
 			}
-			tbls = append(tbls, meta)
+			tbls = append(tbls, model.TableInfoEx{TableInfo: meta})
 			var ok bool
 			meta.ID, ok = tableIDMap[meta.Name.O]
 			if !ok {

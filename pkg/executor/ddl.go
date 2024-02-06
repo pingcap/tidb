@@ -482,7 +482,7 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 		if err != nil {
 			return nil, err
 		}
-		tbl, err := snapMeta.GetTable(schemaID, tableID)
+		tbl, _, err := snapMeta.GetTable(schemaID, tableID)
 		return tbl, err
 	}
 	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)
@@ -671,7 +671,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 				}
 				recoverTabsInfo = append(recoverTabsInfo, &ddl.RecoverInfo{
 					SchemaID:      job.SchemaID,
-					TableInfo:     tblInfo,
+					TableInfo:     tblInfo.TableInfo,
 					DropJobID:     job.ID,
 					SnapshotTS:    job.StartTS,
 					AutoIDs:       autoIDs,

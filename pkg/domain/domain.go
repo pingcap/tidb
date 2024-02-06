@@ -410,18 +410,18 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
 		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
 			for _, tbInfo := range tables {
-				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo)
+				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo.TableInfo)
 			}
 		}
-		di.Tables = make([]*model.TableInfo, 0, len(tables))
+		di.Tables = make([]model.TableInfoEx, 0, len(tables))
 		for _, tbl := range tables {
 			if tbl.State != model.StatePublic {
 				// schema is not public, can't be used outside.
 				continue
 			}
-			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
+			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl.TableInfo)
 			// Check whether the table is in repair mode.
-			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
+			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl.Raw, tbl.TableInfo) {
 				continue
 			}
 			di.Tables = append(di.Tables, tbl)
@@ -2335,6 +2335,7 @@ func (do *Domain) loadStatsWorker() {
 	if lease == 0 {
 		lease = 3 * time.Second
 	}
+	lease = 600 * time.Second
 	loadTicker := time.NewTicker(lease)
 	updStatsHealthyTicker := time.NewTicker(20 * lease)
 	defer func() {

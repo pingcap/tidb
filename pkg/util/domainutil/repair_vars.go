@@ -63,7 +63,7 @@ func (r *repairInfo) SetRepairTableList(list []string) {
 }
 
 // CheckAndFetchRepairedTable fetches the repairing table list from meta, true indicates fetch success.
-func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.TableInfo) bool {
+func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, raw []byte, tbl *model.TableInfo) bool {
 	r.Lock()
 	defer r.Unlock()
 	if !r.repairMode {
@@ -80,12 +80,12 @@ func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.Tab
 	if isRepair {
 		// Record the repaired table in Map.
 		if repairedDB, ok := r.repairDBInfoMap[di.ID]; ok {
-			repairedDB.Tables = append(repairedDB.Tables, tbl)
+			repairedDB.Tables = append(repairedDB.Tables, model.TableInfoEx{tbl, raw})
 		} else {
 			// Shallow copy the DBInfo.
 			repairedDB := di.Copy()
 			// Clean the tables and set repaired table.
-			repairedDB.Tables = []*model.TableInfo{tbl}
+			repairedDB.Tables = []model.TableInfoEx{model.TableInfoEx{tbl, raw}}
 			r.repairDBInfoMap[di.ID] = repairedDB
 		}
 		return true
@@ -103,7 +103,7 @@ func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLower
 		}
 		for _, t := range db.Tables {
 			if t.Name.L == tableLowerName {
-				return t, db
+				return t.TableInfo, db
 			}
 		}
 		return nil, db

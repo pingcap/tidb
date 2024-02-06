@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"fmt"
 	"context"
 	"strconv"
 	"strings"
@@ -256,13 +257,14 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+TaskColumns+`, max(st.concurrency)
+	fmt.Println("execute sql once ===")
+	sql := `select `+TaskColumns+`, max(st.concurrency)
 			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
 				on t.id = st.task_key and t.step = st.step
 			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
 			group by t.id
-			order by priority asc, create_time asc, id asc`,
+			order by priority asc, create_time asc, id asc`
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sql,
 		proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing,
 		proto.SubtaskStatePending, proto.SubtaskStateRunning, execID)
 	if err != nil {

@@ -979,7 +979,7 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 }
 
 // ListTables shows all tables in database.
-func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+func (m *Meta) ListTables(dbID int64) ([]model.TableInfoEx, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
@@ -990,7 +990,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
-	tables := make([]*model.TableInfo, 0, len(res)/2)
+	tables := make([]model.TableInfoEx, 0, len(res)/2)
 	for _, r := range res {
 		// only handle table meta
 		tableKey := string(r.Field)
@@ -1005,7 +1005,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		}
 		tbInfo.DBID = dbID
 
-		tables = append(tables, tbInfo)
+		tables = append(tables, model.TableInfoEx{tbInfo, r.Value})
 	}
 
 	return tables, nil
@@ -1205,23 +1205,23 @@ func whichMagicType(b byte) int {
 }
 
 // GetTable gets the table value in database with tableID.
-func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
+func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, []byte, error) {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	tableKey := m.tableKey(tableID)
 	value, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil || value == nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	tableInfo := &model.TableInfo{}
 	err = json.Unmarshal(value, tableInfo)
 	tableInfo.DBID = dbID
-	return tableInfo, errors.Trace(err)
+	return tableInfo, value, errors.Trace(err)
 }
 
 // CheckTableExists checks if the table is existed with dbID and tableID.

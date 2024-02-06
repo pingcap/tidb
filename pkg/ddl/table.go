@@ -684,7 +684,7 @@ func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID 
 
 func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, error) {
 	// Check this table's database.
-	tblInfo, err := t.GetTable(schemaID, tableID)
+	tblInfo, _, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
@@ -1536,7 +1536,7 @@ func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*
 }
 
 func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
-	tbl, err := t.GetTable(schemaID, tableID)
+	tbl, _, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")

@@ -44,7 +44,8 @@ func (e *ShowExec) fetchShowStatsExtended() error {
 			if pi != nil {
 				continue
 			}
-			e.appendTableForStatsExtended(db.Name.L, tblInfo, h.GetTableStats(tblInfo))
+			tblInfo1 := tblInfo.TableInfo
+			e.appendTableForStatsExtended(db.Name.L, tblInfo1, h.GetTableStats(tblInfo1))
 		}
 	}
 	return nil
@@ -110,7 +111,8 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		for _, tmp := range db.Tables {
+			tbl := tmp.TableInfo
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
@@ -217,7 +219,8 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		for _, tmp := range db.Tables {
+			tbl := tmp.TableInfo
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
@@ -291,7 +294,8 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		for _, tmp := range db.Tables {
+			tbl := tmp.TableInfo
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
@@ -350,7 +354,8 @@ func (e *ShowExec) fetchShowStatsTopN() error {
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		for _, tmp := range db.Tables {
+			tbl := tmp.TableInfo
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
@@ -495,7 +500,8 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.Name.L) {
 			continue
 		}
-		for _, tbl := range db.Tables {
+		for _, tmp := range db.Tables {
+			tbl := tmp.TableInfo
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
@@ -589,7 +595,8 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 	}
 
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		for _, tmp := range db.Tables {
+			tbl := tmp.TableInfo
 			pi := tbl.GetPartitionInfo()
 			// Though partition tables in static pruning mode don't have global stats, we dump predicate columns of partitions with table ID
 			// rather than partition ID. Hence appendTableForColumnStatsUsage needs to be called for both partition and global in both dynamic

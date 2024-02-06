@@ -15,6 +15,7 @@
 package taskexecutor
 
 import (
+	"fmt"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -36,7 +37,7 @@ import (
 
 var (
 	// same as scheduler
-	defaultCheckInterval    = 300 * time.Millisecond
+	defaultCheckInterval    = 5 * time.Second
 	maxCheckInterval        = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
@@ -189,6 +190,7 @@ func (m *Manager) handleTasksLoop() {
 }
 
 func (m *Manager) handleTasks() {
+	fmt.Println("task executor handle tasks ===")
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
 		m.logErr(err)

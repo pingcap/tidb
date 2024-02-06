@@ -1,11 +1,13 @@
 package infoschema
 
 import (
+	// "runtime/debug"
+	"time"
 	"fmt"
 	"math"
 	"sync"
 
-	"github.com/dgraph-io/ristretto"
+	"github.com/allegro/bigcache"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -57,7 +59,8 @@ type InfoSchemaData struct {
 	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	// But this mapping should be synced with name2id.
 	byID  *btree.BTreeG[Item]
-	cache *ristretto.Cache // {id, schemaVersion} => table.Table
+
+	cache tableCache
 
 	// For the SchemaByName API
 	schemaMap *btree.BTreeG[schemaItem]
@@ -67,6 +70,92 @@ type InfoSchemaData struct {
 		sync.RWMutex
 		versionTimestamps []VersionAndTimestamp
 	}
+}
+
+// table cache caches the {id, schemaVersion} => table.Table mapping.
+// It consist of two components: the cache part and the data part.
+// The cache itself only support the key => []byte mapping, it rely on the OnRemove
+// finalizer to remove entity from the data part when the kv is evicted from the cache part.
+// In this way it can support the general key => object mapping.
+type tableCache struct {
+	cache *bigcache.BigCache
+	mu struct {
+		sync.RWMutex
+		data map[cacheKey]table.Table
+	}
+}
+
+func (tc *tableCache) Init() {
+	tc.mu.data = make(map[cacheKey]table.Table, 1024)
+	config := bigcache.Config {
+		// number of shards (must be a power of 2)
+		Shards: 1024,
+			// time after which entry can be evicted
+			LifeWindow: 3 * time.Minute,
+			// rps * lifeWindow, used only in initial memory allocation
+			MaxEntriesInWindow: 1000 * 10 * 60,
+			// max entry size in bytes, used only in initial memory allocation
+			MaxEntrySize: 1000,
+			// prints information about additional memory allocation
+			Verbose: true,
+			// cache will not allocate more memory than this limit, value in MB
+			// if value is reached then the oldest entries can be overridden for the new ones
+			// 0 value means no size limit
+			HardMaxCacheSize: 64,
+			// callback fired when the oldest entry is removed because of its expiration time or no space left
+			// for the new entry, or because delete was called. A bitmask representing the reason will be returned.
+			// Default value is nil which means no callback and it prevents from unwrapping the oldest entry.
+			OnRemove: nil,
+			// OnRemoveWithReason is a callback fired when the oldest entry is removed because of its expiration time or no space left
+			// for the new entry, or because delete was called. A constant representing the reason will be passed through.
+			// Default value is nil which means no callback and it prevents from unwrapping the oldest entry.
+			// Ignored if OnRemove is specified.
+			OnRemoveWithReason: func(keyStr string, entry []byte, reason bigcache.RemoveReason) {
+				tc.mu.Lock()
+				defer tc.mu.Unlock()
+				var key cacheKey 
+				fmt.Sscanf(keyStr, "%d-%d", &key.tableID, &key.schemaVersion)
+				fmt.Println("evict key ===", key.tableID, key.schemaVersion, "reason=", reason)
+				delete(tc.mu.data, key)
+			},
+		}
+
+	cache, initErr := bigcache.NewBigCache(config)
+	if initErr != nil {
+		panic(initErr)
+	}
+	// go func() {
+	// 	for {
+	// 		time.Sleep(3*time.Second)
+	// 		stats := cache.Stats()
+	// 		fmt.Printf("bigcache stats === %#v\n", stats)
+	// 	}
+	// }()
+	tc.cache = cache
+}
+
+func (tc *tableCache) Close() {
+	tc.cache.Close()
+}
+
+func (tc *tableCache) Set(key cacheKey, val []byte, tbl table.Table) {
+	err := tc.cache.Set(fmt.Sprintf("%d-%d", key.tableID, key.schemaVersion), nil)
+	if err == nil {
+		tc.mu.Lock()
+		defer tc.mu.Unlock()
+		tc.mu.data[key] = tbl
+	}
+}
+
+func (tc *tableCache) Get(key cacheKey) (table.Table, bool) {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+
+	find, ok := tc.mu.data[key]
+	if ok {
+		return find, true
+	}
+	return nil, false
 }
 
 func (isd *InfoSchemaData) getVersionByTS(ts uint64) (int64, bool) {
@@ -115,38 +204,32 @@ func keyToHash(key any) (uint64, uint64) {
 	return uint64(k.tableID), uint64(k.schemaVersion)
 }
 
-func NewInfoSchemaData() (*InfoSchemaData, error) {
-	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters: 50000, // this means at most 10,000 items, recommand num is 10x items
-		// TODO: change the cost to size based and provide configuration.
-		MaxCost:     5000, // if we measure one partition cost as 1, at most 10,000 partitions.
-		BufferItems: 64,
-		KeyToHash:   keyToHash,
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &InfoSchemaData{
-		cache:     cache,
+func NewInfoSchemaData() *InfoSchemaData {
+	ret := &InfoSchemaData{
 		byID:      btree.NewBTreeG[Item](compareByID),
 		name2id:   btree.NewBTreeG[Item](compareByName),
 		schemaMap: btree.NewBTreeG[schemaItem](compareBySchema),
-	}, nil
+	}
+	ret.cache.Init()
+	return ret
 }
 
 func (isd *InfoSchemaData) Close() {
 	isd.cache.Close()
 }
 
-func (isd *InfoSchemaData) add(item Item, tbl table.Table) {
+func (isd *InfoSchemaData) add(item Item, rawData []byte, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.name2id.Set(item)
-	isd.cache.Set(cacheKey{item.tableID, item.schemaVersion}, tbl, cacheTableCost(tbl))
+	isd.cache.Set(cacheKey{item.tableID, item.schemaVersion}, rawData, tbl)
 }
 
 func (isd *InfoSchemaData) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	fmt.Println("=== addDB ===", dbInfo.Name.L, schemaVersion)
-	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+	var dbInfo1 model.DBInfo
+	dbInfo1 = *dbInfo
+	dbInfo1.Tables = nil
+	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: &dbInfo1})
 }
 
 func compareByID(a, b Item) bool {
@@ -234,22 +317,30 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		return tbl.(table.Table), true
 	}
 
+	// fmt.Printf("TableByID(%d, %d)  %p\n", id, is.schemaVersion, is.cache)
+
 	eq := func(a, b *Item) bool { return a.tableID == b.tableID }
 	itm, ok := search(is.byID, is.schemaVersion, Item{tableID: id, dbID: math.MaxInt64}, eq)
 	if !ok {
-		return nil, ok
+		// fmt.Printf("TableByID(%d) not found in byID\n", id)
+		return nil, false
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.InfoSchemaData, id, itm.dbID, is.ts)
+	ret, rawData, err := loadTableInfo(is.r, is.InfoSchemaData, id, itm.dbID, is.ts)
 	if err == nil {
-		is.cache.Set(key, ret, cacheTableCost(ret))
+		is.cache.Set(key, rawData, ret)
+		// fmt.Printf("update cache == %d %p\n", id, is.cache)
+		// debug.PrintStack()
+		return ret, true
+	} else {
+		fmt.Println("load table error ==", id, err)
 	}
-	return ret, true
+	return nil, false
 }
 
 func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
-	if schema.L == "information_schema" {
+	if schema.L == "information_schema" || schema.L == "metrics_schema" || schema.L == "performance_schema" {
 		return nil, errors.New("not support yet")
 	}
 
@@ -260,6 +351,9 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
 	}
 	// Get from the cache.
+
+	// fmt.Println("TableByName(", itm.tableID, is.schemaVersion, ")", schema.L, tbl.L)
+
 	key := cacheKey{itm.tableID, is.schemaVersion}
 	res, found := is.cache.Get(key)
 	if found && res != nil {
@@ -267,11 +361,12 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.InfoSchemaData, itm.tableID, itm.dbID, is.ts)
+	ret, raw, err := loadTableInfo(is.r, is.InfoSchemaData, itm.tableID, itm.dbID, is.ts)
 	if err != nil {
+		fmt.Println("load table info error ===", itm.tableID, err)
 		return nil, errors.Trace(err)
 	}
-	is.cache.Set(key, ret, cacheTableCost(ret))
+	is.cache.Set(key, raw, ret)
 	return ret, nil
 }
 
@@ -342,19 +437,26 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	return
 }
 
-func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID int64, ts uint64) (table.Table, error) {
-	snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
-	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
-	// the meta region leader is slow.
-	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-	m := meta.NewSnapshotMeta(snapshot)
-
+func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID int64, ts uint64) (table.Table, []byte, error) {
+	var rawData []byte
 	// Try to avoid repeated concurrency loading.
-	res, err, _ := sf.Do(fmt.Sprintf("%d-%d", dbID, tblID), func() (any, error) {
-		return m.GetTable(dbID, tblID)
+	res, err, _ := sf.Do(fmt.Sprintf("%d-%d", dbID, tblID), func() (ret any, err error) {
+		fmt.Println("load table ...", tblID, dbID, ts)
+		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
+		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+		// the meta region leader is slow.
+		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+		m := meta.NewSnapshotMeta(snapshot)
+
+		ret, rawData, err = m.GetTable(dbID, tblID)
+		return
 	})
+
+	// debug.PrintStack()
+	
 	if err != nil {
 		// TODO???
+		fmt.Println("load table panic!!!", err)
 		panic(err)
 	}
 	tblInfo := res.(*model.TableInfo) // TODO: it could be missing!!!
@@ -367,19 +469,10 @@ func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID i
 	if err != nil {
 		panic("todo, wtf")
 	}
-	return ret, nil
+	return ret, rawData, nil
 }
 
 var sf = &singleflight.Group{}
-
-func cacheTableCost(t table.Table) int64 {
-	info := t.Meta()
-	pi := info.GetPartitionInfo()
-	if pi == nil {
-		return 1
-	}
-	return int64(len(pi.Definitions))
-}
 
 func isTableVirtual(id int64) bool {
 	return (id & (1 << 62)) > 0

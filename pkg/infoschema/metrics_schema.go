@@ -41,7 +41,7 @@ func init() {
 	// Initialize the metric schema database and register the driver to `drivers`.
 	dbID := autoid.MetricSchemaDBID
 	tableID := dbID + 1
-	metricTables := make([]*model.TableInfo, 0, len(MetricTableMap))
+	metricTables := make([]model.TableInfoEx, 0, len(MetricTableMap))
 	for name, def := range MetricTableMap {
 		cols := def.genColumnInfos()
 		tableInfo := buildTableMeta(name, cols)
@@ -49,7 +49,7 @@ func init() {
 		tableInfo.Comment = def.Comment
 		tableInfo.DBID = dbID
 		tableID++
-		metricTables = append(metricTables, tableInfo)
+		metricTables = append(metricTables, model.TableInfoEx{TableInfo:tableInfo})
 		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
 		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}

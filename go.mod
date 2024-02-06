@@ -148,6 +148,7 @@ require (
 )
 
 require (
+	github.com/allegro/bigcache v1.2.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect

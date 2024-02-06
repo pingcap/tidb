@@ -1501,7 +1501,7 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			continue
 		}
 		for _, tableVal := range db.Tables {
-			regionDetail.addTableInRange(db.Name.String(), tableVal, frameRange)
+			regionDetail.addTableInRange(db.Name.String(), tableVal.TableInfo, frameRange)
 		}
 	}
 	writeData(w, regionDetail)

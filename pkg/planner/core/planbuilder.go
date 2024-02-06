@@ -3683,8 +3683,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("INSERT", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
 	}
 
-	fmt.Println("tn==", tn.DBInfo)
-	fmt.Println("tableInfo ==", tableInfo)
+	// fmt.Println("tn==", tn.DBInfo)
+	// fmt.Println("tableInfo ==", tableInfo.TableInfo)
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.DBInfo.Name.L,
 		tableInfo.Name.L, "", authErr)

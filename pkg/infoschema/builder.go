@@ -744,7 +744,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	for _, tbl := range di.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 		// TODO: If the table ID doesn't exist.
-		tableIDs = appendAffectedIDs(tableIDs, tbl)
+		tableIDs = appendAffectedIDs(tableIDs, tbl.TableInfo)
 	}
 	for bucketIdx := range bucketIdxMap {
 		b.copySortedTablesBucket(bucketIdx)
@@ -783,7 +783,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 }
 
 func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
-	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
+	tblInfo, raw, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -819,7 +819,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
 	failpoint.Inject("repairFetchCreateTable", func(val failpoint.Value) {
 		if val.(bool) {
-			if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
+			if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, raw, tblInfo) {
 				failpoint.Return(nil, nil)
 			}
 		}
@@ -874,7 +874,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		tableName:     tblInfo.Name.L,
 		tableID:       tblInfo.ID,
 		schemaVersion: schemaVersion,
-	}, tbl)
+	}, raw, tbl)
 	slices.SortFunc(b.is.sortedTablesBuckets[bucketIdx], func(i, j table.Table) int {
 		return cmp.Compare(i.Meta().ID, j.Meta().ID)
 	})
@@ -885,7 +885,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 	newTbl, ok := b.is.TableByID(tableID)
 	if ok {
-		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
+		dbInfo.Tables = append(dbInfo.Tables, model.TableInfoEx{newTbl.Meta(), raw})
 	}
 	return affected, nil
 }
@@ -949,7 +949,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 			} else {
 				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
 			}
-			b.is.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
+			b.is.deleteReferredForeignKeys(dbInfo.Name, tblInfo.TableInfo)
 			break
 		}
 	}
@@ -1065,7 +1065,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	// Maintain foreign key reference information.
 	for _, di := range dbInfos {
 		for _, t := range di.Tables {
-			b.is.addReferredForeignKeys(di.Name, t)
+			b.is.addReferredForeignKeys(di.Name, t.TableInfo)
 		}
 	}
 
@@ -1118,8 +1118,11 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
 
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) error {
+	var db1 model.DBInfo
+	db1 = *di
+	db1.Tables = nil
 	schTbls := &schemaTables{
-		dbInfo: di,
+		dbInfo: &db1,
 		tables: make(map[string]table.Table, len(di.Tables)),
 	}
 	b.is.schemaMap[di.Name.L] = schTbls
@@ -1128,9 +1131,9 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 		fmt.Println("===== create table ====", di.Name.L, t.Name.L)
 
-		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
+		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t.TableInfo)
 		var tbl table.Table
-		tbl, err := tableFromMeta(allocs, t)
+		tbl, err := tableFromMeta(allocs, t.TableInfo)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
@@ -1145,7 +1148,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			tableName:     t.Name.L,
 			tableID:       t.ID,
 			schemaVersion: schemaVersion,
-		}, tbl)
+		},  t.Raw, tbl)
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)
 		}
