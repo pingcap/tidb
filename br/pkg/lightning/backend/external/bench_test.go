@@ -27,10 +27,12 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/felixge/fgprof"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 )
@@ -673,4 +675,136 @@ func TestMergeBench(t *testing.T) {
 	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
 	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
 	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
+}
+
+func TestReadAllData(t *testing.T) {
+	// test the case that thread=16, where we will load ~3.2GB data once and this
+	// step will at most have 4000 files to read, test the case that we have
+	//
+	// 1000 files read one KV (~100B), 1000 files read ~900KB, 90 files read 10MB,
+	// 1 file read 1G. total read size = 1000*100B + 1000*900KB + 90*10MB + 1*1G = 2.8G
+
+	store := openTestingStorage(t)
+	readRangeStart := []byte("key0")
+	readRangeEnd := []byte("key88888888")
+	keyAfterRange := []byte("key9")
+	keyAfterRange2 := []byte("key9")
+
+	ctx := context.Background()
+
+	fileIdx := 0
+	val := make([]byte, 90)
+	for ; fileIdx < 1000; fileIdx++ {
+		fileName := fmt.Sprintf("/test%d", fileIdx)
+		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+		err := writer.Init(ctx, 5*1024*1024)
+		require.NoError(t, err)
+		key := []byte(fmt.Sprintf("key0%d", fileIdx))
+		err = writer.WriteRow(ctx, key, val)
+		require.NoError(t, err)
+
+		// write some extra data that is greater than readRangeEnd
+		err = writer.WriteRow(ctx, keyAfterRange, val)
+		require.NoError(t, err)
+		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 100*1024))
+		require.NoError(t, err)
+
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+	t.Log("finish writing 1000 files of 100B")
+
+	for ; fileIdx < 2000; fileIdx++ {
+		fileName := fmt.Sprintf("/test%d", fileIdx)
+		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+		err := writer.Init(ctx, 5*1024*1024)
+		require.NoError(t, err)
+
+		kvSize := 0
+		keyIdx := 0
+		for kvSize < 900*1024 {
+			key := []byte(fmt.Sprintf("key%06d_%d", keyIdx, fileIdx))
+			keyIdx++
+			kvSize += len(key) + len(val)
+			err = writer.WriteRow(ctx, key, val)
+			require.NoError(t, err)
+		}
+
+		// write some extra data that is greater than readRangeEnd
+		err = writer.WriteRow(ctx, keyAfterRange, val)
+		require.NoError(t, err)
+		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 300*1024))
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+	t.Log("finish writing 1000 files of 900KB")
+
+	for ; fileIdx < 2090; fileIdx++ {
+		fileName := fmt.Sprintf("/test%d", fileIdx)
+		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+		err := writer.Init(ctx, 5*1024*1024)
+		require.NoError(t, err)
+
+		kvSize := 0
+		keyIdx := 0
+		for kvSize < 10*1024*1024 {
+			key := []byte(fmt.Sprintf("key%09d_%d", keyIdx, fileIdx))
+			keyIdx++
+			kvSize += len(key) + len(val)
+			err = writer.WriteRow(ctx, key, val)
+			require.NoError(t, err)
+		}
+
+		// write some extra data that is greater than readRangeEnd
+		err = writer.WriteRow(ctx, keyAfterRange, val)
+		require.NoError(t, err)
+		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 900*1024))
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+	t.Log("finish writing 90 files of 10MB")
+
+	for ; fileIdx < 2091; fileIdx++ {
+		fileName := fmt.Sprintf("/test%d", fileIdx)
+		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+		err := writer.Init(ctx, 5*1024*1024)
+		require.NoError(t, err)
+
+		kvSize := 0
+		keyIdx := 0
+		for kvSize < 1024*1024*1024 {
+			key := []byte(fmt.Sprintf("key%010d_%d", keyIdx, fileIdx))
+			keyIdx++
+			kvSize += len(key) + len(val)
+			err = writer.WriteRow(ctx, key, val)
+			require.NoError(t, err)
+		}
+
+		// write some extra data that is greater than readRangeEnd
+		err = writer.WriteRow(ctx, keyAfterRange, val)
+		require.NoError(t, err)
+		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 900*1024))
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+	t.Log("finish writing 1 file of 1G")
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/")
+	require.NoError(t, err)
+	require.Equal(t, 2091, len(dataFiles))
+
+	bufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+	)
+	output := &memKVsAndBuffers{}
+	now := time.Now()
+	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, bufPool, output)
+	require.NoError(t, err)
+	output.build(ctx)
+	elapsed := time.Since(now)
+	t.Logf("readAllData time cost: %s, size: %d", elapsed.String(), output.size)
 }
