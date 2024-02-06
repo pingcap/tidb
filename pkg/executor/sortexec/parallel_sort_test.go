@@ -65,19 +65,24 @@ func executeInFailpoint(t *testing.T, exe *sortexec.SortExec) {
 			break
 		}
 	}
+	once.Do(func() {
+		err = exe.Close()
+		require.Equal(t, nil, err)
+	})
 }
 
-func parallelSortTest(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+func parallelSortTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, schema *expression.Schema, dataSource *testutil.MockDataSource, sortCase *testutil.SortCase) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	ctx.GetSessionVars().EnableParallelSort = true
-	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
 
+	if exe == nil {
+		exe = buildSortExec(ctx, sortCase, dataSource)
+	}
+	dataSource.PrepareChunks()
 	resultChunks := executeSortExecutor(t, exe)
 
 	err := exe.Close()
@@ -85,14 +90,16 @@ func parallelSortTest(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCa
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-func failpointTest(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) {
+func failpointTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	ctx.GetSessionVars().EnableParallelSort = true
-	exe := buildSortExec(ctx, sortCase, dataSource)
+	if exe == nil {
+		exe = buildSortExec(ctx, sortCase, dataSource)
+	}
 	dataSource.PrepareChunks()
 	executeInFailpoint(t, exe)
 }
@@ -104,8 +111,13 @@ func TestParallelSort(t *testing.T) {
 	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{nvd, nvd}, Ctx: ctx}
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
-	for i := 0; i < 30; i++ {
-		parallelSortTest(t, ctx, sortCase)
+
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	for i := 0; i < 10; i++ {
+		parallelSortTest(t, ctx, nil, schema, dataSource, sortCase)
+		parallelSortTest(t, ctx, exe, schema, dataSource, sortCase)
 	}
 }
 
@@ -118,8 +130,11 @@ func TestFailpoint(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
-	testNum := 50
+
+	testNum := 30
+	exe := buildSortExec(ctx, sortCase, dataSource)
 	for i := 0; i < testNum; i++ {
-		failpointTest(t, ctx, sortCase, dataSource)
+		failpointTest(t, ctx, nil, sortCase, dataSource)
+		failpointTest(t, ctx, exe, sortCase, dataSource)
 	}
 }
