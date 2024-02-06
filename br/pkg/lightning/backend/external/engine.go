@@ -50,9 +50,11 @@ import (
 const maxCloudStorageConnections = 1000
 
 type memKVsAndBuffers struct {
-	mu           sync.Mutex
-	keys         [][]byte
-	values       [][]byte
+	mu     sync.Mutex
+	keys   [][]byte
+	values [][]byte
+	// memKVBuffers contains two types of buffer, first half are used for small block
+	// buffer, second half are used for large one.
 	memKVBuffers []*membuf.Buffer
 	size         int
 	droppedSize  int
@@ -209,6 +211,8 @@ func (e *Engine) getAdjustedConcurrency() int {
 	return max(adjusted, 1)
 }
 
+var readAllDataConcThreshold = uint64(16)
+
 func getFilesReadConcurrency(
 	ctx context.Context,
 	storage storage.ExternalStorage,
@@ -222,16 +226,28 @@ func getFilesReadConcurrency(
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
 	for i := range statsFiles {
-		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		expectedConc := (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
-		result[i] += 1
-		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-			zap.String("filename", statsFiles[i]),
-			zap.Uint64("startOffset", startOffs[i]),
-			zap.Uint64("endOffset", endOffs[i]),
-			zap.Uint64("expected concurrency", result[i]),
-		)
+		expectedConc += 1
+		// readAllData will enable concurrent read and use large buffer if result[i] > 1
+		// when expectedConc < readAllDataConcThreshold, we don't use concurrent read to
+		// reduce overhead
+		if expectedConc >= readAllDataConcThreshold {
+			result[i] = expectedConc
+		} else {
+			result[i] = 1
+		}
+		// only log for files with expected concurrency > 1, to avoid too many logs
+		if expectedConc > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffs[i]),
+				zap.Uint64("endOffset", endOffs[i]),
+				zap.Uint64("expectedConc", expectedConc),
+				zap.Uint64("concurrency", result[i]),
+			)
+		}
 	}
 	return result, startOffs, nil
 }
