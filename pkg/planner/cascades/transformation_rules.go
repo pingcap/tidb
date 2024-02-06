@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -848,7 +848,7 @@ type pushDownJoin struct {
 }
 
 func (*pushDownJoin) predicatePushDown(
-	sctx sessionctx.Context,
+	sctx context.PlanContext,
 	predicates []expression.Expression,
 	join *plannercore.LogicalJoin,
 	leftSchema *expression.Schema,
@@ -970,7 +970,7 @@ func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
 
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
 func buildChildSelectionGroup(
-	sctx sessionctx.Context,
+	sctx context.PlanContext,
 	qbOffset int,
 	conditions []expression.Expression,
 	childGroup *memo.Group) *memo.Group {
@@ -2137,7 +2137,7 @@ func (*TransformAggregateCaseToSelection) allowsSelection(aggFuncName string) bo
 	return aggFuncName != ast.AggFuncFirstRow
 }
 
-func (*TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx sessionctx.Context, args []expression.Expression, argsNum int, outputIdx int) bool {
+func (*TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx expression.EvalContext, args []expression.Expression, argsNum int, outputIdx int) bool {
 	return !args[outputIdx].Equal(ctx, expression.NewNull()) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.NewNull()))
 }
 
@@ -2541,7 +2541,7 @@ func (*MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 	ctx := expr.GetExpr().ExprNode.SCtx()
 
 	// Whether Partition, OrderBy and Frame parts are the same.
-	if !(curWinPlan.EqualPartitionBy(ctx, nextWinPlan) &&
+	if !(curWinPlan.EqualPartitionBy(nextWinPlan) &&
 		curWinPlan.EqualOrderBy(ctx, nextWinPlan) &&
 		curWinPlan.EqualFrame(ctx, nextWinPlan)) {
 		return false

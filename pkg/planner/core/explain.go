@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1002,7 +1001,7 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 	return buffer.String()
 }
 
-func explainByItems(ctx sessionctx.Context, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
+func explainByItems(ctx expression.EvalContext, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		if item.Desc {
 			fmt.Fprintf(buffer, "%s:desc", item.Expr.ExplainInfo(ctx))
