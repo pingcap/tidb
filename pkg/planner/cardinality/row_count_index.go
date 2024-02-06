@@ -492,7 +492,7 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
-	minTwoCol := min(singleColumnEstResults[0], min(singleColumnEstResults[1], idxLowBound))
+	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
 	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
 	if l == 2 {
 		return max(minTwoCol, multTwoCol), true, nil
