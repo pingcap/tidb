@@ -583,6 +583,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 			Columns: []*model.ColumnInfo{colInfo},
 			Indices: []*model.IndexInfo{},
 			State:   model.StatePublic,
+			DBID:    schemaID,
 		}
 
 		allocs := autoid.NewAllocatorsFromTblInfo(dom, schemaID, tblInfo)
@@ -705,6 +706,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 	err = sc.AddTable(db1b, tb11)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
+	tb11.Meta().DBID = 0 // SchemaByTable will get incorrect result if not reset here.
 
 	// failed add has no effect
 	assertTableByName(sc, db1.Name.L, tb11.Meta().Name.L, db1, tb11)
@@ -712,6 +714,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	// delete some tables
 	require.True(t, sc.RemoveTable(model.NewCIStr("db1"), model.NewCIStr("tb1")))
 	require.True(t, sc.RemoveTable(model.NewCIStr("Db2"), model.NewCIStr("tB2")))
+	tb22.Meta().DBID = 0 // SchemaByTable will get incorrect result if not reset here.
 	require.False(t, sc.RemoveTable(model.NewCIStr("db1"), model.NewCIStr("tbx")))
 	require.False(t, sc.RemoveTable(model.NewCIStr("dbx"), model.NewCIStr("tbx")))
 
@@ -795,6 +798,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, db1.Name.L, info.Name.L)
 	// SchemaByTable returns nil when the schema is not in the infoSchema and the table is an non-existing normal table.
+	normalTbTestC.Meta().DBID = 0 // normalTbTestC is not added to any db, reset the DBID to avoid misuse
 	info, ok = is.SchemaByID(normalTbTestC.Meta().DBID)
 	require.False(t, ok)
 	require.Nil(t, info)

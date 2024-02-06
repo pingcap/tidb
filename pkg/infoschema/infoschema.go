@@ -617,7 +617,6 @@ func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 	if len(tbls.tables) == 0 {
 		delete(is.schemaMap, schema.L)
 	}
-	oldTable.Meta().DBID = 0
 	return true
 }
 
