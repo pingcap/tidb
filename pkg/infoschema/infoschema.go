@@ -34,7 +34,6 @@ import (
 // InfoSchema is the interface used to retrieve the schema information.
 // It works as a in memory cache and doesn't handle any schema change.
 // InfoSchema is read-only, and the returned value is a copy.
-// TODO: add more methods to retrieve tables and columns.
 type InfoSchema interface {
 	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
 	SchemaExists(schema model.CIStr) bool
@@ -47,10 +46,11 @@ type InfoSchema interface {
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
-	InfoSchemaMisc
+	Misc
 }
 
-type InfoSchemaMisc interface {
+// Misc contains the methods that are not closely related to InfoSchema.
+type Misc interface {
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
