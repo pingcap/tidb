@@ -20,14 +20,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"runtime/pprof"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/felixge/fgprof"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -172,34 +168,20 @@ func TestCompareWriter(t *testing.T) {
 	seed := time.Now().Nanosecond()
 	t.Logf("random seed: %d", seed)
 	var (
-		err     error
 		now     time.Time
 		elapsed time.Duration
 
-		fileCPU       *os.File
-		cpuProfCloser func() error
-
-		filenameHeap   string
-		heapProfDoneCh chan struct{}
-		heapWg         *sync.WaitGroup
+		p = newProfiler(true, true)
 	)
 	beforeTest := func() {
 		testIdx++
-		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", testIdx))
-		intest.AssertNoError(err)
-		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
-
-		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", testIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+		p.beforeTest()
 
 		now = time.Now()
 	}
 	afterClose := func() {
 		elapsed = time.Since(now)
-		err = cpuProfCloser()
-		intest.AssertNoError(err)
-		close(heapProfDoneCh)
-		heapWg.Wait()
+		p.afterTest()
 	}
 
 	suite := &writeTestSuite{
@@ -393,46 +375,20 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 
 	kvCnt, _, _ := createEvenlyDistributedFiles(store, fileSize, fileCnt, subDir)
 	memoryLimit := 64 * 1024 * 1024
-	fileIdx := 0
 
 	var (
-		err     error
-		now     time.Time
 		elapsed time.Duration
 
-		fileCPU       *os.File
-		cpuProfCloser func() error
-
-		filenameHeap   string
-		heapProfDoneCh chan struct{}
-		heapWg         *sync.WaitGroup
+		p = newProfiler(true, true)
 	)
-	beforeTest := func() {
-		fileIdx++
-		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
-		intest.AssertNoError(err)
-		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
-
-		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
-
-		now = time.Now()
-	}
-	afterClose := func() {
-		elapsed = time.Since(now)
-		err = cpuProfCloser()
-		intest.AssertNoError(err)
-		close(heapProfDoneCh)
-		heapWg.Wait()
-	}
 
 	suite := &readTestSuite{
 		store:              store,
 		totalKVCnt:         kvCnt,
 		concurrency:        100,
 		memoryLimit:        memoryLimit,
-		beforeCreateReader: beforeTest,
-		afterReaderClose:   afterClose,
+		beforeCreateReader: p.beforeTest,
+		afterReaderClose:   p.afterTest,
 		subDir:             subDir,
 	}
 
@@ -496,41 +452,15 @@ func testCompareReaderWithContent(
 	if !*skipCreate {
 		kvCnt, _, _ = createFn(store, *fileSize, *fileCount, *objectPrefix)
 	}
-	fileIdx := 0
-
-	var (
-		err error
-
-		fileCPU       *os.File
-		cpuProfCloser func() error
-
-		filenameHeap   string
-		heapProfDoneCh chan struct{}
-		heapWg         *sync.WaitGroup
-	)
-	beforeTest := func() {
-		fileIdx++
-		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
-		intest.AssertNoError(err)
-		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
-
-		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
-	}
-	afterClose := func() {
-		err = cpuProfCloser()
-		intest.AssertNoError(err)
-		close(heapProfDoneCh)
-		heapWg.Wait()
-	}
+	p := newProfiler(true, true)
 
 	suite := &readTestSuite{
 		store:              store,
 		totalKVCnt:         kvCnt,
 		concurrency:        *concurrency,
 		memoryLimit:        *memoryLimit,
-		beforeCreateReader: beforeTest,
-		afterReaderClose:   afterClose,
+		beforeCreateReader: p.beforeTest,
+		afterReaderClose:   p.afterTest,
 		subDir:             *objectPrefix,
 	}
 
@@ -646,7 +576,9 @@ func testCompareMergeWithContent(
 	t *testing.T,
 	concurrency int,
 	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
-	fn func(t *testing.T, suite *mergeTestSuite)) {
+	fn func(t *testing.T, suite *mergeTestSuite),
+	p *profiler,
+) {
 	store := openTestingStorage(t)
 	kvCnt := 0
 	var minKey, maxKey kv.Key
@@ -654,29 +586,13 @@ func testCompareMergeWithContent(
 		kvCnt, minKey, maxKey = createFn(store, *fileSize, *fileCount, *objectPrefix)
 	}
 
-	fileIdx := 0
-	var (
-		file *os.File
-		err  error
-	)
-	beforeTest := func() {
-		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
-		intest.AssertNoError(err)
-		err = pprof.StartCPUProfile(file)
-		intest.AssertNoError(err)
-	}
-
-	afterTest := func() {
-		pprof.StopCPUProfile()
-	}
-
 	suite := &mergeTestSuite{
 		store:            store,
 		totalKVCnt:       kvCnt,
 		concurrency:      concurrency,
 		memoryLimit:      *memoryLimit,
-		beforeMerge:      beforeTest,
-		afterMerge:       afterTest,
+		beforeMerge:      p.beforeTest,
+		afterMerge:       p.afterTest,
 		subDir:           *objectPrefix,
 		minKey:           minKey,
 		maxKey:           maxKey,
@@ -687,16 +603,17 @@ func testCompareMergeWithContent(
 }
 
 func TestMergeBench(t *testing.T) {
-	testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
-	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
+	p := newProfiler(true, true)
+	testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep, p)
+	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep, p)
 }
 
 func TestReadAllDataLargeFiles(t *testing.T) {
@@ -761,16 +678,20 @@ func TestReadAllData(t *testing.T) {
 
 	ctx := context.Background()
 	store := openTestingStorage(t)
-	cleanOldFiles(ctx, store, "/")
-
-	readRangeStart := []byte("key0")
+	readRangeStart := []byte("key00")
 	readRangeEnd := []byte("key88888888")
 	keyAfterRange := []byte("key9")
 	keyAfterRange2 := []byte("key9")
-	
+	eg := errgroup.Group{}
+
 	fileIdx := 0
 	val := make([]byte, 90)
-	eg := errgroup.Group{}
+	if *skipCreate {
+		goto finishCreateFiles
+	}
+
+	cleanOldFiles(ctx, store, "/")
+
 	for ; fileIdx < 1000; fileIdx++ {
 		fileIdx := fileIdx
 		eg.Go(func() error {
@@ -878,19 +799,24 @@ func TestReadAllData(t *testing.T) {
 	}
 	t.Log("finish writing 1 file of 1G")
 
+finishCreateFiles:
+
 	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/")
 	require.NoError(t, err)
 	require.Equal(t, 2091, len(dataFiles))
 
+	p := newProfiler(true, true)
 	bufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 	)
 	output := &memKVsAndBuffers{}
+	p.beforeTest()
 	now := time.Now()
 	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, bufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	elapsed := time.Since(now)
+	p.afterTest()
 	t.Logf("readAllData time cost: %s, size: %d", elapsed.String(), output.size)
 }
