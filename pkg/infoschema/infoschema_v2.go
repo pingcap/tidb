@@ -2,12 +2,13 @@ package infoschema
 
 import (
 	// "runtime/debug"
-	"time"
+	// "time"
 	"fmt"
 	"math"
 	"sync"
 
-	"github.com/allegro/bigcache"
+	"github.com/scalalang2/golang-fifo"
+	"github.com/scalalang2/golang-fifo/sieve"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -60,7 +61,7 @@ type InfoSchemaData struct {
 	// But this mapping should be synced with name2id.
 	byID  *btree.BTreeG[Item]
 
-	cache tableCache
+	cache fifo.Cache[cacheKey, table.Table]
 
 	// For the SchemaByName API
 	schemaMap *btree.BTreeG[schemaItem]
@@ -77,86 +78,86 @@ type InfoSchemaData struct {
 // The cache itself only support the key => []byte mapping, it rely on the OnRemove
 // finalizer to remove entity from the data part when the kv is evicted from the cache part.
 // In this way it can support the general key => object mapping.
-type tableCache struct {
-	cache *bigcache.BigCache
-	mu struct {
-		sync.RWMutex
-		data map[cacheKey]table.Table
-	}
-}
+// type tableCache struct {
+// 	cache *bigcache.BigCache
+// 	mu struct {
+// 		sync.RWMutex
+// 		data map[cacheKey]table.Table
+// 	}
+// }
 
-func (tc *tableCache) Init() {
-	tc.mu.data = make(map[cacheKey]table.Table, 1024)
-	config := bigcache.Config {
-		// number of shards (must be a power of 2)
-		Shards: 1024,
-			// time after which entry can be evicted
-			LifeWindow: 3 * time.Minute,
-			// rps * lifeWindow, used only in initial memory allocation
-			MaxEntriesInWindow: 1000 * 10 * 60,
-			// max entry size in bytes, used only in initial memory allocation
-			MaxEntrySize: 1000,
-			// prints information about additional memory allocation
-			Verbose: true,
-			// cache will not allocate more memory than this limit, value in MB
-			// if value is reached then the oldest entries can be overridden for the new ones
-			// 0 value means no size limit
-			HardMaxCacheSize: 64,
-			// callback fired when the oldest entry is removed because of its expiration time or no space left
-			// for the new entry, or because delete was called. A bitmask representing the reason will be returned.
-			// Default value is nil which means no callback and it prevents from unwrapping the oldest entry.
-			OnRemove: nil,
-			// OnRemoveWithReason is a callback fired when the oldest entry is removed because of its expiration time or no space left
-			// for the new entry, or because delete was called. A constant representing the reason will be passed through.
-			// Default value is nil which means no callback and it prevents from unwrapping the oldest entry.
-			// Ignored if OnRemove is specified.
-			OnRemoveWithReason: func(keyStr string, entry []byte, reason bigcache.RemoveReason) {
-				tc.mu.Lock()
-				defer tc.mu.Unlock()
-				var key cacheKey 
-				fmt.Sscanf(keyStr, "%d-%d", &key.tableID, &key.schemaVersion)
-				fmt.Println("evict key ===", key.tableID, key.schemaVersion, "reason=", reason)
-				delete(tc.mu.data, key)
-			},
-		}
+// func (tc *tableCache) Init() {
+// 	tc.mu.data = make(map[cacheKey]table.Table, 1024)
+// 	config := bigcache.Config {
+// 		// number of shards (must be a power of 2)
+// 		Shards: 1024,
+// 			// time after which entry can be evicted
+// 			LifeWindow: 3 * time.Minute,
+// 			// rps * lifeWindow, used only in initial memory allocation
+// 			MaxEntriesInWindow: 1000 * 10 * 60,
+// 			// max entry size in bytes, used only in initial memory allocation
+// 			MaxEntrySize: 1000,
+// 			// prints information about additional memory allocation
+// 			Verbose: true,
+// 			// cache will not allocate more memory than this limit, value in MB
+// 			// if value is reached then the oldest entries can be overridden for the new ones
+// 			// 0 value means no size limit
+// 			HardMaxCacheSize: 64,
+// 			// callback fired when the oldest entry is removed because of its expiration time or no space left
+// 			// for the new entry, or because delete was called. A bitmask representing the reason will be returned.
+// 			// Default value is nil which means no callback and it prevents from unwrapping the oldest entry.
+// 			OnRemove: nil,
+// 			// OnRemoveWithReason is a callback fired when the oldest entry is removed because of its expiration time or no space left
+// 			// for the new entry, or because delete was called. A constant representing the reason will be passed through.
+// 			// Default value is nil which means no callback and it prevents from unwrapping the oldest entry.
+// 			// Ignored if OnRemove is specified.
+// 			OnRemoveWithReason: func(keyStr string, entry []byte, reason bigcache.RemoveReason) {
+// 				tc.mu.Lock()
+// 				defer tc.mu.Unlock()
+// 				var key cacheKey 
+// 				fmt.Sscanf(keyStr, "%d-%d", &key.tableID, &key.schemaVersion)
+// 				fmt.Println("evict key ===", key.tableID, key.schemaVersion, "reason=", reason)
+// 				delete(tc.mu.data, key)
+// 			},
+// 		}
 
-	cache, initErr := bigcache.NewBigCache(config)
-	if initErr != nil {
-		panic(initErr)
-	}
-	// go func() {
-	// 	for {
-	// 		time.Sleep(3*time.Second)
-	// 		stats := cache.Stats()
-	// 		fmt.Printf("bigcache stats === %#v\n", stats)
-	// 	}
-	// }()
-	tc.cache = cache
-}
+// 	cache, initErr := bigcache.NewBigCache(config)
+// 	if initErr != nil {
+// 		panic(initErr)
+// 	}
+// 	// go func() {
+// 	// 	for {
+// 	// 		time.Sleep(3*time.Second)
+// 	// 		stats := cache.Stats()
+// 	// 		fmt.Printf("bigcache stats === %#v\n", stats)
+// 	// 	}
+// 	// }()
+// 	tc.cache = cache
+// }
 
-func (tc *tableCache) Close() {
-	tc.cache.Close()
-}
+// func (tc *tableCache) Close() {
+	// tc.cache.Close()
+// }
 
-func (tc *tableCache) Set(key cacheKey, val []byte, tbl table.Table) {
-	err := tc.cache.Set(fmt.Sprintf("%d-%d", key.tableID, key.schemaVersion), nil)
-	if err == nil {
-		tc.mu.Lock()
-		defer tc.mu.Unlock()
-		tc.mu.data[key] = tbl
-	}
-}
+// func (tc *tableCache) Set(key cacheKey, val []byte, tbl table.Table) {
+// 	err := tc.cache.Set(fmt.Sprintf("%d-%d", key.tableID, key.schemaVersion), nil)
+// 	if err == nil {
+// 		tc.mu.Lock()
+// 		defer tc.mu.Unlock()
+// 		tc.mu.data[key] = tbl
+// 	}
+// }
 
-func (tc *tableCache) Get(key cacheKey) (table.Table, bool) {
-	tc.mu.RLock()
-	defer tc.mu.RUnlock()
+// func (tc *tableCache) Get(key cacheKey) (table.Table, bool) {
+// 	tc.mu.RLock()
+// 	defer tc.mu.RUnlock()
 
-	find, ok := tc.mu.data[key]
-	if ok {
-		return find, true
-	}
-	return nil, false
-}
+// 	find, ok := tc.mu.data[key]
+// 	if ok {
+// 		return find, true
+// 	}
+// 	return nil, false
+// }
 
 func (isd *InfoSchemaData) getVersionByTS(ts uint64) (int64, bool) {
 	isd.mu.RLock()
@@ -209,19 +210,20 @@ func NewInfoSchemaData() *InfoSchemaData {
 		byID:      btree.NewBTreeG[Item](compareByID),
 		name2id:   btree.NewBTreeG[Item](compareByName),
 		schemaMap: btree.NewBTreeG[schemaItem](compareBySchema),
+		cache: sieve.New[cacheKey, table.Table](1000),
 	}
-	ret.cache.Init()
+	// ret.cache.Init()
 	return ret
 }
 
-func (isd *InfoSchemaData) Close() {
-	isd.cache.Close()
-}
+// func (isd *InfoSchemaData) Close() {
+// 	isd.cache.Close()
+// }
 
 func (isd *InfoSchemaData) add(item Item, rawData []byte, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.name2id.Set(item)
-	isd.cache.Set(cacheKey{item.tableID, item.schemaVersion}, rawData, tbl)
+	isd.cache.Set(cacheKey{item.tableID, item.schemaVersion}, tbl)
 }
 
 func (isd *InfoSchemaData) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
@@ -327,9 +329,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, rawData, err := loadTableInfo(is.r, is.InfoSchemaData, id, itm.dbID, is.ts)
+	ret, _, err := loadTableInfo(is.r, is.InfoSchemaData, id, itm.dbID, is.ts)
 	if err == nil {
-		is.cache.Set(key, rawData, ret)
+		is.cache.Set(key, ret)
 		// fmt.Printf("update cache == %d %p\n", id, is.cache)
 		// debug.PrintStack()
 		return ret, true
@@ -361,12 +363,12 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, raw, err := loadTableInfo(is.r, is.InfoSchemaData, itm.tableID, itm.dbID, is.ts)
+	ret, _, err := loadTableInfo(is.r, is.InfoSchemaData, itm.tableID, itm.dbID, is.ts)
 	if err != nil {
 		fmt.Println("load table info error ===", itm.tableID, err)
 		return nil, errors.Trace(err)
 	}
-	is.cache.Set(key, raw, ret)
+	is.cache.Set(key, ret)
 	return ret, nil
 }
 

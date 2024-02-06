@@ -56,7 +56,7 @@ func NewCache(r autoid.Requirement, capacity int) *InfoCache {
 }
 
 func (h *InfoCache) Close() {
-	h.Data.Close()
+	// h.Data.Close()
 }
 
 // ReSize re-size the cache.
