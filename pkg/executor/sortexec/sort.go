@@ -314,7 +314,7 @@ func (e *SortExec) generateResultWhenSpillTriggeredOnlyOnce() {
 		injectParallelSortRandomFail(1)
 
 		rowNum := chk.NumRows()
-		for j := 0; i < rowNum; j++ {
+		for j := 0; j < rowNum; j++ {
 			select {
 			case <-e.finishCh:
 				return
@@ -487,9 +487,7 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 }
 
 func (e *SortExec) spillSortedRowsInMemory() error {
-	merger := newMultiWayMerger(e.Parallel.sortedRowsIters, e.lessRow)
-	merger.init()
-	return e.Parallel.spillHelper.spillImpl(merger)
+	return e.Parallel.spillHelper.spillImpl(e.Parallel.merger)
 }
 
 func (e *SortExec) initExternalSorting() error {
