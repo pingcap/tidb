@@ -122,19 +122,22 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		return nil, errors.New("InputSchema and InputNames should be the same length")
 	}
 
-	if len(options.InputNames) > 0 {
-		intest.AssertFunc(func() bool {
-			dbName := options.InputNames[0].DBName
-			if options.SourceTableDB.L != "" {
-				intest.Assert(dbName.L == options.SourceTableDB.L)
-			}
-
-			for _, name := range options.InputNames {
-				intest.Assert(name.DBName.L == dbName.L)
-			}
+	// assert all input db names are the same if specified
+	intest.AssertFunc(func() bool {
+		if len(options.InputNames) == 0 {
 			return true
-		})
-	}
+		}
+
+		dbName := options.InputNames[0].DBName
+		if options.SourceTableDB.L != "" {
+			intest.Assert(dbName.L == options.SourceTableDB.L)
+		}
+
+		for _, name := range options.InputNames {
+			intest.Assert(name.DBName.L == dbName.L)
+		}
+		return true
+	})
 
 	rewriter := &expressionRewriter{
 		ctx:                 context.TODO(),

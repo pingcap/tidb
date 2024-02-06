@@ -13,17 +13,13 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/kv",
-        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/collate",
         "//pkg/util/ranger",
         "//pkg/util/size",
-        "//pkg/util/sqlexec",
-        "@com_github_pingcap_errors//:errors",
     ],
 )
 
