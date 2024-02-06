@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/felixge/fgprof"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -43,11 +45,17 @@ type writeTestSuite struct {
 	memoryLimit        int
 	beforeCreateWriter func()
 	afterWriterClose   func()
+
+	optionalFilePath string
+	onClose          OnCloseFunc
 }
 
 func writePlainFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	_ = s.store.DeleteFile(ctx, filePath)
 	buf := make([]byte, s.memoryLimit)
 	offset := 0
@@ -92,9 +100,13 @@ func cleanOldFiles(ctx context.Context, store storage.ExternalStorage, subDir st
 func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
-		SetMemorySizeLimit(uint64(s.memoryLimit))
+		SetMemorySizeLimit(uint64(s.memoryLimit)).
+		SetOnCloseFunc(s.onClose)
 
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
@@ -116,6 +128,9 @@ func writeExternalFile(s *writeTestSuite) {
 func writeExternalOneFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
@@ -126,13 +141,21 @@ func writeExternalOneFile(s *writeTestSuite) {
 	writer := builder.BuildOneFile(
 		s.store, filePath, "writerID")
 	intest.AssertNoError(writer.Init(ctx, 20*1024*1024))
+	var minKey, maxKey []byte
+
 	key, val, _ := s.source.next()
+	minKey = key
 	for key != nil {
+		maxKey = key
 		err := writer.WriteRow(ctx, key, val)
 		intest.AssertNoError(err)
 		key, val, _ = s.source.next()
 	}
 	intest.AssertNoError(writer.Close(ctx))
+	s.onClose(&WriterSummary{
+		Min: minKey,
+		Max: maxKey,
+	})
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
@@ -673,4 +696,56 @@ func TestMergeBench(t *testing.T) {
 	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
 	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
 	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
+}
+
+func TestReadAllDataLargeFiles(t *testing.T) {
+	ctx := context.Background()
+	store := openTestingStorage(t)
+
+	// ~ 100B * 20M = 2GB
+	source := newAscendingKeyAsyncSource(20*1024*1024, 10, 90, nil)
+	// ~ 1KB * 2M = 2GB
+	source2 := newAscendingKeyAsyncSource(2*1024*1024, 10, 990, nil)
+	var minKey, maxKey kv.Key
+	recordMinMax := func(s *WriterSummary) {
+		minKey = s.Min
+		maxKey = s.Max
+	}
+	suite := &writeTestSuite{
+		store:            store,
+		source:           source,
+		memoryLimit:      256 * 1024 * 1024,
+		optionalFilePath: "/test/file",
+		onClose:          recordMinMax,
+	}
+	suite2 := &writeTestSuite{
+		store:            store,
+		source:           source2,
+		memoryLimit:      256 * 1024 * 1024,
+		optionalFilePath: "/test/file2",
+		onClose:          recordMinMax,
+	}
+	writeExternalOneFile(suite)
+	t.Logf("minKey: %s, maxKey: %s", minKey, maxKey)
+	writeExternalOneFile(suite2)
+	t.Logf("minKey: %s, maxKey: %s", minKey, maxKey)
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "")
+	intest.AssertNoError(err)
+	intest.Assert(len(dataFiles) == 2)
+
+	// choose the two keys so that expected concurrency is 579 and 19
+	startKey, err := hex.DecodeString("00000001000000000000")
+	intest.AssertNoError(err)
+	endKey, err := hex.DecodeString("00a00000000000000000")
+	intest.AssertNoError(err)
+	bufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+	)
+	output := &memKVsAndBuffers{}
+	now := time.Now()
+	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, bufPool, output)
+	t.Logf("read all data cost: %s", time.Since(now))
+	intest.AssertNoError(err)
 }

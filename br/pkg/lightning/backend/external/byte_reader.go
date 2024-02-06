@@ -16,9 +16,11 @@ package external
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -325,6 +327,11 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 		zap.Int("dropBytes", r.concurrentReader.bufSizePerConc*(len(r.curBuf)-r.curBufIdx)-r.curBufOffset),
 		zap.Int("curBufIdx", r.curBufIdx),
 	)
+	failpoint.Inject("assertReloadAtMostOnce", func() {
+		if r.concurrentReader.reloadCnt > 1 {
+			panic(fmt.Sprintf("reloadCnt is %d", r.concurrentReader.reloadCnt))
+		}
+	})
 	r.concurrentReader.largeBufferPool.Destroy()
 	r.concurrentReader.largeBuf = nil
 	r.concurrentReader.now = false
