@@ -18,7 +18,6 @@ import (
 	"context"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -195,8 +194,6 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 		if i == 10 {
 			// Trigger the spill
 			tracker.Consume(hardLimit)
-			// Wait for spill
-			time.Sleep(10 * time.Millisecond)
 			tracker.Consume(-hardLimit)
 		}
 

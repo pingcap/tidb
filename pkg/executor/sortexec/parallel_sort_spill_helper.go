@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -90,7 +91,13 @@ func (p *parallelSortSpillHelper) setNotSpilled() {
 	p.spillStatus = notSpilled
 }
 
-func (p *parallelSortSpillHelper) spill() error {
+func (p *parallelSortSpillHelper) spill() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
+
 	select {
 	case <-p.finishCh:
 		return nil
@@ -184,6 +191,9 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	for {
 		select {
 		case <-p.finishCh:
+			// We must wait the finish of the above goroutine,
+			// or p.errOutputChan may be closed in advandce.
+			<-spilledRowChannel
 			return nil
 		case row, ok = <-spilledRowChannel:
 			if !ok {

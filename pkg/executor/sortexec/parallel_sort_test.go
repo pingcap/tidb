@@ -32,7 +32,7 @@ import (
 )
 
 // Test is successful if there is no hang
-func executeInFailpoint(t *testing.T, exe *sortexec.SortExec) {
+func executeInFailpoint(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker) {
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func executeInFailpoint(t *testing.T, exe *sortexec.SortExec) {
 	}()
 
 	chk := exec.NewFirstChunk(exe)
-	for {
+	for i := 0; i >= 0; i++ {
 		err := exe.Next(tmpCtx, chk)
 		if err != nil {
 			once.Do(func() {
@@ -63,6 +63,12 @@ func executeInFailpoint(t *testing.T, exe *sortexec.SortExec) {
 		}
 		if chk.NumRows() == 0 {
 			break
+		}
+
+		if i == 10 && hardLimit > 0 {
+			// Trigger the spill
+			tracker.Consume(hardLimit)
+			tracker.Consume(-hardLimit)
 		}
 	}
 	once.Do(func() {
@@ -101,7 +107,7 @@ func failpointTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sort
 		exe = buildSortExec(ctx, sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
-	executeInFailpoint(t, exe)
+	executeInFailpoint(t, exe, 0, nil)
 }
 
 func TestParallelSort(t *testing.T) {

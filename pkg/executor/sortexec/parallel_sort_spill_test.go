@@ -60,6 +60,22 @@ func inMemoryThenSpill(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
+func failpointNoMemoryDataTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+	if exe == nil {
+		exe = buildSortExec(ctx, sortCase, dataSource)
+	}
+	dataSource.PrepareChunks()
+	executeInFailpoint(t, exe, 0, nil)
+}
+
+func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+	if exe == nil {
+		exe = buildSortExec(ctx, sortCase, dataSource)
+	}
+	dataSource.PrepareChunks()
+	executeInFailpoint(t, exe, hardLimit2, ctx.GetSessionVars().MemTracker)
+}
+
 func TestParallelSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
@@ -85,8 +101,6 @@ func TestParallelSortSpillDisk(t *testing.T) {
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = true
-
 	for i := 0; i < 10; i++ {
 		inMemoryThenSpill(t, ctx, nil, sortCase, schema, dataSource)
 		inMemoryThenSpill(t, ctx, exe, sortCase, schema, dataSource)
@@ -94,23 +108,34 @@ func TestParallelSortSpillDisk(t *testing.T) {
 }
 
 func TestParallelSortSpillDiskFailpoint(t *testing.T) {
-	// sortexec.SetSmallSpillChunkSizeForTest()
-	// ctx := mock.NewContext()
-	// sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(false)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(false)`)
 
-	// ctx.GetSessionVars().InitChunkSize = 32
-	// ctx.GetSessionVars().MaxChunkSize = 32
-	// ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit)
-	// ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	// ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	// ctx.GetSessionVars().EnableParallelSort = true
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	ctx.GetSessionVars().EnableParallelSort = true
 
-	// schema := expression.NewSchema(sortCase.Columns()...)
-	// dataSource := buildDataSource(ctx, sortCase, schema)
-	// exe := buildSortExec(ctx, sortCase, dataSource)
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	for i := 0; i < 20; i++ {
+		failpointNoMemoryDataTest(t, ctx, nil, sortCase, schema, dataSource)
+		failpointNoMemoryDataTest(t, ctx, exe, sortCase, schema, dataSource)
+	}
+
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	for i := 0; i < 20; i++ {
+		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, schema, dataSource)
+		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, schema, dataSource)
+	}
 }
