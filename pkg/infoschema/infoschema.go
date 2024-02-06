@@ -348,13 +348,6 @@ func (is *infoSchema) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
 }
 
-// func (is *infoSchema) Clone() (result []*model.DBInfo) {
-// 	for _, v := range is.schemaMap {
-// 		result = append(result, v.dbInfo.Clone())
-// 	}
-// 	return
-// }
-
 // GetSequenceByName gets the sequence by name.
 func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 	tbl, err := is.TableByName(schema, sequence)
