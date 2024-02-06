@@ -67,6 +67,8 @@ type Misc interface {
 	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
 
+var _ Misc = &infoSchemaMisc{}
+
 type sortedTables []table.Table
 
 func (s sortedTables) searchTable(id int64) int {
@@ -344,7 +346,7 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 }
 
 // HasTemporaryTable returns whether information schema has temporary table
-func (is *infoSchema) HasTemporaryTable() bool {
+func (is *infoSchemaMisc) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
 }
 
@@ -405,7 +407,7 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 }
 
 // PolicyByName is used to find the policy.
-func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
+func (is *infoSchemaMisc) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	t, r := is.policyMap[name.L]
@@ -413,7 +415,7 @@ func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 }
 
 // ResourceGroupByName is used to find the resource group.
-func (is *infoSchema) ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool) {
+func (is *infoSchemaMisc) ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool) {
 	is.resourceGroupMutex.RLock()
 	defer is.resourceGroupMutex.RUnlock()
 	t, r := is.resourceGroupMap[name.L]
@@ -421,7 +423,7 @@ func (is *infoSchema) ResourceGroupByName(name model.CIStr) (*model.ResourceGrou
 }
 
 // AllResourceGroups returns all resource groups.
-func (is *infoSchema) AllResourceGroups() []*model.ResourceGroupInfo {
+func (is *infoSchemaMisc) AllResourceGroups() []*model.ResourceGroupInfo {
 	is.resourceGroupMutex.RLock()
 	defer is.resourceGroupMutex.RUnlock()
 	groups := make([]*model.ResourceGroupInfo, 0, len(is.resourceGroupMap))
@@ -432,7 +434,7 @@ func (is *infoSchema) AllResourceGroups() []*model.ResourceGroupInfo {
 }
 
 // AllPlacementPolicies returns all placement policies
-func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
+func (is *infoSchemaMisc) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	policies := make([]*model.PolicyInfo, 0, len(is.policyMap))
@@ -442,12 +444,12 @@ func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
 	return policies
 }
 
-func (is *infoSchema) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
+func (is *infoSchemaMisc) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
 	t, r := is.ruleBundleMap[id]
 	return t, r
 }
 
-func (is *infoSchema) AllPlacementBundles() []*placement.Bundle {
+func (is *infoSchemaMisc) AllPlacementBundles() []*placement.Bundle {
 	bundles := make([]*placement.Bundle, 0, len(is.ruleBundleMap))
 	for _, bundle := range is.ruleBundleMap {
 		bundles = append(bundles, bundle)
@@ -455,31 +457,31 @@ func (is *infoSchema) AllPlacementBundles() []*placement.Bundle {
 	return bundles
 }
 
-func (is *infoSchema) setResourceGroup(resourceGroup *model.ResourceGroupInfo) {
+func (is *infoSchemaMisc) setResourceGroup(resourceGroup *model.ResourceGroupInfo) {
 	is.resourceGroupMutex.Lock()
 	defer is.resourceGroupMutex.Unlock()
 	is.resourceGroupMap[resourceGroup.Name.L] = resourceGroup
 }
 
-func (is *infoSchema) deleteResourceGroup(name string) {
+func (is *infoSchemaMisc) deleteResourceGroup(name string) {
 	is.resourceGroupMutex.Lock()
 	defer is.resourceGroupMutex.Unlock()
 	delete(is.resourceGroupMap, name)
 }
 
-func (is *infoSchema) setPolicy(policy *model.PolicyInfo) {
+func (is *infoSchemaMisc) setPolicy(policy *model.PolicyInfo) {
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
 	is.policyMap[policy.Name.L] = policy
 }
 
-func (is *infoSchema) deletePolicy(name string) {
+func (is *infoSchemaMisc) deletePolicy(name string) {
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
 	delete(is.policyMap, name)
 }
 
-func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchemaMisc) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -519,7 +521,7 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 	}
 }
 
-func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchemaMisc) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -541,7 +543,7 @@ func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *mode
 }
 
 // GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+func (is *infoSchemaMisc) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
 	name := SchemaAndTableName{schema: schema, table: table}
 	return is.referredForeignKeyMap[name]
 }

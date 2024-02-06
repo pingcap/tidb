@@ -128,8 +128,6 @@ func TestBasic(t *testing.T) {
 
 	schemas := is.AllSchemas()
 	require.Len(t, schemas, 4)
-	schemas = is.Clone()
-	require.Len(t, schemas, 4)
 
 	require.True(t, is.SchemaExists(dbName))
 	require.False(t, is.SchemaExists(noexist))
@@ -171,10 +169,7 @@ func TestBasic(t *testing.T) {
 	tb, ok = is.TableByID(dbID)
 	require.False(t, ok)
 	require.Nil(t, tb)
-
-	alloc, ok := is.AllocByID(tbID)
-	require.True(t, ok)
-	require.NotNil(t, alloc)
+	require.NotNil(t, tb.Allocators(nil))
 
 	tb, err = is.TableByName(dbName, tbName)
 	require.NoError(t, err)
