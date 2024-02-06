@@ -67,17 +67,6 @@ type wrapTxn struct {
 	tsFuture oracle.Future
 }
 
-// SetOption implements the interface.
-func (*wrapTxn) SetOption(_ int, _ any) {}
-
-// SetDiskFullOpt implements the interface.
-func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
-
-// StartTS implements the interface.
-func (*wrapTxn) StartTS() uint64 {
-	return 0
-}
-
 func (txn *wrapTxn) validOrPending() bool {
 	return txn.tsFuture != nil || txn.Transaction.Valid()
 }
