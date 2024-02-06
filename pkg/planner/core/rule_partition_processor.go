@@ -121,7 +121,11 @@ type partitionTable interface {
 func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
 	schema := expression.NewSchema(columns...)
 	// Increase the PlanID to make sure some tests will pass. The old implementation to rewrite AST builds a `TableDual`
+<<<<<<< HEAD
 	// that causes the `PlanID` increases, and many test cases hardcoded the output plan ID in the expected result.
+=======
+	// that causes the `PlanID` increases, and many test cases hardcoded the output plan in the expected result.
+>>>>>>> 7f6aafe7fe (use simple expr for partition processor)
 	// Considering the new `ParseSimpleExpr` does not do the same thing and to make the test pass,
 	// we have to increase the `PlanID` here. But it is safe to remove this line without introducing any bug.
 	// TODO: remove this line after fixing the test cases.
@@ -1055,7 +1059,11 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 	monotonous := monotoneModeInvalid
 	schema := expression.NewSchema(columns...)
 	// Increase the PlanID to make sure some tests will pass. The old implementation to rewrite AST builds a `TableDual`
+<<<<<<< HEAD
 	// that causes the `PlanID` increases, and many test cases hardcoded the output plan ID in the expected result.
+=======
+	// that causes the `PlanID` increases, and many test cases hardcoded the output plan in the expected result.
+>>>>>>> 7f6aafe7fe (use simple expr for partition processor)
 	// Considering the new `ParseSimpleExpr` does not do the same thing and to make the test pass,
 	// we have to increase the `PlanID` here. But it is safe to remove this line without introducing any bug.
 	// TODO: remove this line after fixing the test cases.
