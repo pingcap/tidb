@@ -172,16 +172,6 @@ func (i InfoStoreAdaptor) TableExists(schema, table model.CIStr) bool {
 	return tableInfo != nil
 }
 
-// TableIsView implements the InfoSchema interface.
-// nolint:unused
-func (i InfoStoreAdaptor) TableIsView(schema, table model.CIStr) bool {
-	tableInfo, _ := i.inner.TableByName(schema, table)
-	if tableInfo == nil {
-		return false
-	}
-	return tableInfo.IsView()
-}
-
 // TableByName implements the InfoSchema interface.
 // nolint:unused
 func (i InfoStoreAdaptor) TableByName(schema, table model.CIStr) (t table.Table, err error) {

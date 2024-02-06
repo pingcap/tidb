@@ -122,7 +122,7 @@ func TestBasic(t *testing.T) {
 
 	is := builder.Build()
 
-	schemaNames := is.AllSchemaNames()
+	schemaNames := infoschema.AllSchemaNames(is)
 	require.Len(t, schemaNames, 4)
 	require.True(t, testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test"}))
 
@@ -161,8 +161,8 @@ func TestBasic(t *testing.T) {
 
 	require.True(t, is.TableExists(dbName, tbName))
 	require.False(t, is.TableExists(dbName, noexist))
-	require.False(t, is.TableIsView(dbName, tbName))
-	require.False(t, is.TableIsSequence(dbName, tbName))
+	require.False(t, infoschema.TableIsView(is, dbName, tbName))
+	require.False(t, infoschema.TableIsSequence(is, dbName, tbName))
 
 	tb, ok := is.TableByID(tbID)
 	require.True(t, ok)

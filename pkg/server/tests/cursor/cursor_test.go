@@ -67,15 +67,16 @@ func TestCursorFetchErrorInFetch(t *testing.T) {
 
 	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", 1))
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error"))
+	}()
+
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{tmysql.ComStmtExecute}, uint32(stmt.ID())),
 		tmysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error"))
-	}()
 	require.ErrorContains(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{tmysql.ComStmtFetch}, uint32(stmt.ID())), 1024)), "fail to get chunk for test")
 	// after getting a failed FETCH, the cursor should have been reseted
 	require.False(t, stmt.GetCursorActive())

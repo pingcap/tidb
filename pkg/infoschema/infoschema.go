@@ -46,15 +46,10 @@ type InfoSchema interface {
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocators, bool)
-	AllSchemaNames() []string
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
-	// TableIsView indicates whether the schema.table is a view.
-	TableIsView(schema, table model.CIStr) bool
-	// TableIsSequence indicates whether the schema.table is a sequence.
-	TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
@@ -208,20 +203,20 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
 }
 
-func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {
-	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if t, ok := tbNames.tables[table.L]; ok {
-			return t.Meta().IsView()
-		}
+// TableIsView indicates whether the schema.table is a view.
+func TableIsView(is InfoSchema, schema, table model.CIStr) bool {
+	tbl, err := is.TableByName(schema, table)
+	if err == nil {
+		return tbl.Meta().IsView()
 	}
 	return false
 }
 
-func (is *infoSchema) TableIsSequence(schema, table model.CIStr) bool {
-	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if t, ok := tbNames.tables[table.L]; ok {
-			return t.Meta().IsSequence()
-		}
+// TableIsSequence indicates whether the schema.table is a sequence.
+func TableIsSequence(is InfoSchema, schema, table model.CIStr) bool {
+	tbl, err := is.TableByName(schema, table)
+	if err == nil {
+		return tbl.Meta().IsSequence()
 	}
 	return false
 }
@@ -296,9 +291,11 @@ func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	return tbl.Allocators(nil), true
 }
 
-func (is *infoSchema) AllSchemaNames() (names []string) {
-	for _, v := range is.schemaMap {
-		names = append(names, v.dbInfo.Name.O)
+// AllSchemaNames returns all the schemas' names.
+func AllSchemaNames(is InfoSchema) (names []string) {
+	schemas := is.AllSchemas()
+	for _, v := range schemas {
+		names = append(names, v.Name.O)
 	}
 	return
 }

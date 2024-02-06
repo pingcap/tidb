@@ -102,6 +102,8 @@ func newTestDXFContext(t *testing.T) *TestDXFContext {
 }
 
 func (c *TestDXFContext) init(nodeNum int) {
+	// make test faster
+	reduceCheckInterval(c.T)
 	// all nodes are isometric with 16 CPUs
 	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
@@ -421,4 +423,19 @@ func (c *TestContext) CollectedSubtaskCnt(taskID int64, step proto.Step) int {
 // getTaskStepKey returns the key of a task step.
 func getTaskStepKey(id int64, step proto.Step) string {
 	return fmt.Sprintf("%d/%d", id, step)
+}
+
+func reduceCheckInterval(t *testing.T) {
+	schedulerMgrCheckIntervalBak := scheduler.CheckTaskRunningInterval
+	schedulerCheckIntervalBak := scheduler.CheckTaskFinishedInterval
+	checkIntervalBak := taskexecutor.DefaultCheckInterval
+	maxIntervalBak := taskexecutor.MaxCheckInterval
+	t.Cleanup(func() {
+		scheduler.CheckTaskRunningInterval = schedulerMgrCheckIntervalBak
+		scheduler.CheckTaskFinishedInterval = schedulerCheckIntervalBak
+		taskexecutor.DefaultCheckInterval = checkIntervalBak
+		taskexecutor.MaxCheckInterval = maxIntervalBak
+	})
+	scheduler.CheckTaskRunningInterval, scheduler.CheckTaskFinishedInterval = 100*time.Millisecond, 100*time.Millisecond
+	taskexecutor.MaxCheckInterval, taskexecutor.DefaultCheckInterval = 10*time.Millisecond, 10*time.Millisecond
 }

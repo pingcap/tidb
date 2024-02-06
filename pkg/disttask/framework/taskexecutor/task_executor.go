@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -205,8 +204,8 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.
 	// 300ms + 600ms + 1.2s + 2s * 4 = 10.1s
-	backoffer := backoff.NewExponential(defaultCheckInterval, 2, maxCheckInterval)
-	checkInterval, noSubtaskCheckCnt := defaultCheckInterval, 0
+	backoffer := backoff.NewExponential(DefaultCheckInterval, 2, MaxCheckInterval)
+	checkInterval, noSubtaskCheckCnt := DefaultCheckInterval, 0
 	for {
 		select {
 		case <-e.ctx.Done():
@@ -238,7 +237,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			continue
 		}
 		// reset it when we get a subtask
-		checkInterval, noSubtaskCheckCnt = defaultCheckInterval, 0
+		checkInterval, noSubtaskCheckCnt = DefaultCheckInterval, 0
 
 		switch task.State {
 		case proto.TaskStateRunning:
@@ -433,13 +432,6 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 	failpoint.Inject("mockTiDBShutdown", func() {
 		if MockTiDBDown(e.id, e.GetTask()) {
 			failpoint.Return()
-		}
-	})
-
-	failpoint.Inject("mockTiDBPartitionThenResume", func(val failpoint.Value) {
-		if val.(bool) && (e.id == ":4000" || e.id == ":4001" || e.id == ":4002") {
-			infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(e.id)
-			time.Sleep(20 * time.Second)
 		}
 	})
 
