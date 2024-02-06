@@ -386,6 +386,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				fileErrCh <- err
 			}
 		}()
+	generateFileMapDone:
 		for {
 			select {
 			case <-cctx.Done():
@@ -394,7 +395,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				return errors.Trace(err)
 			case file, ok := <-fileCh:
 				if !ok {
-					break
+					break generateFileMapDone
 				}
 				tableID := tablecodec.DecodeTableID(file.GetStartKey())
 				if tableID == 0 {
