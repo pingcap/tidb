@@ -69,7 +69,7 @@ const GlobalWithoutColumnPos = -1
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	base.Plan
-	dbName           string
+	DBName           string
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
@@ -270,7 +270,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyPointGetPlanSize + p.Plan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
+	sum = emptyPointGetPlanSize + p.Plan.MemoryUsage() + int64(len(p.DBName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
 		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.OutputFieldNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
@@ -356,6 +356,8 @@ type BatchPointGetPlan struct {
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
+	// If dynamic partition pruning mode is active
+	NeedPartitionPruning bool
 }
 
 func (p *BatchPointGetPlan) getEstRowCountForDisplay() float64 {
@@ -576,10 +578,10 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			return
 		}
 		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
-			if tidbutil.IsMemDB(fp.dbName) {
+			if tidbutil.IsMemDB(fp.DBName) {
 				return nil
 			}
 			if fp.IsTableDual {
@@ -660,8 +662,8 @@ func newBatchPointGetPlan(
 		// condition key of where is primary key
 		var handles = make([]kv.Handle, len(patternInExpr.List))
 		var handleParams = make([]*expression.Constant, len(patternInExpr.List))
-		var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
-		partitionDefs := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
+		//var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
+		//partitionDefs := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
 			// SELECT * FROM t WHERE (key) in ((1), (2)) // TODO: extend this!
 			if p, ok := item.(*ast.ParenthesesExpr); ok {
@@ -694,39 +696,44 @@ func newBatchPointGetPlan(
 			}
 			handles[i] = kv.IntHandle(intDatum.GetInt64())
 			handleParams[i] = con
-			pairs := []NameValuePair{{ColName: handleCol.Name.L, ColFieldType: item.GetType(), Value: *intDatum, Con: con}}
-			if tbl.GetPartitionInfo() != nil {
-				tmpPartitionDefinition, _, pos, isTableDual := GetPartitionDef(ctx, tbl, handleCol.Name.L, pairs)
-				// TODO: Move this to the execution builder and add test for Batch with tabledual
-				if isTableDual {
-					return nil
+			/*
+				pairs := []NameValuePair{{ColName: handleCol.Name.L, ColFieldType: item.GetType(), Value: *intDatum, Con: con}}
+				if tbl.GetPartitionInfo() != nil {
+					tmpPartitionDefinition, _, pos, isTableDual := GetPartitionDef(ctx, tbl, handleCol.Name.L, pairs)
+					// TODO: Move this to the execution builder and add test for Batch with tabledual
+					if isTableDual {
+						return nil
+					}
+					if tmpPartitionDefinition != nil {
+						pos2PartitionDefinition[pos] = tmpPartitionDefinition
+					}
 				}
-				if tmpPartitionDefinition != nil {
-					pos2PartitionDefinition[pos] = tmpPartitionDefinition
-				}
-			}
+			*/
 		}
 
-		posArr := make([]int, len(pos2PartitionDefinition))
-		i := 0
-		for pos := range pos2PartitionDefinition {
-			posArr[i] = pos
-			i++
-		}
-		sort.Ints(posArr)
-		for _, pos := range posArr {
-			partitionDefs = append(partitionDefs, pos2PartitionDefinition[pos])
-		}
-		if len(partitionDefs) == 0 {
-			partitionDefs = nil
-		}
+		/*
+			posArr := make([]int, len(pos2PartitionDefinition))
+			i := 0
+			for pos := range pos2PartitionDefinition {
+				posArr[i] = pos
+				i++
+			}
+			sort.Ints(posArr)
+			for _, pos := range posArr {
+				partitionDefs = append(partitionDefs, pos2PartitionDefinition[pos])
+			}
+			if len(partitionDefs) == 0 {
+				partitionDefs = nil
+			}
+		*/
 		p := &BatchPointGetPlan{
 			TblInfo:       tbl,
 			Handles:       handles,
 			HandleParams:  handleParams,
 			HandleType:    &handleCol.FieldType,
 			PartitionExpr: partitionExpr,
-			PartitionDefs: partitionDefs,
+			//PartitionDefs: partitionDefs,
+			NeedPartitionPruning: tbl.GetPartitionInfo() != nil,
 		}
 
 		return p.Init(ctx, statsInfo, schema, names, 0)
@@ -783,8 +790,8 @@ func newBatchPointGetPlan(
 
 	indexValues := make([][]types.Datum, len(patternInExpr.List))
 	indexValueParams := make([][]*expression.Constant, len(patternInExpr.List))
-	partitionDefs := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
-	var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
+	//partitionDefs := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
+	//var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
 
 	var indexTypes []*types.FieldType
 	for i, item := range patternInExpr.List {
@@ -884,30 +891,34 @@ func newBatchPointGetPlan(
 		}
 		indexValues[i] = values
 		indexValueParams[i] = valuesParams
-		if tbl.GetPartitionInfo() != nil {
-			tmpPartitionDefinition, _, pos, isTableDual := GetPartitionDef(ctx, tbl, "", pairs)
-			if isTableDual {
-				return nil
+		/*
+			if tbl.GetPartitionInfo() != nil {
+				tmpPartitionDefinition, _, pos, isTableDual := GetPartitionDef(ctx, tbl, "", pairs)
+				if isTableDual {
+					return nil
+				}
+				if tmpPartitionDefinition != nil {
+					pos2PartitionDefinition[pos] = tmpPartitionDefinition
+				}
 			}
-			if tmpPartitionDefinition != nil {
-				pos2PartitionDefinition[pos] = tmpPartitionDefinition
-			}
-		}
+		*/
 	}
 
-	posArr := make([]int, len(pos2PartitionDefinition))
-	i := 0
-	for pos := range pos2PartitionDefinition {
-		posArr[i] = pos
-		i++
-	}
-	sort.Ints(posArr)
-	for _, pos := range posArr {
-		partitionDefs = append(partitionDefs, pos2PartitionDefinition[pos])
-	}
-	if len(partitionDefs) == 0 {
-		partitionDefs = nil
-	}
+	/*
+		posArr := make([]int, len(pos2PartitionDefinition))
+		i := 0
+		for pos := range pos2PartitionDefinition {
+			posArr[i] = pos
+			i++
+		}
+		sort.Ints(posArr)
+		for _, pos := range posArr {
+			partitionDefs = append(partitionDefs, pos2PartitionDefinition[pos])
+		}
+		if len(partitionDefs) == 0 {
+			partitionDefs = nil
+		}
+	*/
 	p := &BatchPointGetPlan{
 		TblInfo:          tbl,
 		IndexInfo:        matchIdxInfo,
@@ -916,7 +927,8 @@ func newBatchPointGetPlan(
 		IndexColTypes:    indexTypes,
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
-		PartitionDefs:    partitionDefs,
+		//PartitionDefs:    partitionDefs,
+		NeedPartitionPruning: tbl.GetPartitionInfo() != nil,
 	}
 
 	return p.Init(ctx, statsInfo, schema, names, 0)
@@ -1065,30 +1077,32 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
-	var partitionDef *model.PartitionDefinition
-	var pairIdx int
-	pi := tbl.GetPartitionInfo()
-	if pi != nil {
-		partitionDef, pairIdx, _, isTableDual = GetPartitionDef(ctx, tbl, "", pairs)
-		if isTableDual {
-			// TODO: if plan cached, allow recalculation later!!!
-			// OR also block plan cache here!
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
-			p.IsTableDual = true
-			return p
-		}
-		if partitionDef == nil {
-			return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, nil, pairIdx, true, isTableDual, check)
-		}
-		// Take partition selection into consideration.
-		if len(tblName.PartitionNames) > 0 {
-			if !partitionNameInSet(partitionDef.Name, tblName.PartitionNames) {
+	/*
+		var partitionDef *model.PartitionDefinition
+		var pairIdx int
+		pi := tbl.GetPartitionInfo()
+		if pi != nil {
+			partitionDef, pairIdx, _, isTableDual = GetPartitionDef(ctx, tbl, "", pairs)
+			if isTableDual {
+				// TODO: if plan cached, allow recalculation later!!!
+				// OR also block plan cache here!
 				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 				p.IsTableDual = true
 				return p
 			}
+			if partitionDef == nil {
+				return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, nil, pairIdx, true, isTableDual, check)
+			}
+			// Take partition selection into consideration.
+			if len(tblName.PartitionNames) > 0 {
+				if !partitionNameInSet(partitionDef.Name, tblName.PartitionNames) {
+					p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+					p.IsTableDual = true
+					return p
+				}
+			}
 		}
-	}
+	*/
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.Value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
@@ -1103,18 +1117,19 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.HandleFieldType = fieldType
 		p.HandleConstant = handlePair.Con
-		p.PartitionDef = partitionDef
+		//p.PartitionDef = partitionDef
+		p.needPartitionPruning = tbl.GetPartitionInfo() != nil
 		return p
 	} else if handlePair.Value.Kind() != types.KindNull {
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, partitionDef, pairIdx, false, isTableDual, check)
+	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, nil /*partitionDef, pairIdx*/, false, isTableDual, check)
 }
 
 func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, schema *expression.Schema,
 	names []*types.FieldName, pairs []NameValuePair, partitionDef *model.PartitionDefinition,
-	pos int, globalIndexCheck, isTableDual, check bool) *PointGetPlan {
+	/*pos int,*/ globalIndexCheck, isTableDual, check bool) *PointGetPlan {
 	if globalIndexCheck {
 		// when partitions are specified or some partition is in ddl, not use point get plan for global index.
 		// TODO: Add partition ID filter for Global Index Point Get.
@@ -1187,9 +1202,11 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
 		p.PartitionDef = partitionDef
-		if p.PartitionDef != nil {
-			p.PartitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
-		}
+		/*
+			if p.PartitionDef != nil {
+				p.PartitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
+			}
+		*/
 		return p
 	}
 	return nil
@@ -1246,7 +1263,7 @@ func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
 		Plan:             base.NewBasePlan(ctx, plancodec.TypePointGet, 0),
-		dbName:           dbName,
+		DBName:           dbName,
 		schema:           schema,
 		TblInfo:          tbl,
 		OutputFieldNames: names,
@@ -1672,7 +1689,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointUpdatePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo, updateStmt)
+		return buildPointUpdatePlan(ctx, pointGet, pointGet.DBName, pointGet.TblInfo, updateStmt)
 	}
 	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt)
 	if batchPointGet != nil {
@@ -1797,7 +1814,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo)
+		return buildPointDeletePlan(ctx, pointGet, pointGet.DBName, pointGet.TblInfo)
 	}
 	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {

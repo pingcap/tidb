@@ -2297,7 +2297,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		ctx:              ds.SCtx(),
 		AccessConditions: candidate.path.AccessConds,
 		schema:           ds.schema.Clone(),
-		dbName:           ds.DBName.L,
+		DBName:           ds.DBName.L,
 		TblInfo:          ds.TableInfo(),
 		OutputFieldNames: ds.OutputNames(),
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,

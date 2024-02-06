@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -111,89 +112,112 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		b.hasLock = true
 	}
 
-	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return e
-	}
+	// Static or Dynamic pruning mode does not affect PointGet!!!
 	pi := p.TblInfo.GetPartitionInfo()
 	if pi == nil {
 		return e
 	}
+	// Reset PartitionDef, should only be used if partitioned table.
+	// If nil and partitioned table, no partition matched!
+	p.PartitionDef = nil
 
 	if p.HandleConstant != nil {
 		// TODO: See if we can reuse the already calculated dVal (see rebuildRange).
 		dVal, err := plannercore.ConvertConstant2Datum(b.ctx, p.HandleConstant, p.HandleFieldType)
 		if err != nil {
-			b.err = err
-			return nil
+			return e
 		}
 		colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
-		partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{colName, p.HandleFieldType, *dVal, p.HandleConstant}})
-		// TODO: Support isTableDual?
-		if isTableDual {
-			b.err = errors.New("point get for partition table can not use plan cache, could not prune (handle, TableDual)")
-			return nil
+		if colName != "" {
+			// Simple partitioning expression, use full pruner!
+			partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{colName, p.HandleFieldType, *dVal, p.HandleConstant}})
+			if isTableDual || partDef == nil {
+				// PartitionDef not set, so it will not use any partitions!
+				return e
+			}
+			p.PartitionDef = partDef
+			return e
 		}
-		if partDef == nil {
-			b.err = errors.New("point get for partition table can not use plan cache, could not prune (handle, no partition found)")
-			return nil
-		}
-		p.PartitionDef = partDef
-		return e
+		// TODO:
+		// Add HandleConstant as conditions
 	}
 
+	var conds []expression.Expression
+	conds = append(conds, p.AccessConditions...)
 	if len(p.IndexValues) > 0 {
 		p.PartitionDef = nil
 		for i, param := range p.IndexConstants {
 			if param != nil && p.PartitionColumnPos == i {
 				// Re-calculate the pruning!
 				colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
-				partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{p.IndexInfo.Columns[i].Name.L, p.ColsFieldType[i], p.IndexValues[i], p.IndexConstants[i]}})
-				// TODO: Can we set UseCache = false here?
-				// TODO: Support isTableDual?
-				if isTableDual {
-					b.err = errors.New("point get for partition table can not use plan cache, could not prune (TableDual)")
-					return nil
+				if colName == "" {
+					// Not simple partitioning expression, use full pruner!
+					break
 				}
-				if partDef == nil {
-					b.err = errors.New("point get for partition table can not use plan cache, could not prune (No partition found)")
-					return nil
+				partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{p.IndexInfo.Columns[i].Name.L, p.ColsFieldType[i], p.IndexValues[i], p.IndexConstants[i]}})
+				if isTableDual || partDef == nil {
+					// PartitionDef not set, so it will not use any partitions!
+					return e
 				}
 				p.PartitionDef = partDef
 				return e
 			}
 		}
+		// TODO:
+		// Add IndexCol[0] = IndexVal[0] AND IndexCol[1] = IndexVal[1] ...
+		// to conds and run full partition pruner
+		for i, param := range p.IndexConstants {
+			if param != nil {
+				col :=
+
+				sf, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{param, p.IndexInfo.Columns[i]}...)
+				if err != nil {
+					// WHAT TO DO?!?
+				}
+				conds = append(conds, sf)
+			}
+		}
 	}
-	// TODO: difference between IndexValues and handles?
 	// Re-calculate the pruning!
 	// For now, use the fully fledged pruner!
 	is := domain.GetDomain(b.ctx).InfoSchema()
 
 	tbl, ok := is.TableByID(p.TblInfo.ID)
 	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
-		b.err = errors.New("point get for partition table can not use plan cache, cannot get table")
-		return nil
+		return e
 	}
 	// TODO: Can we access the partition names somehow? At least test with explicit partition selection
-	parts, err := plannercore.PartitionPruning(b.ctx, tbl.GetPartitionedTable(), p.AccessConditions, nil, p.Schema().Columns, p.OutputFieldNames)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	if len(parts) != 1 {
-		if len(parts) == 0 {
-			// TODO: Handle this, turn it into TableDual!
-			b.err = errors.New("not matching any partitions")
-			return nil
-		}
-		b.err = errors.New("point_get cached query matches multiple partitions")
-		return nil
-	}
-	if parts[0] < 0 || parts[0] >= len(pi.Definitions) {
-		b.err = errors.New("point_get cached query matches no partitions")
-		return nil
-	}
-	p.PartitionDef = &pi.Definitions[parts[0]]
+	tblCols := tbl.Cols()
+	colExpressions := make([]*expression.Column, 0, len(tblCols))
+	colNames := make([]*types.FieldName, 0, len(tblCols))
+	for i := range tblCols {
+		colExpressions = append(colExpressions,
+			&expression.Column{
+				RetType: &tblCols[i].FieldType,
+				ID:      tblCols[i].ID,
+				//UniqueID:              0,
+				//Index:                 0,
+				//VirtualExpr:           nil,
+				//OrigName:              tblCols[i].Name.L,
+				//IsHidden:              false,
+				//IsPrefix:              false,
+				//InOperand:             false,
+				//CorrelatedColUniqueID: 0,
+			})
 
+		colNames = append(colNames, &types.FieldName{
+			DBName:  model.NewCIStr(p.DBName),
+			TblName: tbl.Meta().Name,
+			ColName: tblCols[i].Name,
+		})
+	}
+	parts, err := plannercore.PartitionPruning(b.ctx, tbl.GetPartitionedTable(), conds, nil, colExpressions, colNames)
+	if err != nil {
+		return e
+	}
+	if len(parts) == 1 && parts[0] >= 0 && parts[0] < len(pi.Definitions) {
+		p.PartitionDef = &pi.Definitions[parts[0]]
+	}
 	return e
 }
 
