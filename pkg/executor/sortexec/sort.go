@@ -311,6 +311,8 @@ func (e *SortExec) generateResultWhenSpillTriggeredOnlyOnce() {
 			return
 		}
 
+		injectParallelSortRandomFail(1)
+
 		rowNum := chk.NumRows()
 		for j := 0; i < rowNum; j++ {
 			select {
@@ -383,6 +385,8 @@ func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
 		}
 		multiWayMerge.elements[0].row = newRow
 		heap.Fix(multiWayMerge, 0)
+
+		injectParallelSortRandomFail(1)
 	}
 	return nil
 }
@@ -433,7 +437,7 @@ func (e *SortExec) generateResultInMemory() bool {
 			}
 		}
 
-		injectParallelSortRandomFail()
+		injectParallelSortRandomFail(3)
 
 		if e.Parallel.spillHelper.isSpillNeeded() {
 			return true
@@ -789,7 +793,7 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 			e.Parallel.resultChannel <- rowWithError{err: err}
 			return
 		}
-		injectParallelSortRandomFail()
+		injectParallelSortRandomFail(3)
 	}
 }
 

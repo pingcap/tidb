@@ -112,6 +112,7 @@ func (p *parallelSortSpillHelper) spill() error {
 
 			sortedRowsIters[idx] = chunk.NewIterator4Slice(nil)
 			sortedRowsIters[idx].Reset(p.sortExec.Parallel.workers[idx].sortLocalRows())
+			injectParallelSortRandomFail(200)
 		}(i)
 	}
 
@@ -158,7 +159,14 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 
 	spilledRowChannel := make(chan chunk.Row, 10000)
 	go func() {
-		defer close(spilledRowChannel)
+		defer func() {
+			if r := recover(); r != nil {
+				processPanicAndLog(p.errOutputChan, r)
+			}
+			close(spilledRowChannel)
+		}()
+
+		injectParallelSortRandomFail(200)
 
 		for {
 			row := merger.next()
@@ -185,6 +193,8 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 						return err
 					}
 				}
+
+				injectParallelSortRandomFail(200)
 
 				if inDisk.NumRows() > 0 {
 					p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)

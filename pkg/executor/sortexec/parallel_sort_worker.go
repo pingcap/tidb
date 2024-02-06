@@ -79,8 +79,8 @@ func newParallelSortWorker(
 	}
 }
 
-func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
-	injectParallelSortRandomFail()
+func (p *parallelSortWorker) injectFailPointForParallelSortWorker(triggerFactor int32) {
+	injectParallelSortRandomFail(triggerFactor)
 	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
 		if val.(bool) {
 			if p.workerIDForTest%2 == 0 {
@@ -155,6 +155,7 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() bool {
 	case chk, ok = <-p.chunkChannel:
 		// Memory usage of the chunk has been consumed at the chunk fetcher
 		if !ok {
+			p.injectFailPointForParallelSortWorker(100)
 			// Put local sorted rows into this iter who will be read by sort executor
 			p.sortedRowsIter.Reset(p.sortLocalRows())
 			return false
@@ -169,7 +170,7 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() bool {
 		p.sortBatchRows()
 	}
 
-	p.injectFailPointForParallelSortWorker()
+	p.injectFailPointForParallelSortWorker(3)
 	return true
 }
 

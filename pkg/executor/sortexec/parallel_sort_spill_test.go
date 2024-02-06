@@ -87,5 +87,5 @@ func TestParallelSortSpillDisk(t *testing.T) {
 }
 
 func TestParallelSortSpillDiskFailpoint(t *testing.T) {
-
+	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(false)`)
 }
