@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -109,6 +110,89 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	if e.lock {
 		b.hasLock = true
 	}
+
+	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return e
+	}
+	pi := p.TblInfo.GetPartitionInfo()
+	if pi == nil {
+		return e
+	}
+
+	if p.HandleConstant != nil {
+		// TODO: See if we can reuse the already calculated dVal (see rebuildRange).
+		dVal, err := plannercore.ConvertConstant2Datum(b.ctx, p.HandleConstant, p.HandleFieldType)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
+		partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{colName, p.HandleFieldType, *dVal, p.HandleConstant}})
+		// TODO: Support isTableDual?
+		if isTableDual {
+			b.err = errors.New("point get for partition table can not use plan cache, could not prune (handle, TableDual)")
+			return nil
+		}
+		if partDef == nil {
+			b.err = errors.New("point get for partition table can not use plan cache, could not prune (handle, no partition found)")
+			return nil
+		}
+		p.PartitionDef = partDef
+		return e
+	}
+
+	if len(p.IndexValues) > 0 {
+		p.PartitionDef = nil
+		for i, param := range p.IndexConstants {
+			if param != nil && p.PartitionColumnPos == i {
+				// Re-calculate the pruning!
+				colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
+				partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{p.IndexInfo.Columns[i].Name.L, p.ColsFieldType[i], p.IndexValues[i], p.IndexConstants[i]}})
+				// TODO: Can we set UseCache = false here?
+				// TODO: Support isTableDual?
+				if isTableDual {
+					b.err = errors.New("point get for partition table can not use plan cache, could not prune (TableDual)")
+					return nil
+				}
+				if partDef == nil {
+					b.err = errors.New("point get for partition table can not use plan cache, could not prune (No partition found)")
+					return nil
+				}
+				p.PartitionDef = partDef
+				return e
+			}
+		}
+	}
+	// TODO: difference between IndexValues and handles?
+	// Re-calculate the pruning!
+	// For now, use the fully fledged pruner!
+	is := domain.GetDomain(b.ctx).InfoSchema()
+
+	tbl, ok := is.TableByID(p.TblInfo.ID)
+	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
+		b.err = errors.New("point get for partition table can not use plan cache, cannot get table")
+		return nil
+	}
+	// TODO: Can we access the partition names somehow? At least test with explicit partition selection
+	parts, err := plannercore.PartitionPruning(b.ctx, tbl.GetPartitionedTable(), p.AccessConditions, nil, p.Schema().Columns, p.OutputFieldNames)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if len(parts) != 1 {
+		if len(parts) == 0 {
+			// TODO: Handle this, turn it into TableDual!
+			b.err = errors.New("not matching any partitions")
+			return nil
+		}
+		b.err = errors.New("point_get cached query matches multiple partitions")
+		return nil
+	}
+	if parts[0] < 0 || parts[0] >= len(pi.Definitions) {
+		b.err = errors.New("point_get cached query matches no partitions")
+		return nil
+	}
+	p.PartitionDef = &pi.Definitions[parts[0]]
 
 	return e
 }

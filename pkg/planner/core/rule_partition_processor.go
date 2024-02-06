@@ -506,6 +506,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
+	// TODO: Use this for handling TableDual?
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)

@@ -2299,7 +2299,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		schema:           ds.schema.Clone(),
 		dbName:           ds.DBName.L,
 		TblInfo:          ds.TableInfo(),
-		outputNames:      ds.OutputNames(),
+		OutputFieldNames: ds.OutputNames(),
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
 	}.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())

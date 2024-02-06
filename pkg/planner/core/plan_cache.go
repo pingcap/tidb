@@ -510,26 +510,10 @@ func rebuildRange(p Plan) error {
 				}
 			}
 		}
-		var partDef *model.PartitionDefinition
-		var isTableDual bool
-		partInfo := x.TblInfo.GetPartitionInfo()
 		if x.HandleConstant != nil {
-			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
+			dVal, err := ConvertConstant2Datum(sctx, x.HandleConstant, x.HandleFieldType)
 			if err != nil {
 				return err
-			}
-
-			if partInfo != nil {
-				colName := getPartitionColNameSimple(sctx, x.TblInfo)
-				partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, colName, []nameValuePair{{colName, x.handleFieldType, *dVal, x.HandleConstant}})
-				// TODO: Support isTableDual?
-				if isTableDual {
-					return errors.New("point get for partition table can not use plan cache, could not prune (handle, TableDual)")
-				}
-				if partDef == nil {
-					return errors.New("point get for partition table can not use plan cache, could not prune (handle, no partition found)")
-				}
-				x.PartitionDef = partDef
 			}
 
 			iv, err := dVal.ToInt64(sc.TypeCtx())
@@ -540,61 +524,16 @@ func rebuildRange(p Plan) error {
 			return nil
 		}
 		if len(x.IndexConstants) > 0 {
-			x.PartitionDef = nil
 			for i, param := range x.IndexConstants {
 				if param != nil {
-					dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
+					dVal, err := ConvertConstant2Datum(sctx, param, x.ColsFieldType[i])
 					if err != nil {
 						return err
 					}
 					x.IndexValues[i] = *dVal
-					if partInfo != nil &&
-						x.partitionColumnPos == i {
-						// Re-calculate the pruning!
-						colName := getPartitionColNameSimple(sctx, x.TblInfo)
-						partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, colName, []nameValuePair{{x.IndexInfo.Columns[i].Name.L, x.ColsFieldType[i], *dVal, x.IndexConstants[i]}})
-						// TODO: Support isTableDual?
-						if isTableDual {
-							return errors.New("point get for partition table can not use plan cache, could not prune (TableDual)")
-						}
-						if partDef == nil {
-							return errors.New("point get for partition table can not use plan cache, could not prune (No partition found)")
-						}
-						if i > 0 && x.PartitionDef != partDef {
-							return errors.New("point get for partition table can not use plan cache, found multiple partitions")
-						}
-						x.PartitionDef = partDef
-					}
 				}
 			}
 			return nil
-		}
-		if partInfo != nil {
-			// TODO: difference between IndexValues and handles?
-			// Re-calculate the pruning!
-			// For now, use the fully fledged pruner!
-			is := domain.GetDomain(sctx).InfoSchema()
-
-			tbl, ok := is.TableByID(x.TblInfo.ID)
-			if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
-				return errors.New("point get for partition table can not use plan cache, cannot get table")
-			}
-			// TODO: Can we access the partition names somehow? At least test with explicit partition selection
-			parts, err := PartitionPruning(sctx, tbl.GetPartitionedTable(), x.AccessConditions, nil, x.Schema().Columns, x.outputNames)
-			if err != nil {
-				return err
-			}
-			if len(parts) != 1 {
-				if len(parts) == 0 {
-					// TODO: Handle this, turn it into TableDual!
-					return errors.New("not matching any partitions")
-				}
-				return errors.New("point_get cached query matches multiple partitions")
-			}
-			if parts[0] < 0 || parts[0] >= len(partInfo.Definitions) {
-				return errors.New("point_get cached query matches no partitions")
-			}
-			x.PartitionDef = &partInfo.Definitions[parts[0]]
 		}
 		return nil
 	case *BatchPointGetPlan:
@@ -646,7 +585,7 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				dVal, err := convertConstant2Datum(sctx, param, x.HandleType)
+				dVal, err := ConvertConstant2Datum(sctx, param, x.HandleType)
 				if err != nil {
 					return err
 				}
@@ -663,7 +602,7 @@ func rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					dVal, err := convertConstant2Datum(sctx, param, x.IndexColTypes[j])
+					dVal, err := ConvertConstant2Datum(sctx, param, x.IndexColTypes[j])
 					if err != nil {
 						return err
 					}
@@ -676,20 +615,20 @@ func rebuildRange(p Plan) error {
 			partIDs := make([]int64, 0, len(x.Handles))
 			partDefs := make([]*model.PartitionDefinition, 0, len(x.Handles))
 			if len(x.Handles) > 0 {
-				colName := getPartitionColNameSimple(sctx, x.TblInfo)
-				pairs := []nameValuePair{{
-					colName:      colName,
-					colFieldType: x.HandleType,
+				colName := GetPartitionColNameSimple(sctx, x.TblInfo)
+				pairs := []NameValuePair{{
+					ColName:      colName,
+					ColFieldType: x.HandleType,
 				}}
 				for i := range x.Handles {
 					datum, err := x.Handles[i].Data()
 					if err != nil {
 						return err
 					}
-					pairs[0].value = datum[0]
-					pairs[0].con = x.HandleParams[i]
+					pairs[0].Value = datum[0]
+					pairs[0].Con = x.HandleParams[i]
 					// TODO: handle isTableDual!
-					partDef, _, _, isTableDual := getPartitionDef(sctx, x.TblInfo, colName, pairs)
+					partDef, _, _, isTableDual := GetPartitionDef(sctx, x.TblInfo, colName, pairs)
 					if partDef == nil || isTableDual {
 						return errors.New("not matching any partitions")
 					}
@@ -697,20 +636,20 @@ func rebuildRange(p Plan) error {
 					partIDs = append(partIDs, partDef.ID)
 				}
 			} else if len(x.IndexValues) > 0 {
-				pairs := make([]nameValuePair, 0, len(x.IndexValues))
+				pairs := make([]NameValuePair, 0, len(x.IndexValues))
 				for i := range x.IndexValues {
 					pairs = pairs[:0]
 					for c := range x.IndexInfo.Columns {
-						pairs = append(pairs, nameValuePair{
-							colName:      x.IndexInfo.Columns[c].Name.L,
-							colFieldType: x.IndexColTypes[c],
-							value:        x.IndexValues[i][c],
-							con:          x.IndexValueParams[i][c],
+						pairs = append(pairs, NameValuePair{
+							ColName:      x.IndexInfo.Columns[c].Name.L,
+							ColFieldType: x.IndexColTypes[c],
+							Value:        x.IndexValues[i][c],
+							Con:          x.IndexValueParams[i][c],
 						})
 					}
-					colName := getPartitionColNameSimple(sctx, x.TblInfo)
+					colName := GetPartitionColNameSimple(sctx, x.TblInfo)
 					// TODO: handle isTableDual!
-					partDef, _, _, isTableDual := getPartitionDef(sctx, x.TblInfo, colName, pairs)
+					partDef, _, _, isTableDual := GetPartitionDef(sctx, x.TblInfo, colName, pairs)
 					if partDef == nil || isTableDual {
 						return errors.New("not matching any partitions")
 					}
@@ -786,7 +725,7 @@ func reEvaluateParamMarkerConst(ctx sessionctx.Context, exprs []expression.Expre
 	return nil
 }
 
-func convertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+func ConvertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
 	val, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, err
