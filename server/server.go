@@ -537,9 +537,9 @@ func (s *Server) Close() {
 		s.socket = nil
 	}
 	if s.statusServer != nil {
-		err := s.statusServer.Close()
-		terror.Log(errors.Trace(err))
-		s.statusServer = nil
+		//err := s.statusServer.Close()
+		//terror.Log(errors.Trace(err))
+		//s.statusServer = nil
 	}
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
