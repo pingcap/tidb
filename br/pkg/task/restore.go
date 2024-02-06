@@ -124,18 +124,15 @@ func (cfg *RestoreCommonConfig) adjust() {
 	if !cfg.MergeSmallRegionKeyCount.HasSet {
 		cfg.MergeSmallRegionKeyCount.Value = conn.DefaultMergeRegionKeyCount
 	}
-	cfg.MergeSmallRegionKeyCount.Name = FlagMergeRegionKeyCount
 	if !cfg.MergeSmallRegionSizeBytes.HasSet {
 		cfg.MergeSmallRegionSizeBytes.Value = conn.DefaultMergeRegionSizeBytes
 	}
-	cfg.MergeSmallRegionSizeBytes.Name = FlagMergeRegionSizeBytes
 	if len(cfg.Granularity) == 0 {
 		cfg.Granularity = string(restore.FineGrained)
 	}
 	if cfg.ConcurrencyPerStore.HasSet {
 		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
 	}
-	cfg.ConcurrencyPerStore.Name = flagConcurrencyPerStore
 }
 
 // DefineRestoreCommonFlags defines common flags for the restore command.
