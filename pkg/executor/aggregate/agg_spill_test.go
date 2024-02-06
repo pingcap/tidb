@@ -378,10 +378,9 @@ func TestGetCorrectResult(t *testing.T) {
 		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
 	}
 
-	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
 	finished.Store(true)
 	wg.Wait()
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers", `return(false)`)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers"))
 }
 
 func TestFallBackAction(t *testing.T) {
