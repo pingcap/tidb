@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package integrationtests_test
+package integrationtests
 
 import (
 	"testing"
@@ -31,6 +31,6 @@ func TestFrameworkRollback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask"))
 	}()
 
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }

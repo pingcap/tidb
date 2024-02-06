@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "aggregate",
@@ -38,5 +38,31 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_twmb_murmur3//:murmur3",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "aggregate_test",
+    timeout = "short",
+    srcs = ["agg_spill_test.go"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        ":aggregate",
+        "//pkg/executor/aggfuncs",
+        "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/testutil",
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/memory",
+        "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
     ],
 )

@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package integrationtests_test
+package integrationtests
 
 import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -42,7 +40,7 @@ func submitTaskAndCheckSuccessForBasic(ctx context.Context, t *testing.T, taskKe
 
 func submitTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string,
 	testContext *testutil.TestContext, subtaskCnts map[proto.Step]int) {
-	task := testutil.SubmitAndWaitTask(ctx, t, taskKey)
+	task := testutil.SubmitAndWaitTask(ctx, t, taskKey, 1)
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	for step, cnt := range subtaskCnts {
 		require.Equal(t, cnt, testContext.CollectedSubtaskCnt(task.ID, step))
@@ -132,7 +130,7 @@ func TestFrameworkCancelTask(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel"))
 	}()
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
@@ -144,7 +142,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr"))
 	}()
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
@@ -155,7 +153,7 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockExecSubtaskInitEnvErr"))
 	}()
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
@@ -168,43 +166,6 @@ func TestOwnerChangeWhenSchedule(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange", "1*return(true)"))
 	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange"))
-}
-
-func TestTaskExecutorDownBasic(t *testing.T) {
-	taskexecutor.TestContexts = sync.Map{}
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
-	defer ctrl.Finish()
-
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "4*return(\":4000\")"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	submitTaskAndCheckSuccess(ctx, t, "😊", testContext, map[proto.Step]int{
-		proto.StepOne: 3,
-		proto.StepTwo: 1,
-	})
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	distContext.Close()
-}
-
-func TestTaskExecutorDownManyNodes(t *testing.T) {
-	taskexecutor.TestContexts = sync.Map{}
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
-	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return(\":4000\")"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	submitTaskAndCheckSuccess(ctx, t, "😊", testContext, map[proto.Step]int{
-		proto.StepOne: 3,
-		proto.StepTwo: 1,
-	})
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	distContext.Close()
 }
 
 func TestGC(t *testing.T) {
@@ -251,7 +212,7 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockSubtaskFinishedCancel"))
 	}()
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
@@ -260,7 +221,7 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskCancel", "1*return(true)"))
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskCancel"))
 }
@@ -309,7 +270,7 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelBeforeUpdateTask", "1*return(true)"))
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelBeforeUpdateTask"))
 }

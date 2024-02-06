@@ -12,28 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package taskexecutor
+package integrationtests
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
-func ReduceCheckInterval(t *testing.T) {
-	checkIntervalBak := DefaultCheckInterval
-	maxIntervalBak := MaxCheckInterval
-	t.Cleanup(func() {
-		DefaultCheckInterval = checkIntervalBak
-		MaxCheckInterval = maxIntervalBak
-	})
-	MaxCheckInterval, DefaultCheckInterval = time.Millisecond, time.Millisecond
-}
-
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),

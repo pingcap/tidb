@@ -52,7 +52,9 @@ const (
 )
 
 var (
-	checkTaskFinishedInterval = 500 * time.Millisecond
+	// CheckTaskFinishedInterval is the interval for scheduler.
+	// exported for testing.
+	CheckTaskFinishedInterval = 500 * time.Millisecond
 	nonRetrySQLTime           = 1
 	// RetrySQLTimes is the max retry times when executing SQL.
 	RetrySQLTimes = 30
@@ -149,7 +151,7 @@ func (s *BaseScheduler) refreshTask() error {
 
 // scheduleTask schedule the task execution step by step.
 func (s *BaseScheduler) scheduleTask() {
-	ticker := time.NewTicker(checkTaskFinishedInterval)
+	ticker := time.NewTicker(CheckTaskFinishedInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -226,12 +228,10 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
-				if val.(bool) {
-					s.logger.Info("mockOwnerChange called")
-					MockOwnerChange()
-					time.Sleep(time.Second)
-				}
+			failpoint.Inject("mockOwnerChange", func() {
+				s.logger.Info("mockOwnerChange called")
+				MockOwnerChange()
+				time.Sleep(time.Second)
 			})
 		}
 	}
