@@ -1998,6 +1998,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
 		EnableParallelApply:           DefTiDBEnableParallelApply,
 		ShardAllocateStep:             DefTiDBShardAllocateStep,
+		EnablePointGetCache:           DefTiDBPointGetCache,
 		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
