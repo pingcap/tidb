@@ -1264,6 +1264,17 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
+func restoreFuncCall(expr *ast.FuncCallExpr) (string, error) {
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	if err := expr.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
 // getFuncCallDefaultValue gets the default column value of function-call expression.
 func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (any, bool, error) {
 	switch expr.FnName.L {
@@ -1292,15 +1303,36 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		col.DefaultIsExpr = true
-		var sb strings.Builder
-		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		if err := expr.Restore(restoreCtx); err != nil {
-			return "", false, err
+		str, err := restoreFuncCall(expr)
+		if err != nil {
+			return nil, false, errors.Trace(err)
 		}
-		return sb.String(), false, nil
+		col.DefaultIsExpr = true
+		return str, false, nil
+	case ast.DateFormat:
+		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
+		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		nowFunc, ok := expr.Args[0].(*ast.FuncCallExpr)
+		if ok && nowFunc.FnName.L == ast.Now {
+			if err := expression.VerifyArgsWrapper(nowFunc.FnName.L, len(nowFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			valExpr, isValue := expr.Args[1].(ast.ValueExpr)
+			if !isValue || (valExpr.GetString() != "%Y-%m" && valExpr.GetString() != "%Y-%m-%d" &&
+				valExpr.GetString() != "%Y-%m-%d %H.%i.%s" && valExpr.GetString() != "%Y-%m-%d %H:%i:%s") {
+				return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), valExpr)
+			}
+			str, err := restoreFuncCall(expr)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			col.DefaultIsExpr = true
+			return str, false, nil
+		}
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), nowFunc.FnName.String())
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -4182,7 +4214,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 						return nil, errors.Trace(err)
 					}
 					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
-				case ast.Rand, ast.UUID, ast.UUIDToBin:
+				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.DateFormat:
 					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 				}
 			}
@@ -5352,12 +5384,15 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		col.DefaultIsExpr = isSeqExpr
 	}
 
-	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-		return hasDefaultValue, errors.Trace(err)
-	}
-	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
-	if err != nil {
-		return hasDefaultValue, errors.Trace(err)
+	// When the default value is expression and the type is time, we skip check and convert.
+	if !col.DefaultIsExpr || !types.IsTypeTime(col.GetType()) {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
+		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+		if err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {

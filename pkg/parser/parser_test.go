@@ -2949,6 +2949,13 @@ func TestDDL(t *testing.T) {
 		{"create table t (d date default (current_date()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
 		{"create table t (d date default (curdate()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
 		{"create table t (d date default curdate())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default current_date())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default date_format(now(),'%Y-%m'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m'))"},
+		{"create table t (d date default (date_format(now(),'%Y-%m')))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m'))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d'))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d %H.%i.%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H.%i.%s'))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d %H:%i:%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H:%i:%s'))"},
+		{"create table t (d date default date_format(now(),'%b %d %Y %h:%i %p'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%b %d %Y %h:%i %p'))"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
