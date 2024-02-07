@@ -117,11 +117,14 @@ type ImporterClient interface {
 }
 
 type importClient struct {
-	mu         sync.Mutex
 	metaClient split.SplitClient
-	clients    map[uint64]import_sstpb.ImportSSTClient
-	tlsConf    *tls.Config
+	mu         sync.Mutex
+	// used for any request except the ingest reqeust
+	clients map[uint64]import_sstpb.ImportSSTClient
+	// used for ingest request
+	ingestClients map[uint64]import_sstpb.ImportSSTClient
 
+	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 }
 
@@ -130,6 +133,7 @@ func NewImportClient(metaClient split.SplitClient, tlsConf *tls.Config, keepaliv
 	return &importClient{
 		metaClient:    metaClient,
 		clients:       make(map[uint64]import_sstpb.ImportSSTClient),
+		ingestClients: make(map[uint64]import_sstpb.ImportSSTClient),
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 	}
@@ -188,7 +192,7 @@ func (ic *importClient) IngestSST(
 	storeID uint64,
 	req *import_sstpb.IngestRequest,
 ) (*import_sstpb.IngestResponse, error) {
-	client, err := ic.GetImportClient(ctx, storeID)
+	client, err := ic.GetIngestClient(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -200,23 +204,17 @@ func (ic *importClient) MultiIngest(
 	storeID uint64,
 	req *import_sstpb.MultiIngestRequest,
 ) (*import_sstpb.IngestResponse, error) {
-	client, err := ic.GetImportClient(ctx, storeID)
+	client, err := ic.GetIngestClient(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return client.MultiIngest(ctx, req)
 }
 
-func (ic *importClient) GetImportClient(
+func (ic *importClient) createGrpcConn(
 	ctx context.Context,
 	storeID uint64,
 ) (import_sstpb.ImportSSTClient, error) {
-	ic.mu.Lock()
-	defer ic.mu.Unlock()
-	client, ok := ic.clients[storeID]
-	if ok {
-		return client, nil
-	}
 	store, err := ic.metaClient.GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -240,11 +238,36 @@ func (ic *importClient) GetImportClient(
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(ic.keepaliveConf),
 	)
-	if err != nil {
-		return nil, errors.Trace(err)
+	return import_sstpb.NewImportSSTClient(conn), errors.Trace(err)
+}
+
+func (ic *importClient) GetImportClient(
+	ctx context.Context,
+	storeID uint64,
+) (import_sstpb.ImportSSTClient, error) {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+	client, ok := ic.clients[storeID]
+	if ok {
+		return client, nil
 	}
-	client = import_sstpb.NewImportSSTClient(conn)
+	client, err := ic.createGrpcConn(ctx, storeID)
 	ic.clients[storeID] = client
+	return client, errors.Trace(err)
+}
+
+func (ic *importClient) GetIngestClient(
+	ctx context.Context,
+	storeID uint64,
+) (import_sstpb.ImportSSTClient, error) {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+	client, ok := ic.ingestClients[storeID]
+	if ok {
+		return client, nil
+	}
+	client, err := ic.createGrpcConn(ctx, storeID)
+	ic.ingestClients[storeID] = client
 	return client, errors.Trace(err)
 }
 
