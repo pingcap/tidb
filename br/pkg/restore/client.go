@@ -783,7 +783,7 @@ func (rc *Client) CreateDatabases(ctx context.Context, dbs []*metautil.Database)
 	}
 
 	if len(rc.dbPool) == 0 {
-		log.Info("create databases with db")
+		log.Info("create databases sequentially")
 		for _, db := range dbs {
 			err := rc.createDatabaseWithDBConn(ctx, db.Info, rc.db)
 			if err != nil {
