@@ -17,12 +17,9 @@ package errormanager
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"io"
-	"math/rand"
-	"strconv"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -155,35 +152,6 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 		end = start + limit
 	}
 	return &mockRows{start: start, end: end}, nil
-}
-
-func TestRemoveAllConflictKeys(t *testing.T) {
-	const totalRows = int64(1 << 18)
-	driverName := "errmgr-mock-" + strconv.Itoa(rand.Int())
-	sql.Register(driverName, mockDriver{totalRows: totalRows})
-	db, err := sql.Open(driverName, "")
-	require.NoError(t, err)
-	defer db.Close()
-
-	cfg := config.NewConfig()
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRemove
-	cfg.App.TaskInfoSchemaName = "lightning_errors"
-	em := New(db, cfg, log.L())
-	ctx := context.Background()
-	err = em.Init(ctx)
-	require.NoError(t, err)
-
-	resolved := atomic.NewInt64(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by remove")
-	err = em.RemoveAllConflictKeys(
-		ctx, "test", pool,
-		func(ctx context.Context, handleRows [][2][]byte) error {
-			resolved.Add(int64(len(handleRows)))
-			return nil
-		},
-	)
-	require.NoError(t, err)
-	require.Equal(t, totalRows, resolved.Load())
 }
 
 func TestReplaceConflictOneKey(t *testing.T) {

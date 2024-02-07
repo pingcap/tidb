@@ -19,9 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 	"strings"
-	"sync"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -137,13 +135,6 @@ const (
 	`
 
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
-
-	selectConflictKeysRemove = `
-		SELECT _tidb_rowid, raw_handle, raw_row
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
-	`
 
 	selectIndexConflictKeysReplace = `
 		SELECT raw_key, index_name, raw_value, raw_handle
@@ -457,86 +448,6 @@ func (em *ErrorManager) RecordIndexConflictError(
 		gerr = err
 	}
 	return gerr
-}
-
-// RemoveAllConflictKeys query all conflicting rows (handle and their
-// values) from the current error report and resolve them concurrently by removing all of them.
-func (em *ErrorManager) RemoveAllConflictKeys(
-	ctx context.Context,
-	tableName string,
-	pool *utils.WorkerPool,
-	fn func(ctx context.Context, handleRows [][2][]byte) error,
-) error {
-	if em.db == nil {
-		return nil
-	}
-
-	const rowLimit = 1000
-	taskCh := make(chan [2]int64)
-	taskWg := &sync.WaitGroup{}
-	g, gCtx := errgroup.WithContext(ctx)
-
-	go func() {
-		//nolint:staticcheck
-		//lint:ignore SA2000
-		taskWg.Add(1)
-		taskCh <- [2]int64{0, math.MaxInt64}
-		taskWg.Wait()
-		close(taskCh)
-	}()
-
-	for t := range taskCh {
-		start, end := t[0], t[1]
-		pool.ApplyOnErrorGroup(g, func() error {
-			defer taskWg.Done()
-
-			var handleRows [][2][]byte
-			for start < end {
-				rows, err := em.db.QueryContext(
-					gCtx, common.SprintfWithIdentifiers(selectConflictKeysRemove, em.schema),
-					tableName, start, end, rowLimit)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				var lastRowID int64
-				for rows.Next() {
-					var handleRow [2][]byte
-					if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
-						return errors.Trace(err)
-					}
-					handleRows = append(handleRows, handleRow)
-				}
-				if err := rows.Err(); err != nil {
-					return errors.Trace(err)
-				}
-				if err := rows.Close(); err != nil {
-					return errors.Trace(err)
-				}
-				if len(handleRows) == 0 {
-					break
-				}
-				if err := fn(gCtx, handleRows); err != nil {
-					return errors.Trace(err)
-				}
-				start = lastRowID + 1
-				// If the remaining tasks cannot be processed at once, split the task
-				// into two subtasks and send one of them to the other idle worker if possible.
-				if end-start > rowLimit {
-					mid := start + (end-start)/2
-					taskWg.Add(1)
-					select {
-					case taskCh <- [2]int64{mid, end}:
-						end = mid
-					default:
-						taskWg.Done()
-					}
-				}
-				handleRows = handleRows[:0]
-			}
-			return nil
-		})
-	}
-	return errors.Trace(g.Wait())
 }
 
 // ReplaceConflictKeys query all conflicting rows (handle and their
@@ -975,9 +886,9 @@ func (em *ErrorManager) LogErrorDetails() {
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
 		if em.conflictV1Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", ConflictErrorTableName))
+			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
 		} else {
-			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", DupRecordTable))
+			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTable))
 		}
 	}
 }

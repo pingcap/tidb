@@ -6,6 +6,9 @@ backend = 'local'
 duplicate-resolution = 'replace'
 add-index-by-sql = false
 
+[conflict]
+strategy = "replace"
+
 [checkpoint]
 enable = false
 
