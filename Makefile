@@ -195,9 +195,9 @@ enterprise-server:
 
 server_check:
 ifeq ($(TARGET), "")
-	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server ./cmd/tidb-server
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags intest,deadlock -o bin/tidb-server ./cmd/tidb-server
 else
-	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' ./cmd/tidb-server
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags intest,deadlock -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 linux:
