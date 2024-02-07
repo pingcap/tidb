@@ -1506,6 +1506,8 @@ func (s *UsedStatsInfoForTable) recordedColIdxCount() int {
 	return len(s.IndexStatsLoadStatus) + len(s.ColumnStatsLoadStatus)
 }
 
+// UsedStatsInfo is a map for recording the used stats during query.
+// The key is the table ID, and the value is the used stats info for the table.
 type UsedStatsInfo struct {
 	store sync.Map
 }
