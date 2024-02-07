@@ -828,8 +828,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if isFullRestore(cmdName) {
-		// we need check cluster is fresh every time. except restore from a checkpoint or user has not set filter argument.
-		if client.IsFull() && !cfg.ExplicitFilter && len(checkpointSetWithTableID) == 0 {
+		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointSetWithTableID) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
 				return errors.Trace(err)
 			}
