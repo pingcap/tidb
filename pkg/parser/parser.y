@@ -14341,20 +14341,22 @@ RevokeRoleStmt:
  * for load stmt with format see https://github.com/pingcap/tidb/issues/40499
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LowPriorityOpt LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LowPriorityOpt LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
 	{
 		x := &ast.LoadDataStmt{
 			LowPriority:        $3.(bool),
 			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $6,
-			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
-			Table:              $10.(*ast.TableName),
-			Charset:            $11.(*string),
-			FieldsInfo:         $12.(*ast.FieldsClause),
-			LinesInfo:          $13.(*ast.LinesClause),
-			IgnoreLines:        $14.(*uint64),
-			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
-			ColumnAssignments:  $16.([]*ast.Assignment),
+			Format:             $7.(*string),
+			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
+			Table:              $11.(*ast.TableName),
+			Charset:            $12.(*string),
+			FieldsInfo:         $13.(*ast.FieldsClause),
+			LinesInfo:          $14.(*ast.LinesClause),
+			IgnoreLines:        $15.(*uint64),
+			ColumnsAndUserVars: $16.([]*ast.ColumnNameOrUserVar),
+			ColumnAssignments:  $17.([]*ast.Assignment),
+			Options:            $18.([]*ast.LoadDataOpt),
 		}
 		if $4 != nil {
 			x.FileLocRef = ast.FileLocClient
@@ -14382,6 +14384,16 @@ LowPriorityOpt:
 |	"LOW_PRIORITY"
 	{
 		$$ = true
+	}
+
+FormatOpt:
+	{
+		$$ = (*string)(nil)
+	}
+|	"FORMAT" stringLit
+	{
+		str := $2
+		$$ = &str
 	}
 
 IgnoreLines:
@@ -14646,16 +14658,6 @@ ImportIntoStmt:
 			return 1
 		}
 		$$ = st
-	}
-
-FormatOpt:
-	{
-		$$ = (*string)(nil)
-	}
-|	"FORMAT" stringLit
-	{
-		str := $2
-		$$ = &str
 	}
 
 ImportFromSelectStmt:

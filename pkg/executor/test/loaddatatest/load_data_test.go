@@ -120,7 +120,7 @@ func TestLoadDataInitParam(t *testing.T) {
 	ctx.SetValue(executor.LoadDataVarKey, nil)
 	require.ErrorContains(
 		t, tk.ExecToErr(
-			"load data local infile '/a' format 'delimited data' into"+
+			"load data local infile '/a' into"+
 				" table load_data_test fields terminated by 'a'",
 		), "reader is nil",
 	)
