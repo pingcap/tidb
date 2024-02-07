@@ -714,7 +714,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 	codec := mgr.GetStorage().GetCodec()
 
-	// need retrive these configs from tikv if not set in command.
+	// need retrieve these configs from tikv if not set in command.
 	kvConfigs := &pconfig.KVConfig{
 		ImportGoroutines:    cfg.ConcurrencyPerStore,
 		MergeRegionSize:     cfg.MergeSmallRegionSizeBytes,

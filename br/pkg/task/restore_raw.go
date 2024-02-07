@@ -74,7 +74,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer mgr.Close()
 
-	// need retrive these configs from tikv if not set in command.
+	// need retrieve these configs from tikv if not set in command.
 	kvConfigs := &kvconfig.KVConfig{
 		MergeRegionSize:     cfg.MergeSmallRegionSizeBytes,
 		MergeRegionKeyCount: cfg.MergeSmallRegionKeyCount,
