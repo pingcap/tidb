@@ -55,7 +55,6 @@ var (
 	// CheckTaskFinishedInterval is the interval for scheduler.
 	// exported for testing.
 	CheckTaskFinishedInterval = 500 * time.Millisecond
-	nonRetrySQLTime           = 1
 	// RetrySQLTimes is the max retry times when executing SQL.
 	RetrySQLTimes = 30
 	// RetrySQLInterval is the initial interval between two SQL retries.
@@ -170,6 +169,10 @@ func (s *BaseScheduler) scheduleTask() {
 				continue
 			}
 			task := *s.GetTask()
+
+			failpoint.Inject("exitScheduler", func() {
+				failpoint.Return()
+			})
 			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && task.State == proto.TaskStateRunning {
 					err := s.taskMgr.CancelTask(s.ctx, task.ID)
@@ -213,6 +216,10 @@ func (s *BaseScheduler) scheduleTask() {
 					return
 				}
 			case proto.TaskStateResuming:
+				if !s.allocatedSlots {
+					s.logger.Info("scheduler exit since not allocated slots")
+					return
+				}
 				err = s.onResuming()
 			case proto.TaskStateReverting:
 				err = s.onReverting()

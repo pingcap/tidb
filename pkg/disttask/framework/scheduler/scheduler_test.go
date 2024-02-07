@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
+	mockScheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -47,32 +47,8 @@ const (
 	subtaskCnt = 3
 )
 
-func getTestSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
-	mockScheduler := mockDispatch.NewMockExtension(ctrl)
-	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
-	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]string, error) {
-			return nil, nil
-		},
-	).AnyTimes()
-	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
-	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
-			return proto.StepDone
-		},
-	).AnyTimes()
-	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
-
-	mockScheduler.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return mockScheduler
-}
-
 func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
-	mockScheduler := mockDispatch.NewMockExtension(ctrl)
+	mockScheduler := mockScheduler.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, _ *proto.Task) ([]string, error) {
@@ -145,7 +121,7 @@ func TestTaskFailInManager(t *testing.T) {
 
 	mockScheduler := mock.NewMockScheduler(ctrl)
 	mockScheduler.EXPECT().Init().Return(errors.New("mock scheduler init error"))
-	schManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
+	schManager, mgr := MockSchedulerManager(t, ctrl, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return mockScheduler
