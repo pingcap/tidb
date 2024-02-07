@@ -1528,10 +1528,10 @@ func (u *UsedStatsInfo) RecordUsedInfo(tableID int64, info *UsedStatsInfoForTabl
 
 // Keys returns all the table IDs for the used stats info.
 func (u *UsedStatsInfo) Keys() []int64 {
-	if u == nil {
-		return nil
-	}
 	var ret []int64
+	if u == nil {
+		return ret
+	}
 	u.store.Range(func(k, v any) bool {
 		ret = append(ret, k.(int64))
 		return true
@@ -1542,6 +1542,9 @@ func (u *UsedStatsInfo) Keys() []int64 {
 // Values returns all the used stats info for the table.
 func (u *UsedStatsInfo) Values() []*UsedStatsInfoForTable {
 	var ret []*UsedStatsInfoForTable
+	if u == nil {
+		return ret
+	}
 	u.store.Range(func(k, v any) bool {
 		ret = append(ret, v.(*UsedStatsInfoForTable))
 		return true
