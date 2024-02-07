@@ -475,3 +475,13 @@ func (sm *Manager) collect() {
 
 	subtaskCollector.subtaskInfo.Store(&subtasks)
 }
+
+// MockScheduler mock one scheduler for one task, only used for tests.
+func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
+	return NewBaseScheduler(sm.ctx, task, Param{
+		taskMgr:  sm.taskMgr,
+		nodeMgr:  sm.nodeMgr,
+		slotMgr:  sm.slotMgr,
+		serverID: sm.serverID,
+	})
+}
