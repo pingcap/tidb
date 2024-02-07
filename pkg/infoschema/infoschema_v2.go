@@ -1,8 +1,6 @@
 package infoschema
 
 import (
-	// "runtime/debug"
-	// "time"
 	"fmt"
 	"math"
 	"sync"
@@ -73,92 +71,6 @@ type InfoSchemaData struct {
 	}
 }
 
-// table cache caches the {id, schemaVersion} => table.Table mapping.
-// It consist of two components: the cache part and the data part.
-// The cache itself only support the key => []byte mapping, it rely on the OnRemove
-// finalizer to remove entity from the data part when the kv is evicted from the cache part.
-// In this way it can support the general key => object mapping.
-// type tableCache struct {
-// 	cache *bigcache.BigCache
-// 	mu struct {
-// 		sync.RWMutex
-// 		data map[cacheKey]table.Table
-// 	}
-// }
-
-// func (tc *tableCache) Init() {
-// 	tc.mu.data = make(map[cacheKey]table.Table, 1024)
-// 	config := bigcache.Config {
-// 		// number of shards (must be a power of 2)
-// 		Shards: 1024,
-// 			// time after which entry can be evicted
-// 			LifeWindow: 3 * time.Minute,
-// 			// rps * lifeWindow, used only in initial memory allocation
-// 			MaxEntriesInWindow: 1000 * 10 * 60,
-// 			// max entry size in bytes, used only in initial memory allocation
-// 			MaxEntrySize: 1000,
-// 			// prints information about additional memory allocation
-// 			Verbose: true,
-// 			// cache will not allocate more memory than this limit, value in MB
-// 			// if value is reached then the oldest entries can be overridden for the new ones
-// 			// 0 value means no size limit
-// 			HardMaxCacheSize: 64,
-// 			// callback fired when the oldest entry is removed because of its expiration time or no space left
-// 			// for the new entry, or because delete was called. A bitmask representing the reason will be returned.
-// 			// Default value is nil which means no callback and it prevents from unwrapping the oldest entry.
-// 			OnRemove: nil,
-// 			// OnRemoveWithReason is a callback fired when the oldest entry is removed because of its expiration time or no space left
-// 			// for the new entry, or because delete was called. A constant representing the reason will be passed through.
-// 			// Default value is nil which means no callback and it prevents from unwrapping the oldest entry.
-// 			// Ignored if OnRemove is specified.
-// 			OnRemoveWithReason: func(keyStr string, entry []byte, reason bigcache.RemoveReason) {
-// 				tc.mu.Lock()
-// 				defer tc.mu.Unlock()
-// 				var key cacheKey 
-// 				fmt.Sscanf(keyStr, "%d-%d", &key.tableID, &key.schemaVersion)
-// 				fmt.Println("evict key ===", key.tableID, key.schemaVersion, "reason=", reason)
-// 				delete(tc.mu.data, key)
-// 			},
-// 		}
-
-// 	cache, initErr := bigcache.NewBigCache(config)
-// 	if initErr != nil {
-// 		panic(initErr)
-// 	}
-// 	// go func() {
-// 	// 	for {
-// 	// 		time.Sleep(3*time.Second)
-// 	// 		stats := cache.Stats()
-// 	// 		fmt.Printf("bigcache stats === %#v\n", stats)
-// 	// 	}
-// 	// }()
-// 	tc.cache = cache
-// }
-
-// func (tc *tableCache) Close() {
-	// tc.cache.Close()
-// }
-
-// func (tc *tableCache) Set(key cacheKey, val []byte, tbl table.Table) {
-// 	err := tc.cache.Set(fmt.Sprintf("%d-%d", key.tableID, key.schemaVersion), nil)
-// 	if err == nil {
-// 		tc.mu.Lock()
-// 		defer tc.mu.Unlock()
-// 		tc.mu.data[key] = tbl
-// 	}
-// }
-
-// func (tc *tableCache) Get(key cacheKey) (table.Table, bool) {
-// 	tc.mu.RLock()
-// 	defer tc.mu.RUnlock()
-
-// 	find, ok := tc.mu.data[key]
-// 	if ok {
-// 		return find, true
-// 	}
-// 	return nil, false
-// }
-
 func (isd *InfoSchemaData) getVersionByTS(ts uint64) (int64, bool) {
 	isd.mu.RLock()
 	defer isd.mu.RUnlock()
@@ -212,13 +124,8 @@ func NewInfoSchemaData() *InfoSchemaData {
 		schemaMap: btree.NewBTreeG[schemaItem](compareBySchema),
 		cache: sieve.New[cacheKey, table.Table](1000),
 	}
-	// ret.cache.Init()
 	return ret
 }
-
-// func (isd *InfoSchemaData) Close() {
-// 	isd.cache.Close()
-// }
 
 func (isd *InfoSchemaData) add(item Item, rawData []byte, tbl table.Table) {
 	isd.byID.Set(item)
@@ -322,12 +229,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		return tbl.(table.Table), true
 	}
 
-	// fmt.Printf("TableByID(%d, %d)  %p\n", id, is.schemaVersion, is.cache)
-
 	eq := func(a, b *Item) bool { return a.tableID == b.tableID }
 	itm, ok := search(is.byID, is.schemaVersion, Item{tableID: id, dbID: math.MaxInt64}, eq)
 	if !ok {
-		// fmt.Printf("TableByID(%d) not found in byID\n", id)
 		return nil, false
 	}
 
@@ -335,11 +239,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	ret, _, err := loadTableInfo(is.r, is.InfoSchemaData, id, itm.dbID, is.ts)
 	if err == nil {
 		is.cache.Set(key, ret)
-		// fmt.Printf("update cache == %d %p\n", id, is.cache)
-		// debug.PrintStack()
 		return ret, true
 	} else {
-		fmt.Println("load table error ==", id, err)
+		// fmt.Println("load table error ==", id, err)
 	}
 	return nil, false
 }
@@ -357,8 +259,6 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 	// Get from the cache.
 
-	// fmt.Println("TableByName(", itm.tableID, is.schemaVersion, ")", schema.L, tbl.L)
-
 	key := cacheKey{itm.tableID, is.schemaVersion}
 	res, found := is.cache.Get(key)
 	if found && res != nil {
@@ -368,7 +268,6 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	// Maybe the table is evicted? need to reload.
 	ret, _, err := loadTableInfo(is.r, is.InfoSchemaData, itm.tableID, itm.dbID, is.ts)
 	if err != nil {
-		fmt.Println("load table info error ===", itm.tableID, err)
 		return nil, errors.Trace(err)
 	}
 	is.cache.Set(key, ret)
@@ -383,7 +282,6 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 			ok = false
 			return false
 		}
-		// fmt.Println("schema by name .... search ==", item.dbInfo.Name.L, item.schemaVersion, is.schemaVersion)
 		if item.schemaVersion <= is.schemaVersion {
 			ok = true
 			val = item.dbInfo
@@ -433,14 +331,9 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	return dbInfo, ok
 }
 
-// func (is *infoschemaV2) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
-// 	return is.SchemaByID(tableInfo.DBID)
-// }
-
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
-		fmt.Println("is this expected??")
 		return
 	}
 	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
@@ -459,7 +352,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	for _, tblInfo := range tblInfos {
 		tbl, ok := is.TableByID(tblInfo.ID)
 		if !ok {
-			fmt.Println("what happen?")
+			// what happen?
 			continue
 		}
 		tables = append(tables, tbl)
@@ -471,7 +364,6 @@ func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID i
 	var rawData []byte
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := sf.Do(fmt.Sprintf("%d-%d", dbID, tblID), func() (ret any, err error) {
-		fmt.Println("load table ...", tblID, dbID, ts)
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
@@ -482,11 +374,8 @@ func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID i
 		return
 	})
 
-	// debug.PrintStack()
-	
 	if err != nil {
-		// TODO???
-		fmt.Println("load table panic!!!", err)
+		// TODO load table panic!!!
 		panic(err)
 	}
 	tblInfo := res.(*model.TableInfo) // TODO: it could be missing!!!
@@ -497,7 +386,7 @@ func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID i
 	b := NewBuilder(r, nil, infoData) // TODO: handle cached table!!!
 	ret, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
-		panic("todo, wtf")
+		return nil, nil, errors.Trace(err)
 	}
 	return ret, rawData, nil
 }

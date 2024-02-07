@@ -97,6 +97,7 @@ require (
 	github.com/prometheus/prometheus v0.49.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.1
+	github.com/scalalang2/golang-fifo v0.1.5
 	github.com/shirou/gopsutil/v3 v3.23.10
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
@@ -108,7 +109,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240125030910-e6f5a45b002e
+	github.com/tikv/client-go/v2 v2.0.8-0.20240205071126-11cb7985f0ec
 	github.com/tikv/pd/client v0.0.0-20240126020320-567c7d43a008
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -148,7 +149,6 @@ require (
 )
 
 require (
-	github.com/allegro/bigcache v1.2.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
@@ -162,7 +162,6 @@ require (
 	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
-	github.com/scalalang2/golang-fifo v0.1.5 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.46.1 // indirect

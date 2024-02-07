@@ -1740,7 +1740,7 @@ func (rc *Client) GoValidateChecksum(
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) <-chan *CreatedTable {
+) chan *CreatedTable {
 	log.Info("Start to validate checksum")
 	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")

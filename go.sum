@@ -102,8 +102,6 @@ github.com/alexbrainman/sspi v0.0.0-20210105120005-909beea2cc74 h1:Kk6a4nehpJ3Uu
 github.com/alexbrainman/sspi v0.0.0-20210105120005-909beea2cc74/go.mod h1:cEWa1LVoE5KvSD9ONXsZrj0z6KqySlCCNKHlLzbqAt4=
 github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581 h1:Q/yk4z/cHUVZfgTqtD09qeYBxHwshQAjVRX73qs8UH0=
 github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581/go.mod h1:RcDobYh8k5VP6TNybz9m++gL3ijVI5wueVr0EM10VsU=
-github.com/allegro/bigcache v1.2.1 h1:hg1sY1raCwic3Vnsvje6TT7/pnZba83LeFck5NrFKSc=
-github.com/allegro/bigcache v1.2.1/go.mod h1:Cb/ax3seSYIx7SuZdm2G2xzfwmv3TPSk2ucNfQESPXM=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
 github.com/apache/skywalking-eyes v0.4.0 h1:O13kdRU6FCEZevfD01mdhTgCZLLfPZIQ0GXZrLl7FpQ=
 github.com/apache/skywalking-eyes v0.4.0/go.mod h1:WblDbBgOLsLN0FJEBa9xj6PhuUA/J6spKYVTG4/F8Ls=
@@ -870,8 +868,8 @@ github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
 github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
-github.com/tikv/client-go/v2 v2.0.8-0.20240125030910-e6f5a45b002e h1:I/T4S2jY6yHQdwYQKDBXdDPt44xG/P9TkqUicraEjYk=
-github.com/tikv/client-go/v2 v2.0.8-0.20240125030910-e6f5a45b002e/go.mod h1:jZLZhtui1Po+x616K7jxVAMe+aQfAuWqUZluRdO75Kc=
+github.com/tikv/client-go/v2 v2.0.8-0.20240205071126-11cb7985f0ec h1:j/1OKeXulUHDlfm7uHb6PTlNdagwrHzoHZGPQNK0y68=
+github.com/tikv/client-go/v2 v2.0.8-0.20240205071126-11cb7985f0ec/go.mod h1:jZLZhtui1Po+x616K7jxVAMe+aQfAuWqUZluRdO75Kc=
 github.com/tikv/pd/client v0.0.0-20240126020320-567c7d43a008 h1:McTV/45piKWPinw0m7gFospPEGBW8AfK5J0RB/G9DP4=
 github.com/tikv/pd/client v0.0.0-20240126020320-567c7d43a008/go.mod h1:Z/QAgOt29zvwBTd0H6pdx45VO6KRNc/O/DzGkVmSyZg=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=

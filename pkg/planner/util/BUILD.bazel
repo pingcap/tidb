@@ -4,6 +4,7 @@ go_library(
     name = "util",
     srcs = [
         "byitem.go",
+        "expression.go",
         "misc.go",
         "path.go",
     ],
