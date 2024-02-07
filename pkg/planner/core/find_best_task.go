@@ -1547,8 +1547,8 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	}
 	ts.SetStats(ds.tableStats.ScaleByExpectCnt(totalRowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
-		ts.usedStatsInfo = usedStats[ts.physicalTableID]
+	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
+		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
 	if ds.statisticTable.Pseudo {
 		ts.StatsInfo().StatsVersion = statistics.PseudoVersion
@@ -1787,8 +1787,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
 		ts.SetStats(&property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion})
 		usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-		if usedStats != nil && usedStats[ts.physicalTableID] != nil {
-			ts.usedStatsInfo = usedStats[ts.physicalTableID]
+		if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
+			ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 		}
 		cop.tablePlan = ts
 	}
@@ -2528,8 +2528,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	// for all columns now, as we do in `deriveStatsByFilter`.
 	ts.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
-		ts.usedStatsInfo = usedStats[ts.physicalTableID]
+	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
+		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
@@ -2581,8 +2581,8 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		is.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
 	}
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats[is.physicalTableID] != nil {
-		is.usedStatsInfo = usedStats[is.physicalTableID]
+	if usedStats != nil && usedStats.GetUsedInfo(is.physicalTableID) != nil {
+		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
 	}
 	if isMatchProp {
 		is.Desc = prop.SortItems[0].Desc

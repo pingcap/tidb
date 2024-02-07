@@ -1113,8 +1113,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	})
 	usedStats := p.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
-		ts.usedStatsInfo = usedStats[ts.physicalTableID]
+	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
+		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -1320,8 +1320,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
 		ts.SetStats(&property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion})
 		usedStats := p.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-		if usedStats != nil && usedStats[ts.physicalTableID] != nil {
-			ts.usedStatsInfo = usedStats[ts.physicalTableID]
+		if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
+			ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
@@ -1416,8 +1416,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	is.SetStats(ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats[is.physicalTableID] != nil {
-		is.usedStatsInfo = usedStats[is.physicalTableID]
+	if usedStats != nil && usedStats.GetUsedInfo(is.physicalTableID) != nil {
+		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
