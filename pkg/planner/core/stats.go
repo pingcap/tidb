@@ -1084,5 +1084,8 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 		ModifyCount:   tableStats.HistColl.ModifyCount,
 		Version:       tableStats.Version,
 	}
+	if tableStats.Pseudo {
+		usedStats.Version = statistics.PseudoVersion
+	}
 	statsRecord.RecordUsedInfo(pid, usedStats)
 }
