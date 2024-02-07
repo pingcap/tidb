@@ -14344,7 +14344,7 @@ LoadDataStmt:
 	"LOAD" "DATA" LowPriorityOpt LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
-			LowPriority:        $3,
+			LowPriority:        $3.(bool),
 			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $6,
 			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
