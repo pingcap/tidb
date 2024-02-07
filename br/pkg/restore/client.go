@@ -1072,8 +1072,8 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 }
 
 // NeedCheckFreshCluster is every time. except restore from a checkpoint or user has not set filter argument.
-func (rc *Client) NeedCheckFreshCluster(ExplicitFilter bool, checkpointsMap map[int64]map[string]struct{}) bool {
-	return rc.IsFull() && !ExplicitFilter && len(checkpointsMap) == 0
+func (rc *Client) NeedCheckFreshCluster(ExplicitFilter bool, firstRun bool) bool {
+	return rc.IsFull() && !ExplicitFilter && firstRun
 }
 
 // CheckTargetClusterFresh check whether the target cluster is fresh or not

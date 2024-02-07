@@ -771,7 +771,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if isFullRestore(cmdName) {
-		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointSetWithTableID) {
+		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
 				return errors.Trace(err)
 			}
