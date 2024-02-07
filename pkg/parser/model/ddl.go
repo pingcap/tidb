@@ -279,13 +279,6 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 	},
 }
 
-const (
-	// TiDBDDLV1 is the version 1 of DDL.
-	TiDBDDLV1 int64 = iota + 1
-	// TiDBDDLV2 is the version 2 of DDL.
-	TiDBDDLV2
-)
-
 // String return current ddl action in string
 func (action ActionType) String() string {
 	if v, ok := ActionMap[action]; ok {
@@ -568,7 +561,7 @@ type Job struct {
 	CDCWriteSource uint64 `json:"cdc_write_source"`
 
 	// LocalMode indicates whether the job is running in local TiDB.
-	// Only happens when tidb_ddl_version = 2.
+	// Only happens when tidb_enable_fast_ddl = on
 	LocalMode bool `json:"local_mode"`
 }
 

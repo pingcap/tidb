@@ -85,7 +85,7 @@ const (
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
 	// loaclWorker is the worker who handles the operation in local TiDB.
-	// currently it only handle CreateTable job of TiDBDDLV2.
+	// currently it only handle CreateTable job of fast create table enabled.
 	localWorker workerType = 2
 )
 
@@ -910,7 +910,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	var t *meta.Meta
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+	if variable.EnableFastCreateTable.Load() {
 		t = meta.NewMeta(txn, meta.WithUpdateTableName())
 	} else {
 		t = meta.NewMeta(txn)
