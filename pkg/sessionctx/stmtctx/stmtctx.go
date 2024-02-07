@@ -1527,7 +1527,7 @@ func (u *UsedStatsInfo) RecordUsedInfo(tableID int64, info *UsedStatsInfoForTabl
 // Keys returns all the table IDs for the used stats info.
 func (u *UsedStatsInfo) Keys() []int64 {
 	var ret []int64
-	u.store.Range(func(k, v interface{}) bool {
+	u.store.Range(func(k, v any) bool {
 		ret = append(ret, k.(int64))
 		return true
 	})
@@ -1537,7 +1537,7 @@ func (u *UsedStatsInfo) Keys() []int64 {
 // Values returns all the used stats info for the table.
 func (u *UsedStatsInfo) Values() []*UsedStatsInfoForTable {
 	var ret []*UsedStatsInfoForTable
-	u.store.Range(func(k, v interface{}) bool {
+	u.store.Range(func(k, v any) bool {
 		ret = append(ret, v.(*UsedStatsInfoForTable))
 		return true
 	})
@@ -1547,7 +1547,7 @@ func (u *UsedStatsInfo) Values() []*UsedStatsInfoForTable {
 // Len returns the number of used stats info for the table.
 func (u *UsedStatsInfo) Len() int {
 	var cnt int
-	u.store.Range(func(k, v interface{}) bool {
+	u.store.Range(func(k, v any) bool {
 		cnt++
 		return true
 	})
