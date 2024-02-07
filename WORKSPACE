@@ -14,15 +14,10 @@ http_archive(
 load("@bazel_skylib//lib:versions.bzl", "versions")
 versions.check(minimum_bazel_version = "6.0.0")
 
-http_archive(
+git_repository(
     name = "io_bazel_rules_go",
-    sha256 = "6734a719993b1ba4ebe9806e853864395a8d3968ad27f9dd759c196b3eb3abe8",
-    urls = [
-        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.45.1/rules_go-v0.45.1.zip",
-        "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.45.1/rules_go-v0.45.1.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.45.1/rules_go-v0.45.1.zip",
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.45.1/rules_go-v0.45.1.zip",
-    ],
+    commit = "fe5c2e2b0c26742e3ea856bb512e9f8be8db9b27",
+    remote = "https://github.com/bazelbuild/rules_go.git",
 )
 
 http_archive(
