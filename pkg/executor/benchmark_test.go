@@ -700,11 +700,10 @@ func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expressio
 	for _, col := range outputSchema.Columns {
 		markedOffsets[col.Index] = struct{}{}
 	}
-	prefixLen := 0
 	for _, childSchema := range childSchemas {
 		used := make([]bool, len(childSchema.Columns))
 		for i := range childSchema.Columns {
-			if _, ok := markedOffsets[prefixLen+i]; ok {
+			if _, ok := markedOffsets[i]; ok {
 				used[i] = true
 			}
 		}
