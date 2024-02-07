@@ -1,0 +1,124 @@
+# TestTruncateAllPartitions
+drop table if exists partition_table;
+create table partition_table (v int) partition by hash (v) partitions 10;
+insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+alter table partition_table truncate partition all;
+select count(*) from partition_table;
+
+# TestAutoRandomOnTemporaryTable
+drop table if exists auto_random_temporary, t;
+-- error 8006
+create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows;
+-- error 8006
+create temporary table t(a bigint key auto_random);
+
+# TestAutoRandomWithRangeBits
+drop table if exists t;
+create table t (a bigint auto_random(5, 64) primary key, b int);
+drop table if exists t;
+create table t (a bigint unsigned auto_random(5, 32) primary key, b int);
+drop table if exists t;
+-- error 8216
+create table t (a bigint auto_random(5, 31) primary key, b int);
+-- error 8216
+create table t (a bigint auto_random(5, 65) primary key, b int);
+-- error 8216
+create table t (a bigint auto_random(15, 32) primary key, b int);
+create table t (a bigint auto_random(5, 64) primary key, b int);
+-- error 8216
+alter table t modify column a bigint auto_random(5, 32);
+alter table t modify column a bigint auto_random(15, 64);
+
+# TestModifyingColumn4NewCollations
+create database dct;
+use dct;
+create table t(b varchar(10) collate utf8_bin, c varchar(10) collate utf8_general_ci) collate utf8_bin;
+alter table t modify b varchar(10) collate utf8_general_ci;
+alter table t modify c varchar(10) collate utf8_bin;
+alter table t modify c varchar(10) collate utf8_unicode_ci;
+alter table t charset utf8 collate utf8_general_ci;
+alter table t convert to charset utf8 collate utf8_bin;
+alter table t convert to charset utf8 collate utf8_unicode_ci;
+alter table t convert to charset utf8 collate utf8_general_ci;
+alter table t modify b varchar(10) collate utf8_unicode_ci;
+alter table t modify b varchar(10) collate utf8_bin;
+alter table t add index b_idx(b);
+alter table t add index c_idx(c);
+-- error 8200
+alter table t modify b varchar(10) collate utf8_general_ci;
+-- error 8200
+alter table t modify c varchar(10) collate utf8_bin;
+-- error 8200
+alter table t modify c varchar(10) collate utf8_unicode_ci;
+-- error 8200
+alter table t convert to charset utf8 collate utf8_general_ci;
+alter table t modify c varchar(10) collate utf8mb4_general_ci;
+alter table t collate utf8mb4_general_ci;
+alter table t charset utf8mb4 collate utf8mb4_bin;
+alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
+alter table t charset utf8mb4 collate utf8mb4_zh_pinyin_tidb_as_cs;
+alter database dct charset utf8mb4 collate utf8mb4_general_ci;
+use ddl__serial;
+drop database dct;
+
+# TestForbidUnsupportedCollations
+drop database if exists ucd;
+-- error 1273
+create database ucd charset utf8mb4 collate utf8mb4_roman_ci;
+-- error 1273
+create database ucd charset utf8 collate utf8_roman_ci;
+create database ucd;
+-- error 1273
+alter database ucd charset utf8mb4 collate utf8mb4_roman_ci;
+-- error 1273
+alter database ucd collate utf8mb4_roman_ci;
+use ucd;
+-- error 1273
+create table t(a varchar(20)) charset utf8mb4 collate utf8mb4_roman_ci;
+-- error 1273
+create table t(a varchar(20)) collate utf8_roman_ci;
+create table t(a varchar(20)) collate utf8mb4_general_ci;
+-- error 1273
+alter table t default collate utf8mb4_roman_ci;
+-- error 1273
+alter table t convert to charset utf8mb4 collate utf8mb4_roman_ci;
+-- error 1273
+create table t1(a varchar(20)) collate utf8mb4_roman_ci;
+-- error 1273
+create table t1(a varchar(20)) charset utf8 collate utf8_roman_ci;
+create table t1(a varchar(20));
+-- error 1273
+alter table t1 modify a varchar(20) collate utf8mb4_roman_ci;
+-- error 1273
+alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci;
+-- error 1273
+alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci;
+# TODO(bb7133): fix the following cases by setting charset from collate firstly.
+# mustGetUnsupportedCollation("create database ucd collate utf8mb4_unicode_ci", errMsgUnsupportedUnicodeCI)
+# mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+drop database if exists ucd;
+use ddl__serial;
+
+
+# TestLocalTemporaryTableBlockedDDL
+drop table if exists t1, tmp1;
+create table t1 (id int);
+create temporary table tmp1 (id int primary key, a int unique, b int);
+--error 8200
+rename table tmp1 to tmp2;
+--error 8200
+alter table tmp1 add column c int;
+--error 8200
+alter table tmp1 add index b(b);
+--error 8200
+create index a on tmp1(b);
+--error 8200
+drop index a on tmp1;
+--error 8200
+lock tables tmp1 read;
+--error 8200
+lock tables tmp1 write;
+--error 8200
+lock tables t1 read, tmp1 read;
+--error 8200
+admin cleanup table lock tmp1;

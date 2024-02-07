@@ -122,6 +122,7 @@ func TestBackupConfigHash(t *testing.T) {
 		LastBackupTS:      1,
 		GCTTL:             123,
 		RemoveSchedulers:  true,
+		TableConcurrency:  123,
 		IgnoreStats:       true,
 		UseBackupMetaV2:   true,
 		UseCheckpoint:     true,
@@ -197,6 +198,7 @@ func TestBackupConfigHash(t *testing.T) {
 		testCfg.TLS = TLSConfig{CA: "123"}
 		testCfg.RateLimit = 321
 		testCfg.ChecksumConcurrency = 321
+		testCfg.TableConcurrency = 321
 		testCfg.Concurrency = 321
 		testCfg.Checksum = false
 		testCfg.LogProgress = false

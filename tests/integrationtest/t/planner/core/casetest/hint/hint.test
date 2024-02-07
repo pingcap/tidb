@@ -1,0 +1,243 @@
+# TestHintInWrongPos
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int, b int);
+--enable_warnings
+select /*+ stream_agg() */ count(*) from t where a > 1;
+select count(*) /*+ stream_agg() */ from t where a > 1;
+select count(*) from (select count(*) as a /*+ stream_agg() */ from t where b > 1 group by b) t1 where a > 1;
+--disable_warnings
+
+# TestKeepOrderHint
+set tidb_cost_model_version=2;
+drop table if exists t, t1, th;
+drop view if exists v, v1;
+create table t(a int, b int, primary key(a));
+create table t1(a int, b int, index idx_a(a));
+create table th (a int, key(a)) partition by hash(a) partitions 4;
+create table thp (a int, primary key(a)) partition by hash(a) partitions 4;
+create table thh (a int, b int, key(a)) partition by hash(a) partitions 4;
+create definer='root'@'localhost' view v as select * from t1 where a<10 order by a limit 1;
+create definer='root'@'localhost' view v1 as select * from t where a<10 order by a limit 1;
+-- error 1815
+explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 limit 1;
+-- error 1815
+explain select /*+ order_index(t, primary) */ * from t where a<10 limit 1;
+analyze table th;
+analyze table thp;
+analyze table thh;
+select a from th where a<1 order by a limit 1;
+select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1;
+--enable_warnings
+explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 limit 1;
+explain select /*+ no_order_index(t, primary) */ * from t where a<10 limit 1;
+explain select /*+ order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;
+explain select /*+ order_index(t, idx_b) */ * from t where b<10 order by b limit 1;
+explain select /*+ no_order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;
+explain select /*+ no_order_index(t, idx_b) */ * from t where b<10 order by b limit 1;
+explain select /*+ order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain select /*+ order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
+explain select /*+ order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain select /*+ order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
+explain select /*+ order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain select /*+ order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain select /*+ order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;
+explain select /*+ order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain select /*+ order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;
+explain select /*+ order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain select /*+ no_order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain select /*+ no_order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;
+explain select /*+ no_order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain select /*+ no_order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;
+explain select /*+ no_order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;
+explain select /*+ no_order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain select /*+ no_order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
+explain select /*+ no_order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain select /*+ no_order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
+explain select /*+ no_order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+explain select /*+ qb_name(qb, v) order_index(t1@qb, idx_a) */ * from v;
+explain select /*+ qb_name(qb, v1) order_index(t@qb, primary) */ * from v1;
+explain select /*+ qb_name(qb, v) no_order_index(t1@qb, idx_a) */ * from v;
+explain select /*+ qb_name(qb, v1) no_order_index(t@qb, primary) */ * from v1;
+explain WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
+explain WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
+explain WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
+explain WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
+explain select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1;
+explain select /*+ no_order_index(th, a) */ a from th where a<1 order by a limit 1;
+explain select /*+ order_index(thp, primary) */ a from thp where a<1 order by a limit 1;
+explain select /*+ no_order_index(thp, primary) */ a from thp where a<1 order by a limit 1;
+explain select /*+ order_index(thh, a) */ * from thh where a<1 order by a limit 1;
+--disable_warnings
+
+# TestViewHint
+set tidb_cost_model_version=2;
+drop view if exists v, v1, v2;
+drop table if exists t, t1, t2;
+create table t(a int, b int);
+create table t1(a int, b int);
+create table t2(a int, b int);
+create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 on t1.b=t2.b group by t2.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
+--enable_warnings
+explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel_1), merge_join(t@qb_v_1) */ * from v;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;
+explain format = 'brief' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v1@sel_1 .@sel_1), merge_join(t@qb_v1_1) */ * from v1;
+explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t@qb_v1_1) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2), stream_agg(@qb_v2_2), qb_name(qb_v2_1, v2), merge_join(t@qb_v2_1) */ * from v2;
+--disable_warnings
+
+# TestViewHintScope
+set tidb_cost_model_version=2;
+drop view if exists v, v1, v2, v3, v4;
+drop table if exists t, t1, t2, t3, t4;
+create table t(a int, b int);
+create table t1(a int, b int);
+create table t2(a int, b int);
+create table t3(a int, b int);
+create table t4(a int, b int, index idx_a(a), index idx_b(b));
+create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v3 as select /*+ merge_join(t) */ t.a, t.b from t join (select /*+ stream_agg() */ count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v4 as select * from t4 where a > 2 and b > 3;
+--enable_warnings
+explain format = 'brief' select /*+ qb_name(qb_v, v@sel_1 .@sel_2), qb_name(qb_v, v@sel_1 .@sel_1), merge_join(t1@qb_v) */ * from v;
+explain format = 'brief' select /*+ qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_2), qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v1;
+explain format = 'brief' select /*+ qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_2), qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v1_2, v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;
+explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v2_2, vv@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;
+explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;
+explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v) t;
+explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v.@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;
+explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1) t;
+explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1.v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2), qb_name(qb_v_1, v@sel_2 .@sel1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v) t;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v1@sel_2 . v@sel_2 .@sel_1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v1) t;
+explain format = 'brief' select /*+ qb_name(qb_v1_2, v2. v1@sel_2 .@sel_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t1@qb_v1_2, t@qb_v1_1), merge_join(t1@qb_v1_2) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t1@qb_v_2, t3@qb_v_2) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(@qb_v_2 t1, t3) */ * from v2;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v .@sel_2), merge_join(t1@qb_v_2) */ * from v;
+explain format = 'brief' select /*+ qb_name(qb_v_1, v@sel_1), merge_join(t@qb_v_1) */ * from v;
+explain format = 'brief' select /*+ qb_name(qb_v_2, v1 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;
+explain format = 'brief' select /*+ qb_name(qb_v_1, v1 .v@sel_2), merge_join(t@qb_v_1) */ * from v1;
+explain format = 'brief' select /*+ merge_join(t1@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2) */ * from v;
+explain format = 'brief' select /*+ merge_join(t@qb_v_1), stream_agg(@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel_1) */ * from v;
+explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2) */ * from v3;
+explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2), hash_agg(@qb_v3_2), qb_name(qb_v3_1, v3@sel_1 .@sel_1), hash_join(t@qb_v3_1) */ * from v3;
+explain with d1 as (
+    select a from (
+        select a from (
+            select /*+ qb_name(qb, v4) use_index(t4@qb, idx_a) */ a from v4 where a < 10
+        ) as t0 where a < 9
+    ) as t1 where a < 8
+), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)
+
+select * from (select * from d1) as t0 join (select * from d2) as t1;
+explain with d1 as (
+    select a from (
+        select a from (
+            select a from v4 where a < 10
+        ) as t0 where a < 9
+    ) as t1 where a < 8
+), d2 as (select a from v4 where b < 10)
+
+select /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1;
+explain with d1 as (
+    select a from (
+        select a from (
+            select /*+ qb_name(qb, v5) use_index(t4@qb, idx_a) */ a from v4 where a < 10
+        ) as t0 where a < 9
+    ) as t1 where a < 8
+), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)
+
+select * from (select * from d1) as t0 join (select * from d2) as t1;
+--disable_warnings
+
+# TestIndexMergeHint4CNF
+drop table if exists t;
+create table t(id int primary key, a int, b int, c int, key(a), key(b), key(c));
+explain format = 'brief' select * from t where b = 1 and (a = 1 or c = 1);
+explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1);
+
+# TestIndexHintWarning
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, key a(a), key b(b));
+create table t2(a int, b int, c int, key a(a), key b(b));
+--enable_warnings
+select /*+ USE_INDEX(t1, j) */ * from t1;
+select /*+ IGNORE_INDEX(t1, j) */ * from t1;
+select /*+ USE_INDEX(t2, a, b, c) */ * from t1;
+select /*+ USE_INDEX(t2) */ * from t1;
+select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a;
+select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a;
+select /*+ USE_INDEX_MERGE(t3, a, b, d) */ * from t1;
+select /*+ USE_INDEX_MERGE(t1, a, b, c, d) */ * from t1;
+select /*+ USE_INDEX_MERGE(t1, a, b), USE_INDEX(t1, a) */ * from t1;
+select /*+ USE_INDEX_MERGE(t1, a, b), IGNORE_INDEX(t1, a) */ * from t1;
+select /*+ USE_INDEX_MERGE(t1, primary, a, b, c) */ * from t1;
+--disable_warnings
+drop table if exists t1;
+drop view if exists v1;
+CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, INDEX (c2));
+INSERT INTO t1 VALUES (1,1), (2,2), (3,3);
+CREATE VIEW v1 AS SELECT c1, c2 FROM t1;
+-- error 1176
+SELECT * FROM v1 USE INDEX (PRIMARY) WHERE c1=2;
+
+# TestHintWithRequiredProperty
+set tidb_cost_model_version=2;
+set @@session.tidb_executor_concurrency = 4;
+set @@session.tidb_hash_join_concurrency = 5;
+set @@session.tidb_distsql_scan_concurrency = 15;
+drop table if exists t;
+create table t(a int primary key, b int, c int, key b(b));
+--enable_warnings
+desc format = 'brief' select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a;
+desc format = 'brief' select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a;
+desc format = 'brief' select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a;
+desc format = 'brief' select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b;
+desc format = 'brief' select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a;
+desc format = 'brief' select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.c order by t1.a;
+--disable_warnings
+
+# TestHintWithoutTableWarning
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, key a(a));
+create table t2(a int, b int, c int, key a(a));
+--enable_warnings
+select /*+ TIDB_SMJ() */ * from t1, t2 where t1.a=t2.a;
+select /*+ MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a;
+select /*+ INL_JOIN() */ * from t1, t2 where t1.a=t2.a;
+select /*+ TIDB_INLJ() */ * from t1, t2 where t1.a=t2.a;
+select /*+ INL_HASH_JOIN() */ * from t1, t2 where t1.a=t2.a;
+select /*+ INL_MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a;
+select /*+ HASH_JOIN() */ * from t1, t2 where t1.a=t2.a;
+select /*+ USE_INDEX() */ * from t1, t2 where t1.a=t2.a;
+select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a;
+select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a;
+--disable_warnings
+
+# TestInvalidHint
+drop table if exists tt;
+create table tt(a int, key(a));
+--enable_warnings
+explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=10 or a=20;
+explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);
+--disable_warnings
+

@@ -1,0 +1,22 @@
+set tidb_enable_clustered_index = ON;
+drop table if exists t;
+create table t (a int, b varchar(10), c int, primary key (a, b));
+insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);
+create index idx on t (a, c);
+admin check index t idx;
+admin check table t;
+insert into t values (5, '5', 5), (6, '6', NULL);
+admin check index t idx;
+admin check table t;
+set tidb_enable_clustered_index = default;
+drop table if exists test_add_index_with_dup;
+create table test_add_index_with_dup (a int, b int);
+create index c on test_add_index_with_dup(b, a, b);
+Error 1060 (42S21): Duplicate column name 'b'
+create index c on test_add_index_with_dup(b, a, B);
+Error 1060 (42S21): Duplicate column name 'B'
+alter table test_add_index_with_dup add index c (b, a, b);
+Error 1060 (42S21): Duplicate column name 'b'
+alter table test_add_index_with_dup add index c (b, a, B);
+Error 1060 (42S21): Duplicate column name 'B'
+drop table test_add_index_with_dup;

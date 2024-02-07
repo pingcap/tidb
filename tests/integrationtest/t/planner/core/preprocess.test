@@ -1,0 +1,12 @@
+# TestErrKeyPart0
+create database TestErrKeyPart;
+use TestErrKeyPart;
+-- error 1391
+CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN;
+-- error 1391
+create table t (a int, b varchar(255), key (b(0)));
+create table t (a int, b varchar(255));
+-- error 1391
+alter table t add index (b(0));
+
+

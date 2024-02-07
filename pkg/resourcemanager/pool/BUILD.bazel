@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "pool",
+    srcs = ["basepool.go"],
+    importpath = "github.com/pingcap/tidb/pkg/resourcemanager/pool",
+    visibility = ["//visibility:public"],
+    deps = ["@org_uber_go_atomic//:atomic"],
+)

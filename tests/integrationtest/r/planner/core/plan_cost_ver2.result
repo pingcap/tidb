@@ -1,0 +1,260 @@
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+analyze table t;
+explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1;
+id	estRows	estCost	task	access object	operator info
+TopN_8	1.00	20.71	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1
+└─TableReader_16	1.00	19.11	root		data:TopN_15
+  └─TopN_15	1.00	255.00	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1
+    └─Selection_14	1.00	253.40	cop[tikv]		eq(planner__core__plan_cost_ver2.t.a, 1)
+      └─TableFullScan_13	1.00	203.50	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1000000000;
+id	estRows	estCost	task	access object	operator info
+TopN_8	1.00	20.71	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
+└─TableReader_16	1.00	19.11	root		data:TopN_15
+  └─TopN_15	1.00	255.00	cop[tikv]		planner__core__plan_cost_ver2.t.a, offset:0, count:1000000000
+    └─Selection_14	1.00	253.40	cop[tikv]		eq(planner__core__plan_cost_ver2.t.a, 1)
+      └─TableFullScan_13	1.00	203.50	cop[tikv]	table:t	keep order:false
+drop table if exists t;
+create table t (a int primary key, b int, c int, key(b));
+insert into t values (0, 0, 0), (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8), (9, 9, 9), (10, 10, 10), (11, 11, 11), (12, 12, 12), (13, 13, 13), (14, 14, 14), (15, 15, 15), (16, 16, 16), (17, 17, 17), (18, 18, 18), (19, 19, 19), (20, 20, 20), (21, 21, 21), (22, 22, 22), (23, 23, 23), (24, 24, 24), (25, 25, 25), (26, 26, 26), (27, 27, 27), (28, 28, 28), (29, 29, 29), (30, 30, 30), (31, 31, 31), (32, 32, 32), (33, 33, 33), (34, 34, 34), (35, 35, 35), (36, 36, 36), (37, 37, 37), (38, 38, 38), (39, 39, 39), (40, 40, 40), (41, 41, 41), (42, 42, 42), (43, 43, 43), (44, 44, 44), (45, 45, 45), (46, 46, 46), (47, 47, 47), (48, 48, 48), (49, 49, 49), (50, 50, 50), (51, 51, 51), (52, 52, 52), (53, 53, 53), (54, 54, 54), (55, 55, 55), (56, 56, 56), (57, 57, 57), (58, 58, 58), (59, 59, 59), (60, 60, 60), (61, 61, 61), (62, 62, 62), (63, 63, 63), (64, 64, 64), (65, 65, 65), (66, 66, 66), (67, 67, 67), (68, 68, 68), (69, 69, 69), (70, 70, 70), (71, 71, 71), (72, 72, 72), (73, 73, 73), (74, 74, 74), (75, 75, 75), (76, 76, 76), (77, 77, 77), (78, 78, 78), (79, 79, 79), (80, 80, 80), (81, 81, 81), (82, 82, 82), (83, 83, 83), (84, 84, 84), (85, 85, 85), (86, 86, 86), (87, 87, 87), (88, 88, 88), (89, 89, 89), (90, 90, 90), (91, 91, 91), (92, 92, 92), (93, 93, 93), (94, 94, 94), (95, 95, 95), (96, 96, 96), (97, 97, 97), (98, 98, 98), (99, 99, 99);
+analyze table t;
+set @@tidb_distsql_scan_concurrency=1;
+set @@tidb_executor_concurrency=1;
+set @@tidb_opt_tiflash_concurrency_factor=1;
+set @@tidb_index_lookup_concurrency=1;
+set @@tidb_cost_model_version=2;
+explain format='verbose' select /*+ use_index(t, primary) */ a from t where a<1;
+id	estRows	estCost	task	access object	operator info
+TableReader_6	1.00	290.67	root		data:TableRangeScan_5
+└─TableRangeScan_5	1.00	227.31	cop[tikv]	table:t	range:[-inf,1), keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a from t where a<10;
+id	estRows	estCost	task	access object	operator info
+TableReader_6	10.00	2906.68	root		data:TableRangeScan_5
+└─TableRangeScan_5	10.00	2273.08	cop[tikv]	table:t	range:[-inf,10), keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a from t where a<100;
+id	estRows	estCost	task	access object	operator info
+TableReader_6	100.00	29066.80	root		data:TableRangeScan_5
+└─TableRangeScan_5	100.00	22730.80	cop[tikv]	table:t	range:[-inf,100), keep order:false
+explain format='verbose' select /*+ use_index(t, b) */ b from t where b<1;
+id	estRows	estCost	task	access object	operator info
+IndexReader_6	1.00	226.16	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	1.00	162.80	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false
+explain format='verbose' select /*+ use_index(t, b) */ b from t where b<10;
+id	estRows	estCost	task	access object	operator info
+IndexReader_6	10.00	2261.60	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	1628.00	cop[tikv]	table:t, index:b(b)	range:[-inf,10), keep order:false
+explain format='verbose' select /*+ use_index(t, b) */ b from t where b<100;
+id	estRows	estCost	task	access object	operator info
+IndexReader_6	100.00	22616.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	100.00	16280.00	cop[tikv]	table:t, index:b(b)	range:[-inf,100), keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a from t;
+id	estRows	estCost	task	access object	operator info
+TableReader_5	100.00	29066.80	root		data:TableFullScan_4
+└─TableFullScan_4	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a, b from t;
+id	estRows	estCost	task	access object	operator info
+TableReader_5	100.00	35402.80	root		data:TableFullScan_4
+└─TableFullScan_4	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a, b, c from t;
+id	estRows	estCost	task	access object	operator info
+TableReader_5	100.00	41738.80	root		data:TableFullScan_4
+└─TableFullScan_4	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, b) */ * from t where b<1;
+id	estRows	estCost	task	access object	operator info
+IndexLookUp_7	1.00	10241.58	root		
+├─IndexRangeScan_5(Build)	1.00	203.50	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false
+└─TableRowIDScan_6(Probe)	1.00	227.31	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, b) */ * from t where b<10;
+id	estRows	estCost	task	access object	operator info
+IndexLookUp_7	10.00	102415.83	root		
+├─IndexRangeScan_5(Build)	10.00	2035.00	cop[tikv]	table:t, index:b(b)	range:[-inf,10), keep order:false
+└─TableRowIDScan_6(Probe)	10.00	2273.08	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, b) */ * from t where b<100;
+id	estRows	estCost	task	access object	operator info
+IndexLookUp_7	100.00	1024158.30	root		
+├─IndexRangeScan_5(Build)	100.00	20350.00	cop[tikv]	table:t, index:b(b)	range:[-inf,100), keep order:false
+└─TableRowIDScan_6(Probe)	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a from t where mod(a, 20)<10;
+id	estRows	estCost	task	access object	operator info
+TableReader_7	80.00	32789.60	root		data:Selection_6
+└─Selection_6	80.00	27720.80	cop[tikv]		lt(mod(planner__core__plan_cost_ver2.t.a, 20), 10)
+  └─TableFullScan_5	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a from t where mod(a, 20)<10 and mod(a, 20)<11;
+id	estRows	estCost	task	access object	operator info
+TableReader_7	80.00	37779.60	root		data:Selection_6
+└─Selection_6	80.00	32710.80	cop[tikv]		lt(mod(planner__core__plan_cost_ver2.t.a, 20), 10), lt(mod(planner__core__plan_cost_ver2.t.a, 20), 11)
+  └─TableFullScan_5	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a from t where mod(a, 20)<10 and mod(a, 20)<11 and mod(a, 20)<12;
+id	estRows	estCost	task	access object	operator info
+TableReader_7	80.00	42769.60	root		data:Selection_6
+└─Selection_6	80.00	37700.80	cop[tikv]		lt(mod(planner__core__plan_cost_ver2.t.a, 20), 10), lt(mod(planner__core__plan_cost_ver2.t.a, 20), 11), lt(mod(planner__core__plan_cost_ver2.t.a, 20), 12)
+  └─TableFullScan_5	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a+1 from t;
+id	estRows	estCost	task	access object	operator info
+Projection_3	100.00	34056.80	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#4
+└─TableReader_5	100.00	29066.80	root		data:TableFullScan_4
+  └─TableFullScan_4	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a+1, a+2 from t;
+id	estRows	estCost	task	access object	operator info
+Projection_3	100.00	39046.80	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#4, plus(planner__core__plan_cost_ver2.t.a, 2)->Column#5
+└─TableReader_5	100.00	29066.80	root		data:TableFullScan_4
+  └─TableFullScan_4	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary) */ a+1, a+2, a+3 from t;
+id	estRows	estCost	task	access object	operator info
+Projection_3	100.00	44036.80	root		plus(planner__core__plan_cost_ver2.t.a, 1)->Column#4, plus(planner__core__plan_cost_ver2.t.a, 2)->Column#5, plus(planner__core__plan_cost_ver2.t.a, 3)->Column#6
+└─TableReader_5	100.00	29066.80	root		data:TableFullScan_4
+  └─TableFullScan_4	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b;
+id	estRows	estCost	task	access object	operator info
+HashAgg_7	100.00	62699.70	root		group by:Column#7, funcs:sum(Column#6)->Column#4
+└─Projection_13	100.00	40442.70	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#6, planner__core__plan_cost_ver2.t.b->Column#7
+  └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+    └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a), sum(a+2) from t group by b;
+id	estRows	estCost	task	access object	operator info
+HashAgg_7	100.00	68489.70	root		group by:Column#10, funcs:sum(Column#8)->Column#4, funcs:sum(Column#9)->Column#5
+└─Projection_13	100.00	45432.70	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#8, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#9, planner__core__plan_cost_ver2.t.b->Column#10
+  └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+    └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a), sum(a+2), sum(a+4) from t group by b;
+id	estRows	estCost	task	access object	operator info
+HashAgg_7	100.00	74279.70	root		group by:Column#13, funcs:sum(Column#10)->Column#4, funcs:sum(Column#11)->Column#5, funcs:sum(Column#12)->Column#6
+└─Projection_13	100.00	50422.70	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#10, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#11, cast(plus(planner__core__plan_cost_ver2.t.a, 4), decimal(20,0) BINARY)->Column#12, planner__core__plan_cost_ver2.t.b->Column#13
+  └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+    └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b;
+id	estRows	estCost	task	access object	operator info
+HashAgg_7	100.00	62699.70	root		group by:Column#7, funcs:sum(Column#6)->Column#4
+└─Projection_13	100.00	40442.70	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#6, planner__core__plan_cost_ver2.t.b->Column#7
+  └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+    └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b, b+1;
+id	estRows	estCost	task	access object	operator info
+HashAgg_7	100.00	77669.70	root		group by:Column#8, Column#9, funcs:sum(Column#7)->Column#4
+└─Projection_13	100.00	45432.70	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#7, planner__core__plan_cost_ver2.t.b->Column#8, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#9
+  └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+    └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b, b+1, b+2;
+id	estRows	estCost	task	access object	operator info
+HashAgg_7	100.00	92639.70	root		group by:Column#10, Column#11, Column#9, funcs:sum(Column#8)->Column#4
+└─Projection_13	100.00	50422.70	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#8, planner__core__plan_cost_ver2.t.b->Column#9, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#10, plus(planner__core__plan_cost_ver2.t.b, 2)->Column#11
+  └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+    └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), stream_agg() */ sum(a) from t group by b;
+id	estRows	estCost	task	access object	operator info
+StreamAgg_8	100.00	74235.54	root		group by:Column#6, funcs:sum(Column#5)->Column#4
+└─Projection_17	100.00	74235.54	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#5, planner__core__plan_cost_ver2.t.b->Column#6
+  └─Sort_13	100.00	69195.64	root		planner__core__plan_cost_ver2.t.b
+    └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+      └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), stream_agg() */ sum(a), sum(a+2) from t group by b;
+id	estRows	estCost	task	access object	operator info
+StreamAgg_8	100.00	79225.54	root		group by:Column#8, funcs:sum(Column#6)->Column#4, funcs:sum(Column#7)->Column#5
+└─Projection_17	100.00	79225.54	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#6, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#7, planner__core__plan_cost_ver2.t.b->Column#8
+  └─Sort_13	100.00	69195.64	root		planner__core__plan_cost_ver2.t.b
+    └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+      └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ use_index(t, primary), stream_agg() */ sum(a), sum(a+2), sum(a+4) from t group by b;
+id	estRows	estCost	task	access object	operator info
+StreamAgg_8	100.00	84215.54	root		group by:Column#10, funcs:sum(Column#7)->Column#4, funcs:sum(Column#8)->Column#5, funcs:sum(Column#9)->Column#6
+└─Projection_17	100.00	84215.54	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#7, cast(plus(planner__core__plan_cost_ver2.t.a, 2), decimal(20,0) BINARY)->Column#8, cast(plus(planner__core__plan_cost_ver2.t.a, 4), decimal(20,0) BINARY)->Column#9, planner__core__plan_cost_ver2.t.b->Column#10
+  └─Sort_13	100.00	69195.64	root		planner__core__plan_cost_ver2.t.b
+    └─TableReader_12	100.00	35402.80	root		data:TableFullScan_11
+      └─TableFullScan_11	100.00	22730.80	cop[tikv]	table:t	keep order:false
+explain format='verbose' select /*+ hash_join_build(t1) */ * from t t1, t t2 where t1.b=t2.b and t1.a<10;
+id	estRows	estCost	task	access object	operator info
+HashJoin_35	10.00	63972.68	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
+├─TableReader_38(Build)	10.00	4672.88	root		data:Selection_37
+│ └─Selection_37	10.00	2772.08	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableRangeScan_36	10.00	2273.08	cop[tikv]	table:t1	range:[-inf,10), keep order:false
+└─TableReader_45(Probe)	100.00	46728.80	root		data:Selection_44
+  └─Selection_44	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableFullScan_43	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+explain format='verbose' select /*+ hash_join_build(t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<10;
+id	estRows	estCost	task	access object	operator info
+HashJoin_35	10.00	64836.68	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
+├─TableReader_45(Build)	100.00	46728.80	root		data:Selection_44
+│ └─Selection_44	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableFullScan_43	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+└─TableReader_38(Probe)	10.00	4672.88	root		data:Selection_37
+  └─Selection_37	10.00	2772.08	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableRangeScan_36	10.00	2273.08	cop[tikv]	table:t1	range:[-inf,10), keep order:false
+explain format='verbose' select /*+ hash_join_build(t1) */ * from t t1, t t2 where t1.b=t2.b;
+id	estRows	estCost	task	access object	operator info
+HashJoin_35	100.00	115874.59	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
+├─TableReader_38(Build)	100.00	46728.80	root		data:Selection_37
+│ └─Selection_37	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableFullScan_36	100.00	22730.80	cop[tikv]	table:t1	keep order:false
+└─TableReader_44(Probe)	100.00	46728.80	root		data:Selection_43
+  └─Selection_43	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableFullScan_42	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+explain format='verbose' select /*+ hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a and t1.b=t2.b;
+id	estRows	estCost	task	access object	operator info
+HashJoin_29	100.00	125854.59	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.a, planner__core__plan_cost_ver2.t.a) eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
+├─TableReader_32(Build)	100.00	46728.80	root		data:Selection_31
+│ └─Selection_31	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableFullScan_30	100.00	22730.80	cop[tikv]	table:t1	keep order:false
+└─TableReader_38(Probe)	100.00	46728.80	root		data:Selection_37
+  └─Selection_37	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableFullScan_36	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+set @@tidb_distsql_scan_concurrency=DEFAULT;
+set @@tidb_executor_concurrency=DEFAULT;
+set @@tidb_opt_tiflash_concurrency_factor=DEFAULT;
+set @@tidb_index_lookup_concurrency=DEFAULT;
+set @@tidb_cost_model_version=DEFAULT;
+drop table if exists t1, t2;
+create table t1 (a int, key(a));
+create table t2 (a int, key(a));
+select @@tidb_index_join_double_read_penalty_cost_rate;
+@@tidb_index_join_double_read_penalty_cost_rate
+0
+explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
+id	estRows	estCost	task	access object	operator info
+IndexJoin_12	12487.50	5277413.38	root		inner join, inner:IndexReader_11, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+├─IndexReader_32(Build)	9990.00	150622.56	root		index:IndexFullScan_31
+│ └─IndexFullScan_31	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
+└─IndexReader_11(Probe)	12487.50	23.02	root		index:Selection_10
+  └─Selection_10	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
+    └─IndexRangeScan_9	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
+set tidb_index_join_double_read_penalty_cost_rate=0.5;
+explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
+id	estRows	estCost	task	access object	operator info
+IndexJoin_12	12487.50	250791653.38	root		inner join, inner:IndexReader_11, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+├─IndexReader_32(Build)	9990.00	150622.56	root		index:IndexFullScan_31
+│ └─IndexFullScan_31	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
+└─IndexReader_11(Probe)	12487.50	23.02	root		index:Selection_10
+  └─Selection_10	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
+    └─IndexRangeScan_9	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
+set tidb_index_join_double_read_penalty_cost_rate=1;
+explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
+id	estRows	estCost	task	access object	operator info
+IndexJoin_12	12487.50	496305893.38	root		inner join, inner:IndexReader_11, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+├─IndexReader_32(Build)	9990.00	150622.56	root		index:IndexFullScan_31
+│ └─IndexFullScan_31	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
+└─IndexReader_11(Probe)	12487.50	23.02	root		index:Selection_10
+  └─Selection_10	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
+    └─IndexRangeScan_9	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int, c int, d int, index ia(a), index ibc(b,c));
+set @@tidb_cost_model_version=1;
+explain select * from t where a between 1 and 5 and b != 200 and c = 20 limit 100000;
+id	estRows	task	access object	operator info
+Limit_9	0.17	root		offset:0, count:100000
+└─IndexLookUp_22	0.17	root		
+  ├─IndexRangeScan_14(Build)	250.00	cop[tikv]	table:t, index:ia(a)	range:[1,5], keep order:false, stats:pseudo
+  └─Limit_21(Probe)	0.17	cop[tikv]		offset:0, count:100000
+    └─Selection_16	0.17	cop[tikv]		eq(planner__core__plan_cost_ver2.t.c, 20), ne(planner__core__plan_cost_ver2.t.b, 200)
+      └─TableRowIDScan_15	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int);
+set @@tidb_cost_model_version=2;
+explain format='true_card_cost' select * from t;
+Error 1105 (HY000): 'explain format=true_card_cost' cannot work without 'analyze', please use 'explain analyze format=true_card_cost'
+explain analyze format='true_card_cost' select * from t where a<3;
+id	estRows	estCost	costFormula	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_7	3323.33	0.00	(((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (scan(0*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
+└─Selection_6	3323.33	0.00	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (scan(0*logrowsize(32)*tikv_scan_factor(40.7)))	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
+  └─TableFullScan_5	10000.00	0.00	scan(0*logrowsize(32)*tikv_scan_factor(40.7))	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+set @@tidb_cost_model_version=DEFAULT;

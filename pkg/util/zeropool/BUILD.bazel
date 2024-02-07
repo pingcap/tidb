@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "zeropool",
+    srcs = ["pool.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/zeropool",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "zeropool_test",
+    timeout = "short",
+    srcs = ["pool_test.go"],
+    flaky = True,
+    deps = [
+        ":zeropool",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)

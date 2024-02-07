@@ -26,8 +26,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
-	drivererr "github.com/pingcap/tidb/store/driver/error"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
+	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -79,6 +79,8 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	ErrKVReadIndexNotReady.ID():   {},
 	ErrKVIngestFailed.ID():        {},
 	ErrKVRaftProposalDropped.ID(): {},
+	// litBackendCtxMgr.Register may return the error.
+	ErrCreatePDClient.ID(): {},
 	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr
 	// met ErrRegionUnavailable on free-tier import during checksum, others hasn't met yet
 	drivererr.ErrRegionUnavailable.ID(): {},
@@ -88,13 +90,19 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	drivererr.ErrUnknown.ID():           {},
 }
 
+// ErrWriteTooSlow is used to get rid of the gRPC blocking issue.
+// there are some strange blocking issues of gRPC like
+// https://github.com/pingcap/tidb/issues/48352
+// https://github.com/pingcap/tidb/issues/46321 and I don't know why 😭
+var ErrWriteTooSlow = errors.New("write too slow, maybe gRPC is blocked forever")
+
 func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
 	switch err {
 	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
 		return false
-	case mysql.ErrInvalidConn, driver.ErrBadConn:
+	case mysql.ErrInvalidConn, driver.ErrBadConn, ErrWriteTooSlow:
 		return true
 	}
 
@@ -103,7 +111,9 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-		if syscallErr, ok := goerrors.Unwrap(err).(*os.SyscallError); ok {
+		// the error might be nested, such as *url.Error -> *net.OpError -> *os.SyscallError
+		var syscallErr *os.SyscallError
+		if goerrors.As(nerr, &syscallErr) {
 			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
 		}
 		return false
@@ -138,6 +148,8 @@ func isSingleRetryableError(err error) bool {
 			// 2. in write TiKV: rpc error: code = Unknown desc = EngineTraits(Engine(Status { code: IoError, sub_code:
 			//    None, sev: NoError, state: \"IO error: No such file or directory: while stat a file for size:
 			//    /...../63992d9c-fbc8-4708-b963-32495b299027_32279707_325_5280_write.sst: No such file or directory\"
+			// 3. in write TiKV: rpc error: code = Unknown desc = Engine("request region 26 is staler than local region,
+			//    local epoch conf_ver: 5 version: 65, request epoch conf_ver: 5 version: 64, please rescan region later")
 			return true
 		default:
 			return false

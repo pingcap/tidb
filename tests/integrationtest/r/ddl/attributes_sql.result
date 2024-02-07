@@ -1,0 +1,48 @@
+drop table if exists alter_t;
+create table alter_t (c int);
+alter table alter_t attributes="merge_option=allow";
+alter table alter_t attributes="merge_option=allow,key=value";
+alter table alter_t attributes=" merge_option=allow ";
+alter table alter_t attributes=" merge_option = allow , key = value ";
+alter table alter_t attributes " merge_option=allow ";
+alter table alter_t attributes " merge_option=allow , key=value ";
+drop table alter_t;
+drop database if exists ddl__attributes_sql_test;
+create database ddl__attributes_sql_test;
+use ddl__attributes_sql_test;
+create table drop_s1 (c int)
+PARTITION BY RANGE (c) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11)
+);
+create table drop_s2 (c int);
+alter table drop_s1 attributes="key=value";
+alter table drop_s1 partition p0 attributes="key1=value1";
+alter table drop_s2 attributes="key=value";
+select count(*) from information_schema.attributes where ID like 'schema/ddl__attributes_sql_test%';
+count(*)
+3
+drop database ddl__attributes_sql_test;
+select count(*) from information_schema.attributes where ID like 'schema/ddl__attributes_sql_test%';
+count(*)
+0
+use ddl__attributes_sql;
+drop table if exists def;
+create table def (c int)
+PARTITION BY RANGE (c) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11)
+);
+alter table def attributes="key=value";
+alter table def partition p0 attributes="key1=value1";
+select count(*) from information_schema.attributes where ID like 'schema/ddl__attributes_sql/def%';
+count(*)
+2
+alter table def partition p0 attributes=default;
+select count(*) from information_schema.attributes where ID like 'schema/ddl__attributes_sql/def%';
+count(*)
+1
+alter table def attributes=default;
+select count(*) from information_schema.attributes where ID like 'schema/ddl__attributes_sql/def%';
+count(*)
+0

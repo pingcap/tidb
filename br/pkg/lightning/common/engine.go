@@ -31,13 +31,16 @@ type Range struct {
 type Engine interface {
 	// ID is the identifier of an engine.
 	ID() string
-	// LoadIngestData returns an IngestData that contains the data in [start, end).
-	LoadIngestData(ctx context.Context, start, end []byte) (IngestData, error)
-	// KVStatistics returns the total kv size and total kv length.
-	KVStatistics() (totalKVSize int64, totalKVLength int64)
-	// ImportedStatistics returns the imported kv size and imported kv length.
-	ImportedStatistics() (importedKVSize int64, importedKVLength int64)
+	// LoadIngestData sends DataAndRange to outCh. Implementation may choose smaller
+	// ranges than given regionRanges, and data is contained in its range.
+	LoadIngestData(ctx context.Context, regionRanges []Range, outCh chan<- DataAndRange) error
+	// KVStatistics returns the total kv size and total kv count.
+	KVStatistics() (totalKVSize int64, totalKVCount int64)
+	// ImportedStatistics returns the imported kv size and imported kv count.
+	ImportedStatistics() (importedKVSize int64, importedKVCount int64)
+	// GetKeyRange returns the key range [startKey, endKey) of the engine.
+	GetKeyRange() (startKey []byte, endKey []byte, err error)
 	// SplitRanges splits the range [startKey, endKey) into multiple ranges.
 	SplitRanges(startKey, endKey []byte, sizeLimit, keysLimit int64, logger log.Logger) ([]Range, error)
-	// TODO(lance6716): add more methods
+	Close() error
 }

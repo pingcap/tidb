@@ -42,8 +42,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -275,19 +275,28 @@ func (e *Engine) TotalMemorySize() int64 {
 	return memSize
 }
 
-// KVStatistics returns the total kv size and total kv length.
-func (e *Engine) KVStatistics() (totalKVSize int64, totalKVLength int64) {
+// KVStatistics returns the total kv size and total kv count.
+func (e *Engine) KVStatistics() (totalSize int64, totalKVCount int64) {
 	return e.TotalSize.Load(), e.Length.Load()
 }
 
-// ImportedStatistics returns the imported kv size and imported kv length.
-func (e *Engine) ImportedStatistics() (importedKVSize int64, importedKVLength int64) {
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return e.UUID.String()
+}
+
+// GetKeyRange implements common.Engine.
+func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	firstLey, lastKey, err := e.GetFirstAndLastKey(nil, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return firstLey, nextKey(lastKey), nil
 }
 
 // SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
@@ -633,7 +642,7 @@ func (e *Engine) ingestSSTLoop() {
 					}
 					ingestMetas := metas.metas
 					if e.config.Compact {
-						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir)
+						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir, e.config.BlockSize)
 						if err != nil {
 							e.setError(err)
 							return
@@ -966,20 +975,28 @@ func (e *Engine) loadEngineMeta() error {
 	return nil
 }
 
-func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
+func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *membuf.Buffer) IngestLocalEngineIter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
 		newOpts.LowerBound = normalIterStartKey
 		opts = &newOpts
 	}
 	if !e.duplicateDetection {
-		return pebbleIter{Iterator: e.getDB().NewIter(opts)}
+		return &pebbleIter{Iterator: e.getDB().NewIter(opts), buf: buf}
 	}
 	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+	return newDupDetectIter(
+		e.getDB(),
+		e.keyAdapter,
+		opts,
+		e.duplicateDB,
+		logger,
+		e.dupDetectOpt,
+		buf,
+	)
 }
 
 var _ common.IngestData = (*Engine)(nil)
@@ -996,8 +1013,11 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
+	failpoint.Inject("mockGetFirstAndLastKey", func() {
+		failpoint.Return(lowerBound, upperBound, nil)
+	})
 
-	iter := e.newKVIter(context.Background(), opt)
+	iter := e.newKVIter(context.Background(), opt, nil)
 	//nolint: errcheck
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
@@ -1018,14 +1038,28 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 }
 
 // NewIter implements IngestData interface.
-func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
-	return e.newKVIter(ctx, &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound})
+func (e *Engine) NewIter(
+	ctx context.Context,
+	lowerBound, upperBound []byte,
+	bufPool *membuf.Pool,
+) common.ForwardIter {
+	return e.newKVIter(
+		ctx,
+		&pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound},
+		bufPool.NewBuffer(),
+	)
 }
 
 // GetTS implements IngestData interface.
 func (e *Engine) GetTS() uint64 {
 	return e.TS
 }
+
+// IncRef implements IngestData interface.
+func (*Engine) IncRef() {}
+
+// DecRef implements IngestData interface.
+func (*Engine) DecRef() {}
 
 // Finish implements IngestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {
@@ -1035,8 +1069,19 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 
 // LoadIngestData return (local) Engine itself because Engine has implemented
 // IngestData interface.
-func (e *Engine) LoadIngestData(_ context.Context, _, _ []byte) (common.IngestData, error) {
-	return e, nil
+func (e *Engine) LoadIngestData(
+	ctx context.Context,
+	regionRanges []common.Range,
+	outCh chan<- common.DataAndRange,
+) error {
+	for _, r := range regionRanges {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- common.DataAndRange{Data: e, Range: r}:
+		}
+	}
+	return nil
 }
 
 type sstMeta struct {
@@ -1304,7 +1349,7 @@ func (w *Writer) addSST(ctx context.Context, meta *sstMeta) error {
 
 func (w *Writer) createSSTWriter() (*sstWriter, error) {
 	path := filepath.Join(w.engine.sstDir, uuid.New().String()+".sst")
-	writer, err := newSSTWriter(path)
+	writer, err := newSSTWriter(path, w.engine.config.BlockSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1320,7 +1365,7 @@ type sstWriter struct {
 	logger log.Logger
 }
 
-func newSSTWriter(path string) (*sstable.Writer, error) {
+func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1329,7 +1374,7 @@ func newSSTWriter(path string) (*sstable.Writer, error) {
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
-		BlockSize: 16 * 1024,
+		BlockSize: blockSize,
 	})
 	return writer, nil
 }
@@ -1459,7 +1504,7 @@ func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 // sstIngester is a interface used to merge and ingest SST files.
 // it's a interface mainly used for test convenience
 type sstIngester interface {
-	mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
+	mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error)
 	ingest([]*sstMeta) error
 }
 
@@ -1467,7 +1512,7 @@ type dbSSTIngester struct {
 	e *Engine
 }
 
-func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
+func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {
@@ -1516,7 +1561,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	heap.Init(mergeIter)
 
 	name := filepath.Join(dir, fmt.Sprintf("%s.sst", uuid.New()))
-	writer, err := newSSTWriter(name)
+	writer, err := newSSTWriter(name, blockSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
