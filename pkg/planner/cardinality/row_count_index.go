@@ -222,7 +222,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
 	totalCount := float64(0)
-	isSingleCol := len(idx.Info.Columns) == 1
+	isSingleColIdx := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
 		var count float64
 		lb, err := codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
@@ -278,7 +278,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
-		if isSingleCol && lowIsNull {
+		if isSingleColIdx && lowIsNull {
 			count += float64(idx.Histogram.NullCount)
 		}
 		expBackoffSuccess := false
@@ -324,15 +324,23 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 			count += betweenRowCountOnIndex(sctx, idx, l, r)
 		}
 
-		// If the current table row count has changed, we should scale the row count accordingly.
-		count *= idx.GetIncreaseFactor(realtimeRowCount)
+		// If the table has changed - update the count accordingly. If we're already above 1/3 of the table size
+		// then inflating further is risky since modifications don't break down inserts separately from deletes/updates
+		if count < float64(realtimeRowCount)/3 {
+			count *= idx.GetIncreaseFactor(realtimeRowCount)
+		}
 
 		histNDV := idx.NDV
+		isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
+		if isSingleColRange && !isSingleColIdx {
+			histNDV = coll.Columns[idx.Histogram.ID].Histogram.NDV
+		}
+
 		if idx.StatsVer == statistics.Version2 {
 			histNDV = histNDV - int64(idx.TopN.Num())
 		}
 		// handling the out-of-range part
-		if (outOfRangeOnIndex(idx, l) && !(isSingleCol && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
 		}
 

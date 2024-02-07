@@ -281,8 +281,11 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 
 		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
-		// If the current table row count has changed, we should scale the row count accordingly.
-		cnt *= c.GetIncreaseFactor(realtimeRowCount)
+		// If the table has changed - update the count accordingly. If we're already above 1/3 of the table size
+		// then inflating further is risky since modifications don't break down inserts separately from deletes/updates
+		if cnt < float64(realtimeRowCount)/3 {
+			cnt *= c.GetIncreaseFactor(realtimeRowCount)
+		}
 
 		histNDV := c.NDV
 		if c.StatsVer == statistics.Version2 {
