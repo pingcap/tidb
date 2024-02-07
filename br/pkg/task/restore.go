@@ -139,6 +139,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"batch size for ddl to create a batch of tables once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
+	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
 	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
@@ -219,6 +220,7 @@ type RestoreConfig struct {
 	VolumeEncrypted     bool                  `json:"volume-encrypted" toml:"volume-encrypted"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
+	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -391,6 +393,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		}
 
 		cfg.TargetAZ, err = flags.GetString(flagTargetAZ)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		cfg.UseFSR, err = flags.GetBool(flagUseFSR)
 		if err != nil {
 			return errors.Trace(err)
 		}
