@@ -124,6 +124,36 @@ func getStartedMockedCluster(t *testing.T) *mock.Cluster {
 	return cluster
 }
 
+func TestNeedCheckTargetClusterFresh(t *testing.T) {
+	// cannot use shared `mc`, other parallel case may change it.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, cluster.Storage)
+	require.NoError(t, err)
+
+	require.True(t, client.NeedCheckFreshCluster(false, nil))
+
+	checkpointsMap := make(map[int64]map[string]struct{})
+	require.True(t, client.NeedCheckFreshCluster(false, checkpointsMap))
+
+	// skip check when has checkpoints
+	checkpointsMap[1] = make(map[string]struct{})
+	require.False(t, client.NeedCheckFreshCluster(false, checkpointsMap))
+
+	// skip check when has set --filter
+	require.False(t, client.NeedCheckFreshCluster(true, checkpointsMap))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data", "return(false)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data"))
+	}()
+	// skip check when increment backup
+	require.False(t, client.NeedCheckFreshCluster(false, nil))
+}
+
 func TestCheckTargetClusterFresh(t *testing.T) {
 	// cannot use shared `mc`, other parallel case may change it.
 	cluster := getStartedMockedCluster(t)
