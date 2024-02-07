@@ -36,7 +36,7 @@ var once sync.Once
 //
 // import _ "github.com/pingcap/tidb/perfschema"
 //
-// This function depends on plan/core.init(), which initialize the expression.EvalAstExpr function.
+// This function depends on plan/core.init(), which initialize the expression.EvalSimpleAst function.
 // The initialize order is a problem if init() is used as the function name.
 func Init() {
 	initOnce := func() {
@@ -71,7 +71,7 @@ func Init() {
 		}
 		infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
 	}
-	if expression.EvalAstExpr != nil {
+	if expression.EvalSimpleAst != nil {
 		once.Do(initOnce)
 	}
 }

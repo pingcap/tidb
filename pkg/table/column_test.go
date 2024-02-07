@@ -465,12 +465,12 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 	}
 
-	exp := expression.EvalAstExpr
-	expression.EvalAstExpr = func(sctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
+	exp := expression.EvalSimpleAst
+	expression.EvalSimpleAst = func(sctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
 		return types.NewIntDatum(1), nil
 	}
 	defer func() {
-		expression.EvalAstExpr = exp
+		expression.EvalSimpleAst = exp
 	}()
 
 	defaultMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
