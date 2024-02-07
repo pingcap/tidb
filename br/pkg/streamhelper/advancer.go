@@ -5,6 +5,7 @@ package streamhelper
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -272,6 +273,22 @@ func (c *CheckpointAdvancer) NewCheckpoints(cps *spans.ValueSortedFull) {
 	c.checkpoints = cps
 }
 
+func (c *CheckpointAdvancer) fetchRegionHint(ctx context.Context, startKey []byte) string {
+	region, err := locateKeyOfRegion(ctx, c.env, startKey)
+	if err != nil {
+		return errors.Annotate(err, "failed to fetch region").Error()
+	}
+	r := region.Region
+	l := region.Leader
+	prs := []int{}
+	for _, p := range r.GetPeers() {
+		prs = append(prs, int(p.StoreId))
+	}
+	return fmt.Sprintf("ID=%d,Leader=%d,ConfVer=%d,Version=%d,Peers=%v,RealRange=%s",
+		r.GetId(), l.GetStoreId(), r.GetRegionEpoch().GetConfVer(), r.GetRegionEpoch().GetVersion(),
+		prs, logutil.StringifyRangeOf(r.GetStartKey(), r.GetEndKey()))
+}
+
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 	threshold time.Duration) (spans.Valued, error) {
 	var targets []spans.Valued
@@ -283,9 +300,13 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		})
 		minValue = vsf.Min()
 	})
+	sctx, cancel := context.WithTimeout(ctx, time.Second)
 	log.Info("current last region", zap.String("category", "log backup advancer hint"),
 		zap.Stringer("min", minValue), zap.Int("for-polling", len(targets)),
-		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)))
+		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)),
+		zap.String("region-hint", c.fetchRegionHint(sctx, minValue.Key.StartKey)),
+	)
+	cancel()
 	if len(targets) == 0 {
 		return minValue, nil
 	}
