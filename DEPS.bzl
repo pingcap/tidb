@@ -10139,13 +10139,13 @@ def go_deps():
         name = "org_golang_x_exp",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/exp",
-        sha256 = "430a7061a11f8ba407c95c28017d67f1169e5cba657912e5c34e9a930bd3d1be",
-        strip_prefix = "golang.org/x/exp@v0.0.0-20231206192017-f3f8817b8deb",
+        sha256 = "b5b6cede556511e8318cda042863a37fcd68e8241bd82f751c596dbdb78d449a",
+        strip_prefix = "golang.org/x/exp@v0.0.0-20240205201215-2c58cdc269a3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20231206192017-f3f8817b8deb.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20231206192017-f3f8817b8deb.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20231206192017-f3f8817b8deb.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20231206192017-f3f8817b8deb.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240205201215-2c58cdc269a3.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240205201215-2c58cdc269a3.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240205201215-2c58cdc269a3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/exp/org_golang_x_exp-v0.0.0-20240205201215-2c58cdc269a3.zip",
         ],
     )
     go_repository(
@@ -10412,13 +10412,13 @@ def go_deps():
         name = "org_modernc_sortutil",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/sortutil",
-        sha256 = "0450e080b84a4964908698a9615c0629859ddc527a70f1e5c0f911836dbabc17",
-        strip_prefix = "modernc.org/sortutil@v1.1.1",
+        sha256 = "30f47ffd690ba68e88bcb7f2a1f3d61505580c0d62ba32c2bab5017077208f60",
+        strip_prefix = "modernc.org/sortutil@v1.2.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/sortutil/org_modernc_sortutil-v1.1.1.zip",
-            "http://ats.apps.svc/gomod/modernc.org/sortutil/org_modernc_sortutil-v1.1.1.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/sortutil/org_modernc_sortutil-v1.1.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/sortutil/org_modernc_sortutil-v1.1.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/sortutil/org_modernc_sortutil-v1.2.0.zip",
+            "http://ats.apps.svc/gomod/modernc.org/sortutil/org_modernc_sortutil-v1.2.0.zip",
+            "https://cache.hawkingrei.com/gomod/modernc.org/sortutil/org_modernc_sortutil-v1.2.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/sortutil/org_modernc_sortutil-v1.2.0.zip",
         ],
     )
     go_repository(
@@ -10438,13 +10438,13 @@ def go_deps():
         name = "org_modernc_y",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/y",
-        sha256 = "eeb1fb4b8988f45c9f6124b6b172ddfab89dbfe1dc48093c295c67401f37d564",
-        strip_prefix = "modernc.org/y@v1.0.9",
+        sha256 = "cce55de6a0fe8fa41f1bf95184316f02f90966a12a34bc38534d610920be4720",
+        strip_prefix = "modernc.org/y@v1.1.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/y/org_modernc_y-v1.0.9.zip",
-            "http://ats.apps.svc/gomod/modernc.org/y/org_modernc_y-v1.0.9.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/y/org_modernc_y-v1.0.9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/y/org_modernc_y-v1.0.9.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/y/org_modernc_y-v1.1.0.zip",
+            "http://ats.apps.svc/gomod/modernc.org/y/org_modernc_y-v1.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/modernc.org/y/org_modernc_y-v1.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/y/org_modernc_y-v1.1.0.zip",
         ],
     )
     go_repository(

@@ -366,7 +366,7 @@ func getDynamicAccessPartition(sctx sessionctx.Context, tblInfo *model.TableInfo
 	}
 	res.Table = tblName
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	db, ok := is.SchemaByTable(tblInfo)
+	db, ok := infoschema.SchemaByTable(is, tblInfo)
 	if ok {
 		res.Database = db.Name.O
 	}

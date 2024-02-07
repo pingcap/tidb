@@ -1771,7 +1771,7 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
-		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, plan.Schema(), plan.OutputNames())
+		expr, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, plan.Schema(), plan.OutputNames(), false)
 		if err != nil {
 			return nil, true
 		}

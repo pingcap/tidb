@@ -698,11 +698,11 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 	var firstExpr, lastExpr ast.ExprNode
 	if isIntType {
 		exprStr := fmt.Sprintf("((%s) - (%s)) DIV %d", lastPartLessThan, firstPartLessThan, endIdx-startIdx)
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
+		expr, err := expression.ParseSimpleExpr(ctx, exprStr)
 		if err != nil {
 			return nil
 		}
-		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
+		val, isNull, err := expr.EvalInt(ctx, chunk.Row{})
 		if isNull || err != nil || val < 1 {
 			// If NULL, error or interval < 1 then cannot be an INTERVAL partitioned table
 			return nil
@@ -721,11 +721,11 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 		interval.LastRangeEnd = &lastExpr
 	} else { // types.ETDatetime
 		exprStr := fmt.Sprintf("TIMESTAMPDIFF(SECOND, '%s', '%s')", firstPartLessThan, lastPartLessThan)
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
+		expr, err := expression.ParseSimpleExpr(ctx, exprStr)
 		if err != nil {
 			return nil
 		}
-		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
+		val, isNull, err := expr.EvalInt(ctx, chunk.Row{})
 		if isNull || err != nil || val < 1 {
 			// If NULL, error or interval < 1 then cannot be an INTERVAL partitioned table
 			return nil
@@ -781,7 +781,7 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 	}
 
 	evalFn := func(expr ast.ExprNode) (types.Datum, error) {
-		val, err := expression.EvalAstExpr(ctx, ast.NewValueExpr(expr, "", ""))
+		val, err := expression.EvalSimpleAst(ctx, ast.NewValueExpr(expr, "", ""))
 		if err != nil || partCol == nil {
 			return val, err
 		}
@@ -865,7 +865,7 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 			L:  definedExpr,
 			R:  generatedExpr,
 		}
-		cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
+		cmp, err := expression.EvalSimpleAst(ctx, cmpExpr)
 		if err != nil {
 			return err
 		}
@@ -1066,7 +1066,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	default:
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions, no known alter type")
 	}
-	lastVal, err := expression.EvalAstExpr(ctx, lastExpr)
+	lastVal, err := expression.EvalSimpleAst(ctx, lastExpr)
 	if err != nil {
 		return err
 	}
@@ -1115,7 +1115,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 				}
 			}
 		}
-		currVal, err = expression.EvalAstExpr(ctx, currExpr)
+		currVal, err = expression.EvalSimpleAst(ctx, currExpr)
 		if err != nil {
 			return err
 		}
@@ -1441,7 +1441,7 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, defName any, exprs []ast.
 			}
 			continue
 		}
-		val, err := expression.EvalAstExpr(ctx, exp)
+		val, err := expression.EvalSimpleAst(ctx, exp)
 		if err != nil {
 			return err
 		}
@@ -1580,21 +1580,16 @@ func checkResultOK(ok bool) error {
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, dbName model.CIStr, tblInfo *model.TableInfo) error {
+func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, schema string, tblInfo *model.TableInfo) error {
 	if expr == nil {
 		return nil
 	}
 
-	if dbName.L == "" {
-		dbName = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	if schema == "" {
+		schema = ctx.GetSessionVars().CurrentDB
 	}
 
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
-	if err != nil {
-		return err
-	}
-
-	e, err := expression.RewriteAstExpr(ctx, expr, expression.NewSchema(columns...), names, false)
+	e, err := expression.BuildSimpleExpr(ctx, expr, expression.WithTableInfo(schema, tblInfo))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1720,7 +1715,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 				if strings.EqualFold(v, "MAXVALUE") {
 					return nil, errors.Trace(dbterror.ErrMaxvalueInValuesIn)
 				}
-				expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, v, &model.TableInfo{}, colTps[k])
+				expr, err := expression.ParseSimpleExpr(ctx, v, expression.WithCastExprTo(colTps[k]))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1760,7 +1755,7 @@ func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (any, bool
 			return value, false, nil
 		}
 
-		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		e, err1 := expression.ParseSimpleExpr(ctx, str)
 		if err1 != nil {
 			return 0, false, err1
 		}
@@ -1776,7 +1771,7 @@ func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (any, bool
 		// For example, the following two cases are the same:
 		// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
 		// PARTITION p0 VALUES LESS THAN (63340531200)
-		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		e, err1 := expression.ParseSimpleExpr(ctx, str)
 		if err1 != nil {
 			return 0, false, err1
 		}
@@ -3984,7 +3979,7 @@ func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
 	// We should not rely on any configuration, system or session variables, so use a mock ctx!
 	// Same as in tables.newPartitionExpr
 	ctx := mock.NewContext()
-	expr, err := expression.ParseSimpleExprWithTableInfo(ctx, tbInfo.Partition.Expr, tbInfo)
+	expr, err := expression.ParseSimpleExpr(ctx, tbInfo.Partition.Expr, expression.WithTableInfo("", tbInfo))
 	if err != nil {
 		logutil.BgLogger().Error("isPartExpr failed parsing expression!", zap.Error(err))
 		return false

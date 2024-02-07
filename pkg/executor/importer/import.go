@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1283,7 +1284,7 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	allWarnings := []stmtctx.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
-		newExpr, err := expression.RewriteAstExpr(sctx, assign.Expr, nil, nil, false)
+		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx, assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		allWarnings = append(allWarnings, sctx.GetSessionVars().StmtCtx.GetWarnings()...)
