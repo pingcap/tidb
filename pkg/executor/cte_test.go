@@ -348,6 +348,37 @@ func TestCTEWithLimit(t *testing.T) {
 	rows.Check(testkit.Rows("3", "4", "3", "4"))
 }
 
+func TestCTEIssue49096(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mock_cte_exec_panic_avoid_deadlock", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mock_cte_exec_panic_avoid_deadlock"))
+	}()
+	insertStr := "insert into t1 values(0)"
+	rowNum := 10
+	vals := make([]int, rowNum)
+	vals[0] = 0
+	for i := 1; i < rowNum; i++ {
+		v := rand.Intn(100)
+		vals[i] = v
+		insertStr += fmt.Sprintf(", (%d)", v)
+	}
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("create table t2(c1 int);")
+	tk.MustExec(insertStr)
+	// should be insert statement, otherwise it couldn't step int resetCTEStorageMap in handleNoDelay func.
+	sql := "insert into t2 with cte1 as ( " +
+		"select c1 from t1) " +
+		"select c1 from cte1 natural join (select * from cte1 where c1 > 0) cte2 order by c1;"
+	err := tk.ExecToErr(sql)
+	require.NotNil(t, err)
+	require.Equal(t, "Your query has been cancelled due to exceeding the allowed memory limit", err.Error())
+}
+
 func TestSpillToDisk(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -520,4 +551,24 @@ func TestCTESmallChunkSize(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size = 32;")
 	tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1 offset 100) select * from cte1;").Check(testkit.Rows("100"))
 	tk.MustExec("set @@tidb_max_chunk_size = default;")
+}
+
+func TestIssue46522(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk1.MustExec("use test;")
+
+	tk.MustExec("create table issue46522 (id int primary key);")
+	tk.MustExec("insert into issue46522 values (1);")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = off;")
+	tk.MustExec("begin optimistic;")
+	tk.MustExec("insert into issue46522 with t1 as (select id+1 from issue46522 where id = 1) select * from t1;")
+
+	tk1.MustExec("begin optimistic;")
+	tk1.MustExec("update issue46522 set id = id + 1;")
+	tk1.MustExec("commit;")
+
+	tk.MustExec("commit;")
 }

@@ -172,7 +172,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			config.GetGlobalConfig().Instance.TiDBServiceScope = valStr
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx,
-				`replace into mysql.dist_framework_meta values(%?, %?, DEFAULT)`, serverID, valStr)
+				`replace into mysql.dist_framework_meta(host, role, keyspace_id) values(%?, %?, DEFAULT)`, serverID, valStr)
 		}
 		return err
 	}
