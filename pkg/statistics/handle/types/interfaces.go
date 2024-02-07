@@ -396,7 +396,7 @@ type StatsSyncLoad interface {
 	SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
 
 	// HandleOneTask will handle one task.
-	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+	HandleOneTask(sctx sessionctx.Context, lastTask []*NeededItemTask, exit chan struct{}) (task []*NeededItemTask, err error)
 
 	// SetSubCtxs sets the sessionctx which is used to run queries background.
 	// TODO: use SessionPool instead.
