@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
@@ -593,6 +594,7 @@ func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	if _, ok := is.idx2table[tblMeta.ID]; ok {
 		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
 	}
+	intest.Assert(db.ID == tbl.Meta().DBID)
 
 	schemaTables.tables[tblMeta.Name.L] = tbl
 	is.idx2table[tblMeta.ID] = tbl
