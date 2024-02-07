@@ -1172,7 +1172,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(colNames, ","))
-		if fk.RefSchema.L != "" {
+		if fk.RefSchema.L != "" && dbName != nil && fk.RefSchema.L != dbName.L {
 			fmt.Fprintf(buf, " REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, " REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode))

@@ -2066,7 +2066,7 @@ orders	CREATE TABLE `orders` (
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id`),
-  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `ddl__column_type_change`.`users` (`id`)
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists users, orders;
 CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
@@ -2080,7 +2080,7 @@ orders	CREATE TABLE `orders` (
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id2`),
-  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id2`) REFERENCES `ddl__column_type_change`.`users` (`id`)
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id2`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists users, orders;
 CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
@@ -2094,7 +2094,7 @@ orders	CREATE TABLE `orders` (
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id`),
-  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `ddl__column_type_change`.`users` (`id`)
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists users, orders;
 CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
