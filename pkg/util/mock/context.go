@@ -119,12 +119,12 @@ func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 func (*wrapTxn) SetOption(_ int, _ any) {}
 
 // StartTS implements the interface.
-func (*wrapTxn) StartTS() uint64 { return 0 }
+func (*wrapTxn) StartTS() uint64 { return uint64(time.Now().UnixNano()) }
 
 // Get implements the interface.
 func (txn *wrapTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	if txn.Transaction == nil {
-		return nil, kv.ErrNotExist
+		return nil, nil
 	}
 	return txn.Transaction.Get(ctx, k)
 }
