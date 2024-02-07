@@ -1,5 +1,13 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
+package_group(
+    name = "expression_friend",
+    packages = [
+        "-//pkg/sessionctx/...",
+        "//...",
+    ],
+)
+
 go_library(
     name = "expression",
     srcs = [
@@ -69,7 +77,9 @@ go_library(
         "vectorized.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression",
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":expression_friend",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/errctx",
