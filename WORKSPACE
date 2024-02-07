@@ -67,10 +67,6 @@ go_download_sdk(
     version = "1.22.0",
 )
 
-go_register_toolchains(
-    nogo = "@//build:tidb_nogo",
-)
-
 gazelle_dependencies()
 
 http_archive(
