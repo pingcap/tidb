@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -501,10 +500,6 @@ func TestModifyFromNullToNotNull(t *testing.T) {
 	require.NoError(t, err)
 	// converting from NULL to NOT NULL needs to check data, so caller should provide a RestrictedSQLExecutor
 	executorCtx := mockRestrictedSQLExecutor{sctx}
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	require.NoError(t, err)
-	sctx.Store = store
-	require.NoError(t, sctx.NewTxn(ctx))
 	err = tracker.AlterTable(ctx, executorCtx, stmt.(*ast.AlterTableStmt))
 	require.NoError(t, err)
 
