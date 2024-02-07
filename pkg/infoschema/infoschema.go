@@ -46,10 +46,10 @@ type InfoSchema interface {
 	SchemaTables(schema model.CIStr) []table.Table
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	SchemaMetaVersion() int64
-	InfoSchemaMisc 
+	Misc 
 }
 
-type InfoSchemaMisc interface {
+type Misc interface {
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	// Clone() (result []*model.DBInfo)
@@ -454,7 +454,7 @@ func (is *infoSchemaMisc) PlacementBundleByPhysicalTableID(id int64) (*placement
 	return t, r
 }
 
-func (is *infoSchema) AllPlacementBundles() []*placement.Bundle {
+func (is *infoSchemaMisc) AllPlacementBundles() []*placement.Bundle {
 	bundles := make([]*placement.Bundle, 0, len(is.ruleBundleMap))
 	for _, bundle := range is.ruleBundleMap {
 		bundles = append(bundles, bundle)

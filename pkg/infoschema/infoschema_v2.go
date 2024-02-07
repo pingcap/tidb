@@ -273,6 +273,8 @@ func compareBySchema(a, b schemaItem) bool {
 	return a.schemaVersion < b.schemaVersion
 }
 
+var _ InfoSchema = &infoschemaV2{}
+
 type infoschemaV2 struct {
 	infoSchemaMisc
 	r             autoid.Requirement
@@ -390,6 +392,31 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 		return true
 	})
 	return
+}
+
+func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
+	is.schemaMap.Scan(func(item schemaItem) bool {
+		// TODO: version?
+		schemas = append(schemas, item.dbInfo)
+		return true
+	})
+	return
+}
+
+func (is *infoschemaV2) SchemaMetaVersion() int64 {
+	return is.schemaVersion
+}
+
+func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
+	panic("TODO")
+}
+
+func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
+	panic("TODO")
+}
+
+func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
+	panic("TODO")
 }
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
