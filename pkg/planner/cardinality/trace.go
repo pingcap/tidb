@@ -175,14 +175,14 @@ func recordUsedItemStatsStatus(sctx sessionctx.Context, stats any, tableID, id i
 
 	// need to record
 	statsRecord := sctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
-	if statsRecord[tableID] == nil {
+	if statsRecord.GetUsedInfo(tableID) == nil {
 		name, tblInfo := GetTblInfoForUsedStatsByPhysicalID(sctx, tableID)
-		statsRecord[tableID] = &stmtctx.UsedStatsInfoForTable{
+		statsRecord.RecordUsedInfo(tableID, &stmtctx.UsedStatsInfoForTable{
 			Name:    name,
 			TblInfo: tblInfo,
-		}
+		})
 	}
-	recordForTbl := statsRecord[tableID]
+	recordForTbl := statsRecord.GetUsedInfo(tableID)
 
 	var recordForColOrIdx map[int64]string
 	if isIndex {
