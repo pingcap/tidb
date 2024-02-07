@@ -15349,7 +15349,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_statistics_auto_analyze_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "expr": "sum(increase(tidb_statistics_auto_analyze_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
