@@ -135,7 +135,7 @@ func GetTimeValue(ctx BuildContext, v any, tp byte, fsp int, explicitTz *time.Lo
 		return d, errDefaultValue
 	case *ast.UnaryOperationExpr:
 		// support some expression, like `-1`
-		v, err := EvalAstExpr(ctx, x)
+		v, err := EvalSimpleAst(ctx, x)
 		if err != nil {
 			return d, err
 		}

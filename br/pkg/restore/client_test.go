@@ -134,24 +134,24 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
-	require.True(t, client.NeedCheckFreshCluster(false, nil))
+	// not set filter and first run with checkpoint
+	require.True(t, client.NeedCheckFreshCluster(false, true))
 
-	checkpointsMap := make(map[int64]map[string]struct{})
-	require.True(t, client.NeedCheckFreshCluster(false, checkpointsMap))
+	// skip check when has checkpoint
+	require.False(t, client.NeedCheckFreshCluster(false, false))
 
-	// skip check when has checkpoints
-	checkpointsMap[1] = make(map[string]struct{})
-	require.False(t, client.NeedCheckFreshCluster(false, checkpointsMap))
+	// skip check when set --filter
+	require.False(t, client.NeedCheckFreshCluster(true, false))
 
-	// skip check when has set --filter
-	require.False(t, client.NeedCheckFreshCluster(true, checkpointsMap))
+	// skip check when has set --filter and has checkpoint
+	require.False(t, client.NeedCheckFreshCluster(true, true))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data", "return(false)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data"))
 	}()
 	// skip check when increment backup
-	require.False(t, client.NeedCheckFreshCluster(false, nil))
+	require.False(t, client.NeedCheckFreshCluster(false, true))
 }
 
 func TestCheckTargetClusterFresh(t *testing.T) {
@@ -167,7 +167,7 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, client.CheckTargetClusterFresh(ctx))
 
-	require.NoError(t, client.CreateDatabase(ctx, &model.DBInfo{Name: model.NewCIStr("user_db")}))
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: model.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 

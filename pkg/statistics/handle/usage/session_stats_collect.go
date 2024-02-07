@@ -53,7 +53,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	if !ok {
 		return false
 	}
-	dbInfo, ok := is.SchemaByTable(tbl.Meta())
+	dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
 	if !ok {
 		return false
 	}

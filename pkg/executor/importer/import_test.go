@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -90,7 +91,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		for _, opt := range inOptions {
 			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = expression.RewriteSimpleExprWithNames(sctx, opt.Value, nil, nil)
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
 				require.NoError(t, err)
 			}
 			options = append(options, &loadDataOpt)
