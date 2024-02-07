@@ -3959,7 +3959,7 @@ BuiltinFunction:
 			Args:   $3.([]ast.ExprNode),
 		}
 	}
-|	"REPLACE" '(' ExpressionListOpt ')'
+|	"REPLACE" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
