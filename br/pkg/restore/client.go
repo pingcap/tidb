@@ -259,28 +259,18 @@ func (rc *Client) InitCheckpoint(
 	s storage.ExternalStorage,
 	taskName string,
 	config *pdutil.ClusterConfig,
-	useCheckpoint bool,
+	checkpointFirstRun bool,
 ) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
 	var (
 		// checkpoint sets distinguished by range key
 		checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 		checkpointClusterConfig *pdutil.ClusterConfig
+
+		err error
 	)
 
-	// if not use checkpoint, return empty checkpoint ranges and new gc-safepoint id
-	if !useCheckpoint {
-		return checkpointSetWithTableID, nil, nil
-	}
-
-	// if the checkpoint metadata exists in the external storage, the restore is not
-	// for the first time.
-	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
-	if err != nil {
-		return checkpointSetWithTableID, nil, errors.Trace(err)
-	}
-
-	if exists {
+	if !checkpointFirstRun {
 		// load the checkpoint since this is not the first time to restore
 		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
 		if err != nil {
