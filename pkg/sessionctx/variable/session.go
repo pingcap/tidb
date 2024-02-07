@@ -3293,10 +3293,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if logItems.UsedStats.Len() > 0 {
+	keys := logItems.UsedStats.Keys()
+	if len(keys) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
-		keys := logItems.UsedStats.Keys()
 		slices.Sort(keys)
 		for _, id := range keys {
 			usedStatsForTbl := logItems.UsedStats.GetUsedInfo(id)

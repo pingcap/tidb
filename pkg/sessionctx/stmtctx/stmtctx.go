@@ -1546,16 +1546,6 @@ func (u *UsedStatsInfo) Values() []*UsedStatsInfoForTable {
 	return ret
 }
 
-// Len returns the number of used stats info for the table.
-func (u *UsedStatsInfo) Len() int {
-	var cnt int
-	u.store.Range(func(k, v any) bool {
-		cnt++
-		return true
-	})
-	return cnt
-}
-
 // StatsLoadResult indicates result for StatsLoad
 type StatsLoadResult struct {
 	Item  model.TableItemID
