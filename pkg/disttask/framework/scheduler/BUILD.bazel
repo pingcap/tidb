@@ -40,27 +40,14 @@ go_test(
     name = "scheduler_test",
     timeout = "short",
     srcs = [
-<<<<<<< HEAD
         "manager_test.go",
         "register_test.go",
-=======
-        "main_test.go",
-        "nodes_test.go",
-        "rebalance_test.go",
-        "scheduler_manager_test.go",
-        "scheduler_nokit_test.go",
->>>>>>> 99f0349bfb6 (disttask: fix failed step is taken as success (#49971))
         "scheduler_test.go",
     ],
     embed = [":scheduler"],
     flaky = True,
-<<<<<<< HEAD
     race = "on",
     shard_count = 8,
-=======
-    race = "off",
-    shard_count = 26,
->>>>>>> 99f0349bfb6 (disttask: fix failed step is taken as success (#49971))
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",

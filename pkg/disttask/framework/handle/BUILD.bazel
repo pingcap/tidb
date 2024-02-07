@@ -25,7 +25,6 @@ go_test(
         ":handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
-        "//pkg/disttask/framework/testutil",
         "//pkg/testkit",
         "//pkg/util/backoff",
         "@com_github_ngaut_pools//:pools",

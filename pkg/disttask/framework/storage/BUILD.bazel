@@ -31,11 +31,7 @@ go_test(
     srcs = ["table_test.go"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     shard_count = 8,
-=======
-    shard_count = 14,
->>>>>>> 99f0349bfb6 (disttask: fix failed step is taken as success (#49971))
     deps = [
         ":storage",
         "//pkg/disttask/framework/proto",
