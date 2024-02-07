@@ -269,37 +269,6 @@ func (d *ddl) addBatchDDLJobsV2(tasks []*limitJobTask) {
 	}
 }
 
-// buildJobDependence sets the curjob's dependency-ID.
-// The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
-func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
-	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
-	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	jobListKey := meta.DefaultJobListKey
-	if !curJob.MayNeedReorg() {
-		jobListKey = meta.AddIndexJobListKey
-	}
-	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, job := range jobs {
-		if curJob.ID < job.ID {
-			continue
-		}
-		isDependent, err := curJob.IsDependentOn(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isDependent {
-			logutil.BgLogger().Info("current DDL job depends on other job", zap.String("category", "ddl"), zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
-			curJob.DependencyID = job.ID
-			break
-		}
-	}
-	return nil
-}
-
 func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// lock to reduce conflict
@@ -322,9 +291,6 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
 			setJobStateToQueueing(job)
-			if err = buildJobDependence(t, job); err != nil {
-				return errors.Trace(err)
-			}
 			jobListKey := meta.DefaultJobListKey
 			if job.MayNeedReorg() {
 				jobListKey = meta.AddIndexJobListKey
