@@ -68,11 +68,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 20,
-=======
-    shard_count = 22,
->>>>>>> 00f99ab1c41 (br/streamhelper: fix panic while removing task (#50869))
+    shard_count = 21,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
