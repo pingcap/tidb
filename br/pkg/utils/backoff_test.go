@@ -120,30 +120,16 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
-		if counter == 2 {
+		if counter == 1 {
 			return io.EOF
+		}
+		if counter == 2 {
+			return nil
 		}
 		return gRPCError
 	}, backoffer)
-	require.Equal(t, 16, counter)
-	require.Equal(t, []error{
-		gRPCError,
-		gRPCError,
-		io.EOF,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-	}, multierr.Errors(err))
+	require.Equal(t, 3, counter)
+	require.NoError(t, err)
 }
 
 func TestNewImportSSTBackofferWithSucess(t *testing.T) {
