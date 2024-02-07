@@ -150,12 +150,12 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 }
 
-func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel, isPauseAndResume bool) {
+func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel, isPauseAndResume bool) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
 	}()
-	// test DispatchTaskLoop
+	// test scheduleTaskLoop
 	// test parallelism control
 	var originalConcurrency int
 	if taskCnt == 1 {
@@ -331,43 +331,43 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 }
 
 func TestSimple(t *testing.T) {
-	checkDispatch(t, 1, true, false, false, false)
+	checkSchedule(t, 1, true, false, false, false)
 }
 
 func TestSimpleErrStage(t *testing.T) {
-	checkDispatch(t, 1, false, false, false, false)
+	checkSchedule(t, 1, false, false, false, false)
 }
 
 func TestSimpleCancel(t *testing.T) {
-	checkDispatch(t, 1, false, true, false, false)
+	checkSchedule(t, 1, false, true, false, false)
 }
 
 func TestSimpleSubtaskCancel(t *testing.T) {
-	checkDispatch(t, 1, false, false, true, false)
+	checkSchedule(t, 1, false, false, true, false)
 }
 
 func TestParallel(t *testing.T) {
-	checkDispatch(t, 3, true, false, false, false)
+	checkSchedule(t, 3, true, false, false, false)
 }
 
 func TestParallelErrStage(t *testing.T) {
-	checkDispatch(t, 3, false, false, false, false)
+	checkSchedule(t, 3, false, false, false, false)
 }
 
 func TestParallelCancel(t *testing.T) {
-	checkDispatch(t, 3, false, true, false, false)
+	checkSchedule(t, 3, false, true, false, false)
 }
 
 func TestParallelSubtaskCancel(t *testing.T) {
-	checkDispatch(t, 3, false, false, true, false)
+	checkSchedule(t, 3, false, false, true, false)
 }
 
 func TestPause(t *testing.T) {
-	checkDispatch(t, 1, false, false, false, true)
+	checkSchedule(t, 1, false, false, false, true)
 }
 
 func TestParallelPause(t *testing.T) {
-	checkDispatch(t, 3, false, false, false, true)
+	checkSchedule(t, 3, false, false, false, true)
 }
 
 func TestVerifyTaskStateTransform(t *testing.T) {

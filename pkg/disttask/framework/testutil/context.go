@@ -386,7 +386,7 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	ctx = util.WithInternalSourceType(ctx, "scheduler")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))

@@ -288,7 +288,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.Task) error {
 		}
 
 		metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.SchedulingStatus).Inc()
-		metrics.UpdateMetricsForDispatchTask(task.ID, task.Type)
+		metrics.UpdateMetricsForScheduleTask(task.ID, task.Type)
 		sm.startScheduler(task, allocateSlots, reservedExecID)
 	}
 	return nil

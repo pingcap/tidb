@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
+	mockScheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
@@ -31,14 +31,14 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func TestDispatcherOnNextStage(t *testing.T) {
+func TestSchedulerOnNextStage(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	schExt := mockDispatch.NewMockExtension(ctrl)
+	schExt := mockScheduler.NewMockExtension(ctrl)
 
 	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	ctx = util.WithInternalSourceType(ctx, "scheduler")
 	task := proto.Task{
 		ID:    1,
 		State: proto.TaskStatePending,

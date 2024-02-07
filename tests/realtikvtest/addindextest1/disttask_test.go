@@ -78,7 +78,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("admin check index t idx;")
 	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	ctx := util.WithInternalSourceType(context.Background(), "dispatcher")
+	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
 	task, err := taskMgr.GetTaskByIDWithHistory(ctx, storage.TestLastTaskID.Load())
 	require.NoError(t, err)
 	require.Equal(t, 1, task.Concurrency)
