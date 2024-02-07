@@ -1213,6 +1213,7 @@ import (
 	LocalOpt                               "Local opt"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
+	LowPriorityOpt                         "LOAD DATA low priority option"
 	MaxValPartOpt                          "MAXVALUE partition option"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
@@ -14340,12 +14341,12 @@ RevokeRoleStmt:
  * for load stmt with format see https://github.com/pingcap/tidb/issues/40499
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
+	"LOAD" "DATA" LowPriorityOpt LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
+			LowPriority:        $3,
 			FileLocRef:         ast.FileLocServerOrRemote,
-			Path:               $5,
-			Format:             $6.(*string),
+			Path:               $6,
 			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
 			Table:              $10.(*ast.TableName),
 			Charset:            $11.(*string),
@@ -14354,9 +14355,8 @@ LoadDataStmt:
 			IgnoreLines:        $14.(*uint64),
 			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
 			ColumnAssignments:  $16.([]*ast.Assignment),
-			Options:            $17.([]*ast.LoadDataOpt),
 		}
-		if $3 != nil {
+		if $4 != nil {
 			x.FileLocRef = ast.FileLocClient
 			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
 			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
@@ -14375,14 +14375,13 @@ LoadDataStmt:
 		$$ = x
 	}
 
-FormatOpt:
+LowPriorityOpt:
 	{
-		$$ = (*string)(nil)
+		$$ = false
 	}
-|	"FORMAT" stringLit
+|	"LOW_PRIORITY"
 	{
-		str := $2
-		$$ = &str
+		$$ = true
 	}
 
 IgnoreLines:
@@ -14647,6 +14646,16 @@ ImportIntoStmt:
 			return 1
 		}
 		$$ = st
+	}
+
+FormatOpt:
+	{
+		$$ = (*string)(nil)
+	}
+|	"FORMAT" stringLit
+	{
+		str := $2
+		$$ = &str
 	}
 
 ImportFromSelectStmt:

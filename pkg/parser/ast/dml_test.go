@@ -415,8 +415,8 @@ func TestWindowSpecRestore(t *testing.T) {
 func TestLoadDataRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
-			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
-			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
+			sourceSQL: "load data low_priority infile '/a.csv' into table `t`",
+			expectSQL: "LOAD DATA LOW_PRIORITY INFILE '/a.csv' INTO TABLE `t`",
 		},
 		{
 			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t` character set utf8mb4",
@@ -480,27 +480,6 @@ func TestLoadDataRestore(t *testing.T) {
 		{
 			sourceSQL: "load data infile '/a.csv' into table `t` lines starting by 'a' terminated by '\\n'",
 			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` LINES STARTING BY 'a' TERMINATED BY '\n'",
-		},
-		// with options
-		{
-			sourceSQL: "load data infile '/a.csv' into table `t` with detached",
-			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached",
-		},
-		{
-			sourceSQL: "load data infile '/a.csv' into table `t` with batch_size=999,detached",
-			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH batch_size=999, detached",
-		},
-		{
-			sourceSQL: "load data infile '/a.csv' into table `t` with detached, batch_size=999",
-			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, batch_size=999",
-		},
-		{
-			sourceSQL: "load data infile '/a.csv' into table `t` with detached, thread=-100, batch_size=999",
-			expectSQL: "LOAD DATA INFILE '/a.csv' INTO TABLE `t` WITH detached, thread=-100, batch_size=999",
-		},
-		{
-			sourceSQL: "load data infile '/a.csv' format 'sql' into table `t` with detached, batch_size=999",
-			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql' INTO TABLE `t` WITH detached, batch_size=999",
 		},
 	}
 	extractNodeFunc := func(node Node) Node {

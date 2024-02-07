@@ -1865,9 +1865,9 @@ const (
 type LoadDataStmt struct {
 	dmlNode
 
+	LowPriority       bool
 	FileLocRef        FileLocRefTp
 	Path              string
-	Format            *string
 	OnDuplicate       OnDuplicateKeyHandlingType
 	Table             *TableName
 	Charset           *string
@@ -1876,7 +1876,6 @@ type LoadDataStmt struct {
 	LinesInfo         *LinesClause
 	IgnoreLines       *uint64
 	ColumnAssignments []*Assignment
-	Options           []*LoadDataOpt
 
 	ColumnsAndUserVars []*ColumnNameOrUserVar
 }
@@ -1884,6 +1883,9 @@ type LoadDataStmt struct {
 // Restore implements Node interface.
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
+	if n.LowPriority {
+		ctx.WriteKeyWord("LOW_PRIORITY ")
+	}
 	switch n.FileLocRef {
 	case FileLocServerOrRemote:
 	case FileLocClient:
@@ -1891,10 +1893,6 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)
-	if n.Format != nil {
-		ctx.WriteKeyWord(" FORMAT ")
-		ctx.WriteString(*n.Format)
-	}
 	if n.OnDuplicate == OnDuplicateKeyHandlingReplace {
 		ctx.WriteKeyWord(" REPLACE")
 	} else if n.OnDuplicate == OnDuplicateKeyHandlingIgnore {
@@ -1945,18 +1943,6 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if len(n.Options) > 0 {
-		ctx.WriteKeyWord(" WITH")
-		for i, option := range n.Options {
-			if i != 0 {
-				ctx.WritePlain(",")
-			}
-			ctx.WritePlain(" ")
-			if err := option.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore LoadDataStmt.Options")
-			}
-		}
-	}
 	return nil
 }
 
