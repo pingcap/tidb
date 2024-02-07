@@ -580,7 +580,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				pi.Columns = append(pi.Columns, tbInfo.GetPkName())
 				pi.IsEmptyColumns = true
 			} else if key := tbInfo.GetPrimaryKey(); key != nil {
-				pi.Columns = append(pi.Columns, key.Name)
+				for _, col := range key.Columns {
+					pi.Columns = append(pi.Columns, col.Name)
+				}
 				pi.IsEmptyColumns = true
 			}
 		}
