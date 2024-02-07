@@ -6414,6 +6414,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_scalalang2_golang_fifo",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/scalalang2/golang-fifo",
+        sha256 = "48ed9feefc3680b12116a212eaac53af5d6c7183ffe80ed1427eb8504a3b05cc",
+        strip_prefix = "github.com/scalalang2/golang-fifo@v0.1.5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/scalalang2/golang-fifo/com_github_scalalang2_golang_fifo-v0.1.5.zip",
+            "http://ats.apps.svc/gomod/github.com/scalalang2/golang-fifo/com_github_scalalang2_golang_fifo-v0.1.5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/scalalang2/golang-fifo/com_github_scalalang2_golang_fifo-v0.1.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/scalalang2/golang-fifo/com_github_scalalang2_golang_fifo-v0.1.5.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_scaleway_scaleway_sdk_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/scaleway/scaleway-sdk-go",
@@ -7022,6 +7035,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/tiancaiamao/gp/com_github_tiancaiamao_gp-v0.0.0-20221230034425-4025bc8a4d4a.zip",
             "https://cache.hawkingrei.com/gomod/github.com/tiancaiamao/gp/com_github_tiancaiamao_gp-v0.0.0-20221230034425-4025bc8a4d4a.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tiancaiamao/gp/com_github_tiancaiamao_gp-v0.0.0-20221230034425-4025bc8a4d4a.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_tidwall_btree",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/tidwall/btree",
+        sha256 = "4a6619eb936c836841702933a9d66f27abe83b7ffb541de44d12db4aa3a809d5",
+        strip_prefix = "github.com/tidwall/btree@v1.7.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tidwall/btree/com_github_tidwall_btree-v1.7.0.zip",
+            "http://ats.apps.svc/gomod/github.com/tidwall/btree/com_github_tidwall_btree-v1.7.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tidwall/btree/com_github_tidwall_btree-v1.7.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tidwall/btree/com_github_tidwall_btree-v1.7.0.zip",
         ],
     )
     go_repository(
