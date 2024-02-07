@@ -4166,6 +4166,8 @@ type PartitionMethod struct {
 	// ColumnNames is a list of column names used as argument of KEY,
 	// RANGE COLUMNS and LIST COLUMNS types
 	ColumnNames []*ColumnName
+	// HasEmptyColumnName is for syntax like `partition by key()`
+	HasEmptyColumnName bool
 	// Unit is a time unit used as argument of SYSTEM_TIME type
 	Unit TimeUnitType
 	// Limit is a row count used as argument of the SYSTEM_TIME type
