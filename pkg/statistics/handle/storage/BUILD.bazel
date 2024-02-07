@@ -6,6 +6,7 @@ go_library(
         "gc.go",
         "json.go",
         "read.go",
+        "read_batch.go",
         "save.go",
         "stats_read_writer.go",
         "update.go",
