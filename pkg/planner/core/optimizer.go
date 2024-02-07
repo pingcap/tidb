@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -1347,10 +1348,10 @@ func existsCartesianProduct(p LogicalPlan) bool {
 var DefaultDisabledLogicalRulesList *atomic.Value
 
 func init() {
-	expression.EvalAstExpr = evalAstExpr
-	expression.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
-	expression.RewriteAstExpr = rewriteAstExpr
-	expression.BuildExprWithAst = buildExprWithAst
+	expression.EvalSimpleAst = evalAstExpr
+	expression.BuildSimpleExpr = buildSimpleExpr
+	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
+	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
 }

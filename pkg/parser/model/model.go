@@ -541,6 +541,8 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	DBID int64 `json:"-"`
 }
 
 // TableNameInfo provides meta data describing a table name info.
