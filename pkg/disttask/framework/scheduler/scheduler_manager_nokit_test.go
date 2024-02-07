@@ -121,7 +121,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	mgr := NewManager(context.Background(), taskMgr, "1")
 	RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param Param) Scheduler {
-			mockScheduler := mgr.MockScheduler(task)
+			mockScheduler := NewBaseScheduler(ctx, task, param)
 			mockScheduler.Extension = GetTestSchedulerExt(ctrl)
 			return mockScheduler
 		})

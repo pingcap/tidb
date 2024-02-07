@@ -451,16 +451,6 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }
 
-// MockScheduler mock one scheduler for one task, only used for tests.
-func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
-	return NewBaseScheduler(sm.ctx, task, Param{
-		taskMgr:  sm.taskMgr,
-		nodeMgr:  sm.nodeMgr,
-		slotMgr:  sm.slotMgr,
-		serverID: sm.serverID,
-	})
-}
-
 func (sm *Manager) collectLoop() {
 	sm.logger.Info("collect loop start")
 	ticker := time.NewTicker(defaultCollectMetricsInterval)

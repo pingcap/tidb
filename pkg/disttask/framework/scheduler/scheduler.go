@@ -101,7 +101,7 @@ var MockOwnerChange func()
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
-	logger := log.L().With(zap.Int64("task-id", task.ID), zap.Stringer("task-type", task.Type))
+	logger := log.L().With(zap.Int64("task-id", task.ID), zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}

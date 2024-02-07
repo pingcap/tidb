@@ -95,7 +95,7 @@ func MockSchedulerManager(t *testing.T, ctrl *gomock.Controller, pool *pools.Res
 	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
-			mockScheduler := sch.MockScheduler(task)
+			mockScheduler := scheduler.NewBaseScheduler(ctx, task, param)
 			mockScheduler.Extension = ext
 			return mockScheduler
 		})
@@ -119,11 +119,11 @@ func TestTaskFailInManager(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
-	mockScheduler := mock.NewMockScheduler(ctrl)
-	mockScheduler.EXPECT().Init().Return(errors.New("mock scheduler init error"))
 	schManager, mgr := MockSchedulerManager(t, ctrl, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			mockScheduler := mock.NewMockScheduler(ctrl)
+			mockScheduler.EXPECT().Init().Return(errors.New("mock scheduler init error"))
 			return mockScheduler
 		})
 	schManager.Start()
