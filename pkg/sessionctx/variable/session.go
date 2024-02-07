@@ -663,6 +663,11 @@ type HookContext interface {
 	GetStore() kv.Storage
 }
 
+// SessionVarsProvider provides the session variables.
+type SessionVarsProvider interface {
+	GetSessionVars() *SessionVars
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
