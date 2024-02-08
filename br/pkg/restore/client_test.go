@@ -130,7 +130,7 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 	defer cluster.Stop()
 
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
