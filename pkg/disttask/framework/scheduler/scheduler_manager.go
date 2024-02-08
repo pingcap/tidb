@@ -32,12 +32,14 @@ import (
 )
 
 var (
-	// checkTaskRunningInterval is the interval for loading tasks.
-	checkTaskRunningInterval = 3 * time.Second
+	// CheckTaskRunningInterval is the interval for loading tasks.
+	// It is exported for testing.
+	CheckTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of cleanup routine.
-	DefaultCleanUpInterval = 10 * time.Minute
+	DefaultCleanUpInterval        = 10 * time.Minute
+	defaultCollectMetricsInterval = 5 * time.Second
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -162,6 +164,7 @@ func (sm *Manager) Start() {
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanupTaskLoop)
+	sm.wg.Run(sm.collectLoop)
 	sm.wg.Run(func() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
 	})
@@ -172,6 +175,12 @@ func (sm *Manager) Start() {
 		sm.balancer.balanceLoop(sm.ctx, sm)
 	})
 	sm.initialized = true
+}
+
+// Cancel cancels the scheduler manager.
+// used in test to simulate tidb node shutdown.
+func (sm *Manager) Cancel() {
+	sm.cancel()
 }
 
 // Stop the schedulerManager.
@@ -192,7 +201,7 @@ func (sm *Manager) Initialized() bool {
 // scheduleTaskLoop schedules the tasks.
 func (sm *Manager) scheduleTaskLoop() {
 	sm.logger.Info("schedule task loop start")
-	ticker := time.NewTicker(checkTaskRunningInterval)
+	ticker := time.NewTicker(CheckTaskRunningInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -418,4 +427,29 @@ func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
 		slotMgr:  sm.slotMgr,
 		serverID: sm.serverID,
 	})
+}
+
+func (sm *Manager) collectLoop() {
+	sm.logger.Info("collect loop start")
+	ticker := time.NewTicker(defaultCollectMetricsInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sm.ctx.Done():
+			sm.logger.Info("collect loop exits")
+			return
+		case <-ticker.C:
+			sm.collect()
+		}
+	}
+}
+
+func (sm *Manager) collect() {
+	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
+	if err != nil {
+		sm.logger.Warn("get all subtasks failed", zap.Error(err))
+		return
+	}
+
+	subtaskCollector.subtaskInfo.Store(&subtasks)
 }

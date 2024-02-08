@@ -37,14 +37,14 @@ func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Sc
 	if str == "" {
 		return nil, nil
 	}
-	filters, err := expression.ParseSimpleExprsWithNames(ctx, str, schema, names)
+	filter, err := expression.ParseSimpleExpr(ctx, str, expression.WithInputSchemaAndNames(schema, names, nil))
 	if err != nil {
 		return nil, err
 	}
-	if sf, ok := filters[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
-		filters = expression.FlattenCNFConditions(sf)
+	if sf, ok := filter.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+		return expression.FlattenCNFConditions(sf), nil
 	}
-	return filters, nil
+	return []expression.Expression{filter}, nil
 }
 
 type indexJoinContext struct {

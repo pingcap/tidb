@@ -1298,7 +1298,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	}()
 	gctuner.GlobalMemoryLimitTuner.Start()
 	defer func() {
-		time.Sleep(1 * time.Second) // Wait tuning finished.
+		time.Sleep(1200 * time.Millisecond) // Wait tuning finished.
 	}()
 	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
 	tk.MustExec("set global tidb_server_memory_limit=512<<20")

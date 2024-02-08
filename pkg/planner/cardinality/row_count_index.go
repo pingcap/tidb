@@ -478,14 +478,33 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 	})
 	if l == 1 {
 		return singleColumnEstResults[0], true, nil
-	} else if l == 2 {
-		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]), true, nil
-	} else if l == 3 {
-		return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])), true, nil
 	} else if l == 0 {
 		return 0, false, nil
 	}
-	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), true, nil
+	// Do not allow the exponential backoff to go below the available index bound. If the number of predicates
+	// is less than the number of index columns - use 90% of the bound to differentiate a subset from full index match.
+	// If there is an individual column selectivity that goes below this bound, use that selectivity only.
+	histNDV := coll.RealtimeCount
+	if idx.NDV > 0 {
+		histNDV = idx.NDV
+	}
+	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
+	if l < len(idx.Info.Columns) {
+		idxLowBound /= 0.9
+	}
+	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
+	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
+	if l == 2 {
+		return max(minTwoCol, multTwoCol), true, nil
+	}
+	minThreeCol := min(minTwoCol, singleColumnEstResults[2])
+	multThreeCol := multTwoCol * math.Sqrt(math.Sqrt(singleColumnEstResults[2]))
+	if l == 3 {
+		return max(minThreeCol, multThreeCol), true, nil
+	}
+	minFourCol := min(minThreeCol, singleColumnEstResults[3])
+	multFourCol := multThreeCol * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3])))
+	return max(minFourCol, multFourCol), true, nil
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.

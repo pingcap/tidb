@@ -47,6 +47,7 @@ func init() {
 		tableInfo := buildTableMeta(name, cols)
 		tableInfo.ID = tableID
 		tableInfo.Comment = def.Comment
+		tableInfo.DBID = dbID
 		tableID++
 		metricTables = append(metricTables, tableInfo)
 		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))

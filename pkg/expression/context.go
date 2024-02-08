@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // EvalContext is used to evaluate an expression
@@ -64,7 +65,11 @@ func errCtx(ctx EvalContext) errctx.Context {
 }
 
 func location(ctx EvalContext) *time.Location {
-	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	vars := ctx.GetSessionVars()
+	sc := vars.StmtCtx
+	tc := sc.TypeCtx()
+	intest.Assert(vars.Location() == sc.TimeZone())
+	intest.Assert(sc.TimeZone() == tc.Location())
 	return tc.Location()
 }
 
@@ -82,7 +87,7 @@ type BuildContext interface {
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value interface{})
+	SetValue(key fmt.Stringer, value any)
 	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
 	// Notice that this is a thread safe function
 	BuiltinFunctionUsageInc(scalarFuncSigName string)

@@ -15,14 +15,31 @@
 package priorityqueue
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
+
+type analyzeType string
+
+const (
+	analyzeTable          analyzeType = "analyzeTable"
+	analyzeIndex          analyzeType = "analyzeIndex"
+	analyzePartition      analyzeType = "analyzePartition"
+	analyzePartitionIndex analyzeType = "analyzePartitionIndex"
+)
+
+// defaultFailedAnalysisWaitTime is the default wait time for the next analysis after a failed analysis.
+// NOTE: this is only used when the average analysis duration is not available.(No successful analysis before)
+const defaultFailedAnalysisWaitTime = 30 * time.Minute
 
 // TableAnalysisJob defines the structure for table analysis job information.
 type TableAnalysisJob struct {
@@ -40,6 +57,128 @@ type TableAnalysisJob struct {
 	Weight           float64
 }
 
+// IsValidToAnalyze checks whether the table is valid to analyze.
+// It checks the last failed analysis duration and the average analysis duration.
+// If the last failed analysis duration is less than 2 times the average analysis duration,
+// we skip this table to avoid too much failed analysis.
+func (j *TableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
+	// No need to analyze this table.
+	// TODO: Usually, we should not put this kind of table into the queue.
+	if j.Weight == 0 {
+		return false, "weight is 0"
+	}
+
+	// Check whether the table or partition is valid to analyze.
+	if len(j.Partitions) > 0 || len(j.PartitionIndexes) > 0 {
+		// Any partition is invalid to analyze, the whole table is invalid to analyze.
+		// Because we need to analyze partitions in batch mode.
+		partitions := append(j.Partitions, getPartitionNames(j.PartitionIndexes)...)
+		if valid, failReason := isValidToAnalyze(
+			sctx,
+			j.TableSchema,
+			j.TableName,
+			partitions...,
+		); !valid {
+			return false, failReason
+		}
+	} else {
+		if valid, failReason := isValidToAnalyze(
+			sctx,
+			j.TableSchema,
+			j.TableName,
+		); !valid {
+			return false, failReason
+		}
+	}
+
+	return true, ""
+}
+
+func getPartitionNames(partitionIndexes map[string][]string) []string {
+	names := make([]string, 0, len(partitionIndexes))
+	for _, partitionNames := range partitionIndexes {
+		names = append(names, partitionNames...)
+	}
+	return names
+}
+
+func isValidToAnalyze(
+	sctx sessionctx.Context,
+	schema, table string,
+	partitionNames ...string,
+) (bool, string) {
+	lastFailedAnalysisDuration, err :=
+		getLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
+	if err != nil {
+		statslogutil.StatsLogger().Warn(
+			"Fail to get last failed analysis duration",
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+			zap.Error(err),
+		)
+		return false, fmt.Sprintf("fail to get last failed analysis duration: %v", err)
+	}
+
+	averageAnalysisDuration, err :=
+		getAverageAnalysisDuration(sctx, schema, table, partitionNames...)
+	if err != nil {
+		statslogutil.StatsLogger().Warn(
+			"Fail to get average analysis duration",
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+			zap.Error(err),
+		)
+		return false, fmt.Sprintf("fail to get average analysis duration: %v", err)
+	}
+
+	// Last analysis just failed, we should not analyze it again.
+	if lastFailedAnalysisDuration == justFailed {
+		// The last analysis failed, we should not analyze it again.
+		statslogutil.StatsLogger().Info(
+			"Skip analysis because the last analysis just failed",
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+		)
+		return false, "last analysis just failed"
+	}
+
+	// Failed analysis duration is less than 2 times the average analysis duration.
+	// Skip this table to avoid too much failed analysis.
+	onlyFailedAnalysis := lastFailedAnalysisDuration != noRecord && averageAnalysisDuration == noRecord
+	if onlyFailedAnalysis && lastFailedAnalysisDuration < defaultFailedAnalysisWaitTime {
+		statslogutil.StatsLogger().Info(
+			fmt.Sprintf("Skip analysis because the last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime),
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+			zap.Duration("lastFailedAnalysisDuration", lastFailedAnalysisDuration),
+			zap.Duration("averageAnalysisDuration", averageAnalysisDuration),
+		)
+		return false, fmt.Sprintf("last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime)
+	}
+	// Failed analysis duration is less than 2 times the average analysis duration.
+	meetSkipCondition := lastFailedAnalysisDuration != noRecord &&
+		lastFailedAnalysisDuration < 2*averageAnalysisDuration
+	if meetSkipCondition {
+		statslogutil.StatsLogger().Info(
+			"Skip analysis because the last failed analysis duration is less than 2 times the average analysis duration",
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+			zap.Duration("lastFailedAnalysisDuration", lastFailedAnalysisDuration),
+			zap.Duration("averageAnalysisDuration", averageAnalysisDuration),
+		)
+		return false, "last failed analysis duration is less than 2 times the average analysis duration"
+	}
+
+	return true, ""
+}
+
 // Execute executes the analyze statement.
 func (j *TableAnalysisJob) Execute(
 	statsHandle statstypes.StatsHandle,
@@ -52,15 +191,28 @@ func (j *TableAnalysisJob) Execute(
 }
 
 func (j *TableAnalysisJob) analyze(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, sysProcTracker sessionctx.SysProcTracker) {
+	switch j.getAnalyzeType() {
+	case analyzeTable:
+		j.analyzeTable(sctx, statsHandle, sysProcTracker)
+	case analyzeIndex:
+		j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+	case analyzePartition:
+		j.analyzePartitions(sctx, statsHandle, sysProcTracker)
+	case analyzePartitionIndex:
+		j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
+	}
+}
+
+func (j *TableAnalysisJob) getAnalyzeType() analyzeType {
 	switch {
 	case len(j.PartitionIndexes) > 0:
-		j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
+		return analyzePartitionIndex
 	case len(j.Partitions) > 0:
-		j.analyzePartitions(sctx, statsHandle, sysProcTracker)
+		return analyzePartition
 	case len(j.Indexes) > 0:
-		j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+		return analyzeIndex
 	default:
-		j.analyzeTable(sctx, statsHandle, sysProcTracker)
+		return analyzeTable
 	}
 }
 
@@ -166,4 +318,24 @@ func (j *TableAnalysisJob) genSQLForAnalyzeIndex(index string) (string, []any) {
 	params := []any{j.TableSchema, j.TableName, index}
 
 	return sql, params
+}
+
+func (j *TableAnalysisJob) String() string {
+	analyzeType := j.getAnalyzeType()
+	switch analyzeType {
+	case analyzeTable:
+		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: table, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
+			j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
+	case analyzeIndex:
+		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: index, Indexes: %s, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
+			strings.Join(j.Indexes, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
+	case analyzePartition:
+		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: partition, Partitions: %s, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
+			strings.Join(j.Partitions, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
+	case analyzePartitionIndex:
+		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: partitionIndex, PartitionIndexes: %v, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
+			j.PartitionIndexes, j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
+	default:
+		return "TableAnalysisJob: {AnalyzeType: unknown}"
+	}
 }
