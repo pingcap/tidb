@@ -18,14 +18,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
-	ctx                      sessionctx.Context
+	ctx                      expression.EvalContext
 	checkerCol               *expression.Column
 	length                   int
 	optPrefixIndexSingleScan bool
