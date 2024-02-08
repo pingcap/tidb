@@ -139,7 +139,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	return errors.Trace(v.err)
 }
 
-type preprocessorFlag uint8
+type preprocessorFlag uint64
 
 const (
 	// inPrepare is set when visiting in prepare statement.
@@ -157,6 +157,13 @@ const (
 	inSequenceFunction
 	// initTxnContextProvider is set when we should init txn context in preprocess
 	initTxnContextProvider
+<<<<<<< HEAD:planner/core/preprocess.go
+=======
+	// inImportInto is set when visiting an import into statement.
+	inImportInto
+	// inAnalyze is set when visiting an analyze statement.
+	inAnalyze
+>>>>>>> fce2805f2a5 (planner: skip MDL when analyzing table (#50928)):pkg/planner/core/preprocess.go
 )
 
 // Make linter happy.
@@ -393,6 +400,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			p.IsStaleness = true
 		}
+	case *ast.AnalyzeTableStmt:
+		p.flag |= inAnalyze
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -1913,3 +1922,14 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 	}
 	return tbl, nil
 }
+<<<<<<< HEAD:planner/core/preprocess.go
+=======
+
+// skipLockMDL returns true if the preprocessor should skip the lock of MDL.
+func (p *preprocessor) skipLockMDL() bool {
+	// skip lock mdl for IMPORT INTO statement,
+	// because it's a batch process and will do both DML and DDL.
+	// skip lock mdl for ANALYZE statement.
+	return p.flag&inImportInto > 0 || p.flag&inAnalyze > 0
+}
+>>>>>>> fce2805f2a5 (planner: skip MDL when analyzing table (#50928)):pkg/planner/core/preprocess.go
