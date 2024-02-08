@@ -336,12 +336,13 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			histNDV = coll.Columns[idx.Histogram.ID].Histogram.NDV
 		}
 
-		if idx.StatsVer == statistics.Version2 {
-			histNDV = histNDV - int64(idx.TopN.Num())
-		}
+		//if idx.StatsVer == statistics.Version2 {
+		//	histNDV = histNDV - int64(idx.TopN.Num())
+		//}
 		// handling the out-of-range part
-		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
+		if count < (float64(realtimeRowCount)*0.5) && (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+			//count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV)
+			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, realtimeRowCount, histNDV)
 		}
 
 		if debugTrace {

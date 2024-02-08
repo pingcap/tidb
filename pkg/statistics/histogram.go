@@ -937,7 +937,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx context.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, histNDV int64,
+	modifyCount, realtimeRowCount, histNDV int64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -1052,51 +1052,50 @@ func (hg *Histogram) OutOfRangeRowCount(
 		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
+	currentCount := hg.NotNullCount()
+	modifyCountF := float64(modifyCount)
+	realtimeCountF := float64(realtimeRowCount)
+	if modifyCountF > currentCount {
+		rightPercent = min(rightPercent, 0.5)
+		leftPercent = min(leftPercent, 0.5)
+	}
 	totalPercent := leftPercent*0.5 + rightPercent*0.5
 	if totalPercent > 1 {
 		totalPercent = 1
 	}
-	rowCount = totalPercent * hg.NotNullCount()
+	rowCount = totalPercent * currentCount
 
 	// Upper & lower bound logic.
-	var upperBound float64
+	origUpperBound, realUpperBound := rowCount, rowCount
 	if histNDV > 0 {
-		upperBound = hg.NotNullCount() / float64(histNDV)
+		origUpperBound = currentCount / float64(histNDV)
+		realUpperBound = max(currentCount, realtimeCountF) / float64(histNDV)
 	}
 
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
-	// If the modifyCount is large (as a percentage of the base table rows), then any out of range estimate is
-	// unreliable - because this indicates that our statistics are stale. These bounds are therefore approximations.
-	// ModifyCount counts all inserts/updates/deletes - this logic has a bias towards modifications being inserts.
-	if allowUseModifyCount {
-		// Use modifyCount as the upper bound
-		if rowCount > float64(modifyCount) {
-			return float64(modifyCount)
-		}
-		// Use the upperBound value as a lower bound if modifyCount is larger than the base table count.
-		// This targets the use case where we are searching for a value that is statistically out of range, but
-		// inserts result in the value actually being in that modified range.
-		adjustRatio := float64(modifyCount) / hg.NotNullCount()
-		if float64(modifyCount) >= hg.NotNullCount() {
-			//return max(rowCount, upperBound)
-			if rowCount < upperBound {
-				return max(rowCount*adjustRatio, upperBound)
-			} else {
-				return min(rowCount, upperBound)
-			}
-		} else {
-			// Inflate rowCount by the percentage represented by modify count
-			if rowCount < upperBound {
-				rowCount *= adjustRatio
-			}
-		}
-	} else {
+	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
 		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, upperBound)
+		return min(rowCount, origUpperBound)
 	}
-	return rowCount
+	// If the modifyCount is large (as a percentage of the base table rows), then any out of range estimate is
+	// unreliable - because this indicates that our statistics are stale. These bounds are therefore approximations.
+	// ModifyCount counts all inserts/updates/deletes - this logic has a bias towards modifications being inserts.
+
+	// Use the upperBound value as a lower bound if modifyCount is larger than the base table count.
+	// This targets the use case where we are searching for a value that is statistically out of range, but
+	// inserts result in the value actually being in that modified range.
+	adjustRatio := realtimeCountF / currentCount
+	if modifyCountF >= currentCount {
+		rowCount = max(rowCount, realUpperBound)
+	} else {
+		// Inflate rowCount by the percentage represented by modify count
+		rowCount += rowCount * adjustRatio
+	}
+
+	// Use modifyCount as the final upper bound
+	return min(rowCount, realtimeCountF)
 }
 
 // Copy deep copies the histogram.

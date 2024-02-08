@@ -293,8 +293,8 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 			histNDV = histNDV - int64(c.TopN.Num())
 		}
 		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, histNDV)
+		if cnt < (float64(realtimeRowCount)*0.5) && (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, realtimeRowCount, histNDV)
 		}
 
 		if debugTrace {
