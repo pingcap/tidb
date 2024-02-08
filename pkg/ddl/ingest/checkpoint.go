@@ -200,7 +200,7 @@ func (s *CheckpointManager) tryFlushAllIndexes(mode FlushMode) (flushed, importe
 	for _, idxID := range s.indexIDs {
 		flushed, imported, err := s.flushCtrl.Flush(idxID, mode)
 		if err != nil {
-			return allFlushed, false, err
+			return false, false, err
 		}
 		allFlushed = allFlushed && flushed
 		allImported = allImported && imported
