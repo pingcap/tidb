@@ -1213,6 +1213,7 @@ import (
 	LocalOpt                               "Local opt"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
+	LowPriorityOpt                         "LOAD DATA low priority option"
 	MaxValPartOpt                          "MAXVALUE partition option"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
@@ -14340,23 +14341,24 @@ RevokeRoleStmt:
  * for load stmt with format see https://github.com/pingcap/tidb/issues/40499
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
+	"LOAD" "DATA" LowPriorityOpt LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
 	{
 		x := &ast.LoadDataStmt{
+			LowPriority:        $3.(bool),
 			FileLocRef:         ast.FileLocServerOrRemote,
-			Path:               $5,
-			Format:             $6.(*string),
-			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
-			Table:              $10.(*ast.TableName),
-			Charset:            $11.(*string),
-			FieldsInfo:         $12.(*ast.FieldsClause),
-			LinesInfo:          $13.(*ast.LinesClause),
-			IgnoreLines:        $14.(*uint64),
-			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
-			ColumnAssignments:  $16.([]*ast.Assignment),
-			Options:            $17.([]*ast.LoadDataOpt),
+			Path:               $6,
+			Format:             $7.(*string),
+			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
+			Table:              $11.(*ast.TableName),
+			Charset:            $12.(*string),
+			FieldsInfo:         $13.(*ast.FieldsClause),
+			LinesInfo:          $14.(*ast.LinesClause),
+			IgnoreLines:        $15.(*uint64),
+			ColumnsAndUserVars: $16.([]*ast.ColumnNameOrUserVar),
+			ColumnAssignments:  $17.([]*ast.Assignment),
+			Options:            $18.([]*ast.LoadDataOpt),
 		}
-		if $3 != nil {
+		if $4 != nil {
 			x.FileLocRef = ast.FileLocClient
 			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
 			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
@@ -14373,6 +14375,15 @@ LoadDataStmt:
 		x.Columns = columns
 
 		$$ = x
+	}
+
+LowPriorityOpt:
+	{
+		$$ = false
+	}
+|	"LOW_PRIORITY"
+	{
+		$$ = true
 	}
 
 FormatOpt:

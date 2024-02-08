@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -39,7 +38,7 @@ type dataAccesser interface {
 }
 
 type partitionAccesser interface {
-	accessObject(sessionctx.Context) AccessObject
+	accessObject(PlanContext) AccessObject
 }
 
 // AccessObject represents what is accessed by an operator.
@@ -353,7 +352,7 @@ func (p *BatchPointGetPlan) AccessObject() AccessObject {
 	return res
 }
 
-func getDynamicAccessPartition(sctx sessionctx.Context, tblInfo *model.TableInfo, physPlanPartInfo *PhysPlanPartInfo, asName string) (res *DynamicPartitionAccessObject) {
+func getDynamicAccessPartition(sctx PlanContext, tblInfo *model.TableInfo, physPlanPartInfo *PhysPlanPartInfo, asName string) (res *DynamicPartitionAccessObject) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return nil
@@ -394,7 +393,7 @@ func getDynamicAccessPartition(sctx sessionctx.Context, tblInfo *model.TableInfo
 	return res
 }
 
-func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) AccessObject {
+func (p *PhysicalTableReader) accessObject(sctx PlanContext) AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -448,7 +447,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) AccessObject
 	return res
 }
 
-func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) AccessObject {
+func (p *PhysicalIndexReader) accessObject(sctx PlanContext) AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -464,7 +463,7 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) AccessObject
 	return DynamicPartitionAccessObjects{res}
 }
 
-func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) AccessObject {
+func (p *PhysicalIndexLookUpReader) accessObject(sctx PlanContext) AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -480,7 +479,7 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) Access
 	return DynamicPartitionAccessObjects{res}
 }
 
-func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) AccessObject {
+func (p *PhysicalIndexMergeReader) accessObject(sctx PlanContext) AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
