@@ -557,6 +557,7 @@ type Analyze struct {
 type LoadData struct {
 	baseSchemaProducer
 
+	LowPriority bool
 	FileLocRef  ast.FileLocRefTp
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
