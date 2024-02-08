@@ -604,8 +604,7 @@ const (
 	// they need to add back the correct rows.
 	DupeResAlgReplace
 
-	// DupeResAlgErr reports an error and stops the import process.
-	// Note: this value is only used for internal.
+	// DupeResAlgErr reports an error after detecting the first conflict and stops the import process.
 	DupeResAlgErr
 )
 
