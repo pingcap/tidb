@@ -16,11 +16,8 @@ package handle
 
 import (
 	"fmt"
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
-	"sync"
-=======
 	"math/rand"
->>>>>>> 69917c07b0f (*: avoid thundering herd problem when timeout the stats sync load (#50956)):pkg/statistics/handle/syncload/stats_syncload.go
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -194,14 +191,10 @@ func (h *Handle) SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exit
 			case errExit:
 				return
 			default:
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
-				time.Sleep(h.Lease() / 10)
-=======
 				// To avoid the thundering herd effect
 				// thundering herd effect: Everyone tries to retry a large number of requests simultaneously when a problem occurs.
 				r := rand.Intn(500)
-				time.Sleep(s.statsHandle.Lease()/10 + time.Duration(r)*time.Microsecond)
->>>>>>> 69917c07b0f (*: avoid thundering herd problem when timeout the stats sync load (#50956)):pkg/statistics/handle/syncload/stats_syncload.go
+				time.Sleep(h.Lease()/10 + time.Duration(r)*time.Microsecond)
 				continue
 			}
 		}
