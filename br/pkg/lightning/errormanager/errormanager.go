@@ -737,7 +737,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		}
 
 		// delete the additionally inserted rows of nonclustered PK
-		if err := exec.Transact(ctx, "delete additionally inserted rows of nonclustered PK for conflict detection 'replace' mode",
+		if err := exec.Transact(ctx, "delete additionally inserted rows for conflict detection 'replace' mode",
 			func(c context.Context, txn *sql.Tx) error {
 				sb := &strings.Builder{}
 				_, err2 := common.FprintfWithIdentifiers(sb, deleteNullDataRow, em.schema)
