@@ -19,8 +19,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	dist_store "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -92,6 +94,13 @@ func SyncNormalRunning(s sessionctx.Context) error {
 	}
 	for _, e := range jobErrs {
 		logger.Warn("resume the job failed", zap.Error(e))
+	}
+
+	if mgr, _ := dist_store.GetTaskManager(); mgr != nil {
+		err := mgr.AdjustTaskOverflowConcurrency(context.Background(), s)
+		if err != nil {
+			log.Warn("cannot adjust task overflow concurrency", zap.Error(err))
+		}
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
