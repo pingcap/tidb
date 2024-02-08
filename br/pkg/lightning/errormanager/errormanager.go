@@ -150,6 +150,11 @@ const (
 		ORDER BY raw_key;
 	`
 
+	deleteNullDataRow = `
+		DELETE FROM %s.` + ConflictErrorTableName + `
+		WHERE key_data = "" and row_data = "";
+	`
+
 	insertIntoDupRecord = `
 		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
@@ -479,6 +484,13 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	}
 
 	g, gCtx := errgroup.WithContext(ctx)
+
+	exec := common.SQLWithRetry{
+		DB:           em.db,
+		Logger:       em.logger,
+		HideQueryLog: redact.NeedRedact(),
+	}
+
 	pool.ApplyOnErrorGroup(g, func() error {
 		// TODO: provide a detailed document to explain the algorithm and link it here
 		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
@@ -549,12 +561,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			// find out all the KV pairs that are contained in the data KV
 			kvPairs := encoder.SessionCtx.TakeKvPairs()
 
-			exec := common.SQLWithRetry{
-				DB:           em.db,
-				Logger:       em.logger,
-				HideQueryLog: redact.NeedRedact(),
-			}
-
 			for _, kvPair := range kvPairs.Pairs {
 				em.logger.Debug("got encoded KV",
 					logutil.Key("key", kvPair.Key),
@@ -585,7 +591,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 							sb := &strings.Builder{}
 							_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
 							if err2 != nil {
-								return err2
+								return errors.Trace(err2)
 							}
 							var sqlArgs []any
 							sb.WriteString(sqlValuesConflictErrorData)
@@ -599,9 +605,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 								1,
 							)
 							_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
-							return err
+							return errors.Trace(err)
 						}); err != nil {
-						return err
+						return errors.Trace(err)
 					}
 					if err := fnDeleteKey(gCtx, rawHandle); err != nil {
 						return errors.Trace(err)
@@ -727,6 +733,20 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			}
 		}
 		if err := dataKvRows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		// delete the additionally inserted rows of nonclustered PK
+		if err := exec.Transact(ctx, "delete additionally inserted rows of nonclustered PK for conflict detection 'replace' mode",
+			func(c context.Context, txn *sql.Tx) error {
+				sb := &strings.Builder{}
+				_, err2 := common.FprintfWithIdentifiers(sb, deleteNullDataRow, em.schema)
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+				_, err := txn.ExecContext(c, sb.String())
+				return errors.Trace(err)
+			}); err != nil {
 			return errors.Trace(err)
 		}
 
