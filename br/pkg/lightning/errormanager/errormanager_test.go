@@ -290,6 +290,10 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
 			AddRow(data1RowKey, data1RowValue).
 			AddRow(data1RowKey, data2RowValue))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
@@ -489,6 +493,10 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
 			AddRow(data1RowKey, data1RowValue).
 			AddRow(data1RowKey, data3RowValue))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
