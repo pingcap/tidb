@@ -189,6 +189,10 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
 			AddRow(data2NonclusteredKey, data2NonclusteredValue).
 			AddRow(data6NonclusteredKey, data6NonclusteredValue))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
@@ -351,6 +355,10 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
 			AddRow(data4RowKey, data4RowValue))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
@@ -529,6 +537,10 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 			AddRow(data5RowKey, data5RowValue).
 			AddRow(data2RowKey, data2RowValue).
 			AddRow(data4RowKey, data4RowValue))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
@@ -726,6 +738,10 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 			AddRow(data5RowKey, data5RowValue).
 			AddRow(data2RowKey, data2RowValue).
 			AddRow(data4RowKey, data4RowValue))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
