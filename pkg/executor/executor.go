@@ -2150,6 +2150,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true
+		if stmt.LowPriority {
+			sc.Priority = mysql.LowPriority
+		}
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.SelectStmt:

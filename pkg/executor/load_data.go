@@ -175,9 +175,6 @@ func NewLoadDataWorker(
 	if !controller.Restrictive {
 		setNonRestrictiveFlags(userSctx.GetSessionVars().StmtCtx)
 	}
-	if plan.LowPriority {
-		userSctx.GetSessionVars().StmtCtx.Priority = mysql.LowPriority
-	}
 
 	loadDataWorker := &LoadDataWorker{
 		UserSctx:   userSctx,
