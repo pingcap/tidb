@@ -53,7 +53,7 @@ func TestInitDefaultOptions(t *testing.T) {
 		DataSourceType: DataSourceTypeQuery,
 	}
 	plan.initDefaultOptions(10)
-	require.Equal(t, 1, plan.ThreadCnt)
+	require.Equal(t, 2, plan.ThreadCnt)
 
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
@@ -116,7 +116,8 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		recordErrorsOption+"=123, "+
 		detachedOption+", "+
 		disableTiKVImportModeOption+", "+
-		maxEngineSizeOption+"='100gib'",
+		maxEngineSizeOption+"='100gib', "+
+		disablePrecheckOption,
 	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
@@ -140,6 +141,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.True(t, plan.DisableTiKVImportMode, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
 	require.Empty(t, plan.CloudStorageURI, sql)
+	require.True(t, plan.DisablePrecheck, sql)
 
 	// set cloud storage uri
 	variable.CloudStorageURI.Store("s3://bucket/path")
