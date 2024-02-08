@@ -116,7 +116,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		recordErrorsOption+"=123, "+
 		detachedOption+", "+
 		disableTiKVImportModeOption+", "+
-		maxEngineSizeOption+"='100gib'"+
+		maxEngineSizeOption+"='100gib', "+
 		disablePrecheckOption,
 	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
