@@ -229,7 +229,7 @@ issue50972_3	CREATE TABLE `issue50972_3` (
 PARTITION BY LIST (`id3`)
 (PARTITION `p0` VALUES IN (1,2))
 drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
-drop table if exists k1, k2, k3;
+drop table if exists k1, k2, k3, k4;
 CREATE TABLE k1 (
 id INT NOT NULL PRIMARY KEY,
 name VARCHAR(20))
@@ -257,7 +257,22 @@ k2	CREATE TABLE `k2` (
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY () PARTITIONS 2
-CREATE TABLE k3(
+CREATE TABLE k3 (
+id INT NOT NULL PRIMARY KEY NONCLUSTERED,
+name VARCHAR(20),
+UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k3;
+Table	Create Table
+k3	CREATE TABLE `k3` (
+  `id` int(11) NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  UNIQUE KEY `id` (`id`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k4(
 id INT NOT NULL,
 id1 int,
 name VARCHAR(20),
