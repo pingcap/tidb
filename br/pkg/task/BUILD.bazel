@@ -102,6 +102,7 @@ go_test(
     flaky = True,
     shard_count = 22,
     deps = [
+        "//br/pkg/config",
         "//br/pkg/conn",
         "//br/pkg/errors",
         "//br/pkg/metautil",
