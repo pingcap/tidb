@@ -998,7 +998,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 					break
 				}
 			}
-		} else if !tbl.IsCommonHandle && colName.Name.Name.L == model.ExtraHandleName.L {
+		} else if tbl.GetPartitionInfo() == nil && !tbl.IsCommonHandle && colName.Name.Name.L == model.ExtraHandleName.L {
 			handleCol = model.NewExtraHandleColInfo()
 		}
 		if handleCol == nil {
