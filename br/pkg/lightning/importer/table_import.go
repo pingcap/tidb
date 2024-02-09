@@ -1026,7 +1026,7 @@ func (tr *TableImporter) postProcess(
 				SysVars: rc.sysVars,
 			}
 			var err error
-			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.TikvImporter.DuplicateResolution)
+			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 				return false, errors.Trace(err)

@@ -566,11 +566,6 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
-["Lightning:Restore:ErrEncounterConflictForErrorMode"]
-error = '''
-encounter duplicate rows when setting conflict.strategy to be 'error', will stop the import process
-'''
-
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
 found duplicate key '%s', value '%s'

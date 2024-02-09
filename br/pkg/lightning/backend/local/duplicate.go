@@ -702,16 +702,12 @@ func (m *DupeDetector) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter common.Ke
 }
 
 // CollectDuplicateRowsFromDupDB collects duplicates from the duplicate DB and records all duplicate row info into errorMgr.
-func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter common.KeyAdapter, algorithm config.DuplicateResolutionAlgorithm) error {
+func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter common.KeyAdapter) error {
 	tasks, err := m.buildLocalDupTasks(dupDB, keyAdapter)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	logger := m.logger
-	if algorithm == config.DupeResAlgErr && len(tasks) > 0 {
-		logger.Error("encounter duplicate rows when setting conflict.strategy to be 'error', will stop the import process")
-		return common.ErrEncounterConflictForErrorMode
-	}
 	logger.Info("collect duplicate rows from local duplicate db", zap.String("category", "detect-dupe"), zap.Int("tasks", len(tasks)))
 
 	pool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
@@ -958,7 +954,7 @@ type DupeController struct {
 
 // CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 // may be repeated with other keys in local data source.
-func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
+func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -969,7 +965,7 @@ func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if err := duplicateManager.CollectDuplicateRowsFromDupDB(ctx, local.duplicateDB, local.keyAdapter, algorithm); err != nil {
+	if err := duplicateManager.CollectDuplicateRowsFromDupDB(ctx, local.duplicateDB, local.keyAdapter); err != nil {
 		return false, errors.Trace(err)
 	}
 	return duplicateManager.HasDuplicate(), nil
