@@ -723,7 +723,7 @@ a	b
 1	10
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 drop table if exists t;
 create table t(a int, b int, c int , index idx(a));
 insert into t values(1,2, -1), (1,2, 1), (1,2, -1), (4,4,3);
