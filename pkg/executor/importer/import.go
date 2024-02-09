@@ -99,6 +99,7 @@ const (
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
 	cloudStorageURIOption       = "cloud_storage_uri"
+	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
 )
@@ -124,6 +125,7 @@ var (
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
 		cloudStorageURIOption:       true,
+		disablePrecheckOption:       false,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -138,7 +140,8 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
-		threadOption: {},
+		threadOption:          {},
+		disablePrecheckOption: {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -238,6 +241,7 @@ type Plan struct {
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
+	DisablePrecheck       bool
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -536,8 +540,7 @@ func (e *LoadDataController) checkFieldParams() error {
 func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
-		// TODO: change after spec is ready.
-		threadCnt = 1
+		threadCnt = 2
 	}
 
 	p.Checksum = config.OpLevelRequired
@@ -743,6 +746,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if err = p.MaxEngineSize.UnmarshalText([]byte(v)); err != nil || p.MaxEngineSize < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+	}
+	if _, ok := specifiedOptions[disablePrecheckOption]; ok {
+		p.DisablePrecheck = true
 	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.

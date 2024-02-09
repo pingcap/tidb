@@ -26,14 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
-func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
+func rewriteSimpleExpr(ctx expression.BuildContext, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	if str == "" {
 		return nil, nil
 	}
@@ -340,7 +339,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	}
 }
 
-func checkRangeFallbackAndReset(t *testing.T, ctx sessionctx.Context, expectedRangeFallback bool) {
+func checkRangeFallbackAndReset(t *testing.T, ctx PlanContext, expectedRangeFallback bool) {
 	require.Equal(t, expectedRangeFallback, ctx.GetSessionVars().StmtCtx.RangeFallback)
 	ctx.GetSessionVars().StmtCtx.RangeFallback = false
 }
