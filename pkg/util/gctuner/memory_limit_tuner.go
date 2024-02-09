@@ -194,6 +194,6 @@ func (*memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 var initGOMemoryLimitValue int64
 
 func init() {
-	initGOMemoryLimitValue = debug.SetMemoryLimit(-1)
+	initGOMemoryLimitValue = setMemoryLimit(-1)
 	GlobalMemoryLimitTuner.Start()
 }
