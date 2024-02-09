@@ -232,15 +232,16 @@ func TestIssue48741(t *testing.T) {
 }
 
 func TestSetMemoryLimit(t *testing.T) {
-	debug.SetMemoryLimit(1 << 32)
-	DisableSetMemoryLimit()
+	DisableSetMemoryLimit(1 << 32)
 	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
 	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
-	require.NotEqual(t, debug.SetMemoryLimit(-1), int64(1<<30*80/100))
+	memLimit := debug.SetMemoryLimit(-1)
+	require.NotEqual(t, int64(1<<30)*80/100, memLimit)
+	require.Equal(t, int64(1<<32), memLimit)
 	EnableSetMemoryLimit()
 	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
 	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
-	require.Equal(t, debug.SetMemoryLimit(-1), int64(1<<30*80/100))
+	require.Equal(t, debug.SetMemoryLimit(-1), int64(1<<30)*80/100)
 }

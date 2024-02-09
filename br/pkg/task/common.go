@@ -97,6 +97,9 @@ const (
 	flagMetadataDownloadBatchSize    = "metadata-download-batch-size"
 	defaultMetadataDownloadBatchSize = 128
 
+	flagMemoryLimit    = "memory-limit"
+	defaultMemoryLimit = 0 // won't set go memory limit if not the positive number
+
 	unlimited           = 0
 	crypterAES128KeyLen = 16
 	crypterAES192KeyLen = 24
@@ -260,6 +263,9 @@ type Config struct {
 
 	// Metadata download batch size, such as metadata for log restore
 	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
+
+	// MemoryLimit is to limit the br memory usage to avoid too frequently temporary data allocated leads to out-of-memory.
+	MemoryLimit int64 `json:"memory-limit" toml:"memory-limit"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -312,6 +318,8 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 		"the batch size of downloading metadata, such as log restore metadata for truncate or restore")
 
 	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
+
+	flags.Int64(flagMemoryLimit, defaultMemoryLimit, "set go memory limit with the value if it is larger than 0")
 
 	storage.DefineFlags(flags)
 }
@@ -613,6 +621,10 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if cfg.MetadataDownloadBatchSize, err = flags.GetUint(flagMetadataDownloadBatchSize); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.MemoryLimit, err = flags.GetInt64(flagMemoryLimit); err != nil {
 		return errors.Trace(err)
 	}
 

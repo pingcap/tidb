@@ -632,7 +632,7 @@ func DefaultRestoreConfig() RestoreConfig {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
-	gctuner.DisableSetMemoryLimit()
+	gctuner.DisableSetMemoryLimit(cfg.MemoryLimit)
 	defer gctuner.EnableSetMemoryLimit()
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {

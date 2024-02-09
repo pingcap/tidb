@@ -37,23 +37,31 @@ type setMemoryLimitSwitch struct {
 func setMemoryLimit(limit int64) int64 {
 	if globalSetMemoryLimitSwitch.TryRLock() {
 		defer globalSetMemoryLimitSwitch.RUnlock()
-		if globalSetMemoryLimitSwitch.disable != 0 {
+		if globalSetMemoryLimitSwitch.disable == 0 {
 			return debug.SetMemoryLimit(limit)
 		}
 	}
 	return 0
 }
 
+// EnableSetMemoryLimit enables the memory limit tuner to set go memory limit.
+// Then the memory limit tuner reset go memory limit later.
 func EnableSetMemoryLimit() {
 	globalSetMemoryLimitSwitch.Lock()
-	globalSetMemoryLimitSwitch.disable -= 1
+	globalSetMemoryLimitSwitch.disable--
 	globalSetMemoryLimitSwitch.Unlock()
 }
 
-func DisableSetMemoryLimit() {
+// DisableSetMemoryLimit disables the memory limit tuner to set go memory limit.
+// It also set the go memory limit and return the original go memory limit if in need.
+func DisableSetMemoryLimit(limit int64) int64 {
 	globalSetMemoryLimitSwitch.Lock()
-	globalSetMemoryLimitSwitch.disable += 1
+	globalSetMemoryLimitSwitch.disable++
 	globalSetMemoryLimitSwitch.Unlock()
+	if limit > 0 {
+		return debug.SetMemoryLimit(limit)
+	}
+	return 0
 }
 
 // GlobalMemoryLimitTuner only allow one memory limit tuner in one process

@@ -380,7 +380,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		conf.KeyspaceName = cfg.KeyspaceName
 	})
 
-	gctuner.DisableSetMemoryLimit()
+	gctuner.DisableSetMemoryLimit(cfg.MemoryLimit)
 	defer gctuner.EnableSetMemoryLimit()
 
 	defer summary.Summary(cmdName)
