@@ -3096,7 +3096,7 @@ type TiFlashSystemTableRetriever struct {
 	outputCols    []*model.ColumnInfo
 	instanceCount int
 	instanceIdx   int
-	instanceIds   []string
+	instanceIDs   []string
 	rowIdx        int
 	retrieved     bool
 	initialized   bool
@@ -3147,7 +3147,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 		if len(hostAndStatusPort) != 2 {
 			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
 		}
-		e.instanceIds = append(e.instanceIds, info.Address)
+		e.instanceIDs = append(e.instanceIDs, info.Address)
 		e.instanceCount++
 	}
 	e.initialized = true
@@ -3193,7 +3193,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
 	}
 	// send request to tiflash, timeout is 1s
-	instanceID := e.instanceIds[e.instanceIdx]
+	instanceID := e.instanceIDs[e.instanceIdx]
 	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, time.Second)
 	if err != nil {
 		return nil, errors.Trace(err)
