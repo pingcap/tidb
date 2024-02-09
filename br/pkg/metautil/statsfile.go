@@ -103,8 +103,6 @@ func (s *StatsWriter) writeStatsFileAndClear(ctx context.Context, physicalID int
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// reset the content to nil to make it garbage collected as soon as possible
-	content = nil
 
 	if err := s.storage.WriteFile(ctx, fileName, encryptedContent); err != nil {
 		return errors.Trace(err)
@@ -208,9 +206,6 @@ func downloadStats(
 					return errors.Trace(err)
 				}
 
-				// reset the content to nil to make it garbage collected as soon as possible
-				content = nil
-
 				checksum := sha256.Sum256(decryptContent)
 				if !bytes.Equal(statsFile.Sha256, checksum[:]) {
 					return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
@@ -223,9 +218,6 @@ func downloadStats(
 			if err := proto.Unmarshal(statsContent, statsFileBlocks); err != nil {
 				return errors.Trace(err)
 			}
-
-			// reset the statsContent to nil to make it garbage collected as soon as possible
-			statsContent = nil
 
 			for _, block := range statsFileBlocks.Blocks {
 				physicalId, ok := rewriteIDMap[block.PhysicalId]
