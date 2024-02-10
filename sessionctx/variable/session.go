@@ -535,6 +535,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID int64
 
+	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
+	MapScalarSubQ []interface{}
+
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
@@ -595,6 +598,8 @@ type SessionVars struct {
 
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
+
+	ExplainNonEvaledSubQuery bool
 
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
@@ -1405,6 +1410,11 @@ func (s *SessionVars) CleanBuffers() {
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	s.PlanColumnID++
 	return s.PlanColumnID
+}
+
+// RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
+func (s *SessionVars) RegisterScalarSubQ(scalarSubQ interface{}) {
+	s.MapScalarSubQ = append(s.MapScalarSubQ, scalarSubQ)
 }
 
 // GetCharsetInfo gets charset and collation for current context.
