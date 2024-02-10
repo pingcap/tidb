@@ -33,12 +33,15 @@ func TestT(t *testing.T) {
 var _ = Suite(&testRestoreSchemaSuite{})
 
 type testRestoreSchemaSuite struct {
-	mock    *mock.Cluster
-	storage storage.ExternalStorage
+	mock     *mock.Cluster
+	mockGlue *gluetidb.MockGlue
+	storage  storage.ExternalStorage
 }
 
 func (s *testRestoreSchemaSuite) SetUpSuite(c *C) {
 	var err error
+	s = new(testRestoreSchemaSuite)
+	s.mockGlue = &gluetidb.MockGlue{}
 	s.mock, err = mock.NewCluster()
 	c.Assert(err, IsNil)
 	base := c.MkDir()
