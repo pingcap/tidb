@@ -598,7 +598,10 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if sm == nil {
 		return
 	}
+<<<<<<< HEAD
 	pl := sm.ShowProcessList()
+=======
+>>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -610,6 +613,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 
 	minStartTS := oracle.GoTimeToTS(now)
+<<<<<<< HEAD
 	for _, info := range pl {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
@@ -617,6 +621,16 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 
 	is.minStartTS = minStartTS
+=======
+	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
+		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
+	if ts := sm.GetMinStartTS(startTSLowerLimit); ts > startTSLowerLimit && ts < minStartTS {
+		minStartTS = ts
+	}
+
+	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)
+
+>>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
