@@ -45,8 +45,13 @@ func (s *securitySuite) TestGetJSONInsecure(c *C) {
 	u, err := url.Parse(mockServer.URL)
 	c.Assert(err, IsNil)
 
+<<<<<<< HEAD
 	tls, err := common.NewTLS("", "", "", u.Host)
 	c.Assert(err, IsNil)
+=======
+	tls, err := common.NewTLS("", "", "", u.Host, nil, nil, nil)
+	require.NoError(t, err)
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 
 	var result struct{ Path string }
 	err = tls.GetJSON(ctx, "/aaa", &result)
@@ -77,6 +82,7 @@ func (s *securitySuite) TestInvalidTLS(c *C) {
 	tempDir := c.MkDir()
 
 	caPath := filepath.Join(tempDir, "ca.pem")
+<<<<<<< HEAD
 	_, err := common.NewTLS(caPath, "", "", "localhost")
 	c.Assert(err, ErrorMatches, "could not read ca certificate:.*")
 
@@ -96,4 +102,31 @@ func (s *securitySuite) TestInvalidTLS(c *C) {
 	c.Assert(err, IsNil)
 	_, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
 	c.Assert(err, ErrorMatches, "could not load client key pair: tls.*")
+=======
+
+	caContent := []byte(`-----BEGIN CERTIFICATE-----
+MIIBITCBxwIUf04/Hucshr7AynmgF8JeuFUEf9EwCgYIKoZIzj0EAwIwEzERMA8G
+A1UEAwwIYnJfdGVzdHMwHhcNMjIwNDEzMDcyNDQxWhcNMjIwNDE1MDcyNDQxWjAT
+MREwDwYDVQQDDAhicl90ZXN0czBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABL+X
+wczUg0AbaFFaCI+FAk3K9vbB9JeIORgGKS+F1TKip5tvm96g7S5lq8SgY38SXVc3
+0yS3YqWZqnRjWi+sLwIwCgYIKoZIzj0EAwIDSQAwRgIhAJcpSwsUhqkM08LK1gYC
+ze4ZnCkwJdP2VdpI3WZsoI7zAiEAjP8X1c0iFwYxdAbQAveX+9msVrzyUpZOohi4
+RtgQTNI=
+-----END CERTIFICATE-----
+`)
+	err := os.WriteFile(caPath, caContent, 0o644)
+	require.NoError(t, err)
+
+	certPath := filepath.Join(tempDir, "test.pem")
+	keyPath := filepath.Join(tempDir, "test.key")
+
+	certContent := []byte("invalid cert content")
+	err = os.WriteFile(certPath, certContent, 0o644)
+	require.NoError(t, err)
+	keyContent := []byte("invalid key content")
+	err = os.WriteFile(keyPath, keyContent, 0o600)
+	require.NoError(t, err)
+	_, err = common.NewTLS(caPath, "", "", "localhost", caContent, certContent, keyContent)
+	require.ErrorContains(t, err, "tls: failed to find any PEM data in certificate input")
+>>>>>>> 796fb1f0a... *: adjust TLS behaviour for dumpling and lightning (#37479)
 }
