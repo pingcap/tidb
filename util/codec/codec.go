@@ -881,6 +881,7 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 	case uintFlag:
 		var v uint64
 		b, v, err = DecodeUint(b)
+<<<<<<< HEAD:util/codec/codec.go
 		if err != nil {
 			return b, d, err
 		}
@@ -895,6 +896,15 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 			}
 			d.SetMysqlTime(t)
 		}
+=======
+	case uvarintFlag:
+		// Datetime can be encoded as Uvarint
+		b, v, err = DecodeUvarint(b)
+	case NilFlag:
+		// null value should also be decoded out.
+		return b, d, nil
+
+>>>>>>> a6ba2ec8a87 (planner: fix show stats_bucket couldn't decode index boundary out (#49945)):pkg/util/codec/codec.go
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
 	}
