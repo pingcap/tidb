@@ -506,6 +506,11 @@ func (b *scanRegionBackoffer) Attempt() int {
 func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo, isRawKv bool) map[uint64][][]byte {
 	splitKeyMap := make(map[uint64][][]byte)
 	checkKeys := make([][]byte, 0)
+	if rewriteRules != nil && len(rewriteRules.NewKeyspace) == 0 {
+		for _, rule := range rewriteRules.Data {
+			checkKeys = append(checkKeys, rule.NewKeyPrefix)
+		}
+	}
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, rg.EndKey)
 	}
