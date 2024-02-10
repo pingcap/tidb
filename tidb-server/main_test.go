@@ -15,6 +15,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -72,4 +73,8 @@ func TestSetGlobalVars(t *testing.T) {
 
 	cfg := config.GetGlobalConfig()
 	require.Equal(t, cfg.Socket, variable.GetSysVar(variable.Socket).Value)
+
+	if hostname, err := os.Hostname(); err == nil {
+		require.Equal(t, variable.GetSysVar(variable.Hostname).Value, hostname)
+	}
 }
