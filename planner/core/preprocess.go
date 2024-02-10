@@ -338,7 +338,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 func EraseLastSemicolon(stmt ast.StmtNode) {
 	sql := stmt.Text()
 	if len(sql) > 0 && sql[len(sql)-1] == ';' {
-		stmt.SetText(sql[:len(sql)-1])
+		stmt.SetText(nil, sql[:len(sql)-1])
 	}
 }
 
