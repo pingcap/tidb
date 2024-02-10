@@ -434,8 +434,15 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 }
 
 func (e *Engine) getEngineFileSize() backend.EngineFileSize {
-	metrics := e.db.Metrics()
-	total := metrics.Total()
+	e.mutex.RLock()
+	db := e.db
+	e.mutex.RUnlock()
+
+	var total pebble.LevelMetrics
+	if db != nil {
+		metrics := db.Metrics()
+		total = metrics.Total()
+	}
 	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
@@ -532,7 +539,6 @@ func (e *Engine) ingestSSTLoop() {
 	for i := 0; i < concurrency; i++ {
 		e.wg.Add(1)
 		go func() {
-			defer e.wg.Done()
 			defer func() {
 				if e.ingestErr.Get() != nil {
 					seqLock.Lock()
@@ -542,6 +548,7 @@ func (e *Engine) ingestSSTLoop() {
 					flushQueue = flushQueue[:0]
 					seqLock.Unlock()
 				}
+				e.wg.Done()
 			}()
 			for {
 				select {
@@ -1478,6 +1485,9 @@ func (i dbSSTIngester) ingest(metas []*sstMeta) error {
 	paths := make([]string, 0, len(metas))
 	for _, m := range metas {
 		paths = append(paths, m.path)
+	}
+	if i.e.db == nil {
+		return errorEngineClosed
 	}
 	return i.e.db.Ingest(paths)
 }
