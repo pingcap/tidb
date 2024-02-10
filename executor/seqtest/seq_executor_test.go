@@ -809,10 +809,19 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
+<<<<<<< HEAD:executor/seqtest/seq_executor_test.go
 	r.Check(testkit.Rows("test1 tt id 31 AUTO_INCREMENT"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
+=======
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1"))
+	tk.MustExec("insert test1.tt values ()")
+	r = tk.MustQuery(str + " tt next_row_id")
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1", "21 <nil>"))
+>>>>>>> a3e2ddb5864 (*: Keep the auto id allocator for single table renames (#47892)):pkg/executor/test/seqtest/seq_executor_test.go
 	tk.MustExec("drop table tt")
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
