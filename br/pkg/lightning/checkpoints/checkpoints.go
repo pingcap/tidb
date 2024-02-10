@@ -513,7 +513,19 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
+<<<<<<< HEAD
 		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+=======
+		var (
+			db  *sql.DB
+			err error
+		)
+		if cfg.Checkpoint.MySQLParam != nil {
+			db, err = cfg.Checkpoint.MySQLParam.Connect()
+		} else {
+			db, err = sql.Open("mysql", cfg.Checkpoint.DSN)
+		}
+>>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -538,7 +550,15 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 	}
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
-		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		var (
+			db  *sql.DB
+			err error
+		)
+		if cfg.Checkpoint.MySQLParam != nil {
+			db, err = cfg.Checkpoint.MySQLParam.Connect()
+		} else {
+			db, err = sql.Open("mysql", cfg.Checkpoint.DSN)
+		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
