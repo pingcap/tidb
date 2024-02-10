@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "cte_test_test",
+    timeout = "short",
+    srcs = ["cte_test.go"],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//domain",
+        "//kv",
+        "//session",
+        "//store/mockstore",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
