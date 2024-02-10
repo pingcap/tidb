@@ -1208,8 +1208,17 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+<<<<<<< HEAD
 		chk := newFirstChunk(exec)
 
+=======
+		if pi, ok := sctx.(processinfoSetter); ok {
+			// Before executing the sub-query, we need update the processinfo to make the progress bar more accurate.
+			// because the sub-query may take a long time.
+			pi.UpdateProcessInfo()
+		}
+		chk := tryNewCacheChunk(exec)
+>>>>>>> 4714df8a83d (executor: fix issue of can not get the TxnStart if the SQL has a non-related subquery (#44232))
 		err = Next(ctx, exec, chk)
 		if err != nil {
 			return nil, err
