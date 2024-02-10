@@ -633,7 +633,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 
 	req.Reset()
 	for {
-		resultTask, err := e.getResultTask()
+		resultTask, err := e.getResultTask(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -651,7 +651,17 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 	}
 }
 
+<<<<<<< HEAD
 func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
+=======
+func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*indexMergeTableTask, error) {
+	failpoint.Inject("testIndexMergeMainReturnEarly", func(_ failpoint.Value) {
+		// To make sure processWorker make resultCh to be full.
+		// When main goroutine close finished, processWorker may be stuck when writing resultCh.
+		time.Sleep(time.Second * 20)
+		failpoint.Return(nil, errors.New("failpoint testIndexMergeMainReturnEarly"))
+	})
+>>>>>>> d4500b81eef (executor: fix query hang in IndexMerge Executor when it's killed (#45284))
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
 		return e.resultCurr, nil
 	}
@@ -659,8 +669,14 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
 	if !ok {
 		return nil, nil
 	}
-	if err := <-task.doneCh; err != nil {
-		return nil, errors.Trace(err)
+
+	select {
+	case <-ctx.Done():
+		return nil, errors.Trace(ctx.Err())
+	case err := <-task.doneCh:
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	// Release the memory usage of last task before we handle a new task.
