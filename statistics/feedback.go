@@ -81,6 +81,11 @@ func NewQueryFeedback(physicalID int64, hist *Histogram, expected int64, desc bo
 		Expected:   expected,
 		desc:       desc,
 	}
+<<<<<<< HEAD
+=======
+	rs.Valid.Store(FeedbackProbability.Load() > 0)
+	return rs
+>>>>>>> 37349e1be8 (planner: disable query-feedback thoroughly)
 }
 
 // QueryFeedbackKey is the key for a group of feedbacks on the same index/column.
