@@ -47,7 +47,7 @@
         "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
         "Plan": [
           " Projection         root plus(test.t1.a, ?), plus(test.t1.b, ?)",
-          " └─IndexReader      root index:IndexRangeScan_5",
+          " └─IndexReader      root index:IndexRangeScan",
           "   └─IndexRangeScan cop  table:t1, index:b(b), range:[?,?], keep order:false"
         ]
       },
