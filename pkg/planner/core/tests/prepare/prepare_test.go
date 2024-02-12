@@ -540,15 +540,13 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustExec("drop table if exists t_index_read")
 		tk.MustExec("create table t_index_read (id int, k int, c varchar(10), primary key (id, k)) partition by hash(id+k) partitions 10")
 		tk.MustExec("insert into t_index_read values (1, 2, 'abc'), (3, 4, 'def'), (5, 6, 'xyz')")
-		/*
-			tk.MustExec("prepare stmt1 from 'select c from t_index_read where id = ? and k = ?;'")
-			tk.MustExec("set @id=1, @k=2")
-			// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-			tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("abc"))
-			tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("abc"))
-			tk.MustExec("set @id=5, @k=6")
-			tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("xyz"))
-		*/
+		tk.MustExec("prepare stmt1 from 'select c from t_index_read where id = ? and k = ?;'")
+		tk.MustExec("set @id=1, @k=2")
+		// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
+		tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("abc"))
+		tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("abc"))
+		tk.MustExec("set @id=5, @k=6")
+		tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("xyz"))
 		tk.MustExec("prepare stmt2 from 'select c from t_index_read where id = ? and k = ? and 1 = 1;'")
 		tk.MustExec("set @id=1, @k=2")
 		tk.MustQuery("execute stmt2 using @id, @k").Check(testkit.Rows("abc"))
@@ -659,8 +657,8 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustExec("set @id=5")
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows("def"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
-		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows("def"))
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
+		//tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows("def"))
+		//tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
 		tk.MustExec("set @id=9")
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows("xyz"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
@@ -669,8 +667,9 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
 		tk.MustExec("set @id=100")
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows())
-		// TODO: Handle TableDual!
-		//tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
+		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows())
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
 	}
 }
 

@@ -17,8 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -28,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -129,10 +128,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	if pi == nil {
 		return e
 	}
-	if p.PartitionDef == nil {
-		return e
-	}
-	if !p.SCtx().GetSessionVars().StmtCtx.UseCache {
+	//  If tryPointGet did generate the plan, then PartitionDef is not set and needs to be set here!
+	// Basically there are two ways to get here from non-dynamic mode partition pruning:
+	// 1) converting a set of partitions into a Union scan - This should NOT be cached and should already be having PartitionDef set!
+	// 2) Converted to PointGet from checkTblIndexForPointPlan and then it does have the PartitionDef not set
+	if !p.SCtx().GetSessionVars().StmtCtx.UseCache && p.PartitionDef != nil {
 		return e
 	}
 	// Dynamic/Static prune mode will both use this!
@@ -154,6 +154,14 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	// Then we can always detect if the table in the plan cache
 	// did use a partitioned table.
 
+	tbl, ok := b.is.TableByID(p.TblInfo.ID)
+	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
+		// Can this happen?
+		panic("Partitioned table not table.PartitionedTable?")
+		return e
+	}
+	row := make([]types.Datum, len(p.TblInfo.Columns))
+
 	if p.HandleConstant != nil {
 		// TODO: See if we can reuse the already calculated dVal (see rebuildRange).
 		dVal, err := plannercore.ConvertConstant2Datum(b.ctx, p.HandleConstant, p.HandleFieldType)
@@ -161,33 +169,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 			b.err = err
 			return nil
 		}
-		colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
-		if colName != "" {
-			// Simple partitioning expression, use full pruner!
-			partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{colName, p.HandleFieldType, *dVal, p.HandleConstant}})
-			if isTableDual || partDef == nil {
-				return e.getTableDualExec(p)
-			}
-			p.PartitionDef = partDef
-			e.partitionDef = partDef
-			return e
-		}
-		// TODO:
-		// Add HandleConstant as conditions
-	}
-
-	if len(p.IndexValues) > 0 {
-		p.PartitionDef = nil
-		for i, param := range p.IndexConstants {
-			// TODO: don't use p.PartitionColumnPos?
-			if param != nil && p.PartitionColumnPos == i {
-				// Re-calculate the pruning!
-				colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
-				if colName == "" {
-					// Not simple partitioning expression, use full pruner!
-					break
-				}
-				partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{p.IndexInfo.Columns[i].Name.L, p.ColsFieldType[i], p.IndexValues[i], p.IndexConstants[i]}})
+		/*
+			colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
+			if colName != "" {
+				// Simple partitioning expression, use full pruner!
+				partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{colName, p.HandleFieldType, *dVal, p.HandleConstant}})
 				if isTableDual || partDef == nil {
 					return e.getTableDualExec(p)
 				}
@@ -195,59 +181,130 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 				e.partitionDef = partDef
 				return e
 			}
+		*/
+		var colOffset int
+		if pk := p.TblInfo.GetPrimaryKey(); pk != nil {
+			// TODO: Is this needed?
+			colOffset = pk.Columns[0].Offset
+		} else {
+			for _, col := range p.TblInfo.Columns {
+				if mysql.HasPriKeyFlag(col.GetFlag()) {
+					colOffset = col.Offset
+					break
+				}
+			}
+		}
+		dVal.Copy(&row[colOffset])
+	} else if len(p.IndexValues) > 0 {
+		for i := range p.IndexInfo.Columns {
+			// TODO: Skip copying non-partitioning columns?
+			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
 		}
 	}
-	// Re-calculate the pruning with the fully fledged pruner!
-	var conds []expression.Expression
-	conds = append(conds, p.AccessConditions...)
 
-	tbl, ok := b.is.TableByID(p.TblInfo.ID)
-	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
-		// Can this happen?
+	// Construct one row, with the partitioning columns filled
+	pt, ok := tbl.(table.PartitionedTable)
+	if pt == nil || !ok {
+		panic("Partitioned table not table.PartitionedTable?")
 		return e
 	}
-	// TODO: Can we access the partition names somehow? At least test with explicit partition selection
-	tblCols := tbl.Cols()
-	// TODO: Find out how to get he correct columns, including the column.UniqueID that already exists in AccessConds!
-	colExpressions := make([]*expression.Column, 0, len(tblCols))
-	colNames := make([]*types.FieldName, 0, len(tblCols))
-	for i := range tblCols {
-		colExpressions = append(colExpressions,
-			&expression.Column{
-				RetType:  &tblCols[i].FieldType,
-				ID:       tblCols[i].ID,
-				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			})
-
-		colNames = append(colNames, &types.FieldName{
-			DBName:  model.NewCIStr(p.DBName),
-			TblName: tbl.Meta().Name,
-			ColName: tblCols[i].Name,
-		})
+	part, err := pt.GetPartitionByRow(b.ctx, row)
+	if err != nil {
+		if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
+			return e.getTableDualExec(p)
+		}
+		panic("More expected errors?")
+		b.err = err
+		return nil
 	}
-	for i, param := range p.IndexConstants {
-		if param != nil {
-			sf, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{param, colExpressions[i]}...)
+	// TODO: if this works, cache the map from ID to Def
+	defs := tbl.Meta().Partition.Definitions
+	for i := range defs {
+		if defs[i].ID == part.GetPhysicalID() {
+			p.PartitionDef = &defs[i]
+			e.partitionDef = p.PartitionDef
+			return e
+		}
+	}
+	panic("TODO: fixme :)")
+	return nil
+
+	/*
+			// OLD:
+			// TODO: Can we access the partition names somehow? At least test with explicit partition selection
+			tblCols := tbl.Cols()
+			// TODO: Find out how to get he correct columns, including the column.UniqueID that already exists in AccessConds!
+			colExpressions := make([]*expression.Column, 0, len(tblCols))
+			colNames := make([]*types.FieldName, 0, len(tblCols))
+			for i := range tblCols {
+				colExpressions = append(colExpressions,
+					&expression.Column{
+						RetType:  &tblCols[i].FieldType,
+						ID:       tblCols[i].ID,
+						UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+					})
+
+				colNames = append(colNames, &types.FieldName{
+					DBName:  model.NewCIStr(p.DBName),
+					TblName: tbl.Meta().Name,
+					ColName: tblCols[i].Name,
+				})
+			}
+			for i, param := range p.IndexConstants {
+				if param != nil {
+					sf, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{param, colExpressions[i]}...)
+					if err != nil {
+						b.err = err
+						return nil
+					}
+					conds = append(conds, sf)
+				}
+			}
+			if p.HandleConstant != nil {
+				if !p.TblInfo.PKIsHandle {
+					b.err = errors.New("PointGet with HandleConstant, but not PKIsHandle")
+					return nil
+				}
+				partTable, ok := tbl.(partitionTable)
+				if !ok {
+					b.err = errors.New("Partitioned table, but has no PartitionExpr")
+					return nil
+				}
+
+				expr := partTable.PartitionExpr().Expr
+				sf, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{p.HandleConstant, expr}...)
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				conds = append(conds, sf)
+				part :=
+			}
+
+			// Use GetPartitionByRow instead of PartitionPruning, since PointGet should use a Unique Index
+			// with values => all partitioning columns must be there!
+			part := table.
+			parts, err := plannercore.PartitionPruning(b.ctx, tbl.GetPartitionedTable(), conds, nil, colExpressions, colNames)
 			if err != nil {
 				b.err = err
-				return nil
+				return e
 			}
-			conds = append(conds, sf)
+			if len(parts) == 1 && parts[0] >= 0 && parts[0] < len(pi.Definitions) {
+				p.PartitionDef = &pi.Definitions[parts[0]]
+			} else {
+				// TODO: How to handle Full Range or multiple partitions? I.e. wrong plan?
+				return e.getTableDualExec(p)
+			}
+			e.partitionDef = p.PartitionDef
+			return e
 		}
-	}
 
-	parts, err := plannercore.PartitionPruning(b.ctx, tbl.GetPartitionedTable(), conds, nil, colExpressions, colNames)
-	if err != nil {
-		b.err = err
-		return e
-	}
-	if len(parts) == 1 && parts[0] >= 0 && parts[0] < len(pi.Definitions) {
-		p.PartitionDef = &pi.Definitions[parts[0]]
-	} else {
-		return e.getTableDualExec(p)
-	}
-	e.partitionDef = p.PartitionDef
-	return e
+		// partitionTable is for those tables which implement partition.
+		type partitionTable interface {
+			PartitionExpr() *tables.PartitionExpr
+		}
+
+	*/
 }
 
 // PointGetExecutor executes point select query.
