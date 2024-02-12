@@ -15,14 +15,9 @@
 package expression
 
 import (
-<<<<<<< HEAD:expression/function_traits.go
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/opcode"
-=======
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/sessionctx"
->>>>>>> f72e1d966ce (planner: add Sysdate into deferredFunctions when enable SysdateIsNow (#49949)):pkg/expression/function_traits.go
+	"github.com/pingcap/tidb/sessionctx"
 )
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
