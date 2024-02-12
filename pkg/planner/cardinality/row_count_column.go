@@ -289,7 +289,8 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 		}
 
 		histNDV := c.NDV
-		if c.StatsVer == statistics.Version2 {
+		// Exclude the TopN only if our modifyCount is low - TopN values may exist in the out-of-range part
+		if c.StatsVer == statistics.Version2 && float64(modifyCount) < c.Histogram.NotNullCount() {
 			histNDV = histNDV - int64(c.TopN.Num())
 		}
 		// handling the out-of-range part
