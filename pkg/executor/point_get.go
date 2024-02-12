@@ -129,6 +129,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	if pi == nil {
 		return e
 	}
+	if p.PartitionDef == nil {
+		return e
+	}
+	if !p.SCtx().GetSessionVars().StmtCtx.UseCache {
+		return e
+	}
 	// Dynamic/Static prune mode will both use this!
 	/*
 		if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {

@@ -92,6 +92,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan, opt *logicalOptim
 				children = append(children, us)
 			}
 			ua.SetChildren(children...)
+			ua.SCtx().GetSessionVars().StmtCtx.UseCache = false
 			return ua, nil
 		}
 		// Only one partition, no union all.
@@ -506,8 +507,8 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
-	// TODO: Use this for handling TableDual?
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	tableDual.SCtx().GetSessionVars().StmtCtx.UseCache = false
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
@@ -834,7 +835,6 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 		return s.processListPartition(ds, pi, opt)
 	}
 
-	// We haven't implement partition by key and so on.
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 
@@ -1036,13 +1036,17 @@ func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.Part
 	if err != nil {
 		return nil, err
 	}
-	if used != nil {
-		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
-	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	tableDual.schema = ds.Schema()
-	appendNoPartitionChildTraceStep(ds, tableDual, opt)
-	return tableDual, nil
+	return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
+	/*
+		if used != nil {
+			return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
+		}
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
+		tableDual.SCtx().GetSessionVars().StmtCtx.UseCache = false
+		tableDual.schema = ds.Schema()
+		appendNoPartitionChildTraceStep(ds, tableDual, opt)
+		return tableDual, nil
+	*/
 }
 
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
@@ -1796,6 +1800,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	if len(children) == 0 {
 		// No result after table pruning.
 		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
+		tableDual.SCtx().GetSessionVars().StmtCtx.UseCache = false
 		tableDual.schema = ds.Schema()
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
@@ -1803,9 +1808,11 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	if len(children) == 1 {
 		// No need for the union all.
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
+		children[0].SCtx().GetSessionVars().StmtCtx.UseCache = false
 		return children[0], nil
 	}
 	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	unionAll.SCtx().GetSessionVars().StmtCtx.UseCache = false
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema.Clone())
 	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)
