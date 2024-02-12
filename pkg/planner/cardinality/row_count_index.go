@@ -324,9 +324,11 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			count += betweenRowCountOnIndex(sctx, idx, l, r)
 		}
 
+		highModifyCount := modifyCount > int64(idx.Histogram.NotNullCount())
+		lowEstimate := count < float64(realtimeRowCount)/3
 		// If the table has changed - update the count accordingly. If we're already above 1/3 of the table size
 		// then inflating further is risky since modifications don't break down inserts separately from deletes/updates
-		if count < float64(realtimeRowCount)/3 {
+		if !highModifyCount || lowEstimate {
 			count *= idx.GetIncreaseFactor(realtimeRowCount)
 		}
 
@@ -336,11 +338,11 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 		if isSingleColRange && !isSingleColIdx {
 			histNDV = coll.Columns[idx.Histogram.ID].Histogram.NDV
 			// Exclude the TopN - but only if we have a low modifyCount, since those could be in the out-of-range part
-		} else if idx.StatsVer == statistics.Version2 && float64(modifyCount) < idx.NotNullCount() {
+		} else if idx.StatsVer == statistics.Version2 && !highModifyCount {
 			histNDV -= int64(idx.TopN.Num())
 		}
 		// handling the out-of-range part
-		if count < (float64(realtimeRowCount)*0.5) && (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+		if (!highModifyCount || lowEstimate) && (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, realtimeRowCount, histNDV)
 		}
 

@@ -1055,6 +1055,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	currentCount := hg.NotNullCount()
 	modifyCountF := float64(modifyCount)
 	realtimeCountF := float64(realtimeRowCount)
+	// Bound the left/right percentages if we have a high modifyCount - since this is unreliable
 	if modifyCountF > currentCount {
 		rightPercent = min(rightPercent, 0.5)
 		leftPercent = min(leftPercent, 0.5)
@@ -1069,7 +1070,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	origUpperBound, realUpperBound := rowCount, rowCount
 	if histNDV > 0 {
 		origUpperBound = currentCount / float64(histNDV)
-		realUpperBound = max(currentCount, realtimeCountF) / float64(histNDV)
+		realUpperBound = max(modifyCountF, realtimeCountF) / float64(histNDV)
 	}
 
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
@@ -1086,12 +1087,13 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use the upperBound value as a lower bound if modifyCount is larger than the base table count.
 	// This targets the use case where we are searching for a value that is statistically out of range, but
 	// inserts result in the value actually being in that modified range.
-	adjustRatio := realtimeCountF / currentCount
+	//adjustRatio := realtimeCountF / currentCount
 	if modifyCountF >= currentCount {
 		rowCount = max(rowCount, realUpperBound)
 	} else {
 		// Inflate rowCount by the percentage represented by modify count
-		rowCount += rowCount * adjustRatio
+		//rowCount += rowCount * adjustRatio
+		rowCount *= hg.GetIncreaseFactor(realtimeRowCount)
 	}
 
 	// Use modifyCount as the final upper bound
