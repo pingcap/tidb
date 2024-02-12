@@ -1117,8 +1117,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.HandleFieldType = fieldType
 		p.HandleConstant = handlePair.Con
-		//p.PartitionDef = partitionDef
-		p.needPartitionPruning = tbl.GetPartitionInfo() != nil
 		return p
 	} else if handlePair.Value.Kind() != types.KindNull {
 		return nil

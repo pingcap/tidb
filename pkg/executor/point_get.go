@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -43,6 +42,19 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
+
+func (e *PointGetExecutor) getTableDualExec(p *plannercore.PointGetPlan) exec.Executor {
+	p.PartitionDef = &model.PartitionDefinition{
+		ID:      0,
+		Name:    model.NewCIStr("<none>"),
+		Comment: "No matching partition in PointGet",
+	}
+	return &TableDualExec{
+		BaseExecutor: e.BaseExecutor,
+		numDualRows:  0,
+		numReturned:  0,
+	}
+}
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {
 	var err error
@@ -117,36 +129,51 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	if pi == nil {
 		return e
 	}
+	// Dynamic/Static prune mode will both use this!
+	/*
+		if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {
+			e.partitionDef = p.PartitionDef
+			return e
+		}
+	*/
 	// Reset PartitionDef, should only be used if partitioned table.
 	// If nil and partitioned table, no partition matched!
+	// TODO: Should this be considered as 'depending on parameters'
+	// or as only static parts?
+	// I.e. if prepared statement, and partition columns are not parameterized, then it is depending on parameters,
+	// but if all partition columns are given as constants, then it is not... (Probably this is a non issue for Point Get...)
 	p.PartitionDef = nil
+	// TODO: Should we set it to an 'impossible' partitionDef instead
+	// to note either TableDual or All partitions?
+	// Then we can always detect if the table in the plan cache
+	// did use a partitioned table.
 
 	if p.HandleConstant != nil {
 		// TODO: See if we can reuse the already calculated dVal (see rebuildRange).
 		dVal, err := plannercore.ConvertConstant2Datum(b.ctx, p.HandleConstant, p.HandleFieldType)
 		if err != nil {
-			return e
+			b.err = err
+			return nil
 		}
 		colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
 		if colName != "" {
 			// Simple partitioning expression, use full pruner!
 			partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{colName, p.HandleFieldType, *dVal, p.HandleConstant}})
 			if isTableDual || partDef == nil {
-				// PartitionDef not set, so it will not use any partitions!
-				return e
+				return e.getTableDualExec(p)
 			}
 			p.PartitionDef = partDef
+			e.partitionDef = partDef
 			return e
 		}
 		// TODO:
 		// Add HandleConstant as conditions
 	}
 
-	var conds []expression.Expression
-	conds = append(conds, p.AccessConditions...)
 	if len(p.IndexValues) > 0 {
 		p.PartitionDef = nil
 		for i, param := range p.IndexConstants {
+			// TODO: don't use p.PartitionColumnPos?
 			if param != nil && p.PartitionColumnPos == i {
 				// Re-calculate the pruning!
 				colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
@@ -156,53 +183,34 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 				}
 				partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{p.IndexInfo.Columns[i].Name.L, p.ColsFieldType[i], p.IndexValues[i], p.IndexConstants[i]}})
 				if isTableDual || partDef == nil {
-					// PartitionDef not set, so it will not use any partitions!
-					return e
+					return e.getTableDualExec(p)
 				}
 				p.PartitionDef = partDef
+				e.partitionDef = partDef
 				return e
 			}
 		}
-		// TODO:
-		// Add IndexCol[0] = IndexVal[0] AND IndexCol[1] = IndexVal[1] ...
-		// to conds and run full partition pruner
-		for i, param := range p.IndexConstants {
-			if param != nil {
-				col :=
-
-				sf, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{param, p.IndexInfo.Columns[i]}...)
-				if err != nil {
-					// WHAT TO DO?!?
-				}
-				conds = append(conds, sf)
-			}
-		}
 	}
-	// Re-calculate the pruning!
-	// For now, use the fully fledged pruner!
-	is := domain.GetDomain(b.ctx).InfoSchema()
+	// Re-calculate the pruning with the fully fledged pruner!
+	var conds []expression.Expression
+	conds = append(conds, p.AccessConditions...)
 
-	tbl, ok := is.TableByID(p.TblInfo.ID)
+	tbl, ok := b.is.TableByID(p.TblInfo.ID)
 	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
+		// Can this happen?
 		return e
 	}
 	// TODO: Can we access the partition names somehow? At least test with explicit partition selection
 	tblCols := tbl.Cols()
+	// TODO: Find out how to get he correct columns, including the column.UniqueID that already exists in AccessConds!
 	colExpressions := make([]*expression.Column, 0, len(tblCols))
 	colNames := make([]*types.FieldName, 0, len(tblCols))
 	for i := range tblCols {
 		colExpressions = append(colExpressions,
 			&expression.Column{
-				RetType: &tblCols[i].FieldType,
-				ID:      tblCols[i].ID,
-				//UniqueID:              0,
-				//Index:                 0,
-				//VirtualExpr:           nil,
-				//OrigName:              tblCols[i].Name.L,
-				//IsHidden:              false,
-				//IsPrefix:              false,
-				//InOperand:             false,
-				//CorrelatedColUniqueID: 0,
+				RetType:  &tblCols[i].FieldType,
+				ID:       tblCols[i].ID,
+				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
 
 		colNames = append(colNames, &types.FieldName{
@@ -211,13 +219,28 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 			ColName: tblCols[i].Name,
 		})
 	}
+	for i, param := range p.IndexConstants {
+		if param != nil {
+			sf, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{param, colExpressions[i]}...)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			conds = append(conds, sf)
+		}
+	}
+
 	parts, err := plannercore.PartitionPruning(b.ctx, tbl.GetPartitionedTable(), conds, nil, colExpressions, colNames)
 	if err != nil {
+		b.err = err
 		return e
 	}
 	if len(parts) == 1 && parts[0] >= 0 && parts[0] < len(pi.Definitions) {
 		p.PartitionDef = &pi.Definitions[parts[0]]
+	} else {
+		return e.getTableDualExec(p)
 	}
+	e.partitionDef = p.PartitionDef
 	return e
 }
 
@@ -270,6 +293,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
+	// TODO: is p.PartitionDef the 'static' pruning, i.e. if not part of the prepared statement parameters?
 	e.partitionDef = p.PartitionDef
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
