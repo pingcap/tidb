@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"math"
 	"slices"
 	"strconv"
@@ -5021,6 +5022,29 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
 }
 
+// Map each index value to Partition ID
+func (b *executorBuilder) getPartitionIDs(plan *plannercore.BatchPointGetPlan, rows [][]types.Datum) ([]int64, error) {
+	pi := plan.TblInfo.GetPartitionInfo()
+	tbl, ok := b.is.TableByID(plan.TblInfo.ID)
+	intest.Assert(ok)
+	pTbl, ok := tbl.(table.PartitionedTable)
+	intest.Assert(ok)
+	intest.Assert(pTbl != nil)
+	r := make([]types.Datum, len(pTbl.Cols()))
+	for i := range rows {
+		for j := range rows[i] {
+			rows[i][j].Copy(&r[plan.IndexInfo.Columns[j].Offset])
+		}
+		pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
+		if err != nil {
+			b.err = err
+			return nil, err
+		}
+		plan.PartitionIDs = append(plan.PartitionIDs, pi.Definitions[pIdx].ID)
+	}
+	return plan.PartitionIDs, nil
+}
+
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) exec.Executor {
 	var err error
 	if err = b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
@@ -5103,30 +5127,55 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.hasLock = true
 	}
 
+	plan.PartitionIDs = plan.PartitionIDs[:0]
 	var capacity int
 	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
 		e.idxVals = plan.IndexValues
 		capacity = len(e.idxVals)
+
+		pi := plan.TblInfo.GetPartitionInfo()
+		if pi != nil {
+			e.planPhysIDs, err = b.getPartitionIDs(plan, plan.IndexValues)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+		}
 	} else {
 		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
 		handles := make([]kv.Handle, 0, len(plan.Handles))
 		dedup := kv.NewHandleMap()
-		// Used for clear paritionIDs of duplicated rows.
-		dupPartPos := 0
 		if plan.IndexInfo == nil {
-			for idx, handle := range plan.Handles {
+			for _, handle := range plan.Handles {
 				if _, found := dedup.Get(handle); found {
 					continue
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
-				if len(plan.PartitionIDs) > 0 {
-					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
-					dupPartPos++
+			}
+			if pi := plan.TblInfo.GetPartitionInfo(); pi != nil {
+				tbl, ok := b.is.TableByID(plan.TblInfo.ID)
+				intest.Assert(ok)
+				pTbl, ok := tbl.(table.PartitionedTable)
+				intest.Assert(ok)
+				intest.Assert(pTbl != nil)
+				// TODO: cache this pk col offset!
+				colOffset := plan.TblInfo.GetPkColInfo().Offset
+				r := make([]types.Datum, colOffset+1)
+				for _, handle := range handles {
+					d := types.NewIntDatum(handle.IntValue())
+					d.Copy(&r[colOffset])
+					pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
+					if err != nil {
+						b.err = err
+						return nil
+					}
+					plan.PartitionIDs = append(plan.PartitionIDs, pi.Definitions[pIdx].ID)
 				}
 			}
 		} else {
-			for idx, value := range plan.IndexValues {
+			var vals [][]types.Datum
+			for _, value := range plan.IndexValues {
 				if datumsContainNull(value) {
 					continue
 				}
@@ -5148,16 +5197,20 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
-				if len(plan.PartitionIDs) > 0 {
-					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
-					dupPartPos++
+				if plan.TblInfo.GetPartitionInfo() != nil {
+					vals = append(vals, value)
+				}
+			}
+			if len(vals) > 0 {
+				e.planPhysIDs, err = b.getPartitionIDs(plan, plan.IndexValues)
+				if err != nil {
+					b.err = err
+					return nil
 				}
 			}
 		}
 		e.handles = handles
-		if dupPartPos > 0 {
-			e.planPhysIDs = e.planPhysIDs[:dupPartPos]
-		}
+		e.planPhysIDs = plan.PartitionIDs
 		capacity = len(e.handles)
 	}
 	e.SetInitCap(capacity)

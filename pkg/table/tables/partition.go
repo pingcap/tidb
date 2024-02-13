@@ -19,6 +19,7 @@ import (
 	"context"
 	stderr "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"hash/crc32"
 	"sort"
 	"strconv"
@@ -1308,13 +1309,23 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.BuildContext, tp
 	return idx, nil
 }
 
-func (t *partitionedTable) locatePartition(ctx expression.BuildContext, r []types.Datum) (int64, error) {
+func (t *partitionedTable) locatePartitionIdx(ctx expression.BuildContext, r []types.Datum) (int, error) {
 	pi := t.Meta().GetPartitionInfo()
 	columnsSet := len(t.meta.Partition.Columns) > 0
 	idx, err := t.locatePartitionCommon(ctx, pi.Type, t.partitionExpr, pi.Num, columnsSet, r)
+	intest.Assert(idx >= 0)
+	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	return idx, nil
+}
+
+func (t *partitionedTable) locatePartition(ctx expression.BuildContext, r []types.Datum) (int64, error) {
+	idx, err := t.locatePartitionIdx(ctx, r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	pi := t.Meta().GetPartitionInfo()
 	return pi.Definitions[idx].ID, nil
 }
 
@@ -1541,6 +1552,11 @@ func (t *partitionedTable) GetPartitionByRow(ctx expression.BuildContext, r []ty
 		return nil, errors.Trace(err)
 	}
 	return t.partitions[pid], nil
+}
+
+// GetPartitionIdxByRow returns the index in PartitionDef for the matching partition
+func (t *partitionedTable) GetPartitionIdxByRow(ctx expression.BuildContext, r []types.Datum) (int, error) {
+	return t.locatePartitionIdx(ctx, r)
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.

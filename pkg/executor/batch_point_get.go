@@ -46,12 +46,13 @@ type BatchPointGetExec struct {
 	exec.BaseExecutor
 	indexUsageReporter *exec.IndexUsageReporter
 
-	tblInfo     *model.TableInfo
-	idxInfo     *model.IndexInfo
-	handles     []kv.Handle
-	physIDs     []int64
-	partExpr    *tables.PartitionExpr
-	partPos     int
+	tblInfo  *model.TableInfo
+	idxInfo  *model.IndexInfo
+	handles  []kv.Handle
+	physIDs  []int64
+	partExpr *tables.PartitionExpr
+	partPos  int
+	// TODO: Why both physIDs and planPhysIDs?!?
 	planPhysIDs []int64
 	singlePart  bool
 	partTblID   int64
