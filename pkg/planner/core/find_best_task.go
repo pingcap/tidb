@@ -2304,45 +2304,12 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
 	}.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
-	var partitionDef *model.PartitionDefinition
-	pi := ds.tableInfo.GetPartitionInfo()
-	if ds.isPartition {
-		// static prune
-		if pi != nil {
-			for i := range pi.Definitions {
-				def := pi.Definitions[i]
-				if def.ID == ds.physicalTableID {
-					partitionDef = &def
-					break
-				}
-			}
-		}
-		if partitionDef == nil {
-			return invalidTask
-		}
-	} else if pi != nil {
-		// dynamic prune
-		idxs, err := PartitionPruning(ds.SCtx(), ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
-		if err != nil {
-			return invalidTask
-		}
-		if len(idxs) == 1 && idxs[0] == FullRange {
-			if len(pi.Definitions) != 1 {
-				return invalidTask
-			}
-			partitionDef = &pi.Definitions[0]
-		} else if len(idxs) == 1 {
-			partitionDef = &pi.Definitions[idxs[0]]
-		} else {
-			return invalidTask
-		}
-	}
 	rTsk := &rootTask{p: pointGetPlan}
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
-		pointGetPlan.PartitionDef = partitionDef
 		pointGetPlan.accessCols = ds.TblCols
+		pointGetPlan.HandleColOffset = ds.handleCols.GetCol(0).Index
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sel := PhysicalSelection{
@@ -2356,7 +2323,6 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IdxCols = candidate.path.IdxCols
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
-		pointGetPlan.PartitionDef = partitionDef
 		if candidate.path.IsSingleScan {
 			pointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
@@ -2392,9 +2358,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
-		SinglePart:       ds.isPartition,
-		PartTblID:        ds.physicalTableID,
-		PartitionExpr:    getPartitionExpr(ds.SCtx(), ds.TableInfo()),
 	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
@@ -2418,7 +2381,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		batchPointGetPlan.PartitionColPos = getColumnPosInIndex(candidate.path.Index, hashPartColName)
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}

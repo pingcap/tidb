@@ -161,38 +161,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	row := make([]types.Datum, len(p.TblInfo.Columns))
 
 	if p.HandleConstant != nil {
-		// TODO: See if we can reuse the already calculated dVal (see rebuildRange).
-		dVal, err := plannercore.ConvertConstant2Datum(b.ctx, p.HandleConstant, p.HandleFieldType)
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		/*
-			colName := plannercore.GetPartitionColNameSimple(b.ctx, p.TblInfo)
-			if colName != "" {
-				// Simple partitioning expression, use full pruner!
-				partDef, _, _, isTableDual := plannercore.GetPartitionDef(b.ctx, p.TblInfo, colName, []plannercore.NameValuePair{{colName, p.HandleFieldType, *dVal, p.HandleConstant}})
-				if isTableDual || partDef == nil {
-					return e.getTableDualExec(p)
-				}
-				p.PartitionDef = partDef
-				e.partitionDef = partDef
-				return e
-			}
-		*/
-		var colOffset int
-		if pk := p.TblInfo.GetPrimaryKey(); pk != nil {
-			// TODO: Is this needed?
-			colOffset = pk.Columns[0].Offset
-		} else {
-			for _, col := range p.TblInfo.Columns {
-				if mysql.HasPriKeyFlag(col.GetFlag()) {
-					colOffset = col.Offset
-					break
-				}
-			}
-		}
-		dVal.Copy(&row[colOffset])
+		// TODO: Handle unsigned?
+		dVal := types.NewIntDatum(p.Handle.IntValue())
+		dVal.Copy(&row[p.HandleColOffset])
 	} else if len(p.IndexValues) > 0 {
 		for i := range p.IndexInfo.Columns {
 			// TODO: Skip copying non-partitioning columns?
@@ -211,8 +182,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
 			return e.getTableDualExec(p)
 		}
-		panic("More expected errors?")
 		b.err = err
+		panic("More expected errors?")
 		return nil
 	}
 	// TODO: if this works, cache the map from ID to Def
@@ -226,83 +197,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 	panic("TODO: fixme :)")
 	return nil
-
-	/*
-			// OLD:
-			// TODO: Can we access the partition names somehow? At least test with explicit partition selection
-			tblCols := tbl.Cols()
-			// TODO: Find out how to get he correct columns, including the column.UniqueID that already exists in AccessConds!
-			colExpressions := make([]*expression.Column, 0, len(tblCols))
-			colNames := make([]*types.FieldName, 0, len(tblCols))
-			for i := range tblCols {
-				colExpressions = append(colExpressions,
-					&expression.Column{
-						RetType:  &tblCols[i].FieldType,
-						ID:       tblCols[i].ID,
-						UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-					})
-
-				colNames = append(colNames, &types.FieldName{
-					DBName:  model.NewCIStr(p.DBName),
-					TblName: tbl.Meta().Name,
-					ColName: tblCols[i].Name,
-				})
-			}
-			for i, param := range p.IndexConstants {
-				if param != nil {
-					sf, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{param, colExpressions[i]}...)
-					if err != nil {
-						b.err = err
-						return nil
-					}
-					conds = append(conds, sf)
-				}
-			}
-			if p.HandleConstant != nil {
-				if !p.TblInfo.PKIsHandle {
-					b.err = errors.New("PointGet with HandleConstant, but not PKIsHandle")
-					return nil
-				}
-				partTable, ok := tbl.(partitionTable)
-				if !ok {
-					b.err = errors.New("Partitioned table, but has no PartitionExpr")
-					return nil
-				}
-
-				expr := partTable.PartitionExpr().Expr
-				sf, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{p.HandleConstant, expr}...)
-				if err != nil {
-					b.err = err
-					return nil
-				}
-				conds = append(conds, sf)
-				part :=
-			}
-
-			// Use GetPartitionByRow instead of PartitionPruning, since PointGet should use a Unique Index
-			// with values => all partitioning columns must be there!
-			part := table.
-			parts, err := plannercore.PartitionPruning(b.ctx, tbl.GetPartitionedTable(), conds, nil, colExpressions, colNames)
-			if err != nil {
-				b.err = err
-				return e
-			}
-			if len(parts) == 1 && parts[0] >= 0 && parts[0] < len(pi.Definitions) {
-				p.PartitionDef = &pi.Definitions[parts[0]]
-			} else {
-				// TODO: How to handle Full Range or multiple partitions? I.e. wrong plan?
-				return e.getTableDualExec(p)
-			}
-			e.partitionDef = p.PartitionDef
-			return e
-		}
-
-		// partitionTable is for those tables which implement partition.
-		type partitionTable interface {
-			PartitionExpr() *tables.PartitionExpr
-		}
-
-	*/
 }
 
 // PointGetExecutor executes point select query.

@@ -46,12 +46,12 @@ type BatchPointGetExec struct {
 	exec.BaseExecutor
 	indexUsageReporter *exec.IndexUsageReporter
 
-	tblInfo  *model.TableInfo
-	idxInfo  *model.IndexInfo
-	handles  []kv.Handle
-	physIDs  []int64
-	partExpr *tables.PartitionExpr
-	partPos  int
+	tblInfo     *model.TableInfo
+	idxInfo     *model.IndexInfo
+	handles     []kv.Handle
+	physIDs     []int64
+	BPGpartExpr *tables.PartitionExpr
+	BPGpartPos  int
 	// TODO: Why both physIDs and planPhysIDs?!?
 	planPhysIDs []int64
 	singlePart  bool
@@ -235,13 +235,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 
 			var physID int64
-			if e.partPos == core.GlobalWithoutColumnPos {
+			if e.BPGpartPos == core.GlobalWithoutColumnPos {
 				physID = e.tblInfo.ID
 			} else {
 				if len(e.planPhysIDs) > 0 {
 					physID = e.planPhysIDs[i]
 				} else {
-					physID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, idxVals[e.partPos])
+					physID, err = core.GetPhysID(e.tblInfo, e.BPGpartExpr, e.BPGpartPos, idxVals[e.BPGpartPos])
 					if err != nil {
 						continue
 					}
@@ -387,16 +387,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		} else {
 			if handle.IsInt() {
 				d := types.NewIntDatum(handle.IntValue())
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.BPGpartExpr, e.BPGpartPos, d)
 				if err != nil {
 					continue
 				}
 			} else {
-				_, d, err1 := codec.DecodeOne(handle.EncodedCol(e.partPos))
+				_, d, err1 := codec.DecodeOne(handle.EncodedCol(e.BPGpartPos))
 				if err1 != nil {
 					return err1
 				}
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.BPGpartExpr, e.BPGpartPos, d)
 				if err != nil {
 					continue
 				}

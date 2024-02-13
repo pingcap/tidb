@@ -1560,7 +1560,7 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 		if pruneMode == string(variable.Dynamic) {
-			require.Equal(t, "IndexLookUp_10", explain.Rows()[0][0])
+			require.Equal(t, "Selection_6", explain.Rows()[0][0])
 		} else {
 			require.Equal(t, "TableDual_7", explain.Rows()[0][0])
 		}
@@ -1569,7 +1569,7 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 
 		explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 		if pruneMode == string(variable.Dynamic) {
-			require.Equal(t, "IndexLookUp_10", explain.Rows()[0][0])
+			require.Equal(t, "Selection_6", explain.Rows()[0][0])
 			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows())
 		} else {

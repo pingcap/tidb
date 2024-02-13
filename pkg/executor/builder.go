@@ -5071,11 +5071,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		desc:               plan.Desc,
 		lock:               plan.Lock,
 		waitTime:           plan.LockWaitTime,
-		partExpr:           plan.PartitionExpr,
-		partPos:            plan.PartitionColPos,
-		planPhysIDs:        plan.PartitionIDs,
-		singlePart:         plan.SinglePart,
-		partTblID:          plan.PartTblID,
 		columns:            plan.Columns,
 	}
 
@@ -5160,12 +5155,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				pTbl, ok := tbl.(table.PartitionedTable)
 				intest.Assert(ok)
 				intest.Assert(pTbl != nil)
-				// TODO: cache this pk col offset!
-				colOffset := plan.TblInfo.GetPkColInfo().Offset
-				r := make([]types.Datum, colOffset+1)
+				r := make([]types.Datum, plan.HandleColOffset+1)
 				for _, handle := range handles {
 					d := types.NewIntDatum(handle.IntValue())
-					d.Copy(&r[colOffset])
+					d.Copy(&r[plan.HandleColOffset])
 					pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
 					if err != nil {
 						// TODO: Handle cases where no matching partition is found
