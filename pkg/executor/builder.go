@@ -19,7 +19,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"math"
 	"slices"
 	"strconv"
@@ -57,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -76,6 +76,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -5037,7 +5038,10 @@ func (b *executorBuilder) getPartitionIDs(plan *plannercore.BatchPointGetPlan, r
 		}
 		pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
 		if err != nil {
-			// TODO: Handle cases where no matching partition is found
+			if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
+				plan.PartitionIDs = append(plan.PartitionIDs, 0)
+				continue
+			}
 			b.err = err
 			return nil, err
 		}

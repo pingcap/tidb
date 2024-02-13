@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -155,7 +157,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	tbl, ok := b.is.TableByID(p.TblInfo.ID)
 	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
 		// Can this happen?
-		panic("Partitioned table not table.PartitionedTable?")
+		intest.Assert(false)
 		return e
 	}
 	row := make([]types.Datum, len(p.TblInfo.Columns))
@@ -174,7 +176,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	// Construct one row, with the partitioning columns filled
 	pt, ok := tbl.(table.PartitionedTable)
 	if pt == nil || !ok {
-		panic("Partitioned table not table.PartitionedTable?")
+		intest.Assert(false)
 		return e
 	}
 	part, err := pt.GetPartitionByRow(b.ctx, row)
@@ -182,8 +184,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
 			return e.getTableDualExec(p)
 		}
+		intest.Assert(false)
 		b.err = err
-		panic("More expected errors?")
 		return nil
 	}
 	// TODO: if this works, cache the map from ID to Def
@@ -195,7 +197,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 			return e
 		}
 	}
-	panic("TODO: fixme :)")
+	intest.Assert(false)
 	return nil
 }
 

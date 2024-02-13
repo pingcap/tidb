@@ -240,7 +240,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			} else {
 				if len(e.planPhysIDs) > 0 {
 					physID = e.planPhysIDs[i]
+					if physID == 0 {
+						// No matching partition!
+						continue
+					}
 				} else {
+					// TODO: When is this used?
 					physID, err = core.GetPhysID(e.tblInfo, e.BPGpartExpr, e.BPGpartPos, idxVals[e.BPGpartPos])
 					if err != nil {
 						continue
