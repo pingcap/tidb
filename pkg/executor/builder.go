@@ -5037,6 +5037,7 @@ func (b *executorBuilder) getPartitionIDs(plan *plannercore.BatchPointGetPlan, r
 		}
 		pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
 		if err != nil {
+			// TODO: Handle cases where no matching partition is found
 			b.err = err
 			return nil, err
 		}
@@ -5167,6 +5168,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 					d.Copy(&r[colOffset])
 					pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
 					if err != nil {
+						// TODO: Handle cases where no matching partition is found
 						b.err = err
 						return nil
 					}

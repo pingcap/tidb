@@ -130,20 +130,16 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	if pi == nil {
 		return e
 	}
-	//  If tryPointGet did generate the plan, then PartitionDef is not set and needs to be set here!
+	// If tryPointGetPlan did generate the plan,
+	// then PartitionDef is not set and needs to be set here!
 	// Basically there are two ways to get here from non-dynamic mode partition pruning:
-	// 1) converting a set of partitions into a Union scan - This should NOT be cached and should already be having PartitionDef set!
-	// 2) Converted to PointGet from checkTblIndexForPointPlan and then it does have the PartitionDef not set
+	// 1) Converting a set of partitions into a Union scan
+	//    - This should NOT be cached and should already be having PartitionDef set!
+	// 2) Converted to PointGet from checkTblIndexForPointPlan
+	//    and it does not have the PartitionDef set
 	if !p.SCtx().GetSessionVars().StmtCtx.UseCache && p.PartitionDef != nil {
 		return e
 	}
-	// Dynamic/Static prune mode will both use this!
-	/*
-		if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {
-			e.partitionDef = p.PartitionDef
-			return e
-		}
-	*/
 	// Reset PartitionDef, should only be used if partitioned table.
 	// If nil and partitioned table, no partition matched!
 	// TODO: Should this be considered as 'depending on parameters'

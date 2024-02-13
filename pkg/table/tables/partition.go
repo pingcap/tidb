@@ -19,7 +19,6 @@ import (
 	"context"
 	stderr "errors"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"hash/crc32"
 	"sort"
 	"strconv"
@@ -1313,7 +1312,6 @@ func (t *partitionedTable) locatePartitionIdx(ctx expression.BuildContext, r []t
 	pi := t.Meta().GetPartitionInfo()
 	columnsSet := len(t.meta.Partition.Columns) > 0
 	idx, err := t.locatePartitionCommon(ctx, pi.Type, t.partitionExpr, pi.Num, columnsSet, r)
-	intest.Assert(idx >= 0)
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
