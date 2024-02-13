@@ -856,47 +856,6 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  97 SEQUENCE"))
 }
 
-func TestNoHistoryWhenDisableRetry(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists history")
-	tk.MustExec("create table history (a int)")
-	tk.MustExec("set @@autocommit = 0")
-
-	// retry_limit = 0 will not add history.
-	tk.MustExec("set @@tidb_retry_limit = 0")
-	tk.MustExec("insert history values (1)")
-	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
-
-	// Disable auto_retry will add history for auto committed only
-	tk.MustExec("set @@autocommit = 1")
-	tk.MustExec("set @@tidb_retry_limit = 10")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/keepHistory", `return(true)`))
-	tk.MustExec("insert history values (1)")
-	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/keepHistory"))
-	tk.MustExec("begin")
-	tk.MustExec("insert history values (1)")
-	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("commit")
-
-	// Enable auto_retry will add history for both.
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/keepHistory", `return(true)`))
-	tk.MustExec("insert history values (1)")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/keepHistory"))
-	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("begin")
-	tk.MustExec("insert history values (1)")
-	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("commit")
-}
-
 func TestPrepareMaxParamCountCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1191,30 +1150,6 @@ func TestCoprocessorPriority(t *testing.T) {
 	cli.mu.Unlock()
 }
 
-func TestAutoIncIDInRetry(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (id int not null auto_increment primary key)")
-
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values ()")
-	tk.MustExec("insert into t values (),()")
-	tk.MustExec("insert into t values ()")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitRetryForAutoIncID", `return(true)`))
-	tk.MustExec("commit")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitRetryForAutoIncID"))
-
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
-}
-
 func TestPessimisticConflictRetryAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1300,53 +1235,6 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 		require.NoError(t, e)
 	}
 	require.NoError(t, insertErr)
-}
-
-func TestAutoRandIDRetry(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database if not exists auto_random_retry")
-	tk.MustExec("use auto_random_retry")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id bigint auto_random(3) primary key clustered)")
-
-	extractMaskedOrderedHandles := func() []int64 {
-		handles, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "auto_random_retry", "t")
-		require.NoError(t, err)
-		return testutil.MaskSortHandles(handles, 3, mysql.TypeLong)
-	}
-
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("set @@tidb_retry_limit = 10")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values ()")
-	tk.MustExec("insert into t values (),()")
-	tk.MustExec("insert into t values ()")
-
-	session.ResetMockAutoRandIDRetryCount(5)
-	fpName := "github.com/pingcap/tidb/pkg/session/mockCommitRetryForAutoRandID"
-	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	tk.MustExec("commit")
-	require.NoError(t, failpoint.Disable(fpName))
-	tk.MustExec("insert into t values ()")
-	maskedHandles := extractMaskedOrderedHandles()
-	require.Equal(t, []int64{1, 2, 3, 4, 5}, maskedHandles)
-
-	session.ResetMockAutoRandIDRetryCount(11)
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values ()")
-	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	// Insertion failure will skip the 6 in retryInfo.
-	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
-	require.NoError(t, failpoint.Disable(fpName))
-
-	tk.MustExec("insert into t values ()")
-	maskedHandles = extractMaskedOrderedHandles()
-	require.Equal(t, []int64{1, 2, 3, 4, 5, 7}, maskedHandles)
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,6 +59,83 @@ func (resp rebaseResp) check(msg string) {
 	require.Equal(resp.T, string(resp.RebaseResponse.GetErrmsg()), msg)
 }
 
+func TestConcurrent(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	cli := MockForTest(store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key auto_increment);")
+	is := dom.InfoSchema()
+	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, ok)
+
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbInfo := tbl.Meta()
+
+	to := dest{dbID: dbInfo.ID, tblID: tbInfo.ID}
+
+	const concurrency = 30
+	notify := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			<-notify
+			autoIDRequest(t, cli, to, false, 1)
+		}()
+	}
+
+	// Rebase to some value
+	rebaseRequest(t, cli, to, true, 666).check("")
+	checkCurrValue(t, cli, to, 666, 666)
+	// And +1 concurrently for 30 times
+	close(notify)
+	wg.Wait()
+	// Check the result is increased by 30
+	checkCurrValue(t, cli, to, 666+concurrency, 666+concurrency)
+}
+
+type dest struct {
+	dbID  int64
+	tblID int64
+}
+
+func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, min, max int64) {
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, KeyspaceID: uint32(tikv.NullspaceID)}
+	ctx := context.Background()
+	resp, err := cli.AllocAutoID(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, resp, &autoid.AutoIDResponse{Min: min, Max: max})
+}
+
+func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned bool, n uint64, more ...int64) autoIDResp {
+	increment := int64(1)
+	offset := int64(1)
+	if len(more) >= 1 {
+		increment = more[0]
+	}
+	if len(more) >= 2 {
+		offset = more[1]
+	}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, KeyspaceID: uint32(tikv.NullspaceID)}
+	resp, err := cli.AllocAutoID(context.Background(), req)
+	return autoIDResp{resp, err, t}
+}
+
+func rebaseRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned bool, n int64, force ...struct{}) rebaseResp {
+	req := &autoid.RebaseRequest{
+		DbID:       to.dbID,
+		TblID:      to.tblID,
+		Base:       n,
+		IsUnsigned: unsigned,
+		Force:      len(force) > 0,
+	}
+	resp, err := cli.Rebase(context.Background(), req)
+	return rebaseResp{resp, err, t}
+}
+
 func TestAPI(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -72,80 +150,50 @@ func TestAPI(t *testing.T) {
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
-	ctx := context.Background()
-	checkCurrValue := func(t *testing.T, cli autoid.AutoIDAllocClient, min, max int64) {
-		req := &autoid.AutoIDRequest{DbID: dbInfo.ID, TblID: tbInfo.ID, N: 0, KeyspaceID: uint32(tikv.NullspaceID)}
-		resp, err := cli.AllocAutoID(ctx, req)
-		require.NoError(t, err)
-		require.Equal(t, resp, &autoid.AutoIDResponse{Min: min, Max: max})
-	}
-	autoIDRequest := func(t *testing.T, cli autoid.AutoIDAllocClient, unsigned bool, n uint64, more ...int64) autoIDResp {
-		increment := int64(1)
-		offset := int64(1)
-		if len(more) >= 1 {
-			increment = more[0]
-		}
-		if len(more) >= 2 {
-			offset = more[1]
-		}
-		req := &autoid.AutoIDRequest{DbID: dbInfo.ID, TblID: tbInfo.ID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, KeyspaceID: uint32(tikv.NullspaceID)}
-		resp, err := cli.AllocAutoID(ctx, req)
-		return autoIDResp{resp, err, t}
-	}
-	rebaseRequest := func(t *testing.T, cli autoid.AutoIDAllocClient, unsigned bool, n int64, force ...struct{}) rebaseResp {
-		req := &autoid.RebaseRequest{
-			DbID:       dbInfo.ID,
-			TblID:      tbInfo.ID,
-			Base:       n,
-			IsUnsigned: unsigned,
-			Force:      len(force) > 0,
-		}
-		resp, err := cli.Rebase(ctx, req)
-		return rebaseResp{resp, err, t}
-	}
+	to := dest{dbID: dbInfo.ID, tblID: tbInfo.ID}
 	var force = struct{}{}
 
 	// basic auto id operation
-	autoIDRequest(t, cli, false, 1).check(0, 1)
-	autoIDRequest(t, cli, false, 10).check(1, 11)
-	checkCurrValue(t, cli, 11, 11)
-	autoIDRequest(t, cli, false, 128).check(11, 139)
-	autoIDRequest(t, cli, false, 1, 10, 5).check(139, 145)
+	autoIDRequest(t, cli, to, false, 1).check(0, 1)
+	autoIDRequest(t, cli, to, false, 10).check(1, 11)
+	checkCurrValue(t, cli, to, 11, 11)
+	autoIDRequest(t, cli, to, false, 128).check(11, 139)
+	autoIDRequest(t, cli, to, false, 1, 10, 5).check(139, 145)
 
 	// basic rebase operation
-	rebaseRequest(t, cli, false, 666).check("")
-	autoIDRequest(t, cli, false, 1).check(666, 667)
+	rebaseRequest(t, cli, to, false, 666).check("")
+	autoIDRequest(t, cli, to, false, 1).check(666, 667)
 
-	rebaseRequest(t, cli, false, 6666).check("")
-	autoIDRequest(t, cli, false, 1).check(6666, 6667)
+	rebaseRequest(t, cli, to, false, 6666).check("")
+	autoIDRequest(t, cli, to, false, 1).check(6666, 6667)
 
 	// rebase will not decrease the value without 'force'
-	rebaseRequest(t, cli, false, 44).check("")
-	checkCurrValue(t, cli, 6667, 6667)
-	rebaseRequest(t, cli, false, 44, force).check("")
-	checkCurrValue(t, cli, 44, 44)
+	rebaseRequest(t, cli, to, false, 44).check("")
+	checkCurrValue(t, cli, to, 6667, 6667)
+	rebaseRequest(t, cli, to, false, 44, force).check("")
+	checkCurrValue(t, cli, to, 44, 44)
 
 	// max increase 1
-	rebaseRequest(t, cli, false, math.MaxInt64, force).check("")
-	checkCurrValue(t, cli, math.MaxInt64, math.MaxInt64)
-	autoIDRequest(t, cli, false, 1).checkErrmsg()
+	rebaseRequest(t, cli, to, false, math.MaxInt64, force).check("")
+	checkCurrValue(t, cli, to, math.MaxInt64, math.MaxInt64)
+	autoIDRequest(t, cli, to, false, 1).checkErrmsg()
 
-	rebaseRequest(t, cli, true, 0, force).check("")
-	checkCurrValue(t, cli, 0, 0)
-	autoIDRequest(t, cli, true, 1).check(0, 1)
-	autoIDRequest(t, cli, true, 10).check(1, 11)
-	autoIDRequest(t, cli, true, 128).check(11, 139)
-	autoIDRequest(t, cli, true, 1, 10, 5).check(139, 145)
+	rebaseRequest(t, cli, to, true, 0, force).check("")
+	checkCurrValue(t, cli, to, 0, 0)
+	autoIDRequest(t, cli, to, true, 1).check(0, 1)
+	autoIDRequest(t, cli, to, true, 10).check(1, 11)
+	autoIDRequest(t, cli, to, true, 128).check(11, 139)
+	autoIDRequest(t, cli, to, true, 1, 10, 5).check(139, 145)
 
 	// max increase 1
-	rebaseRequest(t, cli, true, math.MaxInt64).check("")
-	checkCurrValue(t, cli, math.MaxInt64, math.MaxInt64)
-	autoIDRequest(t, cli, true, 1).check(math.MaxInt64, math.MinInt64)
-	autoIDRequest(t, cli, true, 1).check(math.MinInt64, math.MinInt64+1)
+	rebaseRequest(t, cli, to, true, math.MaxInt64).check("")
+	checkCurrValue(t, cli, to, math.MaxInt64, math.MaxInt64)
+	autoIDRequest(t, cli, to, true, 1).check(math.MaxInt64, math.MinInt64)
+	autoIDRequest(t, cli, to, true, 1).check(math.MinInt64, math.MinInt64+1)
 
-	rebaseRequest(t, cli, true, -1).check("")
-	checkCurrValue(t, cli, -1, -1)
-	autoIDRequest(t, cli, true, 1).check(-1, 0)
+	rebaseRequest(t, cli, to, true, -1).check("")
+	checkCurrValue(t, cli, to, -1, -1)
+	autoIDRequest(t, cli, to, true, 1).check(-1, 0)
 }
 
 func TestGRPC(t *testing.T) {

@@ -581,8 +581,6 @@ Error 8200 (HY000): Unsupported reorganize partition
 ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4;
 ALTER TABLE tkey16 REMOVE PARTITIONING;
 CREATE TABLE tkey17 (id INT NOT NULL PRIMARY KEY,name VARCHAR(20))PARTITION BY KEY()PARTITIONS 2;
-Level	Code	Message
-Warning	8200	Unsupported partition type KEY, treat as normal table
 drop tables if exists t_44966;
 create table t_44966 (a bigint unsigned) partition by range (a) (partition p0 values less than (10));
 insert into t_44966 values (0xffffffffffffffff);

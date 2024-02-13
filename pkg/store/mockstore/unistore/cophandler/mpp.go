@@ -512,7 +512,7 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 	for _, aggFunc := range agg.AggFunc {
 		ft := expression.PbTypeToFieldType(aggFunc.FieldType)
 		e.fieldTypes = append(e.fieldTypes, ft)
-		aggExpr, err := aggregation.NewDistAggFunc(aggFunc, chExec.getFieldTypes(), b.sctx)
+		aggExpr, _, err := aggregation.NewDistAggFunc(aggFunc, chExec.getFieldTypes(), b.sctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

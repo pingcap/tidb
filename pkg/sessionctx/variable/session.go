@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -664,6 +663,11 @@ type HookContext interface {
 	GetStore() kv.Storage
 }
 
+// SessionVarsProvider provides the session variables.
+type SessionVarsProvider interface {
+	GetSessionVars() *SessionVars
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -977,10 +981,6 @@ type SessionVars struct {
 
 	// BatchCommit indicates if we should split the transaction into multiple batches.
 	BatchCommit bool
-
-	// IDAllocator is provided by kvEncoder, if it is provided, we will use it to alloc auto id instead of using
-	// Table.alloc.
-	IDAllocator autoid.Allocator
 
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
@@ -1307,6 +1307,9 @@ type SessionVars struct {
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
+
+	// EnableParallelHashaggSpill indicates if parallel hash agg could spill.
+	EnableParallelHashaggSpill bool
 
 	// SysdateIsNow indicates whether Sysdate is an alias of Now function
 	SysdateIsNow bool
@@ -3200,7 +3203,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
+	UsedStats         *stmtctx.UsedStatsInfo
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 	ResourceGroupName string
@@ -3295,13 +3298,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(logItems.UsedStats) > 0 {
+	keys := logItems.UsedStats.Keys()
+	if len(keys) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
-		keys := maps.Keys(logItems.UsedStats)
 		slices.Sort(keys)
 		for _, id := range keys {
-			usedStatsForTbl := logItems.UsedStats[id]
+			usedStatsForTbl := logItems.UsedStats.GetUsedInfo(id)
 			if usedStatsForTbl == nil {
 				continue
 			}

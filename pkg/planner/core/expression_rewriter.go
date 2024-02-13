@@ -49,14 +49,16 @@ import (
 )
 
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
-var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (row []types.Datum, err error)
+var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx PlanContext) (row []types.Datum, err error)
 
 // evalAstExprWithPlanCtx evaluates ast expression with plan context.
+// Different with expression.EvalSimpleAst, it uses planner context and is more powerful to build some special expressions
+// like subquery, window function, etc.
 func evalAstExprWithPlanCtx(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil, false)
+	newExpr, err := rewriteAstExprWithPlanCtx(sctx, expr, nil, nil, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -64,19 +66,21 @@ func evalAstExprWithPlanCtx(sctx sessionctx.Context, expr ast.ExprNode) (types.D
 }
 
 // evalAstExpr evaluates ast expression directly.
-func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	newExpr, err := buildExprWithAst(ctx, expr)
+	newExpr, err := buildSimpleExpr(ctx, expr)
 	if err != nil {
 		return types.Datum{}, err
 	}
 	return newExpr.Eval(ctx, chunk.Row{})
 }
 
-// rewriteAstExpr rewrites ast expression directly.
-func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
+// rewriteAstExprWithPlanCtx rewrites ast expression directly.
+// Different with expression.BuildSimpleExpr, it uses planner context and is more powerful to build some special expressions
+// like subquery, window function, etc.
+func rewriteAstExprWithPlanCtx(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
@@ -98,7 +102,13 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	return newExpr, nil
 }
 
-func buildExprWithAst(ctx sessionctx.Context, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+	intest.AssertNotNil(node)
+	if node == nil {
+		// This should never happen. Return error to make it easy to debug in case we have some unexpected bugs.
+		return nil, errors.New("expression node should be present")
+	}
+
 	var options expression.BuildOptions
 	for _, opt := range opts {
 		opt(&options)
@@ -112,6 +122,23 @@ func buildExprWithAst(ctx sessionctx.Context, node ast.ExprNode, opts ...express
 		return nil, errors.New("InputSchema and InputNames should be the same length")
 	}
 
+	// assert all input db names are the same if specified
+	intest.AssertFunc(func() bool {
+		if len(options.InputNames) == 0 {
+			return true
+		}
+
+		dbName := options.InputNames[0].DBName
+		if options.SourceTableDB.L != "" {
+			intest.Assert(dbName.L == options.SourceTableDB.L)
+		}
+
+		for _, name := range options.InputNames {
+			intest.Assert(name.DBName.L == dbName.L)
+		}
+		return true
+	})
+
 	rewriter := &expressionRewriter{
 		ctx:                 context.TODO(),
 		sctx:                ctx,
@@ -123,7 +150,7 @@ func buildExprWithAst(ctx sessionctx.Context, node ast.ExprNode, opts ...express
 	}
 
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
-		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
+		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, options.SourceTableDB, tbl.Name, tbl.Cols(), tbl)
 		if err != nil {
 			return nil, err
 		}
@@ -138,6 +165,14 @@ func buildExprWithAst(ctx sessionctx.Context, node ast.ExprNode, opts ...express
 	rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
 
 	expr, _, err := rewriteExprNode(rewriter, node, rewriter.asScalar)
+	if err != nil {
+		return nil, err
+	}
+
+	if ft := options.TargetFieldType; ft != nil {
+		expr = expression.BuildCastFunction(ctx, expr, ft)
+	}
+
 	return expr, err
 }
 
@@ -307,7 +342,7 @@ type expressionRewriter struct {
 	names      []*types.FieldName
 	err        error
 
-	sctx sessionctx.Context
+	sctx expression.BuildContext
 	ctx  context.Context
 
 	// asScalar indicates the return value must be a scalar value.
@@ -2079,7 +2114,7 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Expression) {
 	stkLen := len(er.ctxStack)
 	expr, lexp, rexp = er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
-	var castFunc func(sessionctx.Context, expression.Expression) expression.Expression
+	var castFunc func(expression.BuildContext, expression.Expression) expression.Expression
 	switch expression.ResolveType4Between([3]expression.Expression{expr, lexp, rexp}) {
 	case types.ETInt:
 		castFunc = expression.WrapWithCastAsInt
@@ -2088,7 +2123,7 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	case types.ETDecimal:
 		castFunc = expression.WrapWithCastAsDecimal
 	case types.ETString:
-		castFunc = func(ctx sessionctx.Context, e expression.Expression) expression.Expression {
+		castFunc = func(ctx expression.BuildContext, e expression.Expression) expression.Expression {
 			// string kind expression do not need cast
 			if e.GetType().EvalType().IsStringKind() {
 				return e

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -455,11 +456,22 @@ func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
 	c.is = is
 }
 
+// ResetSessionAndStmtTimeZone resets the timezone for session and statement.
+func (c *Context) ResetSessionAndStmtTimeZone(tz *time.Location) {
+	c.GetSessionVars().TimeZone = tz
+	c.GetSessionVars().StmtCtx.SetTimeZone(tz)
+}
+
 // ReportUsageStats implements the sessionctx.Context interface.
 func (*Context) ReportUsageStats() {}
 
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
+
+// NewStmtIndexUsageCollector implements the sessionctx.Context interface
+func (*Context) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector {
+	return nil
+}
 
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
@@ -473,6 +485,7 @@ func NewContext() *Context {
 	sctx.sessionVars = vars
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
+	vars.TimeZone = time.UTC
 	vars.StmtCtx.SetTimeZone(time.UTC)
 	vars.MemTracker.SetBytesLimit(-1)
 	vars.DiskTracker.SetBytesLimit(-1)

@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "servertestkit",
+    srcs = ["testkit.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/tests/servertestkit",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/server",
+        "//pkg/server/internal/testserverclient",
+        "//pkg/server/internal/testutil",
+        "//pkg/server/internal/util",
+        "//pkg/session",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/util/cpuprofile",
+        "//pkg/util/topsql/collector/mock",
+        "//pkg/util/topsql/state",
+        "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
+    ],
+)

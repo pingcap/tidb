@@ -131,6 +131,20 @@ func PanicToErr(err *error) {
 	}
 }
 
+// CatchAndLogPanic recovers when the execution get panicked, and log the panic.
+// generally, this would be used with `defer`, like:
+//
+//	func foo() {
+//	  defer utils.CatchAndLogPanic()
+//	  maybePanic()
+//	}
+func CatchAndLogPanic() {
+	item := recover()
+	if item != nil {
+		log.Warn("CatchAndLogPanic: panicked, but ignored.", zap.StackSkip("stack", 1), zap.Any("panic", item))
+	}
+}
+
 type Result[T any] struct {
 	Err  error
 	Item T

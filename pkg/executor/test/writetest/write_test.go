@@ -325,11 +325,6 @@ func TestLatch(t *testing.T) {
 	tk1.MustExec("update t set id = id + 1")
 	tk2.MustExec("update t set id = id + 1")
 	tk1.MustGetDBError("commit", kv.ErrWriteConflictInTiDB)
-
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("update t set id = id + 1")
-	tk2.MustExec("update t set id = id + 1")
-	tk1.MustExec("commit")
 }
 
 func TestReplaceLog(t *testing.T) {

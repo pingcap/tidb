@@ -83,7 +83,7 @@ type PointGetPlan struct {
 	IdxCols          []*expression.Column
 	IdxColLens       []int
 	AccessConditions []expression.Expression
-	ctx              sessionctx.Context
+	ctx              PlanContext
 	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
@@ -309,12 +309,21 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	return
 }
 
+// LoadTableStats preloads the stats data for the physical table
+func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
+	tableID := p.TblInfo.ID
+	if p.PartitionDef != nil {
+		tableID = p.PartitionDef.ID
+	}
+	loadTableStats(ctx, p.TblInfo, tableID)
+}
+
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
 	baseSchemaProducer
 
-	ctx              sessionctx.Context
+	ctx              PlanContext
 	dbName           string
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
@@ -531,6 +540,14 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 	return
 }
 
+// LoadTableStats preloads the stats data for the physical table
+func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
+	// as a `BatchPointGet` can access multiple partitions, and we cannot distinguish how many rows come from each
+	// partitions in the existing statistics information, we treat all index usage through a `BatchPointGet` just
+	// like a normal global index.
+	loadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
+}
+
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
 const PointPlanKey = stringutil.StringerStr("pointPlanKey")
 
@@ -614,7 +631,7 @@ func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
 	return false
 }
 
-func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
+func getLockWaitTime(ctx PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
 	if lockInfo != nil {
 		if IsSelectForUpdateLockType(lockInfo.LockType) {
 			// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
@@ -1773,7 +1790,7 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
-		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, plan.Schema(), plan.OutputNames())
+		expr, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, plan.Schema(), plan.OutputNames(), false)
 		if err != nil {
 			return nil, true
 		}
@@ -1897,7 +1914,7 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 }
 
 // If single columns partitioning, without expressions, return column name.
-func GetPartitionColNameSimple(sctx sessionctx.Context, tbl *model.TableInfo) string {
+func GetPartitionColNameSimple(sctx PlanContext, tbl *model.TableInfo) string {
 	partitionExpr := getPartitionExpr(sctx, tbl)
 	if partitionExpr == nil {
 		return ""
@@ -1946,7 +1963,7 @@ func GetPartitionColNameSimple(sctx sessionctx.Context, tbl *model.TableInfo) st
 // index to which pair was used
 // index to partition definition
 // true if TableDual (i.e. impossible match) can be used
-func GetPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, colName string, pairs []NameValuePair) (*model.PartitionDefinition, int, int, bool) {
+func GetPartitionDef(ctx PlanContext, tbl *model.TableInfo, colName string, pairs []NameValuePair) (*model.PartitionDefinition, int, int, bool) {
 	if colName == "" {
 		colName = GetPartitionColNameSimple(ctx, tbl)
 		if colName == "" {
@@ -2106,7 +2123,7 @@ func getColumnPosInIndex(idx *model.IndexInfo, colName *model.CIStr) int {
 	panic("unique index must include all partition columns")
 }
 
-func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.PartitionExpr {
+func getPartitionExpr(ctx PlanContext, tbl *model.TableInfo) *tables.PartitionExpr {
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
@@ -2122,7 +2139,7 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 	return partTable.PartitionExpr()
 }
 
-func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *model.CIStr {
+func getHashOrKeyPartitionColumnName(ctx PlanContext, tbl *model.TableInfo) *model.CIStr {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
 		return nil

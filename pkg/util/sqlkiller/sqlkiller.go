@@ -33,6 +33,8 @@ const (
 	MaxExecTimeExceeded
 	QueryMemoryExceeded
 	ServerMemoryExceeded
+	// When you add a new signal, you should also modify store/driver/error/ToTidbErr,
+	// so that errors in client can be correctly converted to tidb errors.
 )
 
 // SQLKiller is used to kill a query.

@@ -402,6 +402,12 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 	return
 }
 
+// LoadTableStats preloads the stats data for the physical table
+func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
+	is := p.IndexPlans[0].(*PhysicalIndexScan)
+	loadTableStats(ctx, is.Table, is.physicalTableID)
+}
+
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
 type PushedDownLimit struct {
 	Offset uint64
@@ -552,6 +558,12 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 	return
 }
 
+// LoadTableStats preloads the stats data for the physical table
+func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+}
+
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
@@ -650,6 +662,12 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 		sum += plan.MemoryUsage()
 	}
 	return
+}
+
+// LoadTableStats preloads the stats data for the physical table
+func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	loadTableStats(ctx, ts.Table, ts.physicalTableID)
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -787,7 +805,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 // For keepOrder with partition table,
 // we need use partitionHandle to distinct two handles,
 // the `_tidb_rowid` in different partitions can have the same value.
-func AddExtraPhysTblIDColumn(sctx sessionctx.Context, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+func AddExtraPhysTblIDColumn(sctx PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
 	// Not adding the ExtraPhysTblID if already exists
 	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
 		return columns, schema, false
@@ -1603,7 +1621,7 @@ type PhysicalExpand struct {
 }
 
 // Init only assigns type and context.
-func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
+func (p PhysicalExpand) Init(ctx PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
@@ -2129,7 +2147,7 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool 
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPointNonNullable(sctx)
+		p.Ranges[0].IsPointNonNullable(sctx.GetSessionVars().StmtCtx.TypeCtx())
 }
 
 // PhysicalSelection represents a filter.

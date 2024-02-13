@@ -571,13 +571,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
-	var concurrency int
-	if e.ctx.GetSessionVars().InRestrictedSQL {
-		// In restricted SQL, we use the default value of IndexSerialScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
-		concurrency = e.ctx.GetSessionVars().IndexSerialScanConcurrency()
-	} else {
-		concurrency = e.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-	}
+	concurrency := e.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,

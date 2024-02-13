@@ -16,7 +16,6 @@ package sessionctx
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/sli"
@@ -66,6 +67,7 @@ type PlanCache interface {
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	SessionStatesHandler
+	contextutil.ValueStoreContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// RollbackTxn rolls back the current transaction.
@@ -83,15 +85,6 @@ type Context interface {
 
 	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
-
-	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value any)
-
-	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) any
-
-	// ClearValue clears the value associated with this context for key.
-	ClearValue(key fmt.Stringer)
 
 	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
 	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
@@ -183,6 +176,8 @@ type Context interface {
 	DisableSandBoxMode()
 	// ReportUsageStats reports the usage stats to the global collector
 	ReportUsageStats()
+	// NewStmtIndexUsageCollector creates a new index usage collector for statement
+	NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after
