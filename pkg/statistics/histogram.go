@@ -1057,9 +1057,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 	rowCount = totalPercent * max(hg.NotNullCount(), float64(modifyCount))
 
 	// Upper & lower bound logic.
-	UpperBound := rowCount
+	upperBound := rowCount
 	if histNDV > 0 {
-		UpperBound = hg.NotNullCount() / float64(histNDV)
+		upperBound = hg.NotNullCount() / float64(histNDV)
 	}
 
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
@@ -1067,7 +1067,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
 		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, UpperBound)
+		return min(rowCount, upperBound)
 	}
 	// If the modifyCount is large (as a percentage of the base table rows), then any out of range estimate is
 	// unreliable - because this indicates that our statistics are stale. These bounds are therefore approximations.
@@ -1077,8 +1077,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// for a statisically out of range value, but inserts result in the value actually being in that modified range.
 	modifyPercent := min(float64(modifyCount)/hg.NotNullCount(), 1.0)
 	if modifyPercent == 1 || modifyPercent > totalPercent {
-		rowCount = max(rowCount, UpperBound)
-	} else if rowCount < UpperBound {
+		rowCount = max(rowCount, upperBound)
+	} else if rowCount < upperBound {
 		rowCount *= hg.GetIncreaseFactor(realtimeRowCount)
 	}
 
