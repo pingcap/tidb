@@ -1052,18 +1052,15 @@ func (hg *Histogram) OutOfRangeRowCount(
 		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
-	currentCount := hg.NotNullCount()
-	modifyCountF := float64(modifyCount)
-	realtimeCountF := float64(realtimeRowCount)
 	totalPercent := min(1, leftPercent*0.5+rightPercent*0.5)
-	rowCount = totalPercent * currentCount
-	modifyPercent := min(1, modifyCountF/currentCount)
+
+	rowCount = totalPercent * hg.NotNullCount()
 
 	// Upper & lower bound logic.
 	origUpperBound, realUpperBound := rowCount, rowCount
 	if histNDV > 0 {
-		origUpperBound = currentCount / float64(histNDV)
-		realUpperBound = max(modifyCountF, realtimeCountF) / float64(histNDV)
+		origUpperBound = hg.NotNullCount() / float64(histNDV)
+		realUpperBound = float64(max(modifyCount, realtimeRowCount)) / float64(histNDV)
 	}
 
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
@@ -1077,19 +1074,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// unreliable - because this indicates that our statistics are stale. These bounds are therefore approximations.
 	// ModifyCount counts all inserts/updates/deletes - this logic has a bias towards modifications being inserts.
 
-	if modifyPercent >= totalPercent {
-		rowCount = max(rowCount, origUpperBound)
-	}
 	// Assume a minimum of 1 value is found if we have a high modifyCount. This targest the situation where we search
 	// for a statisically out of range value, but inserts result in the value actually being in that modified range.
+	modifyPercent := min(1, float64(modifyCount)/hg.NotNullCount())
 	if modifyPercent == 1 {
 		rowCount = max(rowCount, realUpperBound)
+	} else if modifyPercent >= totalPercent {
+		rowCount = max(rowCount, origUpperBound)
 	} else if rowCount < origUpperBound {
 		rowCount *= hg.GetIncreaseFactor(realtimeRowCount)
 	}
 
 	// Use modifyCount as the final upper bound
-	return min(rowCount, modifyCountF)
+	return min(rowCount, float64(modifyCount))
 }
 
 // Copy deep copies the histogram.
