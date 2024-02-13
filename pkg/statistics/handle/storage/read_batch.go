@@ -76,19 +76,19 @@ func HistogramsFromStorage(sctx sessionctx.Context, params []*batchReadHistogram
 		hg := statistics.NewHistogram(colID, p.distinct, p.nullCount, p.ver, p.tp, bucketSize, p.totColSize)
 		hg.Correlation = p.corr
 		totalCount := int64(0)
-		for i := 0; i < bucketSize; i++ {
-			count := rows[i].GetInt64(0)
-			repeats := rows[i].GetInt64(1)
+		for _, row := range rows {
+			count := row.GetInt64(0)
+			repeats := row.GetInt64(1)
 			var upperBound, lowerBound types.Datum
 			if p.isIndex == 1 {
-				lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
-				upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+				lowerBound = row.GetDatum(2, &fields[2].Column.FieldType)
+				upperBound = row.GetDatum(3, &fields[3].Column.FieldType)
 			} else {
 				// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
 				// Hence, when reading statistics, we should skip invalid date check. See #39336.
 				sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 				sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
-				d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
+				d := row.GetDatum(2, &fields[2].Column.FieldType)
 				// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 				// original value.
 				// But there's additional conversion logic for new collation data, and the collate key might be longer than
@@ -103,7 +103,7 @@ func HistogramsFromStorage(sctx sessionctx.Context, params []*batchReadHistogram
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+				d = row.GetDatum(3, &fields[3].Column.FieldType)
 				upperBound, err = d.ConvertTo(sc.TypeCtx(), p.tp)
 				if err != nil {
 					return nil, errors.Trace(err)
