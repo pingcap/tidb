@@ -1056,11 +1056,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	modifyCountF := float64(modifyCount)
 	realtimeCountF := float64(realtimeRowCount)
 	highModifyCount := modifyCountF > currentCount
-	// Bound the left/right percentages if we have a high modifyCount - since this is unreliable
-	if highModifyCount {
-		rightPercent = min(rightPercent, 0.5)
-		leftPercent = min(leftPercent, 0.5)
-	}
 	totalPercent := leftPercent*0.5 + rightPercent*0.5
 	if totalPercent > 1 {
 		totalPercent = 1
