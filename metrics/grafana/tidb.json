@@ -13513,15 +13513,11 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-<<<<<<< HEAD:metrics/grafana/tidb.json
-          "description": "TiDB auto analyze query per second",
-=======
           "description": "TiDB auto analyze query per minute",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
           },
->>>>>>> 3478bd5ef71 (metrics: tidb_statistics_auto_analyze_total should be int (#51050)):pkg/metrics/grafana/tidb.json
           "fill": 1,
           "gridPos": {
             "h": 7,
