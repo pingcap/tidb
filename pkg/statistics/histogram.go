@@ -1052,15 +1052,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
-	totalPercent := min(1, leftPercent*0.5+rightPercent*0.5)
+	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 
-	rowCount = totalPercent * hg.NotNullCount()
+	rowCount = totalPercent * max(hg.NotNullCount(), float64(modifyCount))
 
 	// Upper & lower bound logic.
-	origUpperBound, realUpperBound := rowCount, rowCount
+	UpperBound := rowCount
 	if histNDV > 0 {
-		origUpperBound = hg.NotNullCount() / float64(histNDV)
-		realUpperBound = float64(max(modifyCount, realtimeRowCount)) / float64(histNDV)
+		UpperBound = hg.NotNullCount() / float64(histNDV)
 	}
 
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
@@ -1068,7 +1067,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
 		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, origUpperBound)
+		return min(rowCount, UpperBound)
 	}
 	// If the modifyCount is large (as a percentage of the base table rows), then any out of range estimate is
 	// unreliable - because this indicates that our statistics are stale. These bounds are therefore approximations.
@@ -1076,12 +1075,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// Assume a minimum of 1 value is found if we have a high modifyCount. This targest the situation where we search
 	// for a statisically out of range value, but inserts result in the value actually being in that modified range.
-	modifyPercent := min(1, float64(modifyCount)/hg.NotNullCount())
-	if modifyPercent == 1 {
-		rowCount = max(rowCount, realUpperBound)
-	} else if modifyPercent >= totalPercent {
-		rowCount = max(rowCount, origUpperBound)
-	} else if rowCount < origUpperBound {
+	modifyPercent := min(float64(modifyCount)/hg.NotNullCount(), 1.0)
+	if modifyPercent == 1 || modifyPercent > totalPercent {
+		rowCount = max(rowCount, UpperBound)
+	} else if rowCount < UpperBound {
 		rowCount *= hg.GetIncreaseFactor(realtimeRowCount)
 	}
 
