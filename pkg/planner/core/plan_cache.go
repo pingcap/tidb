@@ -511,7 +511,7 @@ func rebuildRange(p Plan) error {
 			}
 		}
 		if x.HandleConstant != nil {
-			dVal, err := ConvertConstant2Datum(sctx, x.HandleConstant, x.HandleFieldType)
+			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.HandleFieldType)
 			if err != nil {
 				return err
 			}
@@ -526,7 +526,7 @@ func rebuildRange(p Plan) error {
 		if len(x.IndexConstants) > 0 {
 			for i, param := range x.IndexConstants {
 				if param != nil {
-					dVal, err := ConvertConstant2Datum(sctx, param, x.ColsFieldType[i])
+					dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
 					if err != nil {
 						return err
 					}
@@ -585,7 +585,7 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				dVal, err := ConvertConstant2Datum(sctx, param, x.HandleType)
+				dVal, err := convertConstant2Datum(sctx, param, x.HandleType)
 				if err != nil {
 					return err
 				}
@@ -602,7 +602,7 @@ func rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					dVal, err := ConvertConstant2Datum(sctx, param, x.IndexColTypes[j])
+					dVal, err := convertConstant2Datum(sctx, param, x.IndexColTypes[j])
 					if err != nil {
 						return err
 					}
@@ -669,7 +669,7 @@ func reEvaluateParamMarkerConst(ctx PlanContext, exprs []expression.Expression) 
 	return nil
 }
 
-func ConvertConstant2Datum(ctx PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+func convertConstant2Datum(ctx PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
 	val, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, err
