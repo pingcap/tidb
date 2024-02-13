@@ -37,8 +37,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const maxBatchSize = 3
-
 type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
 	StatsLoad   statstypes.StatsLoad
@@ -190,7 +188,7 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 		logutil.BgLogger().Info("SubLoadWorker exited.")
 	}()
 	// if the last task is not successfully handled in last round for error or panic, pass it to this round to retry
-	lastTask := make([]*statstypes.NeededItemTask, maxBatchSize)
+	var lastTask *statstypes.NeededItemTask
 	for {
 		task, err := s.HandleOneTask(sctx, lastTask, exit)
 		lastTask = task
@@ -210,7 +208,7 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
-func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask []*statstypes.NeededItemTask, exit chan struct{}) (task []*statstypes.NeededItemTask, err error) {
+func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -229,21 +227,17 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask []*stats
 	} else {
 		task = lastTask
 	}
-	return s.handleOneTasks(sctx, task)
+	return s.handleOneItemTask(sctx, task)
 }
 
-func (s *statsSyncLoad) handleOneTasks(sctx sessionctx.Context, task []*statstypes.NeededItemTask) (*statstypes.NeededItemTask, error) {
-	map
-	for _, t := range task {
-		result := stmtctx.StatsLoadResult{Item: t.TableItemID}
-		item := result.Item
-		tbl, ok := s.statsHandle.Get(item.TableID)
-		if !ok {
-			s.writeToResultChan(t.ResultCh, result)
-			return nil, nil
-		}
+func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (*statstypes.NeededItemTask, error) {
+	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
+	item := result.Item
+	tbl, ok := s.statsHandle.Get(item.TableID)
+	if !ok {
+		s.writeToResultChan(task.ResultCh, result)
+		return nil, nil
 	}
-
 	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
@@ -378,7 +372,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
-func (s *statsSyncLoad) drainColTask(exit chan struct{}) ([]*statstypes.NeededItemTask, error) {
+func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItemTask, error) {
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
