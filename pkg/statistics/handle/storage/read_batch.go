@@ -110,7 +110,7 @@ func HistogramsFromStorage(sctx sessionctx.Context, params []*batchReadHistogram
 				}
 			}
 			totalCount += count
-			hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(4))
+			hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, row.GetInt64(4))
 		}
 		hg.PreCalculateScalar()
 		result = append(result, hg)
