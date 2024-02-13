@@ -324,8 +324,9 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			count += betweenRowCountOnIndex(sctx, idx, l, r)
 		}
 
-		// If the table has changed - update the count accordingly.
+		// If the current table row count has changed, we should scale the row count accordingly.
 		count *= idx.GetIncreaseFactor(realtimeRowCount)
+
 		// handling the out-of-range part
 		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			histNDV := idx.NDV
@@ -342,7 +343,6 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			}
 			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, realtimeRowCount, histNDV)
 		}
-		//}
 
 		if debugTrace {
 			debugTraceEndEstimateRange(sctx, count, debugTraceRange)
