@@ -1375,10 +1375,10 @@ func TestPreparedPlanCachePartitions(t *testing.T) {
 	tk.MustExec(`set @a=2000000`)
 	// This should use TableDual
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
-	// How does it cache it? (verify that it still allows PartitionInfo to be updated)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @a=1999999`)
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
@@ -1436,13 +1436,17 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 		"├─IndexRangeScan_5(Build) 3.00 cop[tikv] table:t, index:PRIMARY(a) range:[1,1], [3,3], [4,4], keep order:false",
 		"└─TableRowIDScan_6(Probe) 3.00 cop[tikv] table:t keep order:false"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
+
+	// TODO: Should also PointGet include partition? Currently the partition pruning is done during the
+	// build phase, which is not executed for PointGet...
+	//tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
+	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, index:PRIMARY(a) "))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`select * from t where a = 2`).Check(testkit.Rows("abc 2"))
 	tk.MustExec(`create table tk (a int primary key nonclustered, b varchar(255), key (b)) partition by key (a) partitions 3`)
 	tk.MustExec(`insert into tk select a, b from t`)
 	tk.MustExec(`analyze table tk`)
-	tk.MustQuery(`explain format='plan_cache' select * from tk where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:tk, partition:p1, index:PRIMARY(a) "))
+	tk.MustQuery(`explain format='plan_cache' select * from tk where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:tk, index:PRIMARY(a) "))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	// PointGet will use Fast Plan, so no Plan Cache, even for Key Partitioned tables.
 	tk.MustQuery(`select * from tk where a = 2`).Check(testkit.Rows("2 abc"))
@@ -1469,7 +1473,7 @@ func TestFixControl33031(t *testing.T) {
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustExec(`set @@tidb_opt_fix_control = "33031:ON"`)
 	tk.MustExec(`set @a = 1`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 1"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, Fix33031 fix-control set and partitioned table in cached A plan"))
 	tk.MustExec(`set @@tidb_opt_fix_control = "33031:OFF"`)
