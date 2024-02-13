@@ -29,9 +29,9 @@ import (
 )
 
 type batchReadHistogramsParm struct {
+	tp         *types.FieldType
 	tableID    int64
 	colID      int64
-	tp         *types.FieldType
 	distinct   int64
 	isIndex    int
 	ver        uint64
