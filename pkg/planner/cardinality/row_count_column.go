@@ -282,18 +282,13 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 
 		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
-		// Consider the number of modifications compared to the original row count (from ANALYZE) excluding NULLs
-		// In this scenario - out-of-range estimation will be unreliable due to the high number of modifications
-		//highModifyCount := modifyCount > int64(c.Histogram.NotNullCount())
-		// If the table has changed - update the count accordingly. If we're already above 1/2 of the current table size
-		// then inflating further is risky since modifications don't break down inserts separately from deletes/updates
-		//if !highModifyCount || cnt < float64(realtimeRowCount)/2 {
+		// If the table has changed - update the count accordingly.
 		cnt *= c.GetIncreaseFactor(realtimeRowCount)
 		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
 			// handling the out-of-range part
 			histNDV := c.NDV
-			// Exclude the TopN only if our modifyCount is low - TopN values may exist in the out-of-range part
-			if c.StatsVer == statistics.Version2 { //&& !highModifyCount {
+			// Exclude the TopN
+			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
 			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, realtimeRowCount, histNDV)
