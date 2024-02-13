@@ -1055,8 +1055,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 	currentCount := hg.NotNullCount()
 	modifyCountF := float64(modifyCount)
 	realtimeCountF := float64(realtimeRowCount)
+	highModifyCount := modifyCountF > currentCount
 	// Bound the left/right percentages if we have a high modifyCount - since this is unreliable
-	if modifyCountF > currentCount {
+	if highModifyCount {
 		rightPercent = min(rightPercent, 0.5)
 		leftPercent = min(leftPercent, 0.5)
 	}
@@ -1084,20 +1085,16 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// unreliable - because this indicates that our statistics are stale. These bounds are therefore approximations.
 	// ModifyCount counts all inserts/updates/deletes - this logic has a bias towards modifications being inserts.
 
-	// Use the upperBound value as a lower bound if modifyCount is larger than the base table count.
-	// This targets the use case where we are searching for a value that is statistically out of range, but
-	// inserts result in the value actually being in that modified range.
-	//adjustRatio := realtimeCountF / currentCount
-	if modifyCountF >= currentCount {
+	// Assume a minimum of 1 value is found if we have a high modifyCount. This targest the situation where we search
+	// for a statisically out of range value, but inserts result in the value actually being in that modified range.
+	if highModifyCount {
 		rowCount = max(rowCount, realUpperBound)
-	} else {
-		// Inflate rowCount by the percentage represented by modify count
-		//rowCount += rowCount * adjustRatio
+	} else if rowCount < origUpperBound {
 		rowCount *= hg.GetIncreaseFactor(realtimeRowCount)
 	}
 
 	// Use modifyCount as the final upper bound
-	return min(rowCount, realtimeCountF)
+	return min(rowCount, modifyCountF)
 }
 
 // Copy deep copies the histogram.

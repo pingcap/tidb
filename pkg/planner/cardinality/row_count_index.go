@@ -324,26 +324,26 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			count += betweenRowCountOnIndex(sctx, idx, l, r)
 		}
 
+		// Consider the number of modifications compared to the original row count (from ANALYZE) excluding NULLs
+		// In this scenario - out-of-range estimation will be unreliable due to the high number of modifications
 		highModifyCount := modifyCount > int64(idx.Histogram.NotNullCount())
-		lowEstimate := count < float64(realtimeRowCount)/3
-		// If the table has changed - update the count accordingly. If we're already above 1/3 of the table size
+		// If the table has changed - update the count accordingly. If we're already above 1/2 of the current table size
 		// then inflating further is risky since modifications don't break down inserts separately from deletes/updates
-		if !highModifyCount || lowEstimate {
+		if !highModifyCount || count < float64(realtimeRowCount)/2 {
 			count *= idx.GetIncreaseFactor(realtimeRowCount)
-		}
-
-		histNDV := idx.NDV
-		// If this is single column - use the column's NDV rather than (full) index NDV
-		isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-		if isSingleColRange && !isSingleColIdx {
-			histNDV = coll.Columns[idx.Histogram.ID].Histogram.NDV
-			// Exclude the TopN - but only if we have a low modifyCount, since those could be in the out-of-range part
-		} else if idx.StatsVer == statistics.Version2 && !highModifyCount {
-			histNDV -= int64(idx.TopN.Num())
-		}
-		// handling the out-of-range part
-		if (!highModifyCount || lowEstimate) && (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, realtimeRowCount, histNDV)
+			// handling the out-of-range part
+			if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+				histNDV := idx.NDV
+				// If this is single column of a multi-column index - use the column's NDV rather than index NDV
+				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
+				if isSingleColRange && !isSingleColIdx {
+					histNDV = coll.Columns[idx.Histogram.ID].Histogram.NDV
+					// Exclude the TopN - but only if we have a low modifyCount, since those could be in the out-of-range part
+				} else if idx.StatsVer == statistics.Version2 && !highModifyCount {
+					histNDV -= int64(idx.TopN.Num())
+				}
+				count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, realtimeRowCount, histNDV)
+			}
 		}
 
 		if debugTrace {
