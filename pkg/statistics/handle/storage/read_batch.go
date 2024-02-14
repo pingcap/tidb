@@ -55,7 +55,7 @@ func generateBatchReadHistogramsSQLs(params []*batchReadHistogramsParm) string {
 }
 
 // HistogramsFromStorage reads histograms from storage.
-func HistogramsFromStorage(sctx sessionctx.Context, params []*batchReadHistogramsParm) (result []*statistics.Histogram, err error) {
+func HistogramsFromStorage(sctx sessionctx.Context, params []*batchReadHistogramsParm) ([]*statistics.Histogram, error) {
 	var mapParam = make(map[int64]*batchReadHistogramsParm, len(params))
 	for _, param := range params {
 		mapParam[param.colID] = param
@@ -69,7 +69,7 @@ func HistogramsFromStorage(sctx sessionctx.Context, params []*batchReadHistogram
 		tmpColID := row.GetInt64(0)
 		resultRow[tmpColID] = append(resultRow[tmpColID], row)
 	}
-	result = make([]*statistics.Histogram, len(params))
+	result := make([]*statistics.Histogram, len(params))
 	for colID, rows := range resultRow {
 		bucketSize := len(rows)
 		p := mapParam[colID]
@@ -115,6 +115,5 @@ func HistogramsFromStorage(sctx sessionctx.Context, params []*batchReadHistogram
 		hg.PreCalculateScalar()
 		result = append(result, hg)
 	}
-
 	return result, nil
 }
