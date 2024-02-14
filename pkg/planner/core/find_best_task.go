@@ -2347,7 +2347,15 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 	if ds.isPartition {
 		batchPointGetPlan.SinglePartition = true
-		batchPointGetPlan.PartitionIDs = []int64{ds.physicalTableID}
+		// TODO: propagate the partition definition index
+		// to avoid this loop!
+		defs := ds.TableInfo().Partition.Definitions
+		for i := range defs {
+			if defs[i].ID == ds.physicalTableID {
+				batchPointGetPlan.PartitionIdxs = []int{i}
+				break
+			}
+		}
 	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc

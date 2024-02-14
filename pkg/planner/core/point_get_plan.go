@@ -324,7 +324,6 @@ type BatchPointGetPlan struct {
 	dbName           string
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
-	PartitionDefs    []*model.PartitionDefinition
 	Handles          []kv.Handle
 	HandleType       *types.FieldType
 	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
@@ -338,13 +337,15 @@ type BatchPointGetPlan struct {
 	HandleColOffset int
 	// Static prune mode converted to BatchPointGet
 	SinglePartition bool
-	PartitionIDs    []int64 // pre-calculated partition IDs for Handles or IndexValues
-	KeepOrder       bool
-	Desc            bool
-	Lock            bool
-	LockWaitTime    int64
-	Columns         []*model.ColumnInfo
-	cost            float64
+	// pre-calculated partition definition indexes
+	// for Handles or IndexValues
+	PartitionIdxs []int
+	KeepOrder     bool
+	Desc          bool
+	Lock          bool
+	LockWaitTime  int64
+	Columns       []*model.ColumnInfo
+	cost          float64
 
 	// required by cost model
 	planCostInit bool
@@ -495,8 +496,8 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
-		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
-		int64(cap(p.PartitionDefs)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+		int64(cap(p.IdxColLens)+cap(p.PartitionIdxs))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
+		int64(cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.HandleType != nil {
 		sum += p.HandleType.MemoryUsage()
 	}

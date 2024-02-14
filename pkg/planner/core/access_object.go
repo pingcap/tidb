@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -332,8 +333,19 @@ func (p *BatchPointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	for _, partitionDef := range p.PartitionDefs {
-		res.Partitions = append(res.Partitions, partitionDef.Name.O)
+	uniqueIdx := make(map[int]struct{})
+	for _, idx := range p.PartitionIdxs {
+		uniqueIdx[idx] = struct{}{}
+	}
+	if len(uniqueIdx) > 0 {
+		idxs := make([]int, 0, len(uniqueIdx))
+		for k := range uniqueIdx {
+			idxs = append(idxs, k)
+		}
+		sort.Ints(idxs)
+		for _, idx := range idxs {
+			res.Partitions = append(res.Partitions, p.TblInfo.Partition.Definitions[idx].Name.O)
+		}
 	}
 	if p.IndexInfo != nil {
 		index := IndexAccess{

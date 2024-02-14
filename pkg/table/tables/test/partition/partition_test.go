@@ -1218,15 +1218,11 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				if selInfo.batchPoint {
 					result.CheckContain("Batch_Point_Get")
 				}
-				// TODO: Add back pruning info to explain
-				// if Point Get is used
-				/*
-					if selInfo.pruned {
-						for _, part := range selInfo.usedPartition {
-							result.CheckContain(part)
-						}
+				if selInfo.pruned {
+					for _, part := range selInfo.usedPartition {
+						result.CheckContain(part)
 					}
-				*/
+				}
 			}
 		}
 		executeSQLWrapper(t, tk, testCase.dropSQL)
@@ -3064,4 +3060,30 @@ func TestPointGetKeyPartitioning(t *testing.T) {
  c VARCHAR(45) NOT NULL, PRIMARY KEY (b, a)) PARTITION BY KEY(b) PARTITIONS 5`)
 	tk.MustExec(`INSERT INTO t VALUES ('Aa', 'Ab', 'Ac'), ('Ba', 'Bb', 'Bc')`)
 	tk.MustQuery(`SELECT * FROM t WHERE b = 'Ab'`).Check(testkit.Rows("Aa Ab Ac"))
+}
+
+func TestExplainPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t (a int, b int) PARTITION BY hash(a) PARTITIONS 3`)
+	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 3)`,
+		`  └─TableFullScan 2.00 cop[tikv] table:t, partition:p0 keep order:false`))
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
+		`TableReader 1.00 root partition:p0 data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 3)`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`CREATE TABLE t (a int unsigned primary key, b int) PARTITION BY hash(a) PARTITIONS 3`)
+	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`SELECT * FROM t WHERE a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0 handle:3"))
 }

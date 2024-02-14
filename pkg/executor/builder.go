@@ -1328,8 +1328,10 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) exec.Executor {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
-		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
+	// Needs to build the target plan, even if not executing it
+	// to get partition pruning.
+	explainExec.analyzeExec = b.build(v.TargetPlan)
 	return explainExec
 }
 
@@ -5024,8 +5026,8 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 // Map each index value to Partition ID
-func (b *executorBuilder) getPartitionIDs(plan *plannercore.BatchPointGetPlan, rows [][]types.Datum) ([]int64, error) {
-	pids, err := getPartitionIDs(b.ctx, b.is, plan.TblInfo, plan.IndexInfo.Columns, rows)
+func (b *executorBuilder) getPartitionIdxs(plan *plannercore.BatchPointGetPlan, rows [][]types.Datum) ([]int, error) {
+	pids, err := getPartitionIdxs(b.ctx, b.is, plan.TblInfo, plan.IndexInfo.Columns, rows)
 	if err != nil {
 		b.err = err
 		return nil, err
@@ -5033,15 +5035,14 @@ func (b *executorBuilder) getPartitionIDs(plan *plannercore.BatchPointGetPlan, r
 	return pids, nil
 }
 
-func getPartitionIDs(ctx expression.BuildContext, is infoschema.InfoSchema, tblInfo *model.TableInfo, idxCols []*model.IndexColumn, rows [][]types.Datum) ([]int64, error) {
-	pi := tblInfo.GetPartitionInfo()
+func getPartitionIdxs(ctx expression.BuildContext, is infoschema.InfoSchema, tblInfo *model.TableInfo, idxCols []*model.IndexColumn, rows [][]types.Datum) ([]int, error) {
 	tbl, ok := is.TableByID(tblInfo.ID)
 	intest.Assert(ok)
 	pTbl, ok := tbl.(table.PartitionedTable)
 	intest.Assert(ok)
 	intest.Assert(pTbl != nil)
 	r := make([]types.Datum, len(pTbl.Cols()))
-	partitionIDs := make([]int64, 0, len(rows))
+	idxs := make([]int, 0, len(rows))
 	for i := range rows {
 		for j := range rows[i] {
 			rows[i][j].Copy(&r[idxCols[j].Offset])
@@ -5049,14 +5050,14 @@ func getPartitionIDs(ctx expression.BuildContext, is infoschema.InfoSchema, tblI
 		pIdx, err := pTbl.GetPartitionIdxByRow(ctx, r)
 		if err != nil {
 			if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
-				partitionIDs = append(partitionIDs, 0)
+				idxs = append(idxs, -1)
 				continue
 			}
 			return nil, err
 		}
-		partitionIDs = append(partitionIDs, pi.Definitions[pIdx].ID)
+		idxs = append(idxs, pIdx)
 	}
-	return partitionIDs, nil
+	return idxs, nil
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) exec.Executor {
@@ -5140,25 +5141,40 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if pi != nil {
 		if plan.SinglePartition {
 			// Static prune mode, don't do any more partition pruning!
-			e.singlePartID = plan.PartitionIDs[0]
+			e.singlePartID = pi.Definitions[plan.PartitionIdxs[0]].ID
 		} else {
 			// reset the PartitionIDs
-			plan.PartitionIDs = plan.PartitionIDs[:0]
+			plan.PartitionIdxs = plan.PartitionIdxs[:0]
 		}
-		e.planPhysIDs = e.planPhysIDs[:0]
 	}
 	var capacity int
 	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
-		e.idxVals = plan.IndexValues
-		capacity = len(e.idxVals)
-
-		if pi != nil {
-			e.planPhysIDs, err = b.getPartitionIDs(plan, plan.IndexValues)
+		// TODO: filter out duplicate IndexValues
+		if pi == nil {
+			e.idxVals = plan.IndexValues
+		} else {
+			partIdxs, err := b.getPartitionIdxs(plan, plan.IndexValues)
 			if err != nil {
 				b.err = err
 				return nil
 			}
+			for i, idx := range partIdxs {
+				if plan.SinglePartition &&
+					idx != plan.PartitionIdxs[0] {
+					continue
+				}
+				if idx < 0 {
+					// No matching partition
+					continue
+				}
+				e.planPhysIDs = append(e.planPhysIDs, pi.Definitions[idx].ID)
+				e.idxVals = append(e.idxVals, plan.IndexValues[i])
+				if !plan.SinglePartition {
+					plan.PartitionIdxs = append(plan.PartitionIdxs, idx)
+				}
+			}
 		}
+		capacity = len(e.idxVals)
 	} else {
 		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
 		handles := make([]kv.Handle, 0, len(plan.Handles))
@@ -5178,25 +5194,48 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				intest.Assert(ok)
 				intest.Assert(pTbl != nil)
 				r := make([]types.Datum, plan.HandleColOffset+1)
+				partIdxs := make([]int, 0, len(handles))
 				for _, handle := range handles {
-					d := types.NewIntDatum(handle.IntValue())
+					var d types.Datum
+					if mysql.HasUnsignedFlag(plan.HandleType.GetFlag()) {
+						d = types.NewUintDatum(uint64(handle.IntValue()))
+					} else {
+						d = types.NewIntDatum(handle.IntValue())
+					}
 					d.Copy(&r[plan.HandleColOffset])
 					pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
 					if err != nil {
-						// TODO: Handle cases where no matching partition is found
 						if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
-							e.planPhysIDs = append(e.planPhysIDs, 0)
+							partIdxs = append(partIdxs, -1)
 							continue
 						}
 						b.err = err
 						return nil
 					}
-					e.planPhysIDs = append(e.planPhysIDs, pi.Definitions[pIdx].ID)
+					if plan.SinglePartition &&
+						plan.PartitionIdxs[0] != pIdx {
+						// Skip non matching partitions
+						partIdxs = append(partIdxs, -1)
+						continue
+					}
+					partIdxs = append(partIdxs, pIdx)
+				}
+				skipped := 0
+				for i, idx := range partIdxs {
+					if idx < 0 {
+						handles = append(handles[:i-skipped], handles[i-skipped+1:]...)
+						skipped++
+						continue
+					}
+					e.planPhysIDs = append(e.planPhysIDs, pi.Definitions[idx].ID)
+					if !plan.SinglePartition {
+						plan.PartitionIdxs = append(plan.PartitionIdxs, idx)
+					}
 				}
 			}
 		} else {
-			var values [][]types.Datum
-			for _, value := range plan.IndexValues {
+			usedValues := make([]bool, len(plan.IndexValues))
+			for i, value := range plan.IndexValues {
 				if datumsContainNull(value) {
 					continue
 				}
@@ -5218,23 +5257,35 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
-				if pi != nil {
-					values = append(values, value)
-				}
+				usedValues[i] = true
 			}
-			if len(values) > 0 {
-				e.planPhysIDs, err = b.getPartitionIDs(plan, values)
+			if pi != nil {
+				var partIdxs []int
+				partIdxs, err = b.getPartitionIdxs(plan, plan.IndexValues)
 				if err != nil {
 					b.err = err
 					return nil
+				}
+				skipped := 0
+				for i, idx := range partIdxs {
+					if !usedValues[i] {
+						skipped++
+						continue
+					}
+					if partIdxs[i] < 0 ||
+						(plan.SinglePartition &&
+							partIdxs[i] != plan.PartitionIdxs[0]) {
+						handles = append(handles[:i-skipped], handles[i+1-skipped:]...)
+						skipped++
+						continue
+					}
+					e.planPhysIDs = append(e.planPhysIDs, pi.Definitions[idx].ID)
+					plan.PartitionIdxs = append(plan.PartitionIdxs, idx)
 				}
 			}
 		}
 		e.handles = handles
 		capacity = len(e.handles)
-	}
-	if !plan.SinglePartition {
-		plan.PartitionIDs = e.planPhysIDs
 	}
 	e.SetInitCap(capacity)
 	e.SetMaxChunkSize(capacity)
