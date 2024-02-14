@@ -86,7 +86,7 @@ type PointGetPlan struct {
 	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
-	outputFieldNames []*types.FieldName
+	outputNames      []*types.FieldName
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
 	cost             float64
@@ -249,12 +249,12 @@ func (p *PointGetPlan) ResolveIndices() error {
 
 // OutputNames returns the outputting names of each column.
 func (p *PointGetPlan) OutputNames() types.NameSlice {
-	return p.outputFieldNames
+	return p.outputNames
 }
 
 // SetOutputNames sets the outputting name by the given slice.
 func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
-	p.outputFieldNames = names
+	p.outputNames = names
 }
 
 func (*PointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
@@ -268,7 +268,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPointGetPlanSize + p.Plan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputFieldNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
 	}
@@ -297,7 +297,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	for _, cond := range p.AccessConditions {
 		sum += cond.MemoryUsage()
 	}
-	for _, name := range p.outputFieldNames {
+	for _, name := range p.outputNames {
 		sum += name.MemoryUsage()
 	}
 	for _, col := range p.accessCols {
@@ -592,7 +592,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			}
 			if fp.IsTableDual {
 				tableDual := PhysicalTableDual{}
-				tableDual.names = fp.outputFieldNames
+				tableDual.names = fp.outputNames
 				tableDual.SetSchema(fp.Schema())
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
@@ -655,7 +655,7 @@ func newBatchPointGetPlan(
 		var handles = make([]kv.Handle, len(patternInExpr.List))
 		var handleParams = make([]*expression.Constant, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
-			// SELECT * FROM t WHERE (key) in ((1), (2)) // TODO: extend this!
+			// SELECT * FROM t WHERE (key) in ((1), (2))
 			if p, ok := item.(*ast.ParenthesesExpr); ok {
 				item = p.Expr
 			}
@@ -1023,27 +1023,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, nil /*partitionDef, pairIdx*/, false, isTableDual, check)
+	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, isTableDual, check)
 }
 
 func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, schema *expression.Schema,
-	names []*types.FieldName, pairs []nameValuePair, partitionDef *model.PartitionDefinition,
-	/*pos int,*/ globalIndexCheck, isTableDual, check bool) *PointGetPlan {
-	if globalIndexCheck {
-		// when partitions are specified or some partition is in ddl, not use point get plan for global index.
-		// TODO: Add partition ID filter for Global Index Point Get.
-		// partitions are specified in select stmt.
-		if len(tblName.PartitionNames) > 0 {
-			return nil
-		}
-		tbl := tblName.TableInfo
-		// some partition is in ddl.
-		if tbl == nil ||
-			len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
-			len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
-			return nil
-		}
-	}
+	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool) *PointGetPlan {
+	// TODO: Follow up how Global Index for partitioned tables works with this?
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
@@ -1057,9 +1042,6 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
-			continue
-		}
-		if globalIndexCheck && !idxInfo.Global {
 			continue
 		}
 		if isTableDual {
@@ -1100,7 +1082,6 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
-		p.PartitionDef = partitionDef
 		return p
 	}
 	return nil
@@ -1146,12 +1127,12 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		Plan:             base.NewBasePlan(ctx, plancodec.TypePointGet, 0),
-		dbName:           dbName,
-		schema:           schema,
-		TblInfo:          tbl,
-		outputFieldNames: names,
-		LockWaitTime:     ctx.GetSessionVars().LockWaitTimeout,
+		Plan:         base.NewBasePlan(ctx, plancodec.TypePointGet, 0),
+		dbName:       dbName,
+		schema:       schema,
+		TblInfo:      tbl,
+		outputNames:  names,
+		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 	return p
@@ -1567,7 +1548,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
-				names: pointGet.outputFieldNames,
+				names: pointGet.outputNames,
 			}.Init(ctx, &property.StatsInfo{}, 0)
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
@@ -1692,7 +1673,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if pointGet := tryPointGetPlan(ctx, selStmt, true); pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
-				names: pointGet.outputFieldNames,
+				names: pointGet.outputNames,
 			}.Init(ctx, &property.StatsInfo{}, 0)
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {

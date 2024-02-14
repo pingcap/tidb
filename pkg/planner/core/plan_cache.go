@@ -515,7 +515,6 @@ func rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
-
 			iv, err := dVal.ToInt64(sc.TypeCtx())
 			if err != nil {
 				return err
@@ -523,15 +522,13 @@ func rebuildRange(p Plan) error {
 			x.Handle = kv.IntHandle(iv)
 			return nil
 		}
-		if len(x.IndexConstants) > 0 {
-			for i, param := range x.IndexConstants {
-				if param != nil {
-					dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
-					if err != nil {
-						return err
-					}
-					x.IndexValues[i] = *dVal
+		for i, param := range x.IndexConstants {
+			if param != nil {
+				dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
+				if err != nil {
+					return err
 				}
+				x.IndexValues[i] = *dVal
 			}
 			return nil
 		}
@@ -769,15 +766,6 @@ func buildRangeForIndexScan(sctx PlanContext, is *PhysicalIndexScan) (err error)
 		return errors.New("rebuild to get an unsafe range")
 	}
 	is.Ranges = res.Ranges
-	if is.isPartition || (is.physicalTableID > 0 && is.physicalTableID != is.Table.ID) {
-		panic("static pruning mode, when dynamic prune mode is a must for plan cache?!?")
-	}
-	// PhysicalIndexScan will recalculate partition pruning, so no need to do it here!
-	// In executorBuilder.buildIndex{Reader|LookUpReader|MergeReader}
-	// Can PhysicalIndexScan plan be used without IndexReader/IndexLookupReader/MergeReader?
-	// Since those do have the 'PartitionInfo.PruningConds' that needs to be updated...
-	// TODO: check with optimizer team when it should be recalculated through rebuildRange and when not?
-	// TODO: Are there any IndexScan that is *not* updating the pruning?
 	return
 }
 

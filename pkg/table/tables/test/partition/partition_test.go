@@ -1134,7 +1134,6 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey4",
 		},
-
 		{
 			createSQL: "CREATE TABLE tkey9 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(JYRQ, KHH, ZJZH) partitions 4",
 			insertSQL: "INSERT INTO tkey9 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530'),(1,'beijing','010'),(2,'beijing','010'),(2,'zzzzwuhan','027')",
@@ -1210,7 +1209,6 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		executeSQLWrapper(t, tk, testCase.insertSQL)
 		for j, selInfo := range testCase.selectInfo {
 			logutil.BgLogger().Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
-			//tk.MustQuery("EXPLAIN " + selInfo.selectSQL).Check(testkit.Rows())
 			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
@@ -1220,7 +1218,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 				if selInfo.batchPoint {
 					result.CheckContain("Batch_Point_Get")
 				}
-				// TODO: Add pruning info to explain
+				// TODO: Add back pruning info to explain
 				// if Point Get is used
 				/*
 					if selInfo.pruned {

@@ -681,7 +681,6 @@ func TestIssue33031(t *testing.T) {
 	tk.MustExec(`use test`)
 	// https://github.com/pingcap/tidb/issues/33031
 	tk.MustExec(`drop table if exists Issue33031`)
-	//tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1))`)
 	tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1)) PARTITION BY RANGE (COL1) (PARTITION P0 VALUES LESS THAN (0))`)
 	tk.MustExec(`insert into Issue33031 values(-5, 7)`)
 	tk.MustExec(`set @@session.tidb_partition_prune_mode='static'`)
@@ -697,16 +696,11 @@ func TestIssue33031(t *testing.T) {
 	tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
 	tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
-	// TODO: Investigate why it is considered to be over-optimized?
+	// TODO: Add another test that will use the plan cache instead of [Batch]PointGet
+	// which is now supported for partitioned tables as well.
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
-	//tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
-	// Notice that plan cache is used here, while it is not in non-partitioned case.
-	// Seems to relate to DataSource.findBestTask() =>
-	// canConvertPointGet and batchPointGet and partitioning
-	//require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	//tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 	tk.MustExec(`alter table Issue33031 remove partitioning`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
@@ -1075,8 +1069,6 @@ func TestPartitionTable(t *testing.T) {
 			foundInPlanCache := tk.Session().GetSessionVars().FoundInPlanCache
 			warnings := tk.MustQuery(`show warnings`)
 			if len(warnings.Rows()) > 0 {
-				// TODO: support prepared plan cache for all plans which matches multiple partitions
-				// or no partition (Table Dual).
 				warnings.CheckContain("skip plan-cache: plan rebuild failed, ")
 				numWarns++
 			} else {
@@ -1085,6 +1077,7 @@ func TestPartitionTable(t *testing.T) {
 			tk.MustQuery("execute stmt2 using @a /* @a=" + val + " i=" + strconv.Itoa(i) + " */ " + commentString).Sort().Check(result1)
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
+		require.Less(t, numWarns, 5, "Too many skip plan-cache warnings!")
 		t.Logf("Create t1: %s\nstmt: %s\nnumWarns: %d", tc.t1Create, tc.query, numWarns)
 	}
 }

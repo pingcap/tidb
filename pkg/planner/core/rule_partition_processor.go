@@ -834,7 +834,6 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 	for i, cond := range ds.allConds {
 		ds.allConds[i] = expression.PushDownNot(ds.SCtx(), cond)
 	}
-	// TODO: Replace this with the common PartitionPruning function
 	// Try to locate partition directly for hash partition.
 	// TODO: See if there is a way to remove conditions that does not
 	// apply for some partitions like:
@@ -1051,16 +1050,6 @@ func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.Part
 		return nil, err
 	}
 	return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
-	/*
-		if used != nil {
-			return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
-		}
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
-		tableDual.SCtx().GetSessionVars().StmtCtx.UseCache = false
-		tableDual.schema = ds.Schema()
-		appendNoPartitionChildTraceStep(ds, tableDual, opt)
-		return tableDual, nil
-	*/
 }
 
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
@@ -1545,12 +1534,9 @@ func (p *rangePruner) extractDataForPrune(sctx PlanContext, expr expression.Expr
 	// the constExpr may not a really constant when coming here.
 	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
 	// the constExpr is '2 + b' after the replacement which we can't evaluate.
-	// TODO: Is this correct? Can it not at least include a paramMarker?
-	/*
-		if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache) {
-			return ret, false
-		}
-	*/
+	if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache) {
+		return ret, false
+	}
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
@@ -1816,10 +1802,10 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
 
+	ds.SCtx().GetSessionVars().StmtCtx.UseCache = false
 	if len(children) == 0 {
 		// No result after table pruning.
 		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
-		tableDual.SCtx().GetSessionVars().StmtCtx.UseCache = false
 		tableDual.schema = ds.Schema()
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
@@ -1827,11 +1813,9 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	if len(children) == 1 {
 		// No need for the union all.
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
-		children[0].SCtx().GetSessionVars().StmtCtx.UseCache = false
 		return children[0], nil
 	}
 	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	unionAll.SCtx().GetSessionVars().StmtCtx.UseCache = false
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema.Clone())
 	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)
