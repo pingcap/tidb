@@ -2345,6 +2345,10 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
 	}
+	if ds.isPartition {
+		batchPointGetPlan.SinglePartition = true
+		batchPointGetPlan.PartitionIDs = []int64{ds.physicalTableID}
+	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}

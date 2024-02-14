@@ -5025,29 +5025,38 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 
 // Map each index value to Partition ID
 func (b *executorBuilder) getPartitionIDs(plan *plannercore.BatchPointGetPlan, rows [][]types.Datum) ([]int64, error) {
-	pi := plan.TblInfo.GetPartitionInfo()
-	tbl, ok := b.is.TableByID(plan.TblInfo.ID)
+	pids, err := getPartitionIDs(b.ctx, b.is, plan.TblInfo, plan.IndexInfo.Columns, rows)
+	if err != nil {
+		b.err = err
+		return nil, err
+	}
+	return pids, nil
+}
+
+func getPartitionIDs(ctx expression.BuildContext, is infoschema.InfoSchema, tblInfo *model.TableInfo, idxCols []*model.IndexColumn, rows [][]types.Datum) ([]int64, error) {
+	pi := tblInfo.GetPartitionInfo()
+	tbl, ok := is.TableByID(tblInfo.ID)
 	intest.Assert(ok)
 	pTbl, ok := tbl.(table.PartitionedTable)
 	intest.Assert(ok)
 	intest.Assert(pTbl != nil)
 	r := make([]types.Datum, len(pTbl.Cols()))
+	partitionIDs := make([]int64, 0, len(rows))
 	for i := range rows {
 		for j := range rows[i] {
-			rows[i][j].Copy(&r[plan.IndexInfo.Columns[j].Offset])
+			rows[i][j].Copy(&r[idxCols[j].Offset])
 		}
-		pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
+		pIdx, err := pTbl.GetPartitionIdxByRow(ctx, r)
 		if err != nil {
 			if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
-				plan.PartitionIDs = append(plan.PartitionIDs, 0)
+				partitionIDs = append(partitionIDs, 0)
 				continue
 			}
-			b.err = err
 			return nil, err
 		}
-		plan.PartitionIDs = append(plan.PartitionIDs, pi.Definitions[pIdx].ID)
+		partitionIDs = append(partitionIDs, pi.Definitions[pIdx].ID)
 	}
-	return plan.PartitionIDs, nil
+	return partitionIDs, nil
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) exec.Executor {
@@ -5127,13 +5136,22 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.hasLock = true
 	}
 
-	plan.PartitionIDs = plan.PartitionIDs[:0]
+	pi := plan.TblInfo.GetPartitionInfo()
+	if pi != nil {
+		if plan.SinglePartition {
+			// Static prune mode, don't do any more partition pruning!
+			e.singlePartID = plan.PartitionIDs[0]
+		} else {
+			// reset the PartitionIDs
+			plan.PartitionIDs = plan.PartitionIDs[:0]
+		}
+		e.planPhysIDs = e.planPhysIDs[:0]
+	}
 	var capacity int
 	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
 		e.idxVals = plan.IndexValues
 		capacity = len(e.idxVals)
 
-		pi := plan.TblInfo.GetPartitionInfo()
 		if pi != nil {
 			e.planPhysIDs, err = b.getPartitionIDs(plan, plan.IndexValues)
 			if err != nil {
@@ -5153,7 +5171,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
 			}
-			if pi := plan.TblInfo.GetPartitionInfo(); pi != nil {
+			if pi != nil {
 				tbl, ok := b.is.TableByID(plan.TblInfo.ID)
 				intest.Assert(ok)
 				pTbl, ok := tbl.(table.PartitionedTable)
@@ -5169,11 +5187,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 						b.err = err
 						return nil
 					}
-					plan.PartitionIDs = append(plan.PartitionIDs, pi.Definitions[pIdx].ID)
+					e.planPhysIDs = append(e.planPhysIDs, pi.Definitions[pIdx].ID)
 				}
 			}
 		} else {
-			var vals [][]types.Datum
+			var values [][]types.Datum
 			for _, value := range plan.IndexValues {
 				if datumsContainNull(value) {
 					continue
@@ -5196,12 +5214,12 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
-				if plan.TblInfo.GetPartitionInfo() != nil {
-					vals = append(vals, value)
+				if pi != nil {
+					values = append(values, value)
 				}
 			}
-			if len(vals) > 0 {
-				e.planPhysIDs, err = b.getPartitionIDs(plan, plan.IndexValues)
+			if len(values) > 0 {
+				e.planPhysIDs, err = b.getPartitionIDs(plan, values)
 				if err != nil {
 					b.err = err
 					return nil
@@ -5209,8 +5227,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			}
 		}
 		e.handles = handles
-		e.planPhysIDs = plan.PartitionIDs
 		capacity = len(e.handles)
+	}
+	if !plan.SinglePartition {
+		plan.PartitionIDs = e.planPhysIDs
 	}
 	e.SetInitCap(capacity)
 	e.SetMaxChunkSize(capacity)

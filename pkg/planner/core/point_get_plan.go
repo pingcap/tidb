@@ -336,6 +336,8 @@ type BatchPointGetPlan struct {
 	IdxColLens       []int
 	// Offset to column used for handle
 	HandleColOffset int
+	// Static prune mode converted to BatchPointGet
+	SinglePartition bool
 	PartitionIDs    []int64 // pre-calculated partition IDs for Handles or IndexValues
 	KeepOrder       bool
 	Desc            bool

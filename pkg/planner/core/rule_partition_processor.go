@@ -146,16 +146,16 @@ func getPartColumnsForHashPartition(hashExpr expression.Expression) ([]*expressi
 
 func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 	tbl table.Table, partitionNames []model.CIStr, columns []*expression.Column,
-	conds []expression.Expression, names types.NameSlice) ([]int, []expression.Expression, error) {
+	conds []expression.Expression, names types.NameSlice) ([]int, error) {
 	pi := tbl.Meta().Partition
 	hashExpr, err := generateHashPartitionExpr(ctx, pi, columns, names)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	partCols, colLen := getPartColumnsForHashPartition(hashExpr)
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
@@ -171,12 +171,12 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 
 				posHigh, highIsNull, err := hashExpr.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 
 				posLow, lowIsNull, err := hashExpr.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 
 				// consider whether the range is closed or open
@@ -259,19 +259,19 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 		}
 		used = append(used, int(idx))
 	}
-	return used, detachedResult.RemainedConds, nil
+	return used, nil
 }
 
 func (s *partitionProcessor) getUsedKeyPartitions(ctx PlanContext,
 	tbl table.Table, partitionNames []model.CIStr, columns []*expression.Column,
-	conds []expression.Expression, _ types.NameSlice) ([]int, []expression.Expression, error) {
+	conds []expression.Expression, _ types.NameSlice) ([]int, error) {
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(partitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
 	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
@@ -283,12 +283,12 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx PlanContext,
 				col := partCols[0]
 				posHigh, highIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 
 				posLow, lowIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 
 				// consider whether the range is closed or open
@@ -363,15 +363,16 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx PlanContext,
 		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 			continue
 		}
+		// TODO: Also return an array of the column values, to avoid doing it again for static prune mode
 		used = append(used, idx)
 	}
-	return used, detachedResult.RemainedConds, nil
+	return used, nil
 }
 
 // getUsedPartitions is used to get used partitions for hash or key partition tables
 func (s *partitionProcessor) getUsedPartitions(ctx PlanContext, tbl table.Table,
 	partitionNames []model.CIStr, columns []*expression.Column, conds []expression.Expression,
-	names types.NameSlice, partType model.PartitionType) ([]int, []expression.Expression, error) {
+	names types.NameSlice, partType model.PartitionType) ([]int, error) {
 	if partType == model.PartitionTypeHash {
 		return s.getUsedHashPartitions(ctx, tbl, partitionNames, columns, conds, names)
 	}
@@ -380,19 +381,18 @@ func (s *partitionProcessor) getUsedPartitions(ctx PlanContext, tbl table.Table,
 
 // findUsedPartitions is used to get used partitions for hash or key partition tables.
 // The first returning is the used partition index set pruned by `conds`.
-// The second returning is the filter conditions which should be kept after pruning.
 func (s *partitionProcessor) findUsedPartitions(ctx PlanContext,
 	tbl table.Table, partitionNames []model.CIStr, conds []expression.Expression,
-	columns []*expression.Column, names types.NameSlice) ([]int, []expression.Expression, error) {
+	columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	pi := tbl.Meta().Partition
-	used, remainedConds, err := s.getUsedPartitions(ctx, tbl, partitionNames, columns, conds, names, pi.Type)
+	used, err := s.getUsedPartitions(ctx, tbl, partitionNames, columns, conds, names, pi.Type)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		return s.convertToIntSlice(or, pi, partitionNames), nil, nil
+		return s.convertToIntSlice(or, pi, partitionNames), nil
 	}
 	slices.Sort(used)
 	ret := used[:0]
@@ -401,7 +401,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx PlanContext,
 			ret = append(ret, used[i])
 		}
 	}
-	return ret, remainedConds, nil
+	return ret, nil
 }
 
 func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
@@ -440,7 +440,7 @@ func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
 // pruneHashOrKeyPartition is used to prune hash or key partition tables
 func (s *partitionProcessor) pruneHashOrKeyPartition(ctx PlanContext, tbl table.Table, partitionNames []model.CIStr,
 	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
-	used, _, err := s.findUsedPartitions(ctx, tbl, partitionNames, conds, columns, names)
+	used, err := s.findUsedPartitions(ctx, tbl, partitionNames, conds, columns, names)
 	if err != nil {
 		return nil, err
 	}
@@ -834,7 +834,12 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 	for i, cond := range ds.allConds {
 		ds.allConds[i] = expression.PushDownNot(ds.SCtx(), cond)
 	}
+	// TODO: Replace this with the common PartitionPruning function
 	// Try to locate partition directly for hash partition.
+	// TODO: See if there is a way to remove conditions that does not
+	// apply for some partitions like:
+	// a = 1 OR a = 2 => for p1 only "a = 1" and for p2 only "a = 2"
+	// since a cannot be 2 in p1 and a cannot be 1 in p2
 	switch pi.Type {
 	case model.PartitionTypeRange:
 		return s.processRangePartition(ds, pi, opt)
