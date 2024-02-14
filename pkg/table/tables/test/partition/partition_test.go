@@ -816,401 +816,392 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		insertSQL  string
 		selectInfo []compoundSQL
 	}{
-		/*
-			{
-				createSQL: "CREATE TABLE tkey0 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3)) PARTITION BY KEY(col3) PARTITIONS 4",
-				insertSQL: "INSERT INTO tkey0 VALUES(1, '2023-02-22', 1, 1), (2, '2023-02-22', 2, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4)",
-				selectInfo: []compoundSQL{
-					{
-						"SELECT count(*) FROM tkey0",
-						false, false, false, false, []string{}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey0 PARTITION(p0)",
-						false, false, false, false, []string{}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey0 PARTITION(p1)",
-						false, false, false, false, []string{}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey0 PARTITION(p2)",
-						false, false, false, false, []string{}, []string{}, 0,
-					},
-					{
-						"SELECT count(*) FROM tkey0 PARTITION(p3)",
-						false, false, false, false, []string{}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey0 WHERE col3 = 3",
-						true, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey0 WHERE col3 = 3 or col3 = 4",
-						false, false, true, true, []string{"partition:p0", "partition:p3"}, []string{"partition:p1", "partition:p2"}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey0 WHERE col3 >1 AND col3 < 4",
-						false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p0", "partition:p2"}, 2,
-					},
+		{
+			createSQL: "CREATE TABLE tkey0 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3)) PARTITION BY KEY(col3) PARTITIONS 4",
+			insertSQL: "INSERT INTO tkey0 VALUES(1, '2023-02-22', 1, 1), (2, '2023-02-22', 2, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4)",
+			selectInfo: []compoundSQL{
+				{
+					"SELECT count(*) FROM tkey0",
+					false, false, false, false, []string{}, []string{}, 4,
 				},
+				{
+					"SELECT count(*) FROM tkey0 PARTITION(p0)",
+					false, false, false, false, []string{}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey0 PARTITION(p1)",
+					false, false, false, false, []string{}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey0 PARTITION(p2)",
+					false, false, false, false, []string{}, []string{}, 0,
+				},
+				{
+					"SELECT count(*) FROM tkey0 PARTITION(p3)",
+					false, false, false, false, []string{}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey0 WHERE col3 = 3",
+					true, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey0 WHERE col3 = 3 or col3 = 4",
+					false, false, true, true, []string{"partition:p0", "partition:p3"}, []string{"partition:p1", "partition:p2"}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey0 WHERE col3 >1 AND col3 < 4",
+					false, false, true, true, []string{"partition:p1", "partition:p3"}, []string{"partition:p0", "partition:p2"}, 2,
+				},
+			},
 
-				dropSQL: "DROP TABLE IF EXISTS tkey0",
-			},
-			{
-				createSQL: "CREATE TABLE tkey7 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3,col1)) PARTITION BY KEY(col3,col1) PARTITIONS 4",
-				insertSQL: "INSERT INTO tkey7 VALUES(1, '2023-02-22', 1, 1), (1, '2023-02-22', 2, 1),(2, '2023-02-22', 2, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4),(4, '2023-02-22', 5, 4)",
-				selectInfo: []compoundSQL{
-					{
-						"SELECT count(*) FROM tkey7",
-						false, false, false, false, []string{}, []string{}, 6,
-					},
-					{
-						"SELECT count(*) FROM tkey7 PARTITION(p0)",
-						false, false, false, false, []string{}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey7 PARTITION(p1)",
-						false, false, false, false, []string{}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey7 PARTITION(p2)",
-						false, false, false, false, []string{}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey7 PARTITION(p3)",
-						false, false, false, false, []string{}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey7 WHERE col3 = 3",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey7 WHERE col3 = 3 and col1 = 3",
-						true, false, true, true, []string{"partition:p1"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey7 WHERE col3 = 3 or col3 = 4",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey7 WHERE col3 = 3 and col1 = 3 OR col3 = 4 and col1 = 4",
-						false, false, true, true, []string{"partition:p1"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey7 WHERE col1>1 and col3 >1 AND col3 < 4 and col1<3",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
-					},
+			dropSQL: "DROP TABLE IF EXISTS tkey0",
+		},
+		{
+			createSQL: "CREATE TABLE tkey7 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3,col1)) PARTITION BY KEY(col3,col1) PARTITIONS 4",
+			insertSQL: "INSERT INTO tkey7 VALUES(1, '2023-02-22', 1, 1), (1, '2023-02-22', 2, 1),(2, '2023-02-22', 2, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4),(4, '2023-02-22', 5, 4)",
+			selectInfo: []compoundSQL{
+				{
+					"SELECT count(*) FROM tkey7",
+					false, false, false, false, []string{}, []string{}, 6,
 				},
-				dropSQL: "DROP TABLE IF EXISTS tkey7",
-			},
-			{
-				createSQL: "CREATE TABLE tkey8 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,PRIMARY KEY (col3,col1)) PARTITION BY KEY(col3,col1) PARTITIONS 4",
-				insertSQL: "INSERT INTO tkey8 VALUES(1, '2023-02-22', 111, 1), (1, '2023-02-22', 2, 1),(2, '2023-02-22', 218, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4),(4, '2023-02-22', 5, 4),(5, '2023-02-22', 5, 5),(5, '2023-02-22', 50, 2),(6, '2023-02-22', 62, 2),(60, '2023-02-22', 6, 5),(70, '2023-02-22', 50, 2),(80, '2023-02-22', 62, 2),(100, '2023-02-22', 62, 2),(2000, '2023-02-22', 6, 5),(400, '2023-02-22', 50, 2),(90, '2023-02-22', 62, 2)",
-				selectInfo: []compoundSQL{
-					{
-						"SELECT count(*) FROM tkey8",
-						false, false, false, false, []string{}, []string{}, 16,
-					},
-					{
-						"SELECT count(*) FROM tkey8 PARTITION(p0)",
-						false, false, false, false, []string{}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey8 PARTITION(p1)",
-						false, false, false, false, []string{}, []string{}, 7,
-					},
-					{
-						"SELECT count(*) FROM tkey8 PARTITION(p2)",
-						false, false, false, false, []string{}, []string{}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey8 PARTITION(p3)",
-						false, false, false, false, []string{}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey8 WHERE col3 = 3",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey8 WHERE col3 = 3 and col1 = 3",
-						true, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey8 WHERE col3 = 3 or col3 = 4",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey8 WHERE col3 = 3 and col1 = 3 OR col3 = 4 and col1 = 4",
-						false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey8 WHERE col1>1 and col3 >1 AND col3 < 4 and col1<3",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 0,
-					},
+				{
+					"SELECT count(*) FROM tkey7 PARTITION(p0)",
+					false, false, false, false, []string{}, []string{}, 2,
 				},
-				dropSQL: "DROP TABLE IF EXISTS tkey8",
+				{
+					"SELECT count(*) FROM tkey7 PARTITION(p1)",
+					false, false, false, false, []string{}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey7 PARTITION(p2)",
+					false, false, false, false, []string{}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey7 PARTITION(p3)",
+					false, false, false, false, []string{}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey7 WHERE col3 = 3",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey7 WHERE col3 = 3 and col1 = 3",
+					true, false, true, true, []string{"partition:p1"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey7 WHERE col3 = 3 or col3 = 4",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey7 WHERE col3 = 3 and col1 = 3 OR col3 = 4 and col1 = 4",
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p1", "partition:p2", "partition:p3"}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey7 WHERE col1>1 and col3 >1 AND col3 < 4 and col1<3",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+				},
 			},
-		*/
+			dropSQL: "DROP TABLE IF EXISTS tkey7",
+		},
+		{
+			createSQL: "CREATE TABLE tkey8 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,PRIMARY KEY (col3,col1)) PARTITION BY KEY(col3,col1) PARTITIONS 4",
+			insertSQL: "INSERT INTO tkey8 VALUES(1, '2023-02-22', 111, 1), (1, '2023-02-22', 2, 1),(2, '2023-02-22', 218, 2), (3, '2023-02-22', 3, 3), (4, '2023-02-22', 4, 4),(4, '2023-02-22', 5, 4),(5, '2023-02-22', 5, 5),(5, '2023-02-22', 50, 2),(6, '2023-02-22', 62, 2),(60, '2023-02-22', 6, 5),(70, '2023-02-22', 50, 2),(80, '2023-02-22', 62, 2),(100, '2023-02-22', 62, 2),(2000, '2023-02-22', 6, 5),(400, '2023-02-22', 50, 2),(90, '2023-02-22', 62, 2)",
+			selectInfo: []compoundSQL{
+				{
+					"SELECT count(*) FROM tkey8",
+					false, false, false, false, []string{}, []string{}, 16,
+				},
+				{
+					"SELECT count(*) FROM tkey8 PARTITION(p0)",
+					false, false, false, false, []string{}, []string{}, 4,
+				},
+				{
+					"SELECT count(*) FROM tkey8 PARTITION(p1)",
+					false, false, false, false, []string{}, []string{}, 7,
+				},
+				{
+					"SELECT count(*) FROM tkey8 PARTITION(p2)",
+					false, false, false, false, []string{}, []string{}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey8 PARTITION(p3)",
+					false, false, false, false, []string{}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey8 WHERE col3 = 3",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey8 WHERE col3 = 3 and col1 = 3",
+					true, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey8 WHERE col3 = 3 or col3 = 4",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey8 WHERE col3 = 3 and col1 = 3 OR col3 = 4 and col1 = 4",
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey8 WHERE col1>1 and col3 >1 AND col3 < 4 and col1<3",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 0,
+				},
+			},
+			dropSQL: "DROP TABLE IF EXISTS tkey8",
+		},
 		{
 			createSQL: "CREATE TABLE tkey6 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 VARCHAR(12) NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3)) PARTITION BY KEY(col3) PARTITIONS 4",
 			insertSQL: "INSERT INTO tkey6 VALUES(1, '2023-02-22', 'linpin', 1), (2, '2023-02-22', 'zhangsan', 2), (3, '2023-02-22', 'anqila', 3), (4, '2023-02-22', 'xingtian', 4),(1, '2023-02-22', 'renleifeng', 5), (2, '2023-02-22', 'peilin', 2),(1, '2023-02-22', 'abcdeeg', 7), (2, '2023-02-22', 'rpstdfed', 8)",
 			selectInfo: []compoundSQL{
-				/*
-					{
-						"SELECT count(*) FROM tkey6",
-						false, false, false, false, []string{}, []string{}, 8,
-					},
-					{
-						"SELECT count(*) FROM tkey6 PARTITION(p0)",
-						false, false, false, false, []string{}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey6 PARTITION(p1)",
-						false, false, false, false, []string{}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey6 PARTITION(p2)",
-						false, false, false, false, []string{}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey6 PARTITION(p3)",
-						false, false, false, false, []string{}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey6 WHERE col3 = 'linpin'",
-						true, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
-					},
-				*/
+				{
+					"SELECT count(*) FROM tkey6",
+					false, false, false, false, []string{}, []string{}, 8,
+				},
+				{
+					"SELECT count(*) FROM tkey6 PARTITION(p0)",
+					false, false, false, false, []string{}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey6 PARTITION(p1)",
+					false, false, false, false, []string{}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey6 PARTITION(p2)",
+					false, false, false, false, []string{}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey6 PARTITION(p3)",
+					false, false, false, false, []string{}, []string{}, 4,
+				},
+				{
+					"SELECT count(*) FROM tkey6 WHERE col3 = 'linpin'",
+					true, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
+				},
 				{
 					"SELECT count(*) FROM tkey6 WHERE col3 = 'zhangsan' or col3 = 'linpin'",
 					true, true, true, true, []string{}, []string{}, 2,
 				},
-				/*
-					{
-						"SELECT count(*) FROM tkey6 WHERE col3 > 'linpin' AND col3 < 'qing'",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
-					},
-
-				*/
+				{
+					"SELECT count(*) FROM tkey6 WHERE col3 > 'linpin' AND col3 < 'qing'",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+				},
 			},
 			dropSQL: "DROP TABLE IF EXISTS tkey6",
 		},
-		/*
-			{
-				createSQL: "CREATE TABLE tkey2 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(KHH) partitions 4",
-				insertSQL: "INSERT INTO tkey2 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530')",
-				selectInfo: []compoundSQL{
-					{
-						"SELECT count(*) FROM tkey2",
-						false, false, false, false, []string{}, []string{}, 17,
-					},
-					{
-						"SELECT count(*) FROM tkey2 PARTITION(p0)",
-						false, false, false, false, []string{}, []string{}, 5,
-					},
-					{
-						"SELECT count(*) FROM tkey2 PARTITION(p1)",
-						false, false, false, false, []string{}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey2 PARTITION(p2)",
-						false, false, false, false, []string{}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey2 PARTITION(p3)",
-						false, false, false, false, []string{}, []string{}, 6,
-					},
-					{
-						"SELECT count(*) FROM tkey2 WHERE KHH = 'huaian'",
-						false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey2 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
-						false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey2 WHERE KHH > 'nanjing' AND KHH < 'suzhou'",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
-					},
+		{
+			createSQL: "CREATE TABLE tkey2 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(KHH) partitions 4",
+			insertSQL: "INSERT INTO tkey2 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530')",
+			selectInfo: []compoundSQL{
+				{
+					"SELECT count(*) FROM tkey2",
+					false, false, false, false, []string{}, []string{}, 17,
 				},
-				dropSQL: "DROP TABLE IF EXISTS tkey2",
-			},
-			{
-				createSQL: "CREATE TABLE tkey5 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (KHH, JYRQ, ZJZH))PARTITION BY KEY(KHH) partitions 4",
-				insertSQL: "INSERT INTO tkey5 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530')",
-				selectInfo: []compoundSQL{
-					{
-						"SELECT count(*) FROM tkey5",
-						false, false, false, false, []string{}, []string{}, 17,
-					},
-					{
-						"SELECT count(*) FROM tkey5 PARTITION(p0)",
-						false, false, false, false, []string{}, []string{}, 5,
-					},
-					{
-						"SELECT count(*) FROM tkey5 PARTITION(p1)",
-						false, false, false, false, []string{}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey5 PARTITION(p2)",
-						false, false, false, false, []string{}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey5 PARTITION(p3)",
-						false, false, false, false, []string{}, []string{}, 6,
-					},
-					{
-						"SELECT count(*) FROM tkey5 WHERE KHH = 'huaian'",
-						false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey5 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
-						false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey5 WHERE KHH > 'nanjing' AND KHH < 'suzhou'",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
-					},
+				{
+					"SELECT count(*) FROM tkey2 PARTITION(p0)",
+					false, false, false, false, []string{}, []string{}, 5,
 				},
-				dropSQL: "DROP TABLE IF EXISTS tkey5",
-			},
-			{
-				createSQL: "CREATE TABLE tkey4 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(JYRQ, KHH) partitions 4",
-				insertSQL: "INSERT INTO tkey4 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530'),(1,'beijing','010'),(2,'beijing','010'),(2,'zzzzwuhan','027')",
-				selectInfo: []compoundSQL{
-					{
-						"SELECT count(*) FROM tkey4",
-						false, false, false, false, []string{}, []string{}, 20,
-					},
-					{
-						"SELECT count(*) FROM tkey4 PARTITION(p0)",
-						false, false, false, false, []string{}, []string{}, 7,
-					},
-					{
-						"SELECT count(*) FROM tkey4 PARTITION(p1)",
-						false, false, false, false, []string{}, []string{}, 5,
-					},
-					{
-						"SELECT count(*) FROM tkey4 PARTITION(p2)",
-						false, false, false, false, []string{}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey4 PARTITION(p3)",
-						false, false, false, false, []string{}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian'",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE JYRQ = 2",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2",
-						false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2  or KHH = 'zhenjiang' and JYRQ = 3",
-						false, false, true, true, []string{"partition:p0", "partition:p1"}, []string{"partition:p2", "partition:p3"}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2  or KHH = 'zhenjiang' and JYRQ = 3 or KHH = 'HUAIAN' and JYRQ = 15",
-						false, false, true, true, []string{"partition:p0", "partition:p1"}, []string{"partition:p2", "partition:p3"}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE JYRQ = 2  OR  JYRQ = 3",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE JYRQ = 2  OR  JYRQ = 3 OR JYRQ = 15",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE JYRQ >6 AND JYRQ < 10",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey4 WHERE JYRQ >6 and KHH>'lianyungang' AND JYRQ < 10 and KHH<'xuzhou'",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
-					},
+				{
+					"SELECT count(*) FROM tkey2 PARTITION(p1)",
+					false, false, false, false, []string{}, []string{}, 4,
 				},
-				dropSQL: "DROP TABLE IF EXISTS tkey4",
-			},
-			{
-				createSQL: "CREATE TABLE tkey9 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(JYRQ, KHH, ZJZH) partitions 4",
-				insertSQL: "INSERT INTO tkey9 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530'),(1,'beijing','010'),(2,'beijing','010'),(2,'zzzzwuhan','027')",
-				selectInfo: []compoundSQL{
-					{
-						"SELECT count(*) FROM tkey9",
-						false, false, false, false, []string{}, []string{}, 20,
-					},
-					{
-						"SELECT count(*) FROM tkey9 PARTITION(p0)",
-						false, false, false, false, []string{}, []string{}, 6,
-					},
-					{
-						"SELECT count(*) FROM tkey9 PARTITION(p1)",
-						false, false, false, false, []string{}, []string{}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey9 PARTITION(p2)",
-						false, false, false, false, []string{}, []string{}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey9 PARTITION(p3)",
-						false, false, false, false, []string{}, []string{}, 8,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH = '0517'",
-						true, false, true, true, []string{"partition:p0"}, []string{"partition:p3", "partition:p1", "partition:p2"}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE JYRQ = 2",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH='0517'  or KHH = 'zhenjiang' and JYRQ = 3 and ZJZH = '0518'",
-						false, false, true, true, []string{"partition:p3", "partition:p0"}, []string{"partition:p1", "partition:p2"}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH='0517'  or KHH = 'zhenjiang' and JYRQ = 3 and ZJZH = '0518' or KHH = 'NANJING' and JYRQ = 14 and ZJZH = '025'",
-						false, false, true, true, []string{"partition:p0", "partition:p3"}, []string{"partition:p2", "partition:p1"}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE JYRQ = 2  OR  JYRQ = 3",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 4,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE JYRQ = 2  OR  JYRQ = 3 OR JYRQ = 15",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE JYRQ >6 AND JYRQ < 10",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
-					},
-					{
-						"SELECT count(*) FROM tkey9 WHERE JYRQ = 2 and KHH = 'huaian' OR JYRQ = 3 and KHH = 'zhenjiang'",
-						false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
-					},
+				{
+					"SELECT count(*) FROM tkey2 PARTITION(p2)",
+					false, false, false, false, []string{}, []string{}, 2,
 				},
-				dropSQL: "DROP TABLE IF EXISTS tkey9",
+				{
+					"SELECT count(*) FROM tkey2 PARTITION(p3)",
+					false, false, false, false, []string{}, []string{}, 6,
+				},
+				{
+					"SELECT count(*) FROM tkey2 WHERE KHH = 'huaian'",
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey2 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey2 WHERE KHH > 'nanjing' AND KHH < 'suzhou'",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+				},
 			},
+			dropSQL: "DROP TABLE IF EXISTS tkey2",
+		},
+		{
+			createSQL: "CREATE TABLE tkey5 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (KHH, JYRQ, ZJZH))PARTITION BY KEY(KHH) partitions 4",
+			insertSQL: "INSERT INTO tkey5 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530')",
+			selectInfo: []compoundSQL{
+				{
+					"SELECT count(*) FROM tkey5",
+					false, false, false, false, []string{}, []string{}, 17,
+				},
+				{
+					"SELECT count(*) FROM tkey5 PARTITION(p0)",
+					false, false, false, false, []string{}, []string{}, 5,
+				},
+				{
+					"SELECT count(*) FROM tkey5 PARTITION(p1)",
+					false, false, false, false, []string{}, []string{}, 4,
+				},
+				{
+					"SELECT count(*) FROM tkey5 PARTITION(p2)",
+					false, false, false, false, []string{}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey5 PARTITION(p3)",
+					false, false, false, false, []string{}, []string{}, 6,
+				},
+				{
+					"SELECT count(*) FROM tkey5 WHERE KHH = 'huaian'",
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey5 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
+					false, false, true, true, []string{"partition:p3"}, []string{"partition:p0", "partition:p1", "partition:p2"}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey5 WHERE KHH > 'nanjing' AND KHH < 'suzhou'",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+				},
+			},
+			dropSQL: "DROP TABLE IF EXISTS tkey5",
+		},
+		{
+			createSQL: "CREATE TABLE tkey4 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(JYRQ, KHH) partitions 4",
+			insertSQL: "INSERT INTO tkey4 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530'),(1,'beijing','010'),(2,'beijing','010'),(2,'zzzzwuhan','027')",
+			selectInfo: []compoundSQL{
+				{
+					"SELECT count(*) FROM tkey4",
+					false, false, false, false, []string{}, []string{}, 20,
+				},
+				{
+					"SELECT count(*) FROM tkey4 PARTITION(p0)",
+					false, false, false, false, []string{}, []string{}, 7,
+				},
+				{
+					"SELECT count(*) FROM tkey4 PARTITION(p1)",
+					false, false, false, false, []string{}, []string{}, 5,
+				},
+				{
+					"SELECT count(*) FROM tkey4 PARTITION(p2)",
+					false, false, false, false, []string{}, []string{}, 4,
+				},
+				{
+					"SELECT count(*) FROM tkey4 PARTITION(p3)",
+					false, false, false, false, []string{}, []string{}, 4,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian'",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE JYRQ = 2",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2",
+					false, false, true, true, []string{"partition:p1"}, []string{"partition:p0", "partition:p2", "partition:p3"}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2  or KHH = 'zhenjiang' and JYRQ = 3",
+					false, false, true, true, []string{"partition:p0", "partition:p1"}, []string{"partition:p2", "partition:p3"}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' and JYRQ = 2  or KHH = 'zhenjiang' and JYRQ = 3 or KHH = 'HUAIAN' and JYRQ = 15",
+					false, false, true, true, []string{"partition:p0", "partition:p1"}, []string{"partition:p2", "partition:p3"}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE JYRQ = 2  OR  JYRQ = 3",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 4,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE JYRQ = 2  OR  JYRQ = 3 OR JYRQ = 15",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE JYRQ >6 AND JYRQ < 10",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey4 WHERE JYRQ >6 and KHH>'lianyungang' AND JYRQ < 10 and KHH<'xuzhou'",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+				},
+			},
+			dropSQL: "DROP TABLE IF EXISTS tkey4",
+		},
 
-		*/
+		{
+			createSQL: "CREATE TABLE tkey9 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(JYRQ, KHH, ZJZH) partitions 4",
+			insertSQL: "INSERT INTO tkey9 VALUES(1,'nanjing','025'),(2,'huaian','0517'),(3,'zhenjiang','0518'),(4,'changzhou','0519'),(5,'wuxi','0511'),(6,'suzhou','0512'),(7,'xuzhou','0513'),(8,'suqian','0513'),(9,'lianyungang','0514'),(10,'yangzhou','0515'),(11,'taizhou','0516'),(12,'nantong','0520'),(13,'yancheng','0521'),(14,'NANJING','025'),(15,'HUAIAN','0527'),(16,'ZHENJIANG','0529'),(17,'CHANGZHOU','0530'),(1,'beijing','010'),(2,'beijing','010'),(2,'zzzzwuhan','027')",
+			selectInfo: []compoundSQL{
+				{
+					"SELECT count(*) FROM tkey9",
+					false, false, false, false, []string{}, []string{}, 20,
+				},
+				{
+					"SELECT count(*) FROM tkey9 PARTITION(p0)",
+					false, false, false, false, []string{}, []string{}, 6,
+				},
+				{
+					"SELECT count(*) FROM tkey9 PARTITION(p1)",
+					false, false, false, false, []string{}, []string{}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey9 PARTITION(p2)",
+					false, false, false, false, []string{}, []string{}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey9 PARTITION(p3)",
+					false, false, false, false, []string{}, []string{}, 8,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH = '0517'",
+					true, false, true, true, []string{"partition:p0"}, []string{"partition:p3", "partition:p1", "partition:p2"}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 1,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE JYRQ = 2",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH='0517'  or KHH = 'zhenjiang' and JYRQ = 3 and ZJZH = '0518'",
+					false, false, true, true, []string{"partition:p3", "partition:p0"}, []string{"partition:p1", "partition:p2"}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' and JYRQ = 2 and ZJZH='0517'  or KHH = 'zhenjiang' and JYRQ = 3 and ZJZH = '0518' or KHH = 'NANJING' and JYRQ = 14 and ZJZH = '025'",
+					false, false, true, true, []string{"partition:p0", "partition:p3"}, []string{"partition:p2", "partition:p1"}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE KHH = 'huaian' or KHH = 'zhenjiang'",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE JYRQ = 2  OR  JYRQ = 3",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 4,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE JYRQ = 2  OR  JYRQ = 3 OR JYRQ = 15",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE JYRQ >6 AND JYRQ < 10",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 3,
+				},
+				{
+					"SELECT count(*) FROM tkey9 WHERE JYRQ = 2 and KHH = 'huaian' OR JYRQ = 3 and KHH = 'zhenjiang'",
+					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 2,
+				},
+			},
+			dropSQL: "DROP TABLE IF EXISTS tkey9",
+		},
 	}
 
 	for i, testCase := range testCases {

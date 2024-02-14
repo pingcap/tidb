@@ -48,9 +48,10 @@ type BatchPointGetExec struct {
 	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo
 	handles []kv.Handle
-	physIDs []int64
-	// TODO: Why both physIDs and planPhysIDs?!?
+	// IDs for handle or index read (can be secondary unique key, and need lookup through handle)
 	planPhysIDs []int64
+	// IDs for handle lookup from index. Used if plan uses non-clustered/secondary index lookup
+	physIDs []int64
 	// If != 0 then it is a single partition under Static Prune mode.
 	singlePartID int64
 	idxVals      [][]types.Datum
@@ -379,20 +380,22 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	keys := make([]kv.Key, 0, len(e.handles))
 	newHandles := make([]kv.Handle, 0, len(e.handles))
 	for i, handle := range e.handles {
-		var tID int64
-		// TODO: can we just use one of these?
+		tID := e.tblInfo.ID
 		if len(e.physIDs) > 0 {
+			// Key lookup, read the row by handle
 			tID = e.physIDs[i]
 		} else if len(e.planPhysIDs) > 0 {
+			// Direct handle read
 			tID = e.planPhysIDs[i]
-		} else {
-			tID = e.tblInfo.ID
 		}
-		// If this BatchPointGetExec is built only for the specific table partition, skip those handles not matching this partition.
-		// TODO: is this needed?
-		//if e.singlePart && e.partTblID != tID {
-		//continue
-		//}
+		if e.singlePartID != 0 && e.singlePartID != tID {
+			// Static pruning mode, and not matching this partition
+			continue
+		}
+		if tID <= 0 {
+			// not matching any partition
+			continue
+		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys = append(keys, key)
 		newHandles = append(newHandles, handle)
