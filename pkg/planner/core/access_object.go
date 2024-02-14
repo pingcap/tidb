@@ -303,7 +303,7 @@ func (p *PhysicalMemTable) AccessObject() AccessObject {
 // AccessObject implements dataAccesser interface.
 func (p *PointGetPlan) AccessObject() AccessObject {
 	res := &ScanAccessObject{
-		Database: p.DBName,
+		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
 	if p.PartitionDef != nil {

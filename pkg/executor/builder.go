@@ -5184,6 +5184,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 					pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
 					if err != nil {
 						// TODO: Handle cases where no matching partition is found
+						if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
+							e.planPhysIDs = append(e.planPhysIDs, 0)
+							continue
+						}
 						b.err = err
 						return nil
 					}

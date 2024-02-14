@@ -134,7 +134,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 	// If tryPointGetPlan did generate the plan,
 	// then PartitionDef is not set and needs to be set here!
-	// Basically there are two ways to get here from non-dynamic mode partition pruning:
+	// There are two ways to get here from static mode partition pruning:
 	// 1) Converting a set of partitions into a Union scan
 	//    - This should NOT be cached and should already be having PartitionDef set!
 	// 2) Converted to PointGet from checkTblIndexForPointPlan
@@ -149,10 +149,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	// I.e. if prepared statement, and partition columns are not parameterized, then it is depending on parameters,
 	// but if all partition columns are given as constants, then it is not... (Probably this is a non issue for Point Get...)
 	p.PartitionDef = nil
-	// TODO: Should we set it to an 'impossible' partitionDef instead
-	// to note either TableDual or All partitions?
-	// Then we can always detect if the table in the plan cache
-	// did use a partitioned table.
 
 	tbl, ok := b.is.TableByID(p.TblInfo.ID)
 	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
@@ -163,8 +159,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	row := make([]types.Datum, len(p.TblInfo.Columns))
 
 	if p.HandleConstant != nil {
-		// TODO: Handle unsigned?
-		dVal := types.NewIntDatum(p.Handle.IntValue())
+		var dVal types.Datum
+		if p.UnsignedHandle {
+			dVal = types.NewUintDatum(uint64(p.Handle.IntValue()))
+		} else {
+			dVal = types.NewIntDatum(p.Handle.IntValue())
+		}
 		dVal.Copy(&row[p.HandleColOffset])
 	} else if len(p.IndexValues) > 0 {
 		for i := range p.IndexInfo.Columns {
@@ -173,13 +173,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		}
 	}
 
-	// Construct one row, with the partitioning columns filled
 	pt, ok := tbl.(table.PartitionedTable)
 	if pt == nil || !ok {
 		intest.Assert(false)
 		return e
 	}
-	part, err := pt.GetPartitionByRow(b.ctx, row)
+	partIdx, err := pt.GetPartitionIdxByRow(b.ctx, row)
 	if err != nil {
 		if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
 			return e.getTableDualExec(p)
@@ -188,17 +187,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		b.err = err
 		return nil
 	}
-	// TODO: if this works, cache the map from ID to Def
-	defs := tbl.Meta().Partition.Definitions
-	for i := range defs {
-		if defs[i].ID == part.GetPhysicalID() {
-			p.PartitionDef = &defs[i]
-			e.partitionDef = p.PartitionDef
-			return e
-		}
-	}
-	intest.Assert(false)
-	return nil
+	p.PartitionDef = &tbl.Meta().Partition.Definitions[partIdx]
+	e.partitionDef = p.PartitionDef
+	return e
 }
 
 // PointGetExecutor executes point select query.
@@ -251,7 +242,6 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	// TODO: is p.PartitionDef the 'static' pruning, i.e. if not part of the prepared statement parameters?
 	e.partitionDef = p.PartitionDef
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()

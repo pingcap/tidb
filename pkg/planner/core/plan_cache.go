@@ -511,7 +511,7 @@ func rebuildRange(p Plan) error {
 			}
 		}
 		if x.HandleConstant != nil {
-			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.HandleFieldType)
+			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
 			}
