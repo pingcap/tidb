@@ -158,7 +158,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 	row := make([]types.Datum, len(p.TblInfo.Columns))
 
-	if p.HandleConstant != nil {
+	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
+		for i := range p.IndexInfo.Columns {
+			// TODO: Skip copying non-partitioning columns?
+			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
+		}
+	} else {
 		var dVal types.Datum
 		if p.UnsignedHandle {
 			dVal = types.NewUintDatum(uint64(p.Handle.IntValue()))
@@ -166,11 +171,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 			dVal = types.NewIntDatum(p.Handle.IntValue())
 		}
 		dVal.Copy(&row[p.HandleColOffset])
-	} else if len(p.IndexValues) > 0 {
-		for i := range p.IndexInfo.Columns {
-			// TODO: Skip copying non-partitioning columns?
-			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
-		}
 	}
 
 	pt, ok := tbl.(table.PartitionedTable)
