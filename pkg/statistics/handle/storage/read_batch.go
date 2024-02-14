@@ -69,7 +69,7 @@ func HistogramsFromStorage(sctx sessionctx.Context, params []*batchReadHistogram
 		tmpColID := row.GetInt64(0)
 		resultRow[tmpColID] = append(resultRow[tmpColID], row)
 	}
-	result := make([]*statistics.Histogram, len(params))
+	result := make([]*statistics.Histogram, 0, len(params))
 	for colID, rows := range resultRow {
 		bucketSize := len(rows)
 		p := mapParam[colID]
