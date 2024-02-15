@@ -103,6 +103,8 @@ type PointGetPlan struct {
 	probeParents []PhysicalPlan
 	// stmtHints should restore in executing context.
 	stmtHints *hint.StmtHints
+	// explicit partition selection
+	PartitionNames []model.CIStr
 }
 
 func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
@@ -357,6 +359,8 @@ type BatchPointGetPlan struct {
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
+	// explicit partition selection
+	PartitionNames []model.CIStr
 }
 
 func (p *BatchPointGetPlan) getEstRowCountForDisplay() float64 {
@@ -1019,6 +1023,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
 		p.HandleColOffset = pkColOffset
+		p.PartitionNames = tblName.PartitionNames
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil

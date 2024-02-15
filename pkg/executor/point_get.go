@@ -187,7 +187,20 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		b.err = err
 		return nil
 	}
-	p.PartitionDef = &tbl.Meta().Partition.Definitions[partIdx]
+	def := &tbl.Meta().Partition.Definitions[partIdx]
+	if len(p.PartitionNames) > 0 {
+		found := false
+		for _, partName := range p.PartitionNames {
+			if partName.L == def.Name.L {
+				found = true
+			}
+		}
+		if !found {
+			return e.getTableDualExec(p)
+		}
+	}
+
+	p.PartitionDef = def
 	e.partitionDef = p.PartitionDef
 	return e
 }

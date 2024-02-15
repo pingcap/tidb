@@ -2299,6 +2299,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			}
 		}
 	}
+	pointGetPlan.PartitionNames = ds.partitionNames
 	rTsk := &rootTask{p: pointGetPlan}
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
@@ -2353,6 +2354,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
+		PartitionNames:   ds.partitionNames,
 	}
 	if ds.isPartition {
 		batchPointGetPlan.SinglePartition = true

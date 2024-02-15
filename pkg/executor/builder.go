@@ -5246,8 +5246,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				usedValues[i] = true
 			}
 			if pi != nil {
-				var partIdxs []int
-				partIdxs = b.getPartitionIdxs(plan, plan.IndexValues)
+				partIdxs := b.getPartitionIdxs(plan, plan.IndexValues)
 				skipped := 0
 				for i, idx := range partIdxs {
 					if !usedValues[i] {
