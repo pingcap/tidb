@@ -129,7 +129,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 
 	// Static or Dynamic pruning mode does not affect PointGet!!!
 	pi := p.TblInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil || p.IndexInfo.Global {
 		return e
 	}
 	// If tryPointGetPlan did generate the plan,
@@ -178,6 +178,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		intest.Assert(false)
 		return e
 	}
+	// TODO: Handle overflow?
 	partIdx, err := pt.GetPartitionIdxByRow(b.ctx, row)
 	if err != nil {
 		if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
