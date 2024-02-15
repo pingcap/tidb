@@ -2290,6 +2290,15 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
 	}.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
+	if ds.isPartition {
+		defs := pointGetPlan.TblInfo.Partition.Definitions
+		// TODO: propagate the index or partition def instead of this loop
+		for i := range defs {
+			if defs[i].ID == ds.physicalTableID {
+				pointGetPlan.PartitionDef = &defs[i]
+			}
+		}
+	}
 	rTsk := &rootTask{p: pointGetPlan}
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
