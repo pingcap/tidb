@@ -274,12 +274,14 @@ Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
   └─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
     ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
-    │ └─TableReader	3336.66	root		data:Selection
-    │   └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
-    │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    │ └─ShuffleReceiver	3336.66	root		
+    │   └─TableReader	3336.66	root		data:Selection
+    │     └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+    │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
 c1	c2	c1	c2
 1	1	NULL	NULL
@@ -289,12 +291,14 @@ Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
   └─MergeJoin	10000.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t.c1
     ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
-    │ └─TableReader	3336.66	root		data:Selection
-    │   └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
-    │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    │ └─ShuffleReceiver	3336.66	root		
+    │   └─TableReader	3336.66	root		data:Selection
+    │     └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
+    │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
 c1	c2	c1	c2
 NULL	NULL	1	1
@@ -304,12 +308,14 @@ Selection	9990.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_
 └─Shuffle	12487.50	root		execution info: concurrency:4, data sources:[TableReader TableReader]
   └─MergeJoin	12487.50	root		right outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
     ├─Sort(Build)	9990.00	root		executor__merge_join.t.c1
-    │ └─TableReader	9990.00	root		data:Selection
-    │   └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.t.c1))
-    │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    │ └─ShuffleReceiver	9990.00	root		
+    │   └─TableReader	9990.00	root		data:Selection
+    │     └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.t.c1))
+    │       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
     └─Sort(Probe)	10000.00	root		executor__merge_join.t1.c1
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
 c1	c2	c1	c2
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
@@ -317,13 +323,15 @@ id	estRows	task	access object	operator info
 Shuffle	12.50	root		execution info: concurrency:4, data sources:[TableReader TableReader]
 └─MergeJoin	12.50	root		inner join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
   ├─Sort(Build)	10.00	root		executor__merge_join.t1.c1
-  │ └─TableReader	10.00	root		data:Selection
-  │   └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 3), 0)
-  │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  │ └─ShuffleReceiver	10.00	root		
+  │   └─TableReader	10.00	root		data:Selection
+  │     └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 3), 0)
+  │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Sort(Probe)	10.00	root		executor__merge_join.t.c1
-    └─TableReader	10.00	root		data:Selection
-      └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t.c1)), or(eq(executor__merge_join.t.c1, 3), 0)
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─ShuffleReceiver	10.00	root		
+      └─TableReader	10.00	root		data:Selection
+        └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t.c1)), or(eq(executor__merge_join.t.c1, 3), 0)
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
 c1	c2	c1	c2
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
@@ -332,12 +340,14 @@ Sort	10000.00	root		executor__merge_join.t1.c1
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
   └─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:[ne(executor__merge_join.t.c1, 1)]
     ├─Sort(Build)	6656.67	root		executor__merge_join.t1.c1
-    │ └─TableReader	6656.67	root		data:Selection
-    │   └─Selection	6656.67	cop[tikv]		ne(executor__merge_join.t1.c1, 1), not(isnull(executor__merge_join.t1.c1))
-    │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    │ └─ShuffleReceiver	6656.67	root		
+    │   └─TableReader	6656.67	root		data:Selection
+    │     └─Selection	6656.67	cop[tikv]		ne(executor__merge_join.t1.c1, 1), not(isnull(executor__merge_join.t1.c1))
+    │       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─Sort(Probe)	10000.00	root		executor__merge_join.t.c1
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
 c1	c2	c1	c2
 1	1	NULL	NULL
