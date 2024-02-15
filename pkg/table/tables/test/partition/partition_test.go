@@ -3129,9 +3129,10 @@ func TestTmpPart(t *testing.T) {
 	*/
 	tk.MustQuery(`select * from t19141 partition (p0) where c_int = 1`).Sort().Check(testkit.Rows())
 	tk.MustExec(`update t19141 partition (p0) set c_int = -c_int where c_int = 1`)
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustQuery(`select * from t19141 partition (p0, p2) where c_int in (1,2,3)`).Sort().Check(testkit.Rows("2"))
 	tk.MustExec(`update t19141 partition (p1) set c_int = -c_int where c_int in (2,3)`)
-	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustExec(`delete from t19141 partition (p0) where c_int in (2,3)`)
-	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
 }
