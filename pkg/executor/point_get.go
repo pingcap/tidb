@@ -48,7 +48,7 @@ import (
 func (e *PointGetExecutor) getTableDualExec(p *plannercore.PointGetPlan) exec.Executor {
 	p.PartitionDef = &model.PartitionDefinition{
 		ID:      0,
-		Name:    model.NewCIStr("<none>"),
+		Name:    model.NewCIStr("dual"),
 		Comment: "No matching partition in PointGet",
 	}
 	return &TableDualExec{

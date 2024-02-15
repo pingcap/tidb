@@ -3101,6 +3101,18 @@ func TestTmpPart(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+
+	tk.MustExec(`create table t (a int) partition by range (a) (partition p values less than (10))`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
+		`TableReader 0.00 root partition:dual data:Selection`,
+		`└─Selection 0.00 cop[tikv]  eq(test.t.a, 10)`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a = 10`).Check(testkit.Rows())
+
+	tk.MustExec(`drop table t`)
 	tk.MustExec(`set @p=1,@q=2,@u=3;`)
 	tk.MustExec(`create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2`)
 	tk.MustExec(`insert into t values(1,0),(2,0),(3,0),(4,0)`)
