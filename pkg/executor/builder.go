@@ -5139,7 +5139,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	}
 	var capacity int
 	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
-		// TODO: filter out duplicate IndexValues
+		// duplicate IndexValues are filtered in e.initialize()
 		if pi == nil {
 			e.idxVals = plan.IndexValues
 		} else {

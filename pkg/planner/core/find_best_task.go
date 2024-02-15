@@ -1193,17 +1193,19 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
-		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
-			if canConvertPointGet {
-				// If the schema contains ExtraPidColID, do not convert to point get.
-				// Because the point get executor can not handle the extra partition ID column now.
-				// I.e. Global Index is used
-				for _, col := range ds.schema.Columns {
-					if col.ID == model.ExtraPidColID {
-						canConvertPointGet = false
-						break
-					}
+		if ds.table.Meta().GetPartitionInfo() != nil {
+			// If the schema contains ExtraPidColID, do not convert to point get.
+			// Because the point get executor can not handle the extra partition ID column now.
+			// I.e. Global Index is used
+			for _, col := range ds.schema.Columns {
+				if col.ID == model.ExtraPidColID {
+					canConvertPointGet = false
+					break
 				}
+			}
+			if canConvertPointGet && len(path.Ranges) > 1 &&
+				ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+				canConvertPointGet = false
 			}
 		}
 		if canConvertPointGet {

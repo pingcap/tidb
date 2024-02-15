@@ -264,6 +264,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			toFetchIndexKeys = append(toFetchIndexKeys, idxKey)
 		}
 		if e.keepOrder {
+			// TODO: if multiple partitions, then the IDs needs to be
+			// in the same order as the index keys
+			// and should skip table id part when comparing
+			intest.Assert(e.singlePartID != 0 || len(e.planPhysIDs) <= 1 || e.idxInfo.Global)
 			slices.SortFunc(toFetchIndexKeys, func(i, j kv.Key) int {
 				if e.desc {
 					return j.Cmp(i)
@@ -294,6 +298,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 		e.handles = make([]kv.Handle, 0, len(toFetchIndexKeys))
 		if e.tblInfo.Partition != nil {
+			// TODO: reuse e.planPhysIDs, since it is no longer needed here
 			e.physIDs = make([]int64, 0, len(toFetchIndexKeys))
 		}
 		for _, key := range toFetchIndexKeys {
@@ -371,10 +376,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 		}
 		slices.SortFunc(e.handles, less)
-		// TODO: if partitoned table, sorting the handles would also need to have the physIDs
-		// rearranged in the same order!
-		intest.Assert(len(e.planPhysIDs) == 0)
-		intest.Assert(len(e.physIDs) == 0)
+		// TODO: if partitioned table, sorting the handles would also
+		//  need to have the physIDs rearranged in the same order!
+		intest.Assert(e.singlePartID != 0 || len(e.planPhysIDs) <= 1)
 	}
 
 	keys := make([]kv.Key, 0, len(e.handles))
