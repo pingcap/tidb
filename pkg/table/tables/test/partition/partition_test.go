@@ -3087,3 +3087,12 @@ func TestExplainPartition(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM t WHERE a = 3`).Check(testkit.Rows("3 3"))
 	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0 handle:3"))
 }
+
+func TestPruningOverflow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("CREATE TABLE t (a int NOT NULL, b bigint NOT NULL,PRIMARY KEY (a,b)) PARTITION BY HASH ((a*b))PARTITIONS 13")
+	tk.MustExec(`insert into t values(0, 3522101843073676459)`)
+	tk.MustQuery(`SELECT a, b FROM t WHERE a IN (0,14158354938390,0) AND b IN (3522101843073676459,-2846203247576845955,838395691793635638)`).Check(testkit.Rows("0 3522101843073676459"))
+}

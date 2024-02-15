@@ -5026,17 +5026,8 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 // Map each index value to Partition ID
-func (b *executorBuilder) getPartitionIdxs(plan *plannercore.BatchPointGetPlan, rows [][]types.Datum) ([]int, error) {
-	pids, err := getPartitionIdxs(b.ctx, b.is, plan.TblInfo, plan.IndexInfo.Columns, rows)
-	if err != nil {
-		b.err = err
-		return nil, err
-	}
-	return pids, nil
-}
-
-func getPartitionIdxs(ctx expression.BuildContext, is infoschema.InfoSchema, tblInfo *model.TableInfo, idxCols []*model.IndexColumn, rows [][]types.Datum) ([]int, error) {
-	tbl, ok := is.TableByID(tblInfo.ID)
+func (b *executorBuilder) getPartitionIdxs(plan *plannercore.BatchPointGetPlan, rows [][]types.Datum) []int {
+	tbl, ok := b.is.TableByID(plan.TblInfo.ID)
 	intest.Assert(ok)
 	pTbl, ok := tbl.(table.PartitionedTable)
 	intest.Assert(ok)
@@ -5045,19 +5036,18 @@ func getPartitionIdxs(ctx expression.BuildContext, is infoschema.InfoSchema, tbl
 	idxs := make([]int, 0, len(rows))
 	for i := range rows {
 		for j := range rows[i] {
-			rows[i][j].Copy(&r[idxCols[j].Offset])
+			rows[i][j].Copy(&r[plan.IndexInfo.Columns[j].Offset])
 		}
-		pIdx, err := pTbl.GetPartitionIdxByRow(ctx, r)
+		pIdx, err := pTbl.GetPartitionIdxByRow(b.ctx, r)
 		if err != nil {
-			if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
-				idxs = append(idxs, -1)
-				continue
-			}
-			return nil, err
+			// Skip on any error, like:
+			// No matching partition, overflow etc.
+			idxs = append(idxs, -1)
+			continue
 		}
 		idxs = append(idxs, pIdx)
 	}
-	return idxs, nil
+	return idxs
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) exec.Executor {
@@ -5153,11 +5143,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		if pi == nil {
 			e.idxVals = plan.IndexValues
 		} else {
-			partIdxs, err := b.getPartitionIdxs(plan, plan.IndexValues)
-			if err != nil {
-				b.err = err
-				return nil
-			}
+			partIdxs := b.getPartitionIdxs(plan, plan.IndexValues)
 			for i, idx := range partIdxs {
 				if plan.SinglePartition &&
 					idx != plan.PartitionIdxs[0] {
@@ -5261,11 +5247,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			}
 			if pi != nil {
 				var partIdxs []int
-				partIdxs, err = b.getPartitionIdxs(plan, plan.IndexValues)
-				if err != nil {
-					b.err = err
-					return nil
-				}
+				partIdxs = b.getPartitionIdxs(plan, plan.IndexValues)
 				skipped := 0
 				for i, idx := range partIdxs {
 					if !usedValues[i] {
