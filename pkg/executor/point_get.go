@@ -73,11 +73,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 
 	e := &PointGetExecutor{
-		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
-		indexUsageReporter: b.buildIndexUsageReporter(p),
-		txnScope:           b.txnScope,
-		readReplicaScope:   b.readReplicaScope,
-		isStaleness:        b.isStaleness,
+		BaseExecutor:     exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		txnScope:         b.txnScope,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
 	}
 
 	e.SetInitCap(1)
@@ -130,6 +129,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	// Static or Dynamic pruning mode does not affect PointGet!!!
 	pi := p.TblInfo.GetPartitionInfo()
 	if pi == nil || (p.IndexInfo != nil && p.IndexInfo.Global) {
+		e.indexUsageReporter = b.buildIndexUsageReporter(p)
 		return e
 	}
 	// If tryPointGetPlan did generate the plan,
@@ -140,6 +140,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	// 2) Converted to PointGet from checkTblIndexForPointPlan
 	//    and it does not have the PartitionDef set
 	if !p.SCtx().GetSessionVars().StmtCtx.UseCache && p.PartitionDef != nil {
+		e.indexUsageReporter = b.buildIndexUsageReporter(p)
 		return e
 	}
 	// Reset PartitionDef, should only be used if partitioned table.
@@ -154,6 +155,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
 		// Can this happen?
 		intest.Assert(false)
+		e.indexUsageReporter = b.buildIndexUsageReporter(p)
 		return e
 	}
 	row := make([]types.Datum, len(p.TblInfo.Columns))
@@ -176,6 +178,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	pt, ok := tbl.(table.PartitionedTable)
 	if pt == nil || !ok {
 		intest.Assert(false)
+		e.indexUsageReporter = b.buildIndexUsageReporter(p)
 		return e
 	}
 	// TODO: Handle overflow?
@@ -203,6 +206,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 
 	p.PartitionDef = def
 	e.partitionDef = p.PartitionDef
+	e.indexUsageReporter = b.buildIndexUsageReporter(p)
 	return e
 }
 
