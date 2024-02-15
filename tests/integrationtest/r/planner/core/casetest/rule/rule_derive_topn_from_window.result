@@ -63,8 +63,9 @@ Projection	10000.00	root		Column#6->Column#7
 └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[IndexReader]
   └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
     └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
-      └─IndexReader	10000.00	root		index:IndexFullScan
-        └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─IndexReader	10000.00	root		index:IndexFullScan
+          └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select row_number() over () as rownumber1, row_number() over (partition by a) as rownumber2 from t) DT where rownumber1 <= 3 -- pattern not applicable with multiple window functions;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#8, Column#7
@@ -73,8 +74,9 @@ Projection	8000.00	root		Column#8, Column#7
     └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[IndexReader]
       └─Window	10000.00	root		row_number()->Column#7 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
         └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
-          └─IndexReader	10000.00	root		index:IndexFullScan
-            └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+          └─ShuffleReceiver	10000.00	root		
+            └─IndexReader	10000.00	root		index:IndexFullScan
+              └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select row_number() over (partition by a) as rownumber from t) DT where rownumber <= 3 -- pattern is not applicable with partition by not prefix of PK;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#6
@@ -82,8 +84,9 @@ Projection	8000.00	root		Column#6
   └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[IndexReader]
     └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
       └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
-        └─IndexReader	10000.00	root		index:IndexFullScan
-          └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+        └─ShuffleReceiver	10000.00	root		
+          └─IndexReader	10000.00	root		index:IndexFullScan
+            └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select row_number() over (partition by a) as rownumber from tt) DT where rownumber <= 3 -- pattern is not applicable with no clustered index on table;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#6
@@ -91,8 +94,9 @@ Projection	8000.00	root		Column#6
   └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[IndexReader]
     └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.tt.a rows between current row and current row)
       └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.tt.a
-        └─IndexReader	10000.00	root		index:IndexFullScan
-          └─IndexFullScan	10000.00	cop[tikv]	table:tt, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+        └─ShuffleReceiver	10000.00	root		
+          └─IndexReader	10000.00	root		index:IndexFullScan
+            └─IndexFullScan	10000.00	cop[tikv]	table:tt, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select row_number() over (partition by a) as rownumber from ti) DT where rownumber <= 3 -- pattern is not applicable. ti clustered on 'c' and partition by 'a';
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#6
@@ -100,8 +104,9 @@ Projection	8000.00	root		Column#6
   └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[TableReader]
     └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.ti.a rows between current row and current row)
       └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.ti.a
-        └─TableReader	10000.00	root		data:TableFullScan
-          └─TableFullScan	10000.00	cop[tikv]	table:ti	keep order:false, stats:pseudo
+        └─ShuffleReceiver	10000.00	root		
+          └─TableReader	10000.00	root		data:TableFullScan
+            └─TableFullScan	10000.00	cop[tikv]	table:ti	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select a, row_number() over (partition by c) as rownumber from ti) DT where rownumber <= 1 -- pattern is applicable. ti clustered on 'c' and partition by 'c' - not supported yet;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.ti.a, Column#6
@@ -127,9 +132,10 @@ Projection	8000.00	root		Column#6
   └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[Projection]
     └─Window	10000.00	root		row_number()->Column#6 over(partition by Column#5 rows between current row and current row)
       └─Sort	10000.00	root		Column#5
-        └─Projection	10000.00	root		plus(planner__core__casetest__rule__rule_derive_topn_from_window.td.a, 1)->Column#5
-          └─IndexReader	10000.00	root		index:IndexFullScan
-            └─IndexFullScan	10000.00	cop[tikv]	table:td, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+        └─ShuffleReceiver	10000.00	root		
+          └─Projection	10000.00	root		plus(planner__core__casetest__rule__rule_derive_topn_from_window.td.a, 1)->Column#5
+            └─IndexReader	10000.00	root		index:IndexFullScan
+              └─IndexFullScan	10000.00	cop[tikv]	table:td, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 set tidb_opt_derive_topn=1;
 drop table if exists t;
 create table t(a int, b int, primary key(b,a));
