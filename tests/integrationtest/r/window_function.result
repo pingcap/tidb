@@ -69,40 +69,45 @@ Projection	10000.00	root		Column#6->Column#7
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	10000.00	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b range between unbounded preceding and current row)
     └─Sort	10000.00	root		window_function.t.a, window_function.t.b
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select sum(a) over(partition by a order by b rows unbounded preceding) from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#6->Column#7
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	10000.00	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b rows between unbounded preceding and current row)
     └─Sort	10000.00	root		window_function.t.a, window_function.t.b
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#6->Column#7
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	10000.00	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b rows between 1 preceding and 1 following)
     └─Sort	10000.00	root		window_function.t.a, window_function.t.b
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#6->Column#7
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	10000.00	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b range between 1 preceding and 1 following)
     └─Sort	10000.00	root		window_function.t.a, window_function.t.b
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#6->Column#7
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	10000.00	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.c range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
     └─Sort	10000.00	root		window_function.t.a, window_function.t.c
-      └─TableReader	10000.00	root		data:TableFullScan
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─ShuffleReceiver	10000.00	root		
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t1;
 create table t1(a int primary key, b int);
 insert into t1 values(1, 1), (2, 1);
@@ -122,5 +127,6 @@ Projection	3.00	root		Column#4->Column#5
 └─Shuffle	3.00	root		execution info: concurrency:2, data sources:[TableReader]
   └─Window	3.00	root		sum(cast(window_function.t1.a, decimal(10,0) BINARY))->Column#4 over(partition by window_function.t1.b)
     └─Sort	3.00	root		window_function.t1.b
-      └─TableReader	3.00	root		data:TableFullScan
-        └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
+      └─ShuffleReceiver	3.00	root		
+        └─TableReader	3.00	root		data:TableFullScan
+          └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
