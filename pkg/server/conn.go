@@ -1865,15 +1865,16 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			if v.PartitionDefs != nil && len(v.PartitionIDs) == 0 {
-				// skip when PartitionIDs is not initialized.
+			pi := v.TblInfo.GetPartitionInfo()
+			if pi != nil && len(v.PartitionIdxs) == 0 {
+				// skip when PartitionIdxs is not initialized.
 				return nil
 			}
 			getPhysID := func(i int) int64 {
-				if v.PartitionDefs == nil {
+				if pi == nil {
 					return v.TblInfo.ID
 				}
-				return v.PartitionIDs[i]
+				return pi.Definitions[v.PartitionIdxs[i]].ID
 			}
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()

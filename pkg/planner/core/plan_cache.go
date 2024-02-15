@@ -530,7 +530,6 @@ func rebuildRange(p Plan) error {
 				}
 				x.IndexValues[i] = *dVal
 			}
-			return nil
 		}
 		return nil
 	case *BatchPointGetPlan:
