@@ -3096,3 +3096,19 @@ func TestPruningOverflow(t *testing.T) {
 	tk.MustExec(`insert into t values(0, 3522101843073676459)`)
 	tk.MustQuery(`SELECT a, b FROM t WHERE a IN (0,14158354938390,0) AND b IN (3522101843073676459,-2846203247576845955,838395691793635638)`).Check(testkit.Rows("0 3522101843073676459"))
 }
+
+func TestTmpPart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @p=1,@q=2,@u=3;`)
+	tk.MustExec(`create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2`)
+	tk.MustExec(`insert into t values(1,0),(2,0),(3,0),(4,0)`)
+	tk.MustQuery(`explain format = 'brief' select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Sort().Check(testkit.Rows("2 0"))
+	tk.MustQuery(`select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Sort().Check(testkit.Rows("2 0"))
+	tk.MustExec(`prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and 1 = 1'`)
+	tk.MustQuery(`execute stmt using @p,@p`).Sort().Check(testkit.Rows("1 0", "2 0"))
+	tk.MustQuery(`execute stmt using @q,@q`).Sort().Check(testkit.Rows("2 0"))
+	tk.MustQuery(`execute stmt using @p,@u`).Sort().Check(testkit.Rows("1 0", "2 0", "3 0"))
+	tk.MustQuery(`execute stmt using @u,@p`).Sort().Check(testkit.Rows("1 0", "2 0", "3 0"))
+}

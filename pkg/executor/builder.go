@@ -5183,7 +5183,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				partIdxs := make([]int, 0, len(handles))
 				for _, handle := range handles {
 					var d types.Datum
-					if mysql.HasUnsignedFlag(plan.HandleType.GetFlag()) {
+					if mysql.HasUnsignedFlag(plan.TblInfo.Columns[plan.HandleColOffset].GetFlag()) {
 						d = types.NewUintDatum(uint64(handle.IntValue()))
 					} else {
 						d = types.NewIntDatum(handle.IntValue())
