@@ -1193,21 +1193,39 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
-		if ds.table.Meta().GetPartitionInfo() != nil {
-			// If the schema contains ExtraPidColID, do not convert to point get.
-			// Because the point get executor can not handle the extra partition ID column now.
-			// I.e. Global Index is used
-			for _, col := range ds.schema.Columns {
-				if col.ID == model.ExtraPidColID {
-					canConvertPointGet = false
-					break
-				}
-			}
-			if canConvertPointGet && len(path.Ranges) > 1 &&
-				ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		if canConvertPointGet && ds.table.Meta().GetPartitionInfo() != nil {
+			// partition table with dynamic prune not support batchPointGet
+			// Due to sorting?
+			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				canConvertPointGet = false
 			}
+			if canConvertPointGet && len(path.Ranges) > 1 {
+				// TODO: This is now implemented, but to decrease
+				// the impact of supporting plan cache for patitioning,
+				// this is not yet enabled.
+				// TODO: just remove this if block and update/add tests...
+				// We can only build batch point get for hash partitions on a simple column now. This is
+				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
+				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
+				// BatchPointGet plan for more cases.
+				hashPartColName := getHashOrKeyPartitionColumnName(ds.SCtx(), ds.table.Meta())
+				if hashPartColName == nil {
+					canConvertPointGet = false
+				}
+			}
+			if canConvertPointGet {
+				// If the schema contains ExtraPidColID, do not convert to point get.
+				// Because the point get executor can not handle the extra partition ID column now.
+				// I.e. Global Index is used
+				for _, col := range ds.schema.Columns {
+					if col.ID == model.ExtraPidColID {
+						canConvertPointGet = false
+						break
+					}
+				}
+			}
 		}
+
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()

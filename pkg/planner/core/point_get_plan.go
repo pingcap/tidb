@@ -1770,3 +1770,35 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	schema.Append(handleCol)
 	return &IntHandleCols{col: handleCol}
 }
+
+// TODO: Remove this, by enabling all types of partitioning
+// and update/add tests
+func getHashOrKeyPartitionColumnName(ctx PlanContext, tbl *model.TableInfo) *model.CIStr {
+	pi := tbl.GetPartitionInfo()
+	if pi == nil {
+		return nil
+	}
+	if pi.Type != model.PartitionTypeHash && pi.Type != model.PartitionTypeKey {
+		return nil
+	}
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil
+	}
+	// PartitionExpr don't need columns and names for hash partition.
+	partitionExpr := table.(partitionTable).PartitionExpr()
+	if pi.Type == model.PartitionTypeKey {
+		// used to judge whether the key partition contains only one field
+		if len(pi.Columns) != 1 {
+			return nil
+		}
+		return &pi.Columns[0]
+	}
+	expr := partitionExpr.OrigExpr
+	col, ok := expr.(*ast.ColumnNameExpr)
+	if !ok {
+		return nil
+	}
+	return &col.Name.Name
+}
