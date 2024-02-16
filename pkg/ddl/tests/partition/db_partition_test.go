@@ -1455,8 +1455,8 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`use test`)
-	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
-	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows("15"))
+	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows("15"))
 	// Here it will fail with
 	// the partition is not in public.
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
