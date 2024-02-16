@@ -3106,19 +3106,26 @@ func TestTmpPart(t *testing.T) {
 	tk.MustExec(`analyze table t`)
 	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
 	query := `select * from t where a in (1,2) and b = 1 order by a`
-	tk.MustQuery(`explain ` + query).Check(testkit.Rows("Batch_Point_Get_12 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"))
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"))
 	tk.MustQuery(query).Check(testkit.Rows("1 1", "2 1"))
 	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
-	tk.MustQuery(`explain ` + query).Check(testkit.Rows(""+
-		"TableReader_12 2.00 root partition:p1 data:TableRangeScan_11",
-		"└─TableRangeScan_11 2.00 cop[tikv] table:t range:[1 1,1 1], [2 1,2 1], keep order:true"))
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"TableReader 2.00 root partition:p1 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t range:[1 1,1 1], [2 1,2 1], keep order:true"))
 	tk.MustQuery(query).Check(testkit.Rows("1 1", "2 1"))
+
 	query = `select * from t where a = 1 and b in (1,2)`
 	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
-	tk.MustQuery(`explain ` + query).Check(testkit.Rows(""))
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"PartitionUnion 2.00 root  ",
+		"├─Batch_Point_Get 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"└─Batch_Point_Get 2.00 root table:t, partition:p2, clustered index:PRIMARY(a, b) keep order:false, desc:false"))
+
 	tk.MustQuery(query).Sort().Check(testkit.Rows("1 1", "1 2"))
 	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
-	tk.MustQuery(`explain ` + query).Check(testkit.Rows(""))
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"TableReader 3.00 root partition:p1,p2 data:TableRangeScan",
+		"└─TableRangeScan 3.00 cop[tikv] table:t range:[1 1,1 1], [1 2,1 2], keep order:false"))
 	tk.MustQuery(query).Sort().Check(testkit.Rows("1 1", "1 2"))
 	tk.MustExec(`drop table t`)
 
