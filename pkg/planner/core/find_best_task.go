@@ -1225,7 +1225,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
-
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()

@@ -588,6 +588,7 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
 	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
+	errMsg3 := "GetForUpdateTS not supported for stalenessTxnProvider"
 	testcases := []struct {
 		name       string
 		sql        string
@@ -602,7 +603,8 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 		{
 			name:       "explain statement",
 			sql:        `explain insert into t (id) values (1);`,
-			isValidate: true,
+			isValidate: false,
+			errMsg:     errMsg3,
 		},
 		{
 			name:       "explain analyze insert statement",
@@ -746,8 +748,8 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
-			require.Error(t, err)
-			require.Regexp(t, testcase.errMsg, err.Error())
+			require.Error(t, err, "name: %s stmt: %s", testcase.name, testcase.sql)
+			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		tk.MustExec("commit")
 		tk.MustExec("set transaction read only as of timestamp NOW(3);")
@@ -755,8 +757,8 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
-			require.Error(t, err)
-			require.Regexp(t, testcase.errMsg, err.Error())
+			require.Error(t, err, "name: %s stmt: %s", testcase.name, testcase.sql)
+			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		// clean the status
 		tk.MustExec("set transaction read only as of timestamp ''")
