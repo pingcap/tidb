@@ -128,7 +128,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 
 	// Static or Dynamic pruning mode does not affect PointGet!!!
 	pi := p.TblInfo.GetPartitionInfo()
-	if pi == nil || (p.IndexInfo != nil && p.IndexInfo.Global) {
+	if pi == nil {
+		e.indexUsageReporter = b.buildIndexUsageReporter(p)
+		return e
+	}
+	if p.IndexInfo != nil && p.IndexInfo.Global {
+		e.partitionNames = p.PartitionNames
 		e.indexUsageReporter = b.buildIndexUsageReporter(p)
 		return e
 	}
@@ -219,6 +224,7 @@ type PointGetExecutor struct {
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
 	partitionDef     *model.PartitionDefinition
+	partitionNames   []model.CIStr
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -410,6 +416,24 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 				tblID = pid
+				if len(e.partitionNames) > 0 {
+					found := false
+					for _, name := range e.partitionNames {
+						// TODO: create a map from id to partition definition index
+						for _, def := range e.tblInfo.GetPartitionInfo().Definitions {
+							if def.ID == tblID && def.Name.L == name.L {
+								found = true
+								break
+							}
+						}
+						if found {
+							break
+						}
+					}
+					if !found {
+						return nil
+					}
+				}
 			}
 		}
 	}

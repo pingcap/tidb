@@ -5129,7 +5129,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 
 	pi := plan.TblInfo.GetPartitionInfo()
 	if pi != nil {
-		if plan.SinglePartition {
+		if plan.IndexInfo != nil && plan.IndexInfo.Global {
+			// Reading from a global index, i.e. base table ID
+			// Skip pruning partitions here
+			pi = nil
+			// But set the partition names for explicit partition selection
+			e.partitionNames = plan.PartitionNames
+		} else if plan.SinglePartition {
 			// Static prune mode, don't do any more partition pruning!
 			e.singlePartID = pi.Definitions[plan.PartitionIdxs[0]].ID
 		} else {
@@ -5151,6 +5157,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				if idx < 0 {
 					// No matching partition
+					continue
+				}
+				if !isInExplicitPartitions(pi, idx, plan.PartitionNames) {
+					// not matching explicit partition list
 					continue
 				}
 				e.planPhysIDs = append(e.planPhysIDs, pi.Definitions[idx].ID)
@@ -5197,6 +5207,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 						}
 						b.err = err
 						return nil
+					}
+					if !isInExplicitPartitions(pi, pIdx, plan.PartitionNames) {
+						// not matching explicit partition list
+						partIdxs = append(partIdxs, -1)
+						continue
 					}
 					if plan.SinglePartition &&
 						plan.PartitionIdxs[0] != pIdx {
@@ -5255,7 +5270,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 					}
 					if partIdxs[i] < 0 ||
 						(plan.SinglePartition &&
-							partIdxs[i] != plan.PartitionIdxs[0]) {
+							partIdxs[i] != plan.PartitionIdxs[0]) ||
+						!isInExplicitPartitions(pi, idx, plan.PartitionNames) {
 						handles = append(handles[:i-skipped], handles[i+1-skipped:]...)
 						skipped++
 						continue
@@ -5272,6 +5288,19 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	e.SetMaxChunkSize(capacity)
 	e.buildVirtualColumnInfo()
 	return e
+}
+
+func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []model.CIStr) bool {
+	if len(names) == 0 {
+		return true
+	}
+	s := pi.Definitions[idx].Name.L
+	for _, name := range names {
+		if s == name.L {
+			return true
+		}
+	}
+	return false
 }
 
 func newReplicaReadAdjuster(ctx sessionctx.Context, avgRowSize float64) txnkv.ReplicaReadAdjuster {

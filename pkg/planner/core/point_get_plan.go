@@ -884,6 +884,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 		return nil
 	}
 	// Skip the optimization with partition selection.
+	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
 		return nil
 	}
@@ -1088,6 +1089,7 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
+		p.PartitionNames = tblName.PartitionNames
 		return p
 	}
 	return nil

@@ -53,18 +53,19 @@ type BatchPointGetExec struct {
 	// IDs for handle lookup from index. Used if plan uses non-clustered/secondary index lookup
 	physIDs []int64
 	// If != 0 then it is a single partition under Static Prune mode.
-	singlePartID int64
-	idxVals      [][]types.Datum
-	txn          kv.Transaction
-	lock         bool
-	waitTime     int64
-	inited       uint32
-	values       [][]byte
-	index        int
-	rowDecoder   *rowcodec.ChunkDecoder
-	keepOrder    bool
-	desc         bool
-	batchGetter  kv.BatchGetter
+	singlePartID   int64
+	partitionNames []model.CIStr
+	idxVals        [][]types.Datum
+	txn            kv.Transaction
+	lock           bool
+	waitTime       int64
+	inited         uint32
+	values         [][]byte
+	index          int
+	rowDecoder     *rowcodec.ChunkDecoder
+	keepOrder      bool
+	desc           bool
+	batchGetter    kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -310,10 +311,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if err1 != nil {
 				return err1
 			}
-			e.handles = append(e.handles, handle)
-			if rc {
-				indexKeys = append(indexKeys, key)
-			}
 			if e.tblInfo.Partition != nil {
 				var pid int64
 				if e.idxInfo.Global {
@@ -321,6 +318,20 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					_, pid, err = codec.DecodeInt(segs.PartitionID)
 					if err != nil {
 						return err
+					}
+					if len(e.partitionNames) > 0 {
+						found := false
+						for _, name := range e.partitionNames {
+							// TODO: create a map of partition ids -> definitions
+							for _, def := range e.tblInfo.GetPartitionInfo().Definitions {
+								if pid == def.ID && def.Name.L == name.L {
+									found = true
+								}
+							}
+						}
+						if !found {
+							continue
+						}
 					}
 					e.physIDs = append(e.physIDs, pid)
 				} else {
@@ -330,6 +341,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if e.lock {
 					e.UpdateDeltaForTableID(pid)
 				}
+			}
+			e.handles = append(e.handles, handle)
+			if rc {
+				indexKeys = append(indexKeys, key)
 			}
 		}
 
