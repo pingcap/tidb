@@ -680,8 +680,8 @@
         ],
         "StaticPlan": [
           "PartitionUnion 2.00 root  ",
-          "├─Batch_Point_Get 1.00 root table:t handle:[1 2], keep order:false, desc:false",
-          "└─Batch_Point_Get 1.00 root table:t handle:[1 2], keep order:false, desc:false"
+          "├─Batch_Point_Get 1.00 root table:t, partition:p1 handle:[1 2], keep order:false, desc:false",
+          "└─Batch_Point_Get 1.00 root table:t, partition:P2 handle:[1 2], keep order:false, desc:false"
         ]
       },
       {

@@ -676,6 +676,8 @@ func TestPrepareCacheForPartition(t *testing.T) {
 
 func TestIssue33031(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	tkExplain := testkit.NewTestKit(t, store)
+	tkExplain.MustExec(`use test`)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec(`use test`)
@@ -687,28 +689,37 @@ func TestIssue33031(t *testing.T) {
 	tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
 	tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustExec(`deallocate prepare stmt`)
 	tk.MustExec(`set @@session.tidb_partition_prune_mode='dynamic'`)
 	tk.MustExec(`analyze table Issue33031`)
 	tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
 	tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	// TODO: Add another test that will use the plan cache instead of [Batch]PointGet
-	// which is now supported for partitioned tables as well.
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
+	// when supported for partitioned tables as well.
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Regexp(t, "IndexLookUp", explain[1][0])
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec(`alter table Issue33031 remove partitioning`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
-	// Does not use plan cache if non-partitioned!
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.Regexp(t, "Batch_Point_Get", explain[2][0])
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 }
 
