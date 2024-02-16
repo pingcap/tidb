@@ -192,38 +192,40 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 }
 
 func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int, UNIQUE KEY (b)) PARTITION BY HASH(b) PARTITIONS 4")
 	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustExec(`analyze table t1`)
 
 	tk.MustExec("CREATE TABLE t2 (id int primary key, name_id int) PARTITION BY LIST(id) (" +
 		"partition p0 values IN (1, 2), " +
 		"partition p1 values IN (3, 4), " +
 		"partition p3 values IN (5))")
 	tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustExec(`analyze table t2`)
 
 	tk.MustExec("CREATE TABLE t3 (id int primary key, name_id int) PARTITION BY LIST COLUMNS(id) (" +
 		"partition p0 values IN (1, 2), " +
 		"partition p1 values IN (3, 4), " +
 		"partition p3 values IN (5))")
 	tk.MustExec("insert into t3 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustExec(`analyze table t3`)
 
 	tk.MustExec("CREATE TABLE t4 (id int, name_id int, unique key(id, name_id)) PARTITION BY LIST COLUMNS(id, name_id) (" +
 		"partition p0 values IN ((1, 1),(2, 2)), " +
 		"partition p1 values IN ((3, 3),(4, 4)), " +
 		"partition p3 values IN ((5, 5)))")
 	tk.MustExec("insert into t4 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustExec(`analyze table t4`)
 
 	tk.MustExec("CREATE TABLE t5 (id int, name varchar(10), unique key(id, name)) PARTITION BY LIST COLUMNS(id, name) (" +
 		"partition p0 values IN ((1,'a'),(2,'b')), " +
 		"partition p1 values IN ((3,'c'),(4,'d')), " +
 		"partition p3 values IN ((5,'e')))")
 	tk.MustExec("insert into t5 values(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
+	tk.MustExec(`analyze table t5`)
 
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
