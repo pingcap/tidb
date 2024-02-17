@@ -112,6 +112,23 @@ func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.Transaction.GetTableInfo(id)
 }
 
+// SetDiskFullOpt implements the interface.
+func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
+
+// SetOption implements the interface.
+func (*wrapTxn) SetOption(_ int, _ any) {}
+
+// StartTS implements the interface.
+func (*wrapTxn) StartTS() uint64 { return uint64(time.Now().UnixNano()) }
+
+// Get implements the interface.
+func (txn *wrapTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	if txn.Transaction == nil {
+		return nil, nil
+	}
+	return txn.Transaction.Get(ctx, k)
+}
+
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (*Context) Execute(_ context.Context, _ string) ([]sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported")
