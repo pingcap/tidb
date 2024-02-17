@@ -594,6 +594,8 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 		sql        string
 		isValidate bool
 		errMsg     string
+		// Only validate when transaction has not started
+		isValidateWithoutStart bool
 	}{
 		{
 			name:       "select statement",
@@ -605,6 +607,10 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			sql:        `explain insert into t (id) values (1);`,
 			isValidate: false,
 			errMsg:     errMsg3,
+			// Explain will not start a transaction,
+			// but if one is already started,
+			// it will use it for getting the
+			isValidateWithoutStart: true,
 		},
 		{
 			name:       "explain analyze insert statement",
@@ -753,7 +759,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 		}
 		tk.MustExec("commit")
 		tk.MustExec("set transaction read only as of timestamp NOW(3);")
-		if testcase.isValidate {
+		if testcase.isValidate || testcase.isValidateWithoutStart {
 			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
