@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -38,6 +39,9 @@ import (
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func GetRowCountByIndexRanges(sctx context.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error) {
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("fuck")
+	}
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)

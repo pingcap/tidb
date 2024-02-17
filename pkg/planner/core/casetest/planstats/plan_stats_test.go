@@ -400,3 +400,18 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		require.Equal(t, output[i].OutputColNames, cols)
 	}
 }
+
+func TestIssue51098(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int);")
+	tk.MustExec("insert t value(1);")
+	tk.MustExec("insert t select t1.id from t t1 join t t2;")
+	tk.MustExec("insert t select t1.id from t t1 join t t2;")
+	tk.MustExec("insert t select t1.id from t t1 join t t2;")
+	tk.MustExec("insert t select t1.id from t t1 join t t2;")
+	tk.MustExec("insert t select t1.id from t t1 join t t2;")
+	tk.MustExec("analyze table t;")
+	tk.MustQuery("explain select * from t where _tidb_rowid between 100000 and 300000;")
+}

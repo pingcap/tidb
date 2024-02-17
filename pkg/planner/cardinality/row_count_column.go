@@ -15,6 +15,8 @@
 package cardinality
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -118,6 +120,9 @@ func GetRowCountByIntColumnRanges(sctx context.PlanContext, coll *statistics.His
 
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
 func equalRowCountOnColumn(sctx context.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("fuck")
+	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
