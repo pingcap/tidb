@@ -362,4 +362,6 @@ For example, if your table contains 2 million rows, then the calculation is the 
 
 ## Unresolved Questions
 
-None
+1. After adopting a time interval as the indicator, will it prevent us from implementing a strategy of updating the queue instead of rebuilding the entire queue in the future? Because after each change, we need to recalculate the time interval for all tables to determine their priority.
+
+   Perhaps we can tolerate a temporary delay, for example, by updating the entire queue only after encountering 100 updates.
