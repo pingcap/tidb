@@ -90,7 +90,7 @@ func (isd *InfoSchemaData) getVersionByTSNoLock(ts uint64) (int64, bool) {
 	// moreover, the most likely hit element in the array is the first one in steady mode
 	// thus it may have better performance than binary search
 	for i, vt := range isd.mu.versionTimestamps {
-		if vt.timestamp == 0 || ts < uint64(vt.timestamp) {
+		if vt.timestamp == 0 || ts < vt.timestamp {
 			// is.timestamp == 0 means the schema ts is unknown, so we can't use it, then just skip it.
 			// ts < is.timestamp means the schema is newer than ts, so we can't use it too, just skip it to find the older one.
 			continue
@@ -100,7 +100,7 @@ func (isd *InfoSchemaData) getVersionByTSNoLock(ts uint64) (int64, bool) {
 			// the first element is the latest schema, so we can return it directly.
 			return vt.schemaVersion, true
 		}
-		if isd.mu.versionTimestamps[i-1].schemaVersion == vt.schemaVersion+1 && uint64(isd.mu.versionTimestamps[i-1].timestamp) > ts {
+		if isd.mu.versionTimestamps[i-1].schemaVersion == vt.schemaVersion+1 && isd.mu.versionTimestamps[i-1].timestamp > ts {
 			// This first condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10,
 			// but current(cache[i]) schema-version is not 9, then current schema is not suitable for ts.
 			// The second condition is to make sure the cache[i-1].timestamp > ts >= cache[i].timestamp, then the current schema is suitable for ts.
@@ -229,7 +229,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	key := cacheKey{id, is.schemaVersion}
 	tbl, found := is.cache.Get(key)
 	if found && tbl != nil {
-		return tbl.(table.Table), true
+		return tbl, true
 	}
 
 	eq := func(a, b *Item) bool { return a.tableID == b.tableID }
@@ -243,8 +243,6 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	if err == nil {
 		is.cache.Set(key, ret)
 		return ret, true
-	} else {
-		// fmt.Println("load table error ==", id, err)
 	}
 	return nil, false
 }
@@ -270,7 +268,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	key := cacheKey{itm.tableID, is.schemaVersion}
 	res, found := is.cache.Get(key)
 	if found && res != nil {
-		return res.(table.Table), nil
+		return res, nil
 	}
 
 	// Maybe the table is evicted? need to reload.
@@ -332,10 +330,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
 	_, err := is.TableByName(schema, table)
-	if err == nil {
-		return true
-	}
-	return false
+	return err == nil
 }
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
