@@ -729,7 +729,7 @@ func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
 	uniqueIDMap := make(map[int64]struct{})
-	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
+	handleJobAndTableInfo := func(_ *model.Job, tblInfo *model.TableInfo) (bool, error) {
 		// Avoid duplicate table ID info.
 		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
 			return false, nil

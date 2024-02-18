@@ -46,7 +46,7 @@ func addVerifyPeerCertificate(tlsCfg *tls.Config, verifyCN []string) {
 			checkCN[cn] = struct{}{}
 		}
 		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
-		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		tlsCfg.VerifyPeerCertificate = func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
 			cns := make([]string, 0, len(verifiedChains))
 			for _, chains := range verifiedChains {
 				for _, chain := range chains {
@@ -204,7 +204,7 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 		tlsCfg.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 			return loadCert()
 		}
-		tlsCfg.GetCertificate = func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		tlsCfg.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return loadCert()
 		}
 	}
