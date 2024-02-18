@@ -186,7 +186,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	var cases []testCase
 	// https://github.com/golang/go/issues/63438
 	// in 1.21, the load factor of map is 6 rather than 6.5 and the go team refused to backport to 1.21.
-	if strings.Contains(runtime.Version(), `go1.21`) {
+	if strings.Contains(runtime.Version(), `go1.21`) || strings.Contains(runtime.Version(), `go1.22`) {
 		cases = []testCase{
 			{
 				rowNum:          0,
