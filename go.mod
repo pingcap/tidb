@@ -104,13 +104,8 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tikv/client-go/v2 v2.0.8-0.20231116065855-46811b6ac353
-	github.com/tikv/pd/client v0.0.0-20240102100501-7ce5860ab342
-=======
-	github.com/tikv/client-go/v2 v2.0.8-0.20231204074048-e80e9ca1fe66
-	github.com/tikv/pd/client v0.0.0-20231204034622-259435d93ae2
->>>>>>> 161107a7127 (executor: add ru details in slow log and INFORMATION_SCHEMA.SLOW_QUERY (#49067))
+	github.com/tikv/client-go/v2 v2.0.8-0.20240218024828-b13f4be4e6f9
+	github.com/tikv/pd/client v0.0.0-20240210135946-3488a653ddd9
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
