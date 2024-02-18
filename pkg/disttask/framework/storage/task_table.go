@@ -758,7 +758,7 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	if err != nil {
 		return err
 	}
-	sql := "update mysql.tidb_global_task set concurrency = ? where concurrency > ?;"
-	_, err = sqlexec.ExecSQL(ctx, se, sql, []any{cpuCount, cpuCount})
+	sql := "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;"
+	_, err = sqlexec.ExecSQL(ctx, se, sql, cpuCount, cpuCount)
 	return err
 }
