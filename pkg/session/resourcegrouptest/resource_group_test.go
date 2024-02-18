@@ -31,23 +31,23 @@ func TestResourceGroupHintInTxn(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (id int primary key, val int)")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResouceGroupChecker", `return("default")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResourceGroupChecker", `return("default")`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/kv/TxnResouceGroupChecker"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/kv/TxnResourceGroupChecker"))
 	}()
 	tk.MustExec("insert into t values (1, 1);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResouceGroupChecker", `return("rg1")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResourceGroupChecker", `return("rg1")`))
 	tk.MustExec("insert /*+ RESOURCE_GROUP(rg1) */ into t values (2, 2);")
 	tk.MustExec("BEGIN;")
 	// for pessimistic lock the resource group should be rg1
 	tk.MustExec("insert /*+ RESOURCE_GROUP(rg1) */ into t values (3, 3);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResouceGroupChecker", `return("rg2")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResourceGroupChecker", `return("rg2")`))
 	// for final prewrite/commit the resource group should be rg2
 	tk.MustExec("update /*+ RESOURCE_GROUP(rg2) */ t set val = val + 1 where id = 3;")
 	tk.MustExec("COMMIT;")
 
 	tk.MustExec("SET @@autocommit=1;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResouceGroupChecker", `return("default")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResourceGroupChecker", `return("default")`))
 	tk.MustExec("insert /*+ RESOURCE_GROUP(not_exist_group) */ into t values (4, 4);")
 
 	tk.MustExec("BEGIN;")
@@ -56,4 +56,35 @@ func TestResourceGroupHintInTxn(t *testing.T) {
 	// for final prewrite/commit the resource group should be rg2
 	tk.MustExec("update /*+ RESOURCE_GROUP(unknown_2) */ t set val = val + 1 where id = 5;")
 	tk.MustExec("COMMIT;")
+}
+
+func TestResourceGroupHintSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create resource group rg1 ru_per_sec=1000")
+	tk.MustExec("create resource group rg2 ru_per_sec=1000")
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (id int primary key, val int)")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (2, 2);")
+	tk.MustExec("insert into t values (3, 3);")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/CopResourceGroupChecker", `return("rg1")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/CopResourceGroupChecker"))
+	}()
+	tk.MustQuery("select /*+ RESOURCE_GROUP(rg1) */ * from t")
+	tk.MustQuery("select /*+ RESOURCE_GROUP(rg1) */ * from t where id = 1")
+	tk.MustQuery("select /*+ RESOURCE_GROUP(rg1) */ * from t where id = 2")
+	tk.MustQuery("select /*+ RESOURCE_GROUP(rg1) */ * from t where id = 3")
+	tk.MustQuery("select /*+ RESOURCE_GROUP(rg1) */ * from t where id = 4")
+	tk.MustExec(`prepare mystmt from 'select /*+ RESOURCE_GROUP(rg1) */ * from t where id = ?';`)
+	tk.MustExec("SET @num = 1;")
+	tk.MustExec("execute mystmt using @num;")
+	tk.MustExec("execute mystmt using @num;")
+	tk.MustExec("execute mystmt using @num;")
+	tk.MustExec("SET @num = 2;")
+	tk.MustExec("execute mystmt using @num;")
+	tk.MustExec("execute mystmt using @num;")
 }
