@@ -44,6 +44,7 @@ type versionAndTimestamp struct {
 	timestamp     uint64
 }
 
+// Data is the core data struct of infoschema V2.
 type Data struct {
 	// For the TableByName API, sorted by {dbName, tableName, tableID} => schemaVersion
 	//
@@ -120,6 +121,7 @@ type cacheKey struct {
 	schemaVersion int64
 }
 
+// NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
 		byID:      btree.NewBTreeG[Item](compareByID),
