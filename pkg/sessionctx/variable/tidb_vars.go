@@ -1440,6 +1440,7 @@ const (
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0
 	DefTiDBOptOrderingIdxSelRatio                     = -1
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
+	DefTiDBEnableINLJoinInnerMultiPattern             = true
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
 	DefTiDBEnableRowLevelChecksum                     = false
 	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
