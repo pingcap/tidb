@@ -462,9 +462,8 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	client := initTestSplitClient(keys, hook)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
 	local.RegionSplitBatchSize = 4
 	local.RegionSplitConcurrency = 4
@@ -721,9 +720,8 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
 	client := initTestSplitClient(keys, nil)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
 	local.RegionSplitBatchSize = 4
 	local.RegionSplitConcurrency = 4
@@ -807,9 +805,8 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	keys = append(keys, tableEndKey, []byte(""))
 	client := initTestSplitClient(keys, hook)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
 	local.RegionSplitBatchSize = 10
 	local.RegionSplitConcurrency = 10

@@ -221,10 +221,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (
 	}
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-
-	// todo: use a real region size getter
-	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, regionSizeGetter)
+	d := kvStore.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, d)
 	if err != nil {
 		return nil, err
 	}
