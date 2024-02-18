@@ -1000,7 +1000,7 @@ func (em *ErrorManager) Output() string {
 		{Name: "Error Count", WidthMax: 12},
 		{Name: "Error Data Table", WidthMax: 42},
 	})
-	t.SetRowPainter(func(row table.Row) text.Colors {
+	t.SetRowPainter(func(table.Row) text.Colors {
 		return text.Colors{text.FgRed}
 	})
 

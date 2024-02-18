@@ -228,12 +228,12 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		activeGroup:           make(map[string]int64),
 		metricsMap:            generic.NewSyncMap[string, prometheus.Counter](8),
 	}
-	m.insertionCancel = watchList.OnInsertion(func(ctx context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
+	m.insertionCancel = watchList.OnInsertion(func(_ context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
 		m.activeLock.Lock()
 		m.activeGroup[i.Value().ResourceGroupName]++
 		m.activeLock.Unlock()
 	})
-	m.evictionCancel = watchList.OnEviction(func(ctx context.Context, er ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
+	m.evictionCancel = watchList.OnEviction(func(_ context.Context, _ ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
 		m.activeLock.Lock()
 		m.activeGroup[i.Value().ResourceGroupName]--
 		m.activeLock.Unlock()
