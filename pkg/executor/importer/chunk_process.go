@@ -61,7 +61,7 @@ type encodeReaderFn func(ctx context.Context) (data rowToEncode, closed bool, er
 
 // parserEncodeReader wraps a mydump.Parser as a encodeReaderFn.
 func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) encodeReaderFn {
-	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+	return func(context.Context) (data rowToEncode, closed bool, err error) {
 		readPos, _ := parser.Pos()
 		if readPos >= endOffset {
 			closed = true
