@@ -2031,6 +2031,7 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
