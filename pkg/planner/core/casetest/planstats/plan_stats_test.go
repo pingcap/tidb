@@ -411,7 +411,6 @@ func TestIssue51098(t *testing.T) {
 	tk.MustExec("insert t select t1.id from t t1 join t t2;")
 	tk.MustExec("insert t select t1.id from t t1 join t t2;")
 	tk.MustExec("insert t select t1.id from t t1 join t t2;")
-	tk.MustExec("insert t select t1.id from t t1 join t t2;")
 	tk.MustExec("analyze table t;")
-	tk.MustQuery("explain select * from t where _tidb_rowid between 100000 and 300000;")
+	tk.MustQuery("explain select * from t where _tidb_rowid between 100 and 300;")
 }

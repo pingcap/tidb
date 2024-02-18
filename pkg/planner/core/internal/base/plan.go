@@ -19,12 +19,14 @@ import (
 	"strconv"
 	"unsafe"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
 
 // Plan Should be used as embedded struct in Plan implementations.
@@ -115,6 +117,10 @@ func (p *Plan) QueryBlockOffset() int {
 
 // SetStats sets the stats
 func (p *Plan) SetStats(s *property.StatsInfo) {
+	if s.RowCount == 1806.00 {
+		log.Info("fuck", zap.Any("info", s), zap.Stack("stack"))
+	}
+
 	p.stats = s
 }
 
