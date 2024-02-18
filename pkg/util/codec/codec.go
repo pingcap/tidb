@@ -391,6 +391,154 @@ func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.Field
 	return
 }
 
+// SerializeKeys is used in join
+func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType, colIdx int, filterVector []bool, nullVector []bool, ignoreSign bool, serializedKeysVector [][]byte) (err error) {
+	column := chk.Column(colIdx)
+	rows := chk.NumRows()
+	canSkip := func(index int) bool {
+		if column.IsNull(index) {
+			nullVector[index] = true
+		}
+		return (filterVector != nil && filterVector[index]) || (nullVector != nil && nullVector[index])
+	}
+	switch tp.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		i64s := column.Int64s()
+		for i, v := range i64s {
+			if canSkip(i) {
+				continue
+			}
+			if !ignoreSign {
+				if !mysql.HasUnsignedFlag(tp.GetFlag()) && v < 0 {
+					serializedKeysVector[i] = append(serializedKeysVector[i], varintFlag)
+				} else {
+					serializedKeysVector[i] = append(serializedKeysVector[i], uvarintFlag)
+				}
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], column.GetRaw(i)...)
+		}
+	case mysql.TypeFloat:
+		f32s := column.Float32s()
+		for i, f := range f32s {
+			if canSkip(i) {
+				continue
+			}
+			d := float64(f)
+			// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+			// It makes -0's hash val different from 0's.
+			if d == 0 {
+				d = 0
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], unsafe.Slice((*byte)(unsafe.Pointer(&d)), sizeFloat64)...)
+		}
+	case mysql.TypeDouble:
+		f64s := column.Float64s()
+		for i, f := range f64s {
+			if canSkip(i) {
+				continue
+			}
+			// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+			// It makes -0's hash val different from 0's.
+			if f == 0 {
+				f = 0
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], unsafe.Slice((*byte)(unsafe.Pointer(&f)), sizeFloat64)...)
+		}
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		for i := 0; i < rows; i++ {
+			if canSkip(i) {
+				continue
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], ConvertByCollation(column.GetBytes(i), tp)...)
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		ts := column.Times()
+		for i, t := range ts {
+			if canSkip(i) {
+				continue
+			}
+			var v uint64
+			v, err = t.ToPackedUint()
+			if err != nil {
+				return err
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
+		}
+	case mysql.TypeDuration:
+		for i := 0; i < rows; i++ {
+			if canSkip(i) {
+				continue
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], column.GetRaw(i)...)
+		}
+	case mysql.TypeNewDecimal:
+		ds := column.Decimals()
+		for i, d := range ds {
+			if canSkip(i) {
+				continue
+			}
+			var b []byte
+			b, err = d.ToHashKey()
+			if err != nil {
+				return err
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], b...)
+		}
+	case mysql.TypeEnum:
+		for i := 0; i < rows; i++ {
+			if canSkip(i) {
+				continue
+			}
+			v := column.GetEnum(i).Value
+			if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
+				serializedKeysVector[i] = append(serializedKeysVector[i], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
+			} else {
+				str := ""
+				if enum, err := types.ParseEnumValue(tp.GetElems(), v); err == nil {
+					str = enum.Name
+				}
+				serializedKeysVector[i] = append(serializedKeysVector[i], ConvertByCollation(hack.Slice(str), tp)...)
+			}
+		}
+	case mysql.TypeSet:
+		for i := 0; i < rows; i++ {
+			if canSkip(i) {
+				continue
+			}
+			s, err := types.ParseSetValue(tp.GetElems(), column.GetSet(i).Value)
+			if err != nil {
+				return err
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], ConvertByCollation(hack.Slice(s.Name), tp)...)
+		}
+	case mysql.TypeBit:
+		for i := 0; i < rows; i++ {
+			if canSkip(i) {
+				continue
+			}
+			v, err1 := types.BinaryLiteral(column.GetBytes(i)).ToInt(typeCtx)
+			terror.Log(errors.Trace(err1))
+			serializedKeysVector[i] = append(serializedKeysVector[i], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
+		}
+	case mysql.TypeJSON:
+		for i := 0; i < rows; i++ {
+			if canSkip(i) {
+				continue
+			}
+			serializedKeysVector[i] = column.GetJSON(i).HashValue(serializedKeysVector[i])
+		}
+	case mysql.TypeNull:
+		for i := 0; i < rows; i++ {
+			if canSkip(i) {
+				continue
+			}
+		}
+	default:
+		return errors.Errorf("unsupport column type for encode %d", tp.GetType())
+	}
+	return
+}
+
 // HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
 func HashChunkColumns(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
 	return HashChunkSelected(typeCtx, h, chk, tp, colIdx, buf, isNull, nil, false)
