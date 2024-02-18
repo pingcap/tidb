@@ -22,13 +22,11 @@ import (
 	"io"
 	"math"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
@@ -44,14 +42,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -60,13 +56,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"go.uber.org/atomic"
+	"github.com/tikv/pd/client/retry"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
@@ -78,7 +72,7 @@ import (
 
 const (
 	dialTimeout             = 5 * time.Minute
-	maxRetryTimes           = 5
+	maxRetryTimes           = 20
 	defaultRetryBackoffTime = 3 * time.Second
 	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
@@ -262,17 +256,17 @@ func (*encodingBuilder) MakeEmptyRows() encode.Rows {
 }
 
 type targetInfoGetter struct {
-	tls      *common.TLS
-	targetDB *sql.DB
-	pdCli    pd.Client
+	tls       *common.TLS
+	targetDB  *sql.DB
+	pdHTTPCli pdhttp.Client
 }
 
 // NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
-func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdCli pd.Client) backend.TargetInfoGetter {
+func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdHTTPCli pdhttp.Client) backend.TargetInfoGetter {
 	return &targetInfoGetter{
-		tls:      tls,
-		targetDB: db,
-		pdCli:    pdCli,
+		tls:       tls,
+		targetDB:  db,
+		pdHTTPCli: pdHTTPCli,
 	}
 }
 
@@ -293,10 +287,10 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
 		return err
 	}
-	if err := tikv.CheckPDVersion(ctx, g.tls, g.pdCli.GetLeaderAddr(), localMinPDVersion, localMaxPDVersion); err != nil {
+	if err := tikv.CheckPDVersion(ctx, g.pdHTTPCli, localMinPDVersion, localMaxPDVersion); err != nil {
 		return err
 	}
-	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdCli.GetLeaderAddr(), localMinTiKVVersion, localMaxTiKVVersion); err != nil {
+	if err := tikv.CheckTiKVVersion(ctx, g.pdHTTPCli, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
 		return err
 	}
 
@@ -426,6 +420,7 @@ type BackendConfig struct {
 	// see DisableAutomaticCompactions of pebble.Options for more details.
 	// default true.
 	DisableAutomaticCompactions bool
+	BlockSize                   int
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -436,6 +431,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
 		RegionSplitConcurrency:      cfg.TikvImporter.RegionSplitConcurrency,
@@ -463,9 +459,6 @@ func (c *BackendConfig) adjust() {
 
 // Backend is a local backend.
 type Backend struct {
-	engines        sync.Map // sync version of map[uuid.UUID]*Engine
-	externalEngine map[uuid.UUID]common.Engine
-
 	pdCli            pd.Client
 	pdHTTPCli        pdhttp.Client
 	splitCli         split.SplitClient
@@ -475,13 +468,11 @@ type Backend struct {
 	tikvCodec        tikvclient.Codec
 
 	BackendConfig
+	engineMgr *engineManager
 
 	supportMultiIngest  bool
-	duplicateDB         *pebble.DB
-	keyAdapter          common.KeyAdapter
 	importClientFactory ImportClientFactory
 
-	bufferPool   *membuf.Pool
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
@@ -490,28 +481,14 @@ type Backend struct {
 }
 
 var _ DiskUsage = (*Backend)(nil)
+var _ StoreHelper = (*Backend)(nil)
 var _ backend.Backend = (*Backend)(nil)
-
-func openDuplicateDB(storeDir string) (*pebble.DB, error) {
-	dbPath := filepath.Join(storeDir, duplicateDBName)
-	// TODO: Optimize the opts for better write.
-	opts := &pebble.Options{
-		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-			newRangePropertiesCollector,
-		},
-	}
-	return pebble.Open(dbPath, opts)
-}
 
 const (
 	pdCliMaxMsgSize = int(128 * units.MiB) // pd.ScanRegion may return a large response
 )
 
 var (
-	// RunInTest indicates whether the current process is running in test.
-	RunInTest bool
-	// LastAlloc is the last ID allocator.
-	LastAlloc      manual.Allocator
 	maxCallMsgSize = []grpc.DialOption{
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(pdCliMaxMsgSize)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(pdCliMaxMsgSize)),
@@ -525,12 +502,6 @@ func NewBackend(
 	config BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
 ) (b *Backend, err error) {
-	var duplicateDB *pebble.DB
-	defer func() {
-		if err != nil && duplicateDB != nil {
-			_ = duplicateDB.Close()
-		}
-	}()
 	config.adjust()
 	pdAddrs := strings.Split(config.PDAddr, ",")
 	pdCli, err := pd.NewClientWithContext(
@@ -543,33 +514,6 @@ func NewBackend(
 	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
-	}
-	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig()))
-	splitCli := split.NewSplitClient(pdCli, tls.TLSConfig(), false)
-
-	shouldCreate := true
-	if config.CheckpointEnabled {
-		if info, err := os.Stat(config.LocalStoreDir); err != nil {
-			if !os.IsNotExist(err) {
-				return nil, err
-			}
-		} else if info.IsDir() {
-			shouldCreate = false
-		}
-	}
-
-	if shouldCreate {
-		err = os.Mkdir(config.LocalStoreDir, 0o700)
-		if err != nil {
-			return nil, common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
-		}
-	}
-
-	if config.DupeDetectEnabled {
-		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
-		if err != nil {
-			return nil, common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
-		}
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
@@ -594,25 +538,20 @@ func NewBackend(
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
+	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
+		"lightning",
+		pdCli.GetServiceDiscovery(),
+		pdhttp.WithTLSConfig(tls.TLSConfig()),
+	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
+	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), false)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
-	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if config.DupeDetectEnabled {
-		keyAdapter = common.DupDetectKeyAdapter{}
-	}
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
 		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
 	} else {
 		writeLimiter = noopStoreWriteLimiter{}
 	}
-	alloc := manual.Allocator{}
-	if RunInTest {
-		alloc.RefCnt = new(atomic.Int64)
-		LastAlloc = alloc
-	}
 	local := &Backend{
-		engines:          sync.Map{},
-		externalEngine:   map[uuid.UUID]common.Engine{},
 		pdCli:            pdCli,
 		pdHTTPCli:        pdHTTPCli,
 		splitCli:         splitCli,
@@ -623,13 +562,15 @@ func NewBackend(
 
 		BackendConfig: config,
 
-		duplicateDB:         duplicateDB,
-		keyAdapter:          keyAdapter,
 		importClientFactory: importClientFactory,
-		bufferPool:          membuf.NewPool(membuf.WithAllocator(alloc)),
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
 	}
+	engineMgr, err := newEngineManager(config, local, local.logger)
+	if err != nil {
+		return nil, err
+	}
+	local.engineMgr = engineMgr
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
 	}
@@ -640,17 +581,30 @@ func NewBackend(
 	return local, nil
 }
 
+// NewBackendForTest creates a new Backend for test.
+func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper StoreHelper) (*Backend, error) {
+	config.adjust()
+
+	logger := log.FromContext(ctx)
+	engineMgr, err := newEngineManager(config, storeHelper, logger)
+	if err != nil {
+		return nil, err
+	}
+	local := &Backend{
+		BackendConfig: config,
+		logger:        logger,
+		engineMgr:     engineMgr,
+	}
+	if m, ok := metric.GetCommonMetric(ctx); ok {
+		local.metrics = m
+	}
+
+	return local, nil
+}
+
 // TotalMemoryConsume returns the total memory usage of the local backend.
 func (local *Backend) TotalMemoryConsume() int64 {
-	var memConsume int64
-	local.engines.Range(func(k, v interface{}) bool {
-		e := v.(*Engine)
-		if e != nil {
-			memConsume += e.TotalMemorySize()
-		}
-		return true
-	})
-	return memConsume + local.bufferPool.TotalSize()
+	return local.engineMgr.totalMemoryConsume()
 }
 
 func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
@@ -718,108 +672,11 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 	return nil
 }
 
-// rlock read locks a local file and returns the Engine instance if it exists.
-func (local *Backend) rLockEngine(engineID uuid.UUID) *Engine {
-	if e, ok := local.engines.Load(engineID); ok {
-		engine := e.(*Engine)
-		engine.rLock()
-		return engine
-	}
-	return nil
-}
-
-// lock locks a local file and returns the Engine instance if it exists.
-func (local *Backend) lockEngine(engineID uuid.UUID, state importMutexState) *Engine {
-	if e, ok := local.engines.Load(engineID); ok {
-		engine := e.(*Engine)
-		engine.lock(state)
-		return engine
-	}
-	return nil
-}
-
-// tryRLockAllEngines tries to read lock all engines, return all `Engine`s that are successfully locked.
-func (local *Backend) tryRLockAllEngines() []*Engine {
-	var allEngines []*Engine
-	local.engines.Range(func(k, v interface{}) bool {
-		engine := v.(*Engine)
-		// skip closed engine
-		if engine.tryRLock() {
-			if !engine.closed.Load() {
-				allEngines = append(allEngines, engine)
-			} else {
-				engine.rUnlock()
-			}
-		}
-		return true
-	})
-	return allEngines
-}
-
-// lockAllEnginesUnless tries to lock all engines, unless those which are already locked in the
-// state given by ignoreStateMask. Returns the list of locked engines.
-func (local *Backend) lockAllEnginesUnless(newState, ignoreStateMask importMutexState) []*Engine {
-	var allEngines []*Engine
-	local.engines.Range(func(k, v interface{}) bool {
-		engine := v.(*Engine)
-		if engine.lockUnless(newState, ignoreStateMask) {
-			allEngines = append(allEngines, engine)
-		}
-		return true
-	})
-	return allEngines
-}
-
 // Close the local backend.
 func (local *Backend) Close() {
-	for _, e := range local.externalEngine {
-		_ = e.Close()
-	}
-	local.externalEngine = map[uuid.UUID]common.Engine{}
-	allLocalEngines := local.lockAllEnginesUnless(importMutexStateClose, 0)
-	for _, e := range allLocalEngines {
-		_ = e.Close()
-		e.unlock()
-	}
-	local.engines = sync.Map{}
+	local.engineMgr.close()
 	local.importClientFactory.Close()
-	local.bufferPool.Destroy()
 
-	if local.duplicateDB != nil {
-		// Check if there are duplicates that are not collected.
-		iter := local.duplicateDB.NewIter(&pebble.IterOptions{})
-		hasDuplicates := iter.First()
-		allIsWell := true
-		if err := iter.Error(); err != nil {
-			local.logger.Warn("iterate duplicate db failed", zap.Error(err))
-			allIsWell = false
-		}
-		if err := iter.Close(); err != nil {
-			local.logger.Warn("close duplicate db iter failed", zap.Error(err))
-			allIsWell = false
-		}
-		if err := local.duplicateDB.Close(); err != nil {
-			local.logger.Warn("close duplicate db failed", zap.Error(err))
-			allIsWell = false
-		}
-		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
-		// db dir will be useless, so we clean up this dir.
-		if allIsWell && (!local.CheckpointEnabled || !hasDuplicates) {
-			if err := os.RemoveAll(filepath.Join(local.LocalStoreDir, duplicateDBName)); err != nil {
-				local.logger.Warn("remove duplicate db file failed", zap.Error(err))
-			}
-		}
-		local.duplicateDB = nil
-	}
-
-	// if checkpoint is disable or we finish load all data successfully, then files in this
-	// dir will be useless, so we clean up this dir and all files in it.
-	if !local.CheckpointEnabled || common.IsEmptyDir(local.LocalStoreDir) {
-		err := os.RemoveAll(local.LocalStoreDir)
-		if err != nil {
-			local.logger.Warn("remove local db file failed", zap.Error(err))
-		}
-	}
 	_ = local.tikvCli.Close()
 	local.pdHTTPCli.Close()
 	local.pdCli.Close()
@@ -827,36 +684,12 @@ func (local *Backend) Close() {
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
 func (local *Backend) FlushEngine(ctx context.Context, engineID uuid.UUID) error {
-	engine := local.rLockEngine(engineID)
-
-	// the engine cannot be deleted after while we've acquired the lock identified by UUID.
-	if engine == nil {
-		return errors.Errorf("engine '%s' not found", engineID)
-	}
-	defer engine.rUnlock()
-	if engine.closed.Load() {
-		return nil
-	}
-	return engine.flushEngineWithoutLock(ctx)
+	return local.engineMgr.flushEngine(ctx, engineID)
 }
 
 // FlushAllEngines flush all engines.
 func (local *Backend) FlushAllEngines(parentCtx context.Context) (err error) {
-	allEngines := local.tryRLockAllEngines()
-	defer func() {
-		for _, engine := range allEngines {
-			engine.rUnlock()
-		}
-	}()
-
-	eg, ctx := errgroup.WithContext(parentCtx)
-	for _, engine := range allEngines {
-		e := engine
-		eg.Go(func() error {
-			return e.flushEngineWithoutLock(ctx)
-		})
-	}
-	return eg.Wait()
+	return local.engineMgr.flushAllEngines(parentCtx)
 }
 
 // RetryImportDelay returns the delay time before retrying to import a file.
@@ -869,186 +702,14 @@ func (*Backend) ShouldPostProcess() bool {
 	return true
 }
 
-func (local *Backend) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
-	opt := &pebble.Options{
-		MemTableSize: local.MemTableSize,
-		// the default threshold value may cause write stall.
-		MemTableStopWritesThreshold: 8,
-		MaxConcurrentCompactions:    16,
-		// set threshold to half of the max open files to avoid trigger compaction
-		L0CompactionThreshold: math.MaxInt32,
-		L0StopWritesThreshold: math.MaxInt32,
-		LBaseMaxBytes:         16 * units.TiB,
-		MaxOpenFiles:          local.MaxOpenFiles,
-		DisableWAL:            true,
-		ReadOnly:              readOnly,
-		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-			newRangePropertiesCollector,
-		},
-		DisableAutomaticCompactions: local.DisableAutomaticCompactions,
-	}
-	// set level target file size to avoid pebble auto triggering compaction that split ingest SST files into small SST.
-	opt.Levels = []pebble.LevelOptions{
-		{
-			TargetFileSize: 16 * units.GiB,
-		},
-	}
-
-	dbPath := filepath.Join(local.LocalStoreDir, engineUUID.String())
-	db, err := pebble.Open(dbPath, opt)
-	return db, errors.Trace(err)
-}
-
 // OpenEngine must be called with holding mutex of Engine.
 func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
-	db, err := local.openEngineDB(engineUUID, false)
-	if err != nil {
-		return err
-	}
-
-	sstDir := engineSSTDir(local.LocalStoreDir, engineUUID)
-	if !cfg.KeepSortDir {
-		if err := os.RemoveAll(sstDir); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if !common.IsDirExists(sstDir) {
-		if err := os.Mkdir(sstDir, 0o750); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	engineCtx, cancel := context.WithCancel(ctx)
-
-	e, _ := local.engines.LoadOrStore(engineUUID, &Engine{
-		UUID:               engineUUID,
-		sstDir:             sstDir,
-		sstMetasChan:       make(chan metaOrFlush, 64),
-		ctx:                engineCtx,
-		cancel:             cancel,
-		config:             cfg.Local,
-		tableInfo:          cfg.TableInfo,
-		duplicateDetection: local.DupeDetectEnabled,
-		dupDetectOpt:       local.DuplicateDetectOpt,
-		duplicateDB:        local.duplicateDB,
-		keyAdapter:         local.keyAdapter,
-		logger:             log.FromContext(ctx),
-	})
-	engine := e.(*Engine)
-	engine.lock(importMutexStateOpen)
-	defer engine.unlock()
-	engine.db.Store(db)
-	engine.sstIngester = dbSSTIngester{e: engine}
-	if err = engine.loadEngineMeta(); err != nil {
-		return errors.Trace(err)
-	}
-	if err = local.allocateTSIfNotExists(ctx, engine); err != nil {
-		return errors.Trace(err)
-	}
-	engine.wg.Add(1)
-	go engine.ingestSSTLoop()
-	return nil
-}
-
-func (local *Backend) allocateTSIfNotExists(ctx context.Context, engine *Engine) error {
-	if engine.TS > 0 {
-		return nil
-	}
-	physical, logical, err := local.pdCli.GetTS(ctx)
-	if err != nil {
-		return err
-	}
-	ts := oracle.ComposeTS(physical, logical)
-	engine.TS = ts
-	return engine.saveEngineMeta()
+	return local.engineMgr.openEngine(ctx, cfg, engineUUID)
 }
 
 // CloseEngine closes backend engine by uuid.
 func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
-	if externalCfg := cfg.External; externalCfg != nil {
-		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
-		if err != nil {
-			return err
-		}
-		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
-		if err != nil {
-			return err
-		}
-		physical, logical, err := local.pdCli.GetTS(ctx)
-		if err != nil {
-			return err
-		}
-		ts := oracle.ComposeTS(physical, logical)
-		externalEngine := external.NewExternalEngine(
-			store,
-			externalCfg.DataFiles,
-			externalCfg.StatFiles,
-			externalCfg.StartKey,
-			externalCfg.EndKey,
-			externalCfg.SplitKeys,
-			externalCfg.RegionSplitSize,
-			local.keyAdapter,
-			local.DupeDetectEnabled,
-			local.duplicateDB,
-			local.DuplicateDetectOpt,
-			local.WorkerConcurrency,
-			ts,
-			externalCfg.TotalFileSize,
-			externalCfg.TotalKVCount,
-			externalCfg.CheckHotspot,
-		)
-		local.externalEngine[engineUUID] = externalEngine
-		return nil
-	}
-
-	// flush mem table to storage, to free memory,
-	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
-	engineI, ok := local.engines.Load(engineUUID)
-	if !ok {
-		// recovery mode, we should reopen this engine file
-		db, err := local.openEngineDB(engineUUID, true)
-		if err != nil {
-			return err
-		}
-		engine := &Engine{
-			UUID:               engineUUID,
-			sstMetasChan:       make(chan metaOrFlush),
-			tableInfo:          cfg.TableInfo,
-			keyAdapter:         local.keyAdapter,
-			duplicateDetection: local.DupeDetectEnabled,
-			dupDetectOpt:       local.DuplicateDetectOpt,
-			duplicateDB:        local.duplicateDB,
-			logger:             log.FromContext(ctx),
-		}
-		engine.db.Store(db)
-		engine.sstIngester = dbSSTIngester{e: engine}
-		if err = engine.loadEngineMeta(); err != nil {
-			return err
-		}
-		local.engines.Store(engineUUID, engine)
-		return nil
-	}
-
-	engine := engineI.(*Engine)
-	engine.rLock()
-	if engine.closed.Load() {
-		engine.rUnlock()
-		return nil
-	}
-
-	err := engine.flushEngineWithoutLock(ctx)
-	engine.rUnlock()
-
-	// use mutex to make sure we won't close sstMetasChan while other routines
-	// trying to do flush.
-	engine.lock(importMutexStateClose)
-	engine.closed.Store(true)
-	close(engine.sstMetasChan)
-	engine.unlock()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	engine.wg.Wait()
-	return engine.ingestErr.Get()
+	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
 func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
@@ -1149,6 +810,8 @@ func (local *Backend) prepareAndSendJob(
 		needSplit = true
 	})
 	logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
+	backOffTime := 10 * time.Second
+	maxbackoffTime := 120 * time.Second
 	for i := 0; i < maxRetryTimes; i++ {
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
@@ -1161,6 +824,15 @@ func (local *Backend) prepareAndSendJob(
 
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
 			log.ShortError(err), zap.Int("retry", i))
+		select {
+		case <-time.After(backOffTime):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		backOffTime *= 2
+		if backOffTime > maxbackoffTime {
+			backOffTime = maxbackoffTime
+		}
 	}
 	logger.End(zap.ErrorLevel, err)
 	if err != nil {
@@ -1428,6 +1100,11 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 			zap.String("capacity", store.Status.Capacity), zap.Error(err))
 		return nil
 	}
+	if capacity <= 0 {
+		// PD will return a zero value StoreInfo if heartbeat is not received after
+		// startup, skip temporarily.
+		return nil
+	}
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
 		logger.Warn("failed to parse available",
@@ -1436,7 +1113,12 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	}
 	ratio := available * 100 / capacity
 	if ratio < 10 {
-		return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
+		storeType := "TiKV"
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			storeType = "TiFlash"
+		}
+		return errors.Errorf("the remaining storage capacity of %s(%s) is less than 10%%; please increase the storage capacity of %s and try again",
+			storeType, store.Store.Address, storeType)
 	}
 	return nil
 }
@@ -1513,10 +1195,10 @@ func (local *Backend) ImportEngine(
 	regionSplitSize, regionSplitKeys int64,
 ) error {
 	var e common.Engine
-	if externalEngine, ok := local.externalEngine[engineUUID]; ok {
+	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
 		e = externalEngine
 	} else {
-		localEngine := local.lockEngine(engineUUID, importMutexStateImport)
+		localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateImport)
 		if localEngine == nil {
 			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
 			return nil
@@ -1607,11 +1289,6 @@ func (local *Backend) ImportEngine(
 			zap.Int64("importedCount", importedLength))
 	}
 	return err
-}
-
-// GetRegionSplitSizeKeys gets the region split size and keys from PD.
-func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
-	return GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
 }
 
 // expose these variables to unit test.
@@ -1745,101 +1422,23 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 
 // GetImportedKVCount returns the number of imported KV pairs of some engine.
 func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
-	v, ok := local.engines.Load(engineUUID)
-	if !ok {
-		// we get it after import, but before clean up, so this should not happen
-		// todo: return error
-		return 0
-	}
-	e := v.(*Engine)
-	return e.importedKVCount.Load()
+	return local.engineMgr.getImportedKVCount(engineUUID)
 }
 
 // GetExternalEngineKVStatistics returns kv statistics of some engine.
 func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	totalKVSize int64, totalKVCount int64) {
-	v, ok := local.externalEngine[engineUUID]
-	if !ok {
-		return 0, 0
-	}
-	return v.ImportedStatistics()
+	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
 }
 
 // ResetEngine reset the engine and reclaim the space.
 func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
-	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
-	if localEngine == nil {
-		if engineI, ok := local.externalEngine[engineUUID]; ok {
-			extEngine := engineI.(*external.Engine)
-			return extEngine.Reset()
-		}
-
-		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
-		return nil
-	}
-	defer localEngine.unlock()
-	if err := localEngine.Close(); err != nil {
-		return err
-	}
-	if err := localEngine.Cleanup(local.LocalStoreDir); err != nil {
-		return err
-	}
-	db, err := local.openEngineDB(engineUUID, false)
-	if err == nil {
-		localEngine.db.Store(db)
-		localEngine.engineMeta = engineMeta{}
-		if !common.IsDirExists(localEngine.sstDir) {
-			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		if err = local.allocateTSIfNotExists(ctx, localEngine); err != nil {
-			return errors.Trace(err)
-		}
-		failpoint.Inject("mockAllocateTSErr", func() {
-			// mock generate timestamp error when reset engine.
-			localEngine.TS = 0
-			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
-			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
-		})
-	}
-	localEngine.pendingFileSize.Store(0)
-
-	return err
+	return local.engineMgr.resetEngine(ctx, engineUUID)
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.
 func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	localEngine := local.lockEngine(engineUUID, importMutexStateClose)
-	// release this engine after import success
-	if localEngine == nil {
-		if extEngine, ok := local.externalEngine[engineUUID]; ok {
-			retErr := extEngine.Close()
-			delete(local.externalEngine, engineUUID)
-			return retErr
-		}
-		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
-		return nil
-	}
-	defer localEngine.unlock()
-
-	// since closing the engine causes all subsequent operations on it panic,
-	// we make sure to delete it from the engine map before calling Close().
-	// (note that Close() returning error does _not_ mean the pebble DB
-	// remains open/usable.)
-	local.engines.Delete(engineUUID)
-	err := localEngine.Close()
-	if err != nil {
-		return err
-	}
-	err = localEngine.Cleanup(local.LocalStoreDir)
-	if err != nil {
-		return err
-	}
-	localEngine.TotalSize.Store(0)
-	localEngine.Length.Store(0)
-	return nil
+	return local.engineMgr.cleanupEngine(ctx, engineUUID)
 }
 
 // GetDupeController returns a new dupe controller.
@@ -1850,8 +1449,8 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 		tikvCodec:           local.tikvCodec,
 		errorMgr:            errorMgr,
 		dupeConcurrency:     dupeConcurrency,
-		duplicateDB:         local.duplicateDB,
-		keyAdapter:          local.keyAdapter,
+		duplicateDB:         local.engineMgr.getDuplicateDB(),
+		keyAdapter:          local.engineMgr.getKeyAdapter(),
 		importClientFactory: local.importClientFactory,
 		resourceGroupName:   local.ResourceGroupName,
 		taskType:            local.TaskType,
@@ -1873,7 +1472,7 @@ func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.
 	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
 		return err
 	}
-	return local.ResetEngine(ctx, engineUUID)
+	return local.engineMgr.resetEngine(ctx, engineUUID)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
@@ -1881,20 +1480,15 @@ func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 }
 
 // LocalWriter returns a new local writer.
-func (local *Backend) LocalWriter(_ context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
-	e, ok := local.engines.Load(engineUUID)
-	if !ok {
-		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
-	}
-	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.tikvCodec, local.LocalWriterMemCacheSize, local.bufferPool.NewBuffer())
+func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+	return local.engineMgr.localWriter(ctx, cfg, engineUUID)
 }
 
 // SwitchModeByKeyRanges will switch tikv mode for regions in the specific key range for multirocksdb.
 // This function will spawn a goroutine to keep switch mode periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
 func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common.Range) (<-chan struct{}, error) {
-	switcher := NewTiKVModeSwitcher(local.tls, local.pdCli, log.FromContext(ctx).Logger)
+	switcher := NewTiKVModeSwitcher(local.tls, local.pdHTTPCli, log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
 	keyRanges := make([]*sst.Range, 0, len(ranges))
@@ -1982,12 +1576,23 @@ func nextKey(key []byte) []byte {
 
 // EngineFileSizes implements DiskUsage interface.
 func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
-	local.engines.Range(func(k, v interface{}) bool {
-		engine := v.(*Engine)
-		res = append(res, engine.getEngineFileSize())
-		return true
-	})
-	return
+	return local.engineMgr.engineFileSizes()
+}
+
+// GetTS implements StoreHelper interface.
+func (local *Backend) GetTS(ctx context.Context) (physical, logical int64, err error) {
+	return local.pdCli.GetTS(ctx)
+}
+
+// GetTiKVCodec implements StoreHelper interface.
+func (local *Backend) GetTiKVCodec() tikvclient.Codec {
+	return local.tikvCodec
+}
+
+// CloseEngineMgr close the engine manager.
+// This function is used for test.
+func (local *Backend) CloseEngineMgr() {
+	local.engineMgr.close()
 }
 
 var getSplitConfFromStoreFunc = getSplitConfFromStore

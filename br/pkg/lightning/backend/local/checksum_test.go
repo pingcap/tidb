@@ -239,6 +239,9 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 func TestGetGCLifetime(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 	ctx := context.Background()
 
 	mock.
@@ -254,6 +257,9 @@ func TestGetGCLifetime(t *testing.T) {
 
 func TestSetGCLifetime(t *testing.T) {
 	db, mock, err := sqlmock.New()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -353,6 +359,7 @@ func TestGcTTLManagerSingle(t *testing.T) {
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
+	cancel()
 	time.Sleep(10 * time.Millisecond)
 	val = pdClient.count.Load()
 	time.Sleep(1*time.Second + 10*time.Millisecond)
@@ -361,7 +368,8 @@ func TestGcTTLManagerSingle(t *testing.T) {
 
 func TestGcTTLManagerMulti(t *testing.T) {
 	manager := newGCTTLManager(&testPDClient{})
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	for i := uint64(1); i <= 5; i++ {
 		err := manager.addOneJob(ctx, fmt.Sprintf("test%d", i), i)
@@ -383,6 +391,9 @@ func TestGcTTLManagerMulti(t *testing.T) {
 
 	manager.removeOneJob("test5")
 	require.Equal(t, uint64(0), manager.currentTS)
+	cancel()
+	// GCTTLManager don't wait its goroutine to exit, so we need to wait awhile.
+	time.Sleep(time.Second)
 }
 
 func TestPdServiceID(t *testing.T) {
@@ -457,7 +468,7 @@ type mockChecksumKVClient struct {
 }
 
 // a mock client for checksum request
-func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, option *kv.ClientSendOption) kv.Response {
+func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars any, option *kv.ClientSendOption) kv.Response {
 	if c.onSendReq != nil {
 		c.onSendReq(req)
 	}

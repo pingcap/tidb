@@ -67,7 +67,7 @@ func TestSQLModeVar(t *testing.T) {
 	require.Equal(t, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", val)
 
 	require.Nil(t, sv.SetSessionFromHook(vars, val)) // sets to strict from above
-	require.True(t, vars.StrictSQLMode)
+	require.True(t, vars.SQLMode.HasStrictMode())
 
 	sqlMode, err := mysql.GetSQLMode(val)
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestSQLModeVar(t *testing.T) {
 	require.Equal(t, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", val)
 
 	require.Nil(t, sv.SetSessionFromHook(vars, val)) // sets to non-strict from above
-	require.False(t, vars.StrictSQLMode)
+	require.False(t, vars.SQLMode.HasStrictMode())
 	sqlMode, err = mysql.GetSQLMode(val)
 	require.NoError(t, err)
 	require.Equal(t, sqlMode, vars.SQLMode)
@@ -1288,6 +1288,8 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 		}
 	}
 	SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
+	// Reset the switch. It may be set by other tests.
+	EnableResourceControl.Store(false)
 
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
@@ -1414,7 +1416,7 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 
 	// Set to s3, should fail
 	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "s3://blackhole")
-	require.ErrorContains(t, err, "bucket blackhole")
+	require.Error(t, err, "unreachable storage URI")
 
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -1452,4 +1454,75 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	require.NoError(t, err1)
 	require.Len(t, val, 0)
 	cancel()
+}
+
+func TestGlobalSystemVariableInitialValue(t *testing.T) {
+	vars := []struct {
+		name    string
+		val     string
+		initVal string
+	}{
+		{
+			TiDBTxnMode,
+			DefTiDBTxnMode,
+			"pessimistic",
+		},
+		{
+			TiDBEnableAsyncCommit,
+			BoolToOnOff(DefTiDBEnableAsyncCommit),
+			BoolToOnOff(DefTiDBEnableAsyncCommit),
+		},
+		{
+			TiDBEnable1PC,
+			BoolToOnOff(DefTiDBEnable1PC),
+			BoolToOnOff(DefTiDBEnable1PC),
+		},
+		{
+			TiDBMemOOMAction,
+			DefTiDBMemOOMAction,
+			OOMActionLog,
+		},
+		{
+			TiDBEnableAutoAnalyze,
+			BoolToOnOff(DefTiDBEnableAutoAnalyze),
+			Off,
+		},
+		{
+			TiDBRowFormatVersion,
+			strconv.Itoa(DefTiDBRowFormatV1),
+			strconv.Itoa(DefTiDBRowFormatV2),
+		},
+		{
+			TiDBTxnAssertionLevel,
+			DefTiDBTxnAssertionLevel,
+			AssertionFastStr,
+		},
+		{
+			TiDBEnableMutationChecker,
+			BoolToOnOff(DefTiDBEnableMutationChecker),
+			On,
+		},
+		{
+			TiDBPessimisticTransactionFairLocking,
+			BoolToOnOff(DefTiDBPessimisticTransactionFairLocking),
+			On,
+		},
+	}
+	for _, v := range vars {
+		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
+		require.Equal(t, v.initVal, initVal)
+	}
+}
+
+func TestTiDBOptTxnAutoRetry(t *testing.T) {
+	sv := GetSysVar(TiDBDisableTxnAutoRetry)
+	vars := NewSessionVars(nil)
+
+	for _, scope := range []ScopeFlag{ScopeSession, ScopeGlobal} {
+		val, err := sv.Validate(vars, "OFF", scope)
+		require.NoError(t, err)
+		require.Equal(t, "ON", val)
+		warn := vars.StmtCtx.GetWarnings()[0].Err
+		require.Equal(t, "[variable:1287]'OFF' is deprecated and will be removed in a future release. Please use ON instead", warn.Error())
+	}
 }

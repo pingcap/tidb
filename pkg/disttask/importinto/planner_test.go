@@ -61,7 +61,7 @@ func TestToPhysicalPlan(t *testing.T) {
 		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
-		NextTaskStep: StepImport,
+		NextTaskStep: proto.ImportStepImport,
 	}
 	physicalPlan, err := logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
@@ -81,13 +81,13 @@ func TestToPhysicalPlan(t *testing.T) {
 						},
 					},
 				},
-				Step: StepImport,
+				Step: proto.ImportStepImport,
 			},
 		},
 	}
 	require.Equal(t, plan, physicalPlan)
 
-	subtaskMetas1, err := physicalPlan.ToSubtaskMetas(planCtx, StepImport)
+	subtaskMetas1, err := physicalPlan.ToSubtaskMetas(planCtx, proto.ImportStepImport)
 	require.NoError(t, err)
 	subtaskMeta1 := ImportStepMeta{
 		ID:     chunkID,
@@ -97,22 +97,22 @@ func TestToPhysicalPlan(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas1)
 
-	subtaskMeta1.Checksum = Checksum{Size: 1, KVs: 2, Sum: 3}
+	subtaskMeta1.Checksum = map[int64]Checksum{-1: {Size: 1, KVs: 2, Sum: 3}}
 	bs, err = json.Marshal(subtaskMeta1)
 	require.NoError(t, err)
 	planCtx = planner.PlanCtx{
-		NextTaskStep: StepPostProcess,
+		NextTaskStep: proto.ImportStepPostProcess,
 	}
 	physicalPlan, err = logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
 	subtaskMetas2, err := physicalPlan.ToSubtaskMetas(planner.PlanCtx{
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
-			StepImport: {bs},
+			proto.ImportStepImport: {bs},
 		},
-	}, StepPostProcess)
+	}, proto.ImportStepPostProcess)
 	require.NoError(t, err)
 	subtaskMeta2 := PostProcessStepMeta{
-		Checksum: Checksum{Size: 1, KVs: 2, Sum: 3},
+		Checksum: map[int64]Checksum{-1: {Size: 1, KVs: 2, Sum: 3}},
 		MaxIDs:   map[autoid.AllocatorType]int64{},
 	}
 	bs, err = json.Marshal(subtaskMeta2)
@@ -176,7 +176,7 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 		Ctx:    context.Background(),
 		TaskID: 1,
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
-			StepEncodeAndSort: encodeStepMetaBytes,
+			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
 	}
 	specs, err := generateMergeSortSpecs(planCtx)
@@ -244,8 +244,8 @@ func TestGetSortedKVMetas(t *testing.T) {
 	})
 	allKVMetas, err := getSortedKVMetasForIngest(planner.PlanCtx{
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
-			StepEncodeAndSort: encodeStepMetaBytes,
-			StepMergeSort:     mergeStepMetas,
+			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
+			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
 	})
 	require.NoError(t, err)

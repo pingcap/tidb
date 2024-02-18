@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -261,11 +261,6 @@ const (
 // AnalyzeFlag is set when the statistics comes from analyze.
 const AnalyzeFlag = 1
 
-// IsAnalyzed checks whether this flag contains AnalyzeFlag.
-func IsAnalyzed(flag int64) bool {
-	return (flag & AnalyzeFlag) > 0
-}
-
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
 func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
@@ -299,12 +294,13 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 // BinarySearchRemoveVal removes the value from the TopN using binary search.
 func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	lowIdx, highIdx := 0, hg.Len()-1
+	column := hg.Bounds.Column(0)
 	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
 	if hg.Len() > 4 {
-		if cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
+		if cmpResult := bytes.Compare(column.GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
 			return
 		}
-		if cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
+		if cmpResult := bytes.Compare(column.GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
 			return
 		}
 	}
@@ -312,12 +308,12 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	var found bool
 	for lowIdx <= highIdx {
 		midIdx = (lowIdx + highIdx) / 2
-		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
+		cmpResult := bytes.Compare(column.GetRaw(midIdx*2), valCntPairs.Encoded)
 		if cmpResult > 0 {
 			highIdx = midIdx - 1
 			continue
 		}
-		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
+		cmpResult = bytes.Compare(column.GetRaw(midIdx*2+1), valCntPairs.Encoded)
 		if cmpResult < 0 {
 			lowIdx = midIdx + 1
 			continue
@@ -469,7 +465,7 @@ func (hg *Histogram) ToString(idxCols int) string {
 // EqualRowCount estimates the row count where the column equals to value.
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) EqualRowCount(sctx sessionctx.Context, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
+func (hg *Histogram) EqualRowCount(sctx context.PlanContext, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -519,7 +515,7 @@ func (hg *Histogram) GreaterRowCount(value types.Datum) float64 {
 // locateBucket(val2): false, 2, false, false
 // locateBucket(val3): false, 2, true, false
 // locateBucket(val4): true, 3, false, false
-func (hg *Histogram) LocateBucket(sctx sessionctx.Context, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
+func (hg *Histogram) LocateBucket(sctx context.PlanContext, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		defer func() {
 			debugTraceLocateBucket(sctx, &value, exceed, bucketIdx, inBucket, matchLastValue)
@@ -552,7 +548,7 @@ func (hg *Histogram) LocateBucket(sctx sessionctx.Context, value types.Datum) (e
 
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types.Datum) (result float64, bucketIdx int) {
+func (hg *Histogram) LessRowCountWithBktIdx(sctx context.PlanContext, value types.Datum) (result float64, bucketIdx int) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -587,14 +583,14 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types
 
 // LessRowCount estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) LessRowCount(sctx sessionctx.Context, value types.Datum) float64 {
+func (hg *Histogram) LessRowCount(sctx context.PlanContext, value types.Datum) float64 {
 	result, _ := hg.LessRowCountWithBktIdx(sctx, value)
 	return result
 }
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) BetweenRowCount(sctx sessionctx.Context, a, b types.Datum) float64 {
+func (hg *Histogram) BetweenRowCount(sctx context.PlanContext, a, b types.Datum) float64 {
 	lessCountA := hg.LessRowCount(sctx, a)
 	lessCountB := hg.LessRowCount(sctx, b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
@@ -939,7 +935,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 // leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 // You can find more details at https://github.com/pingcap/tidb/pull/47966#issuecomment-1778866876
 func (hg *Histogram) OutOfRangeRowCount(
-	sctx sessionctx.Context,
+	sctx context.PlanContext,
 	lDatum, rDatum *types.Datum,
 	modifyCount, histNDV int64,
 ) (result float64) {

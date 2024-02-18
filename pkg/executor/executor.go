@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -73,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -297,7 +300,7 @@ func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	tblMeta := tbl.Meta()
 
-	allocators := tbl.Allocators(e.Ctx())
+	allocators := tbl.Allocators(e.Ctx().GetSessionVars())
 	for _, alloc := range allocators.Allocs {
 		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
@@ -915,7 +918,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 	return errors.Trace(err)
 }
 
-func (e *CheckTableExec) handlePanic(r interface{}) {
+func (e *CheckTableExec) handlePanic(r any) {
 	if r != nil {
 		e.retCh <- errors.Errorf("%v", r)
 	}
@@ -1456,16 +1459,22 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
+	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, pctx planctx.PlanContext) ([]types.Datum, error) {
 		defer func(begin time.Time) {
-			s := sctx.GetSessionVars()
-			s.StmtCtx.SetSkipPlanCache(errors.New("query has uncorrelated sub-queries is un-cacheable"))
+			s := pctx.GetSessionVars()
+			s.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("query has uncorrelated sub-queries is un-cacheable"))
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
 
 		r, ctx := tracing.StartRegionEx(ctx, "executor.EvalSubQuery")
 		defer r.End()
+
+		sctx, ok := pctx.(sessionctx.Context)
+		intest.Assert(ok)
+		if !ok {
+			return nil, errors.New("plan context should be sessionctx.Context to EvalSubqueryFirstRow")
+		}
 
 		e := newExecutorBuilder(sctx, is, nil)
 		executor := e.build(p)
@@ -1678,7 +1687,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 		type tableIter interface {
 			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
-		err := (e.t.(tableIter)).IterRecords(ctx, e.Ctx(), columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := (e.t.(tableIter)).IterRecords(ctx, e.Ctx(), columns, func(_ kv.Handle, rec []types.Datum, _ []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -1972,7 +1981,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	vars.StmtCtx.SetVarHintRestore = nil
 	var sc *stmtctx.StatementContext
-	if vars.TxnCtx.CouldRetry || mysql.HasCursorExistsFlag(vars.Status) {
+	if vars.TxnCtx.CouldRetry || vars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
 		sc = stmtctx.NewStmtCtx()
@@ -2015,7 +2024,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
-	vars.StmtCtx.TableStats = make(map[int64]interface{})
+	vars.StmtCtx.TableStats = make(map[int64]any)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -2104,42 +2113,53 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 
 	sc.InRestrictedSQL = vars.InRestrictedSQL
+	strictSQLMode := vars.SQLMode.HasStrictMode()
+
+	errLevels := sc.ErrLevels()
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)
+		errLevels = sc.ErrLevels()
 	case *ast.DeleteStmt:
 		ResetDeleteStmtCtx(sc, stmt, vars)
+		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
-		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.IgnoreNoPartition = stmt.IgnoreErr
-		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
-		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		if stmt.IgnoreErr {
+			errLevels[errctx.ErrGroupDupKey] = errctx.LevelWarn
+			errLevels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+			errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+		}
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
+		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+			!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+			!strictSQLMode || stmt.IgnoreErr,
+		)
 		sc.Priority = stmt.Priority
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+			WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
-				!vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr ||
+				!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode || stmt.IgnoreErr ||
 				vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!vars.StrictSQLMode).
+			WithTruncateAsWarning(!strictSQLMode).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
-			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode ||
+			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !strictSQLMode ||
 				vars.SQLMode.HasAllowInvalidDatesMode()).
-			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode))
+			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode))
 
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
-		sc.IgnoreNoPartition = true
+		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -2186,6 +2206,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	}
 
+	if errLevels != sc.ErrLevels() {
+		sc.SetErrLevels(errLevels)
+	}
+
 	sc.SetTypeFlags(sc.TypeFlags().
 		WithSkipUTF8Check(vars.SkipUTF8Check).
 		WithSkipSACIICheck(vars.SkipASCIICheck).
@@ -2219,6 +2243,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			reuseObj = nil
 		}
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
+
+		// also enable index usage collector
+		sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
 	}
 
 	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)
@@ -2242,31 +2269,43 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
 func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
+	strictSQLMode := vars.SQLMode.HasStrictMode()
 	sc.InUpdateStmt = true
-	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	errLevels := sc.ErrLevels()
+	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+		!strictSQLMode || stmt.IgnoreErr,
+	)
+	errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
+	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
-	sc.IgnoreNoPartition = stmt.IgnoreErr
 	sc.SetTypeFlags(sc.TypeFlags().
-		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+		WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
-			!vars.StrictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
+			!strictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
 }
 
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.
 func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars *variable.SessionVars) {
+	strictSQLMode := vars.SQLMode.HasStrictMode()
 	sc.InDeleteStmt = true
-	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	errLevels := sc.ErrLevels()
+	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+		!strictSQLMode || stmt.IgnoreErr,
+	)
+	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
 	sc.SetTypeFlags(sc.TypeFlags().
-		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+		WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
-			!vars.StrictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
+			!strictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
@@ -2621,7 +2660,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 					if idx == nil {
 						return nil
 					}
-					k, _, err := idx.GenIndexKey(w.sctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+					sc := w.sctx.GetSessionVars().StmtCtx
+					k, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
 					if err != nil {
 						return nil
 					}
@@ -2777,14 +2817,10 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		return nil
 	}
 
-	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		role, err := meta.NewMeta(txn).GetBDRRole()
 		if err != nil {
 			return err
-		}
-
-		if role == "" {
-			role = string(ast.BDRRoleNone)
 		}
 
 		req.AppendString(0, role)

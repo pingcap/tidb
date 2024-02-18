@@ -1073,6 +1073,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataPreCheckFailed:           mysql.Message("PreCheck failed: %s", nil),
 	ErrMemoryExceedForQuery:             mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", nil),
 	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
+	ErrHTTPServiceError:                 mysql.Message("HTTP request failed with status %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1164,4 +1165,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused: %s", nil),
 	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed: %s", nil),
 	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
+	ErrBDRRestrictedDDL:   mysql.Message("The operation is not allowed while the bdr role of this cluster is set to %s.", nil),
 }

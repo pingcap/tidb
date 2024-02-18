@@ -59,10 +59,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -78,7 +78,16 @@ const (
 
 var (
 	telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
+	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
 )
+
+func suppressErrorTooLongKeyKey(sctx sessionctx.Context) bool {
+	if suppress, ok := sctx.Value(SuppressErrorTooLongKeyKey).(bool); ok && suppress {
+		return true
+	}
+	return false
+}
 
 func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
@@ -114,7 +123,8 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		if sumLength > maxIndexLength {
 			// The multiple column index and the unique index in which the length sum exceeds the maximum size
 			// will return an error instead produce a warning.
-			if ctx == nil || ctx.GetSessionVars().StrictSQLMode || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
+			suppress := suppressErrorTooLongKeyKey(ctx)
+			if ctx == nil || (ctx.GetSessionVars().SQLMode.HasStrictMode() && !suppress) || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
 				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(sumLength, maxIndexLength)
 			}
 			// truncate index length and produce warning message in non-restrict sql mode.
@@ -223,9 +233,12 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	}
 	// Specified length must be shorter than the max length for prefix.
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
-	if indexColumnLen > maxIndexLength && (ctx == nil || ctx.GetSessionVars().StrictSQLMode) {
-		// return error in strict sql mode
-		return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
+	if indexColumnLen > maxIndexLength {
+		suppress := suppressErrorTooLongKeyKey(ctx)
+		if ctx == nil || (ctx.GetSessionVars().SQLMode.HasStrictMode() && !suppress) {
+			// return error in strict sql mode
+			return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
+		}
 	}
 	return nil
 }
@@ -733,7 +746,7 @@ SwitchIndexState:
 			allIndexIDs = append(allIndexIDs, indexInfo.ID)
 			ifExists = append(ifExists, false)
 		}
-		job.Args = []interface{}{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta())}
+		job.Args = []any{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta())}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -1151,14 +1164,14 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		idxIds := make([]int64, 0, len(allIndexInfos))
+		idxIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateNone
 			// Set column index flag.
 			DropIndexColumnFlag(tblInfo, indexInfo)
 			RemoveDependentHiddenColumns(tblInfo, indexInfo)
 			removeIndexInfo(tblInfo, indexInfo)
-			idxIds = append(idxIds, indexInfo.ID)
+			idxIDs = append(idxIDs, indexInfo.ID)
 		}
 
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -1176,7 +1189,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = idxIds
+			job.Args[0] = idxIDs
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
@@ -1184,9 +1197,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			// Global index key has t{tableID}_ prefix.
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
 			if allIndexInfos[0].Global {
-				job.Args = append(job.Args, idxIds[0], []int64{})
+				job.Args = append(job.Args, idxIDs[0], []int64{})
 			} else {
-				job.Args = append(job.Args, idxIds[0], getPartitionIDs(tblInfo))
+				job.Args = append(job.Args, idxIDs[0], getPartitionIDs(tblInfo))
 			}
 		}
 	default:
@@ -1632,7 +1645,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		}
 		// skip by default.
 		idxRecords[i].skip = true
-		iter := idx.GenIndexKVIter(stmtCtx, record.vals, record.handle, idxRecords[i].rsData)
+		iter := idx.GenIndexKVIter(stmtCtx.ErrCtx(), stmtCtx.TimeZone(), record.vals, record.handle, idxRecords[i].rsData)
 		for iter.Valid() {
 			var buf []byte
 			if cnt < len(w.idxKeyBufs) {
@@ -1841,7 +1854,7 @@ func writeOneKVToLocal(
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
 ) error {
-	iter := index.GenIndexKVIter(sCtx, idxDt, handle, rsData)
+	iter := index.GenIndexKVIter(sCtx.ErrCtx(), sCtx.TimeZone(), idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
@@ -1880,7 +1893,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) (err error) {
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -2077,7 +2090,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		return err
 	}
 	task, err := taskManager.GetTaskByKeyWithHistory(w.ctx, taskKey)
-	if err != nil {
+	if err != nil && err != storage.ErrTaskNotFound {
 		return err
 	}
 	if task != nil {
@@ -2094,14 +2107,14 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			defer close(done)
 			backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 			err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logutil.BgLogger(),
-				func(ctx context.Context) (bool, error) {
+				func(context.Context) (bool, error) {
 					return true, handle.ResumeTask(w.ctx, taskKey)
 				},
 			)
 			if err != nil {
 				return err
 			}
-			err = handle.WaitTask(ctx, task.ID)
+			err = handle.WaitTaskDoneOrPaused(ctx, task.ID)
 			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
@@ -2118,12 +2131,16 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
-		concurrency := min(workerCntLimit, cpu.GetCPUCount())
+		cpuCount, err := handle.GetCPUCountOfManagedNode(ctx)
+		if err != nil {
+			return err
+		}
+		concurrency := min(workerCntLimit, cpuCount)
 		logutil.BgLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
 			zap.String("task-key", taskKey))
 		taskMeta := &BackfillTaskMeta{
-			Job:             *reorgInfo.Job.Clone(),
+			Job:             *job.Clone(),
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
@@ -2136,7 +2153,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		g.Go(func() error {
 			defer close(done)
-			err := handle.SubmitAndWaitTask(ctx, taskKey, taskType, concurrency, metaData)
+			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, metaData)
 			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
 			})
@@ -2197,16 +2214,25 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		return
 	}
 	task, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
-	if err != nil || task == nil {
+	if err != nil {
 		logutil.BgLogger().Warn("cannot get task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, task.ID, proto.StepOne)
+	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, task.ID, proto.BackfillStepReadIndex)
 	if err != nil {
 		logutil.BgLogger().Warn("cannot get subtask row count", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
 	w.getReorgCtx(jobID).setRowCount(rowCount)
+}
+
+// submitAndWaitTask submits a task and wait for it to finish.
+func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
+	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, taskMeta)
+	if err != nil {
+		return err
+	}
+	return handle.WaitTaskDoneOrPaused(ctx, task.ID)
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
@@ -2368,7 +2394,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)
@@ -2393,7 +2419,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 			// we fetch records row by row, so records will belong to
 			// index[0], index[1] ... index[n-1], index[0], index[1] ...
 			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err := w.indexes[i%n].Delete(w.sessCtx.GetSessionVars().StmtCtx, txn, idxRecord.vals, idxRecord.handle)
+			err := w.indexes[i%n].Delete(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -267,7 +268,7 @@ type Session struct {
 	txn  transaction
 	Vars *variable.SessionVars
 	// currently, we only set `CommonAddRecordCtx`
-	values map[fmt.Stringer]interface{}
+	values map[fmt.Stringer]any
 }
 
 // NewSessionCtx creates a new trimmed down Session matching the options.
@@ -278,14 +279,13 @@ func NewSessionCtx(options *encode.SessionOptions, logger log.Logger) sessionctx
 // NewSession creates a new trimmed down Session matching the options.
 func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	s := &Session{
-		values: make(map[fmt.Stringer]interface{}, 1),
+		values: make(map[fmt.Stringer]any, 1),
 	}
 	sqlMode := options.SQLMode
 	vars := variable.NewSessionVars(s)
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
-	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	vars.SQLMode = sqlMode
 
 	typeFlags := vars.StmtCtx.TypeFlags().
@@ -293,6 +293,13 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
 	vars.StmtCtx.SetTypeFlags(typeFlags)
+
+	errLevels := vars.StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
+	errLevels[errctx.ErrGroupDividedByZero] =
+		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
+	vars.StmtCtx.SetErrLevels(errLevels)
+
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
 			// since 6.3(current master) tidb checks whether we can set a system variable
@@ -347,12 +354,12 @@ func (se *Session) GetSessionVars() *variable.SessionVars {
 }
 
 // SetValue saves a value associated with this context for key.
-func (se *Session) SetValue(key fmt.Stringer, value interface{}) {
+func (se *Session) SetValue(key fmt.Stringer, value any) {
 	se.values[key] = value
 }
 
 // Value returns the value associated with this context for key.
-func (se *Session) Value(key fmt.Stringer) interface{} {
+func (se *Session) Value(key fmt.Stringer) any {
 	return se.values[key]
 }
 

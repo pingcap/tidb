@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
@@ -293,7 +293,6 @@ const (
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		sql_digest varchar(64),
 		plan_digest varchar(64),
-		type varchar(64) NOT NULL DEFAULT '',
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -461,19 +460,18 @@ const (
 	);`
 	// CreateMDLView is a view about metadata locks.
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
-		SELECT job_id,
-			db_name,
-			table_name,
-			query,
+		SELECT tidb_mdl_info.job_id,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query")) as query,
 			session_id,
-			txnstart,
+			cluster_tidb_trx.start_time,
 			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
-		FROM information_schema.ddl_jobs,
-			information_schema.cluster_tidb_trx,
-			information_schema.cluster_processlist
-		WHERE (ddl_jobs.state != 'synced' and ddl_jobs.state != 'cancelled')
-			AND Find_in_set(ddl_jobs.table_id, cluster_tidb_trx.related_table_ids)
-			AND cluster_tidb_trx.session_id = cluster_processlist.id
+		FROM mysql.tidb_ddl_job,
+			mysql.tidb_mdl_info,
+			information_schema.cluster_tidb_trx
+		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), ',') != 0
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -613,7 +611,9 @@ const (
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
-        keyspace_id bigint(8) NOT NULL DEFAULT -1);`
+        cpu_count int default 0,
+        keyspace_id bigint(8) NOT NULL DEFAULT -1
+    );`
 
 	// CreateLoadDataJobs is a table that LOAD DATA uses
 	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
@@ -675,6 +675,16 @@ const (
 		action bigint(10),
 		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
+	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
+	CreateRequestUnitByGroupTable = `CREATE TABLE IF NOT EXISTS mysql.request_unit_by_group (
+		start_time TIMESTAMP(6) NOT NULL,
+		end_time TIMESTAMP(6) NOT NULL,
+		resource_group VARCHAR(32) NOT null,
+		total_ru bigint(64) UNSIGNED NOT NULL,
+		PRIMARY KEY (start_time, end_time, resource_group),
+		KEY (resource_group)
+	);`
 
 	// CreateImportJobs is a table that IMPORT INTO uses.
 	CreateImportJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_import_jobs (
@@ -1038,16 +1048,26 @@ const (
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
 	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
 	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
+	//   add cpu_count to mysql.dist_framework_meta
 	version180 = 180
 
 	// version 181
-	//   add a new `type` column on mysql.bind_info, which is for universal binding #48875.
+	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
 	version181 = 181
+
+	// version 182
+	//   add new system table `mysql.request_unit_by_group`, which is used for
+	//   historical RU consumption by resource group per day.
+	version182 = 182
+
+	// version 183
+	//   replace `mysql.tidb_mdl_view` table
+	version183 = 183
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version181
+var currentBootstrapVersion int64 = version183
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1204,6 +1224,8 @@ var (
 		upgradeToVer179,
 		upgradeToVer180,
 		upgradeToVer181,
+		upgradeToVer182,
+		upgradeToVer183,
 	}
 )
 
@@ -1486,7 +1508,7 @@ func upgradeToVer12(s sessiontypes.Session, ver int64) {
 	terror.MustNil(err)
 	sql := "SELECT HIGH_PRIORITY user, host, password FROM mysql.user WHERE password != ''"
 	rs, err := s.ExecuteInternal(ctx, sql)
-	if terror.ErrorEqual(err, core.ErrUnknownColumn) {
+	if terror.ErrorEqual(err, plannererrors.ErrUnknownColumn) {
 		sql := "SELECT HIGH_PRIORITY user, host, authentication_string FROM mysql.user WHERE authentication_string != ''"
 		rs, err = s.ExecuteInternal(ctx, sql)
 	}
@@ -2027,7 +2049,6 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
-	h := bindinfo.NewGlobalBindingHandle(nil)
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 
@@ -2039,7 +2060,7 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 
 		mustExecute(s, "COMMIT")
 	}()
-	mustExecute(s, h.LockBindInfoSQL())
+	mustExecute(s, bindinfo.LockBindInfoSQL)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	var rs sqlexec.RecordSet
 	rs, err = s.ExecuteInternal(ctx,
@@ -2462,7 +2483,7 @@ func upgradeToVer99After(s sessiontypes.Session) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
 	mustExecute(s, sql)
-	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return t.SetMetadataLock(true)
 	})
@@ -2847,7 +2868,7 @@ func upgradeToVer175(s sessiontypes.Session, ver int64) {
 		}
 		for i := 0; i < req.NumRows(); i++ {
 			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
-			newNormalizedSQL := parser.NormalizeForBinding(bindSQL)
+			newNormalizedSQL := parser.NormalizeForBinding(bindSQL, false)
 			// update `in (?)` to `in (...)`
 			if originalNormalizedSQL == newNormalizedSQL {
 				continue // no need to update
@@ -2889,7 +2910,7 @@ func upgradeToVer177(s sessiontypes.Session, ver int64) {
 func writeDDLTableVersion(s sessiontypes.Session) {
 	var err error
 	var ddlTableVersion meta.DDLTableVersion
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ddlTableVersion, err = t.CheckDDLTableVersion()
 		return err
@@ -2940,13 +2961,32 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `cpu_count` INT DEFAULT 0 AFTER `role`", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer181(s sessiontypes.Session, ver int64) {
 	if ver >= version181 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `type` VARCHAR(64) NOT NULL DEFAULT ''", infoschema.ErrColumnExists)
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer182(s sessiontypes.Session, ver int64) {
+	if ver >= version182 {
+		return
+	}
+	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+}
+
+func upgradeToVer183(s sessiontypes.Session, ver int64) {
+	if ver >= version183 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
@@ -3078,6 +3118,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateDoneRunawayWatchTable)
 	// create dist_framework_meta
 	mustExecute(s, CreateDistFrameworkMeta)
+	// create request_unit_by_group
+	mustExecute(s, CreateRequestUnitByGroupTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -3152,37 +3194,7 @@ func doDMLWorks(s sessiontypes.Session) {
 		if !v.HasGlobalScope() {
 			continue
 		}
-		vVal := v.Value
-		switch v.Name {
-		case variable.TiDBTxnMode:
-			if config.GetGlobalConfig().Store == "tikv" || config.GetGlobalConfig().Store == "unistore" {
-				vVal = "pessimistic"
-			}
-		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
-			if config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.On
-			}
-		case variable.TiDBMemOOMAction:
-			if intest.InTest {
-				vVal = variable.OOMActionLog
-			}
-		case variable.TiDBEnableAutoAnalyze:
-			if intest.InTest {
-				vVal = variable.Off
-			}
-		// For the following sysvars, we change the default
-		// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
-		// It is better to change the value in the Sysvar struct, so that
-		// all installs will have the same value.
-		case variable.TiDBRowFormatVersion:
-			vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
-		case variable.TiDBTxnAssertionLevel:
-			vVal = variable.AssertionFastStr
-		case variable.TiDBEnableMutationChecker:
-			vVal = variable.On
-		case variable.TiDBPessimisticTransactionFairLocking:
-			vVal = variable.On
-		}
+		vVal := variable.GlobalSystemVariableInitialValue(v.Name, v.Value)
 
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlescape.EscapeString(k), sqlescape.EscapeString(vVal))
@@ -3225,7 +3237,7 @@ func doDMLWorks(s sessiontypes.Session) {
 	}
 }
 
-func mustExecute(s sessiontypes.Session, sql string, args ...interface{}) {
+func mustExecute(s sessiontypes.Session, sql string, args ...any) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)

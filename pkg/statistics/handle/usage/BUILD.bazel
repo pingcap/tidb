@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
+        "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
@@ -18,6 +19,7 @@ go_library(
         "//pkg/statistics",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/usage/indexusage",
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util",
@@ -31,8 +33,17 @@ go_library(
 go_test(
     name = "usage_test",
     timeout = "short",
-    srcs = ["session_stats_collect_test.go"],
+    srcs = [
+        "index_usage_integration_test.go",
+        "session_stats_collect_test.go",
+    ],
     embed = [":usage"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/parser/model",
+        "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
 )

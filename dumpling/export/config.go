@@ -175,7 +175,7 @@ type Config struct {
 	TiDBMemQuotaQuery   uint64
 	FileSize            uint64
 	StatementSize       uint64
-	SessionParams       map[string]interface{}
+	SessionParams       map[string]any
 	Tables              DatabaseTables
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
@@ -231,7 +231,7 @@ func DefaultConfig() *Config {
 		CsvDelimiter:             "\"",
 		CsvSeparator:             ",",
 		CsvLineTerminator:        "\r\n",
-		SessionParams:            make(map[string]interface{}),
+		SessionParams:            make(map[string]any),
 		OutputFileTemplate:       DefaultOutputFileTemplate,
 		PosAfterConnect:          false,
 		CollationCompatible:      LooseCollationCompatible,
@@ -279,7 +279,7 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 		/* #nosec G402 */
 		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS10,
+			MinVersion:         tls.VersionTLS12,
 			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}
@@ -519,7 +519,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if conf.SessionParams == nil {
-		conf.SessionParams = make(map[string]interface{})
+		conf.SessionParams = make(map[string]any)
 	}
 
 	tablesList, err := flags.GetStringSlice(flagTablesList)

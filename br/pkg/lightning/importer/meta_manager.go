@@ -43,15 +43,15 @@ func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 		Logger:       log.FromContext(ctx),
 		HideQueryLog: redact.NeedRedact(),
 	}
-	metaDBSQL := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", common.EscapeIdentifier(b.schema))
+	metaDBSQL := common.SprintfWithIdentifiers("CREATE DATABASE IF NOT EXISTS %s", b.schema)
 	if err := exec.Exec(ctx, "create meta schema", metaDBSQL); err != nil {
 		return errors.Annotate(err, "create meta schema failed")
 	}
-	taskMetaSQL := fmt.Sprintf(CreateTaskMetaTable, common.UniqueTable(b.schema, TaskMetaTableName))
+	taskMetaSQL := common.SprintfWithIdentifiers(CreateTaskMetaTable, b.schema, TaskMetaTableName)
 	if err := exec.Exec(ctx, "create meta table", taskMetaSQL); err != nil {
 		return errors.Annotate(err, "create task meta table failed")
 	}
-	tableMetaSQL := fmt.Sprintf(CreateTableMetadataTable, common.UniqueTable(b.schema, TableMetaTableName))
+	tableMetaSQL := common.SprintfWithIdentifiers(CreateTableMetadataTable, b.schema, TableMetaTableName)
 	if err := exec.Exec(ctx, "create meta table", tableMetaSQL); err != nil {
 		return errors.Annotate(err, "create table meta table failed")
 	}
@@ -63,7 +63,7 @@ func (b *dbMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 		session:    b.db,
 		taskID:     b.taskID,
 		pd:         pd,
-		tableName:  common.UniqueTable(b.schema, TaskMetaTableName),
+		tableName:  TaskMetaTableName,
 		schemaName: b.schema,
 	}
 }
@@ -73,7 +73,8 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 		session:      b.db,
 		taskID:       b.taskID,
 		tr:           tr,
-		tableName:    common.UniqueTable(b.schema, TableMetaTableName),
+		schemaName:   b.schema,
+		tableName:    TableMetaTableName,
 		needChecksum: b.needChecksum,
 	}
 }
@@ -92,6 +93,7 @@ type dbTableMetaMgr struct {
 	session      *sql.DB
 	taskID       int64
 	tr           *TableImporter
+	schemaName   string
 	tableName    string
 	needChecksum bool
 }
@@ -102,7 +104,7 @@ func (m *dbTableMetaMgr) InitTableMeta(ctx context.Context) error {
 		Logger: m.tr.logger,
 	}
 	// avoid override existing metadata if the meta is already inserted.
-	stmt := fmt.Sprintf(`INSERT IGNORE INTO %s (task_id, table_id, table_name, status) values (?, ?, ?, ?)`, m.tableName)
+	stmt := common.SprintfWithIdentifiers(`INSERT IGNORE INTO %s.%s (task_id, table_id, table_name, status) VALUES (?, ?, ?, ?)`, m.schemaName, m.tableName)
 	task := m.tr.logger.Begin(zap.DebugLevel, "init table meta")
 	err := exec.Exec(ctx, "init table meta", stmt, m.taskID, m.tr.tableInfo.ID, m.tr.tableName, metaStatusInitial.String())
 	task.End(zap.ErrorLevel, err)
@@ -189,7 +191,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		return exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
 			rows, err := tx.QueryContext(
 				ctx,
-				fmt.Sprintf("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from %s WHERE table_id = ? FOR UPDATE", m.tableName),
+				common.SprintfWithIdentifiers("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status FROM %s.%s WHERE table_id = ? FOR UPDATE", m.schemaName, m.tableName),
 				m.tr.tableInfo.ID,
 			)
 			if err != nil {
@@ -270,8 +272,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 					newStatus = metaStatusRestoreStarted
 				}
 
-				// nolint:gosec
-				query := fmt.Sprintf("update %s set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?", m.tableName)
+				query := common.SprintfWithIdentifiers("UPDATE %s.%s SET row_id_base = ?, row_id_max = ?, status = ? WHERE table_id = ? AND task_id = ?", m.schemaName, m.tableName)
 				_, err := tx.ExecContext(ctx, query, newRowIDBase, newRowIDMax, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
 				if err != nil {
 					return errors.Trace(err)
@@ -351,7 +352,7 @@ func (m *dbTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum *
 		DB:     m.session,
 		Logger: m.tr.logger,
 	}
-	query := fmt.Sprintf("update %s set total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? where table_id = ? and task_id = ?", m.tableName)
+	query := common.SprintfWithIdentifiers("UPDATE %s.%s SET total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? WHERE table_id = ? AND task_id = ?", m.schemaName, m.tableName)
 
 	return exec.Exec(ctx, "update base checksum", query, checksum.SumKVS(),
 		checksum.SumSize(), checksum.Sum(), metaStatusRestoreStarted.String(), m.tr.tableInfo.ID, m.taskID)
@@ -362,7 +363,7 @@ func (m *dbTableMetaMgr) UpdateTableStatus(ctx context.Context, status metaStatu
 		DB:     m.session,
 		Logger: m.tr.logger,
 	}
-	query := fmt.Sprintf("update %s set status = ? where table_id = ? and task_id = ?", m.tableName)
+	query := common.SprintfWithIdentifiers("UPDATE %s.%s SET status = ? WHERE table_id = ? AND task_id = ?", m.schemaName, m.tableName)
 	return exec.Exec(ctx, "update meta status", query, status.String(), m.tr.tableInfo.ID, m.taskID)
 }
 
@@ -395,7 +396,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 	err = exec.Transact(ctx, "checksum pre-check", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
 			ctx,
-			fmt.Sprintf("SELECT task_id, total_kvs_base, total_bytes_base, checksum_base, total_kvs, total_bytes, checksum, status, has_duplicates from %s WHERE table_id = ? FOR UPDATE", m.tableName),
+			common.SprintfWithIdentifiers("SELECT task_id, total_kvs_base, total_bytes_base, checksum_base, total_kvs, total_bytes, checksum, status, has_duplicates from %s.%s WHERE table_id = ? FOR UPDATE", m.schemaName, m.tableName),
 			m.tr.tableInfo.ID,
 		)
 		if err != nil {
@@ -442,7 +443,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 				needRemoteDupe = false
 				break
 			} else if status == metaStatusChecksuming {
-				return common.ErrTableIsChecksuming.GenWithStackByArgs(m.tableName)
+				return common.ErrTableIsChecksuming.GenWithStackByArgs(common.UniqueTable(m.schemaName, m.tableName))
 			}
 
 			totalBytes += baseTotalBytes
@@ -459,8 +460,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 			return errors.Trace(err)
 		}
 
-		// nolint:gosec
-		query := fmt.Sprintf("update %s set total_kvs = ?, total_bytes = ?, checksum = ?, status = ?, has_duplicates = ? where table_id = ? and task_id = ?", m.tableName)
+		query := common.SprintfWithIdentifiers("UPDATE %s.%s SET total_kvs = ?, total_bytes = ?, checksum = ?, status = ?, has_duplicates = ? WHERE table_id = ? AND task_id = ?", m.schemaName, m.tableName)
 		_, err = tx.ExecContext(ctx, query, checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), newStatus.String(), hasLocalDupes, m.tr.tableInfo.ID, m.taskID)
 		return errors.Annotate(err, "update local checksum failed")
 	})
@@ -483,7 +483,7 @@ func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
 		DB:     m.session,
 		Logger: m.tr.logger,
 	}
-	query := fmt.Sprintf("DELETE FROM %s where table_id = ? and (status = 'checksuming' or status = 'checksum_skipped')", m.tableName)
+	query := common.SprintfWithIdentifiers("DELETE FROM %s.%s where table_id = ? and (status = 'checksuming' or status = 'checksum_skipped')", m.schemaName, m.tableName)
 	return exec.Exec(ctx, "clean up metas", query, m.tr.tableInfo.ID)
 }
 
@@ -494,10 +494,10 @@ func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tabl
 		Logger: log.FromContext(ctx),
 	}
 	query := fmt.Sprintf("DELETE FROM %s", metaTable)
-	var args []interface{}
+	var args []any
 	if tableName != "" {
 		query += " where table_name = ?"
-		args = []interface{}{tableName}
+		args = []any{tableName}
 	}
 
 	return exec.Exec(ctx, "clean up metas", query, args...)
@@ -524,10 +524,9 @@ type taskMetaMgr interface {
 }
 
 type dbTaskMetaMgr struct {
-	session *sql.DB
-	taskID  int64
-	pd      *pdutil.PdController
-	// unique name of task meta table
+	session    *sql.DB
+	taskID     int64
+	pd         *pdutil.PdController
 	tableName  string
 	schemaName string
 }
@@ -598,7 +597,10 @@ func (m *dbTaskMetaMgr) InitTask(ctx context.Context, tikvSourceSize, tiflashSou
 		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
-	stmt := fmt.Sprintf(`INSERT INTO %s (task_id, status, tikv_source_bytes, tiflash_source_bytes) values (?, ?, ?, ?) ON DUPLICATE KEY UPDATE state = ?`, m.tableName)
+	stmt := common.SprintfWithIdentifiers(`
+		INSERT INTO %s.%s (task_id, status, tikv_source_bytes, tiflash_source_bytes)
+			VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE state = ?`,
+		m.schemaName, m.tableName)
 	err := exec.Exec(ctx, "init task meta", stmt, m.taskID, taskMetaStatusInitial.String(), tikvSourceSize, tiflashSourceSize, taskStateNormal)
 	return errors.Trace(err)
 }
@@ -612,7 +614,7 @@ func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	exist := false
 	err := exec.Transact(ctx, "check whether this task has started before", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
-			fmt.Sprintf("SELECT task_id from %s WHERE task_id = ?", m.tableName),
+			common.SprintfWithIdentifiers("SELECT task_id from %s.%s WHERE task_id = ?", m.schemaName, m.tableName),
 			m.taskID,
 		)
 		if err != nil {
@@ -658,7 +660,17 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	return exec.Transact(ctx, "check tasks exclusively", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
 			ctx,
-			fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail from %s FOR UPDATE", m.tableName),
+			common.SprintfWithIdentifiers(`
+				SELECT
+					task_id,
+					pd_cfgs,
+					status,
+					state,
+					tikv_source_bytes,
+					tiflash_source_bytes,
+					tikv_avail,
+					tiflash_avail
+				FROM %s.%s FOR UPDATE`, m.schemaName, m.tableName),
 		)
 		if err != nil {
 			return errors.Annotate(err, "fetch task metas failed")
@@ -687,8 +699,10 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 			return errors.Trace(err)
 		}
 		for _, task := range newTasks {
-			// nolint:gosec
-			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail) VALUES(?, ?, ?, ?, ?, ?, ?, ?)", m.tableName)
+			query := common.SprintfWithIdentifiers(`
+				REPLACE INTO %s.%s (task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+				m.schemaName, m.tableName)
 			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.tikvSourceBytes, task.tiflashSourceBytes, task.tikvAvail, task.tiflashAvail); err != nil {
 				return errors.Trace(err)
 			}
@@ -722,7 +736,10 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 	err = exec.Transact(ctx, "check and pause schedulers", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
 			ctx,
-			fmt.Sprintf("SELECT task_id, pd_cfgs, status, state from %s FOR UPDATE", m.tableName),
+			common.SprintfWithIdentifiers(`
+				SELECT task_id, pd_cfgs, status, state
+				FROM %s.%s FOR UPDATE`,
+				m.schemaName, m.tableName),
 		)
 		if err != nil {
 			return errors.Annotate(err, "fetch task meta failed")
@@ -796,8 +813,9 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			return errors.Trace(err)
 		}
 
-		// nolint:gosec
-		query := fmt.Sprintf("update %s set pd_cfgs = ?, status = ? where task_id = ?", m.tableName)
+		query := common.SprintfWithIdentifiers(`
+			UPDATE %s.%s SET pd_cfgs = ?, status = ? WHERE task_id = ?`,
+			m.schemaName, m.tableName)
 		_, err = tx.ExecContext(ctx, query, string(jsonByts), taskMetaStatusScheduleSet.String(), m.taskID)
 
 		return errors.Annotate(err, "update task pd configs failed")
@@ -854,7 +872,10 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 	switchBack = true
 	allFinished = finished
 	err = exec.Transact(ctx, "check and finish schedulers", func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf("SELECT task_id, status, state from %s FOR UPDATE", m.tableName))
+		rows, err := tx.QueryContext(
+			ctx,
+			common.SprintfWithIdentifiers("SELECT task_id, status, state FROM %s.%s FOR UPDATE", m.schemaName, m.tableName),
+		)
 		if err != nil {
 			return errors.Annotate(err, "fetch task meta failed")
 		}
@@ -914,8 +935,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 				newStatus = taskMetaStatusSwitchSkipped
 			}
 
-			// nolint:gosec
-			query := fmt.Sprintf("update %s set status = ?, state = ? where task_id = ?", m.tableName)
+			query := common.SprintfWithIdentifiers("UPDATE %s.%s SET status = ?, state = ? WHERE task_id = ?", m.schemaName, m.tableName)
 			if _, err = tx.ExecContext(ctx, query, newStatus.String(), newState, m.taskID); err != nil {
 				return errors.Trace(err)
 			}
@@ -935,7 +955,7 @@ func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
-	stmt := fmt.Sprintf("DROP TABLE %s;", m.tableName)
+	stmt := common.SprintfWithIdentifiers("DROP TABLE %s.%s;", m.schemaName, m.tableName)
 	if err := exec.Exec(ctx, "cleanup task meta tables", stmt); err != nil {
 		return errors.Trace(err)
 	}
@@ -947,8 +967,8 @@ func (m *dbTaskMetaMgr) CleanupTask(ctx context.Context) error {
 		DB:     m.session,
 		Logger: log.FromContext(ctx),
 	}
-	stmt := fmt.Sprintf("DELETE FROM %s WHERE task_id = %d;", m.tableName, m.taskID)
-	err := exec.Exec(ctx, "clean up task", stmt)
+	stmt := common.SprintfWithIdentifiers("DELETE FROM %s.%s WHERE task_id = ?;", m.schemaName, m.tableName)
+	err := exec.Exec(ctx, "clean up task", stmt, m.taskID)
 	return errors.Trace(err)
 }
 
@@ -975,7 +995,7 @@ func MaybeCleanupAllMetas(
 
 	// check if all tables are finished
 	if tableMetaExist {
-		query := fmt.Sprintf("SELECT COUNT(*) from %s", common.UniqueTable(schemaName, TableMetaTableName))
+		query := common.SprintfWithIdentifiers("SELECT COUNT(*) from %s.%s", schemaName, TableMetaTableName)
 		var cnt int
 		if err := exec.QueryRow(ctx, "fetch table meta row count", query, &cnt); err != nil {
 			return errors.Trace(err)
@@ -987,7 +1007,7 @@ func MaybeCleanupAllMetas(
 	}
 
 	// avoid override existing metadata if the meta is already inserted.
-	stmt := fmt.Sprintf("DROP DATABASE %s;", common.EscapeIdentifier(schemaName))
+	stmt := common.SprintfWithIdentifiers("DROP DATABASE %s;", schemaName)
 	if err := exec.Exec(ctx, "cleanup task meta tables", stmt); err != nil {
 		return errors.Trace(err)
 	}
@@ -1019,7 +1039,7 @@ func (noopTaskMetaMgr) CheckTasksExclusively(_ context.Context, _ func(tasks []t
 }
 
 func (noopTaskMetaMgr) CheckAndPausePdSchedulers(_ context.Context) (pdutil.UndoFunc, error) {
-	return func(ctx context.Context) error {
+	return func(context.Context) error {
 		return nil
 	}, nil
 }
@@ -1028,7 +1048,7 @@ func (noopTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
 	return false
 }
 
-func (noopTaskMetaMgr) CheckTaskExist(_ context.Context) (bool, error) {
+func (noopTaskMetaMgr) CheckTaskExist(context.Context) (bool, error) {
 	return true, nil
 }
 

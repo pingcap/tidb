@@ -47,7 +47,7 @@ var (
 )
 
 // GetMvccByKey gets the MVCC value by key, and returns a json string including decoded data
-func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})) string {
+func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any)) string {
 	if key == nil {
 		return ""
 	}
@@ -60,7 +60,7 @@ func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key
 
 	decodeKey := strings.ToUpper(hex.EncodeToString(key))
 
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"key":      decodeKey,
 		"regionID": regionID,
 		"mvcc":     data,
@@ -101,8 +101,8 @@ type Reporter struct {
 }
 
 // DecodeRowMvccData creates a closure that captures the tableInfo to be used a decode function in GetMvccByKey.
-func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{}) {
-	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
+func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any) {
+	return func(_ kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]any) {
 		colMap := make(map[int64]*types.FieldType, 3)
 		for _, col := range tableInfo.Columns {
 			var fieldType = col.FieldType
@@ -134,8 +134,8 @@ func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGet
 }
 
 // DecodeIndexMvccData creates a closure that captures the indexInfo to be used a decode function in GetMvccByKey.
-func DecodeIndexMvccData(indexInfo *model.IndexInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{}) {
-	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
+func DecodeIndexMvccData(indexInfo *model.IndexInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any) {
+	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]any) {
 		if respValue.Info != nil {
 			var (
 				hd    kv.Handle

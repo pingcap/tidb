@@ -91,7 +91,7 @@ func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.Stmt
 			binaryParams, _ = execStmt.BinaryArgs.([]expression.Expression)
 		}
 	}
-	useCursor := mysql.HasCursorExistsFlag(sessionVars.Status)
+	useCursor := sessionVars.HasStatusFlag(mysql.ServerStatusCursorExists)
 	// If none of them needs record, we don't need a executeInfo.
 	if binaryParams == nil && planCacheStmt == nil && !useCursor {
 		return
@@ -172,7 +172,7 @@ type getStatsTblInfo struct {
 }
 
 func debugTraceGetStatsTbl(
-	s sessionctx.Context,
+	s PlanContext,
 	tblInfo *model.TableInfo,
 	pid int64,
 	handleIsNil,
@@ -249,7 +249,7 @@ func convertAccessPathForDebugTrace(path *util.AccessPath, out *accessPathForDeb
 	}
 }
 
-func debugTraceAccessPaths(s sessionctx.Context, paths []*util.AccessPath) {
+func debugTraceAccessPaths(s PlanContext, paths []*util.AccessPath) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := make([]accessPathForDebugTrace, len(paths))
 	for i, partialPath := range paths {

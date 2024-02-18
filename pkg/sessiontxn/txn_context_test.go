@@ -40,6 +40,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -93,7 +94,7 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 }
 
 func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
-	records, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]interface{})
+	records, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]any)
 	require.True(t, ok, fmt.Sprintf("'%s' not in record, maybe failpoint not enabled?", name))
 	_, ok = records[name]
 	require.True(t, ok, fmt.Sprintf("'%s' not in record", name))
@@ -356,35 +357,6 @@ func TestTxnContextInPessimisticKeyConflict(t *testing.T) {
 	})
 
 	tk.MustExec("rollback")
-}
-
-func TestTxnContextInOptimisticRetry(t *testing.T) {
-	store, do := setupTxnContextTest(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
-	se := tk.Session()
-	is1 := do.InfoSchema()
-
-	tk.MustExec("begin optimistic")
-
-	// trigger retry
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("update t1 set v=11 where id=1")
-	tk2.MustExec("alter table t2 add column(c1 int)")
-
-	tk.MustExec("update t1 set v=12 where id=1")
-
-	// check retry context
-	path := append([]string{"assertTxnManagerInRebuildPlan"}, normalPathRecords...)
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, do.InfoSchema())
-	doWithCheckPath(t, se, path, func() {
-		tk.MustExec("commit")
-	})
-
-	tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 12"))
 }
 
 func TestTxnContextForHistoricalRead(t *testing.T) {

@@ -21,7 +21,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -36,18 +37,16 @@ func TestMaintainLiveNodes(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes"))
 	})
 
-	MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-	}
+	MockServerInfo.Store(&[]string{":4000"})
 
-	nodeMgr := newNodeManager()
+	nodeMgr := newNodeManager("")
 	ctx := context.Background()
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return(nil, errors.New("mock error"))
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
 	require.Empty(t, nodeMgr.prevLiveNodes)
 	require.True(t, ctrl.Satisfied())
 	// no change
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000"}, nil)
+	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}}, nil)
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
 	require.Equal(t, map[string]struct{}{":4000": {}}, nodeMgr.prevLiveNodes)
 	require.True(t, ctrl.Satisfied())
@@ -57,19 +56,16 @@ func TestMaintainLiveNodes(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// scale out 1 node
-	MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-		{Port: 4001},
-	}
+	MockServerInfo.Store(&[]string{":4000", ":4001"})
 
 	// fail on clean
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4002"}, nil)
+	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}, {ID: ":4001"}, {ID: ":4002"}}, nil)
 	mockTaskMgr.EXPECT().DeleteDeadNodes(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
 	require.Equal(t, map[string]struct{}{":4000": {}}, nodeMgr.prevLiveNodes)
 	require.True(t, ctrl.Satisfied())
 	// remove 1 node
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4002"}, nil)
+	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}, {ID: ":4001"}, {ID: ":4002"}}, nil)
 	mockTaskMgr.EXPECT().DeleteDeadNodes(gomock.Any(), gomock.Any()).Return(nil)
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
 	require.Equal(t, map[string]struct{}{":4000": {}, ":4001": {}}, nodeMgr.prevLiveNodes)
@@ -80,11 +76,9 @@ func TestMaintainLiveNodes(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// scale in 1 node
-	MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-	}
+	MockServerInfo.Store(&[]string{":4000"})
 
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4002"}, nil)
+	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}, {ID: ":4001"}, {ID: ":4002"}}, nil)
 	mockTaskMgr.EXPECT().DeleteDeadNodes(gomock.Any(), gomock.Any()).Return(nil)
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
 	require.Equal(t, map[string]struct{}{":4000": {}}, nodeMgr.prevLiveNodes)
@@ -100,20 +94,27 @@ func TestMaintainManagedNodes(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
-	nodeMgr := newNodeManager()
+	nodeMgr := newNodeManager("")
 
+	slotMgr := newSlotManager()
 	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, errors.New("mock error"))
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr)
+	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
+	require.Equal(t, cpu.GetCPUCount(), int(slotMgr.capacity.Load()))
 	require.Empty(t, nodeMgr.getManagedNodes())
 	require.True(t, ctrl.Satisfied())
 
-	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]string{":4000", ":4001"}, nil)
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr)
+	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{
+		{ID: ":4000", CPUCount: 100},
+		{ID: ":4001", CPUCount: 100},
+	}, nil)
+	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
 	require.Equal(t, []string{":4000", ":4001"}, nodeMgr.getManagedNodes())
+	require.Equal(t, 100, int(slotMgr.capacity.Load()))
 	require.True(t, ctrl.Satisfied())
 	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, nil)
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr)
+	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
 	require.NotNil(t, nodeMgr.getManagedNodes())
 	require.Empty(t, nodeMgr.getManagedNodes())
+	require.Equal(t, 100, int(slotMgr.capacity.Load()))
 	require.True(t, ctrl.Satisfied())
 }

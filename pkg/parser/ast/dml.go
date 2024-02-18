@@ -1569,6 +1569,7 @@ func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
 	}
+
 	for i, stmt := range n.Selects {
 		switch selectStmt := stmt.(type) {
 		case *SelectStmt:
@@ -1588,6 +1589,20 @@ func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 				return err
 			}
 			ctx.WritePlain(")")
+		}
+	}
+
+	if n.OrderBy != nil {
+		ctx.WritePlain(" ")
+		if err := n.OrderBy.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.OrderBy")
+		}
+	}
+
+	if n.Limit != nil {
+		ctx.WritePlain(" ")
+		if err := n.Limit.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.Limit")
 		}
 	}
 	return nil
@@ -1613,6 +1628,20 @@ func (n *SetOprSelectList) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Selects[i] = node
+	}
+	if n.OrderBy != nil {
+		node, ok := n.OrderBy.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OrderBy = node.(*OrderByClause)
+	}
+	if n.Limit != nil {
+		node, ok := n.Limit.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Limit = node.(*Limit)
 	}
 	return v.Leave(n)
 }
@@ -1836,6 +1865,7 @@ const (
 type LoadDataStmt struct {
 	dmlNode
 
+	LowPriority       bool
 	FileLocRef        FileLocRefTp
 	Path              string
 	Format            *string
@@ -1855,6 +1885,9 @@ type LoadDataStmt struct {
 // Restore implements Node interface.
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
+	if n.LowPriority {
+		ctx.WriteKeyWord("LOW_PRIORITY ")
+	}
 	switch n.FileLocRef {
 	case FileLocServerOrRemote:
 	case FileLocClient:
@@ -2079,6 +2112,7 @@ type ImportIntoStmt struct {
 	Path               string
 	Format             *string
 	Options            []*LoadDataOpt
+	Select             ResultSetNode
 }
 
 var _ SensitiveStmtNode = &ImportIntoStmt{}
@@ -2115,10 +2149,16 @@ func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	ctx.WriteKeyWord(" FROM ")
-	ctx.WriteString(n.Path)
-	if n.Format != nil {
-		ctx.WriteKeyWord(" FORMAT ")
-		ctx.WriteString(*n.Format)
+	if n.Select != nil {
+		if err := n.Select.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Select")
+		}
+	} else {
+		ctx.WriteString(n.Path)
+		if n.Format != nil {
+			ctx.WriteKeyWord(" FORMAT ")
+			ctx.WriteString(*n.Format)
+		}
 	}
 
 	if len(n.Options) > 0 {
@@ -2164,6 +2204,13 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.ColumnAssignments[i] = node.(*Assignment)
+	}
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
 	}
 	return v.Leave(n)
 }
@@ -2981,6 +3028,7 @@ const (
 	ShowImportJobs
 	ShowCreateProcedure
 	ShowBinlogStatus
+	ShowReplicaStatus
 )
 
 const (
@@ -3362,6 +3410,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT LABELS")
 		case ShowSessionStates:
 			ctx.WriteKeyWord("SESSION_STATES")
+		case ShowReplicaStatus:
+			ctx.WriteKeyWord("REPLICA STATUS")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}

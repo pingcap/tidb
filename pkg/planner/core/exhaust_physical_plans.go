@@ -237,8 +237,8 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		if p.preferJoinType&h.PreferMergeJoin == 0 {
 			return nil
 		}
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
-			"Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored"))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+			"Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored")
 	}
 
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
@@ -402,7 +402,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	forceLeftToBuild := ((p.preferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.preferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.preferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.preferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints")
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
@@ -413,7 +413,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			// Do not support specifying the build side.
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType)))
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
 			forceLeftToBuild = false
 			forceRightToBuild = false
 		}
@@ -458,9 +458,9 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	if !forced && p.shouldSkipHashJoin() {
 		return nil, false
 	} else if forced && p.shouldSkipHashJoin() {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, " +
-				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."))
+				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence.")
 	}
 	return
 }
@@ -959,7 +959,21 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	outerIdx int, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	ds := wrapper.ds
 	us := wrapper.us
-	helper, keyOff2IdxOff := p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return !path.IsTablePath() }, outerJoinKeys)
+	indexValid := func(path *util.AccessPath) bool {
+		if path.IsTablePath() {
+			return false
+		}
+		// if path is index path. index path currently include two kind of, one is normal, and the other is mv index.
+		// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+		// on mvi, it will return many index rows which breaks handle-unique attribute here.
+		//
+		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
+		if !isMVIndexPath(path) {
+			return true // not a MVIndex path, it can successfully be index join probe side.
+		}
+		return false
+	}
+	helper, keyOff2IdxOff := p.getIndexJoinBuildHelper(ds, innerJoinKeys, indexValid, outerJoinKeys)
 	if helper == nil {
 		return nil
 	}
@@ -1099,8 +1113,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	})
 	usedStats := p.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats[ts.physicalTableID] != nil {
-		ts.usedStatsInfo = usedStats[ts.physicalTableID]
+	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
+		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -1108,13 +1122,13 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
-	copTask.partitionInfo = PartitionInfo{
+	copTask.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   ds.allConds,
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	ts.PartitionInfo = copTask.partitionInfo
+	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
 	t := copTask.convertToRootTask(ds.SCtx())
@@ -1272,7 +1286,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
 	}
-	cop.partitionInfo = PartitionInfo{
+	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   ds.allConds,
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
@@ -1306,8 +1320,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
 		ts.SetStats(&property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion})
 		usedStats := p.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-		if usedStats != nil && usedStats[ts.physicalTableID] != nil {
-			ts.usedStatsInfo = usedStats[ts.physicalTableID]
+		if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
+			ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
@@ -1402,8 +1416,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	is.SetStats(ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats[is.physicalTableID] != nil {
-		is.usedStatsInfo = usedStats[is.physicalTableID]
+	if usedStats != nil && usedStats.GetUsedInfo(is.physicalTableID) != nil {
+		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
@@ -1962,7 +1976,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	return
 }
 
-func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPlan) []PhysicalPlan {
+func filterIndexJoinBySessionVars(sc PlanContext, indexJoins []PhysicalPlan) []PhysicalPlan {
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}
@@ -2040,13 +2054,13 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	// Handle hints conflict first.
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	if p.preferAny(h.PreferLeftAsINLJInner, h.PreferRightAsINLJInner) && p.preferAny(h.PreferNoIndexJoin) {
-		stmtCtx.AppendWarning(ErrInternal.FastGen("Some INL_JOIN and NO_INDEX_JOIN hints conflict, NO_INDEX_JOIN may be ignored"))
+		stmtCtx.SetHintWarning("Some INL_JOIN and NO_INDEX_JOIN hints conflict, NO_INDEX_JOIN may be ignored")
 	}
 	if p.preferAny(h.PreferLeftAsINLHJInner, h.PreferRightAsINLHJInner) && p.preferAny(h.PreferNoIndexHashJoin) {
-		stmtCtx.AppendWarning(ErrInternal.FastGen("Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored"))
+		stmtCtx.SetHintWarning("Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored")
 	}
 	if p.preferAny(h.PreferLeftAsINLMJInner, h.PreferRightAsINLMJInner) && p.preferAny(h.PreferNoIndexMergeJoin) {
-		stmtCtx.AppendWarning(ErrInternal.FastGen("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored"))
+		stmtCtx.SetHintWarning("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored")
 	}
 
 	candidates, canForced = p.handleForceIndexJoinHints(prop, candidates)
@@ -2107,9 +2121,9 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 	// If the required property is not empty, we will enforce it and try the hint again.
 	// So we only need to generate warning message when the property is empty.
 	if prop.IsSortItemEmpty() {
-		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.TableInfo
+		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.HintedTable
 		if p.hintInfo != nil {
-			t := p.hintInfo.IndexNestedLoopJoinTables
+			t := p.hintInfo.IndexJoin
 			indexJoinTables, indexHashJoinTables, indexMergeJoinTables = t.INLJTables, t.INLHJTables, t.INLMJTables
 		}
 		var errMsg string
@@ -2126,7 +2140,7 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 			errMsg += " without column equal ON condition"
 		}
 		// Generate warning message to client.
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 	}
 	return candidates, false
 }
@@ -2270,7 +2284,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	if !isJoinHintSupportedInMPPMode(p.preferJoinType) {
 		if hasMPPJoinHints(p.preferJoinType) {
 			// If there are MPP hints but has some conflicts join method hints, all the join hints are invalid.
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now"))
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now")
 			p.preferJoinType = 0
 		} else {
 			// If there are no MPP hints but has some conflicts join method hints, the MPP mode will be blocked.
@@ -2315,7 +2329,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 			hasMppHints = true
 		}
 		if hasMppHints {
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 		}
 	}
 	if prop.IsFlashProp() {
@@ -2437,7 +2451,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	forceLeftToBuild := ((p.preferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.preferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.preferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.preferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+			"Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints")
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
@@ -2485,7 +2500,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		if !match {
 			if fixedBuildSide {
 				// A warning will be generated if the build side is fixed, but we attempt to change it using the hint.
-				p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+					"Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints")
 			} else {
 				// The HASH_JOIN_BUILD OR HASH_JOIN_PROBE hints can take effective.
 				preferredBuildIndex = 1 - preferredBuildIndex
@@ -2665,10 +2681,10 @@ func pushLimitOrTopNForcibly(p LogicalPlan) bool {
 	var preferPushDown *bool
 	switch lp := p.(type) {
 	case *LogicalTopN:
-		preferPushDown = &lp.limitHints.PreferLimitToCop
+		preferPushDown = &lp.PreferLimitToCop
 		meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
 	case *LogicalLimit:
-		preferPushDown = &lp.limitHints.PreferLimitToCop
+		preferPushDown = &lp.PreferLimitToCop
 		meetThreshold = true // always push Limit down in this case since it has no side effect
 	default:
 		return false
@@ -2679,8 +2695,7 @@ func pushLimitOrTopNForcibly(p LogicalPlan) bool {
 			return true
 		}
 		if *preferPushDown {
-			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint LIMIT_TO_COP is inapplicable")
 			*preferPushDown = false
 		}
 	}
@@ -2855,7 +2870,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 	{
 		allSupported := true
 		for _, windowFunc := range lw.WindowFuncDescs {
-			if !windowFunc.CanPushDownToTiFlash(lw.SCtx()) {
+			if !windowFunc.CanPushDownToTiFlash(lw.SCtx(), lw.SCtx().GetClient()) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function `" + windowFunc.Name + "` or its arguments are not supported now.")
 				allSupported = false
@@ -3086,7 +3101,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		if !la.canPushToCop(kv.TiKV) || !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
-	} else if !la.aggHints.PreferAggToCop {
+	} else if !la.PreferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	for _, taskTp := range taskTypes {
@@ -3167,7 +3182,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			} else if !la.distinctArgsMeetsProperty() {
 				continue
 			}
-		} else if !la.aggHints.PreferAggToCop {
+		} else if !la.PreferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
 		}
 		if !la.canPushToCop(kv.TiKV) && !la.canPushToCop(kv.TiFlash) {
@@ -3193,7 +3208,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	}
 	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
 	// because we can't trust possibleChildProperty completely.
-	if (la.aggHints.PreferAggType & h.PreferStreamAgg) > 0 {
+	if (la.PreferAggType & h.PreferStreamAgg) > 0 {
 		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
 	}
 	return streamAggs
@@ -3327,9 +3342,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	// handle MPP Agg hints
 	var preferMode AggMppRunMode
 	var prefer bool
-	if la.aggHints.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
+	if la.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
 		preferMode, prefer = Mpp1Phase, true
-	} else if la.aggHints.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
+	} else if la.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
 		preferMode, prefer = Mpp2Phase, true
 	}
 	if prefer {
@@ -3371,7 +3386,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 			// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
-	} else if !la.aggHints.PreferAggToCop {
+	} else if !la.PreferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	if !la.canPushToCop(kv.TiKV) && !canPushDownToTiFlash {
@@ -3382,16 +3397,16 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	} else {
 		hasMppHints := false
 		var errMsg string
-		if la.aggHints.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
+		if la.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
 			errMsg = "The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
 			hasMppHints = true
 		}
-		if la.aggHints.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
+		if la.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
 			errMsg = "The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
 			hasMppHints = true
 		}
 		if hasMppHints {
-			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
+			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 		}
 	}
 	if prop.IsFlashProp() {
@@ -3413,28 +3428,25 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	return hashAggs
 }
 
-// ResetHintIfConflicted resets the aggHints.PreferAggType if they are conflicted,
+// ResetHintIfConflicted resets the PreferAggType if they are conflicted,
 // and returns the two PreferAggType hints.
 func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
-	preferHash = (la.aggHints.PreferAggType & h.PreferHashAgg) > 0
-	preferStream = (la.aggHints.PreferAggType & h.PreferStreamAgg) > 0
+	preferHash = (la.PreferAggType & h.PreferHashAgg) > 0
+	preferStream = (la.PreferAggType & h.PreferStreamAgg) > 0
 	if preferHash && preferStream {
-		errMsg := "Optimizer aggregation hints are conflicted"
-		warning := ErrInternal.FastGen(errMsg)
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
-		la.aggHints.PreferAggType = 0
+		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer aggregation hints are conflicted")
+		la.PreferAggType = 0
 		preferHash, preferStream = false, false
 	}
 	return
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if la.aggHints.PreferAggToCop {
+	if la.PreferAggToCop {
 		if !la.canPushToCop(kv.TiKV) {
-			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
-			warning := ErrInternal.FastGen(errMsg)
-			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
-			la.aggHints.PreferAggToCop = false
+			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+				"Optimizer Hint AGG_TO_COP is inapplicable")
+			la.PreferAggToCop = false
 		}
 	}
 
@@ -3453,9 +3465,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	aggs := append(hashAggs, streamAggs...)
 
 	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
-		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
-		warning := ErrInternal.FastGen(errMsg)
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
 	}
 
 	return aggs, !(preferStream || preferHash), nil

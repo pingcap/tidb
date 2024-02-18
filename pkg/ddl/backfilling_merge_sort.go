@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -34,6 +35,7 @@ import (
 )
 
 type mergeSortExecutor struct {
+	taskexecutor.EmptyStepExecutor
 	jobID               int64
 	idxNum              int
 	ptbl                table.PhysicalTable
@@ -133,10 +135,5 @@ func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
-	return nil
-}
-
-func (*mergeSortExecutor) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort executor rollback backfill add index task")
 	return nil
 }

@@ -525,7 +525,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 // getMemRowsHandle is called when memIndexMergeReader.partialPlans[i] is TableScan.
 func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
 	handles := make([]kv.Handle, 0, 16)
-	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
+	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, _ []byte) error {
 		handle, err := tablecodec.DecodeRowKey(key)
 		if err != nil {
 			return err
@@ -1124,7 +1124,7 @@ func (m *memIndexMergeReader) intersectionHandles(kvRanges [][]kv.KeyRange) (fin
 			}
 		}
 	}
-	hMap.Range(func(h kv.Handle, val interface{}) bool {
+	hMap.Range(func(h kv.Handle, val any) bool {
 		if *(val.(*int)) == len(m.memReaders) {
 			finalHandles = append(finalHandles, h)
 		}
@@ -1158,11 +1158,7 @@ func getColIDAndPkColIDs(ctx sessionctx.Context, tbl table.Table, columns []*mod
 		pkColIDs = []int64{-1}
 	}
 	defVal := func(i int) ([]byte, error) {
-		sessVars := ctx.GetSessionVars()
-		originStrict := sessVars.StrictSQLMode
-		sessVars.StrictSQLMode = false
-		d, err := table.GetColOriginDefaultValue(ctx, columns[i])
-		sessVars.StrictSQLMode = originStrict
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(ctx, columns[i])
 		if err != nil {
 			return nil, err
 		}

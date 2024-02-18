@@ -74,7 +74,7 @@ func updateRecord(
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if err = col.HandleBadNull(&newData[i], sc, 0); err != nil {
+		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
 			return false, err
 		}
 	}
@@ -103,7 +103,7 @@ func updateRecord(
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
+				if err = t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
 					return false, err
 				}
 			}
@@ -186,16 +186,18 @@ func updateRecord(
 			memBuffer.Release(sh)
 			return true, nil
 		}(); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-				return false, nil
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
+				return false, ec.HandleError(err)
 			}
 			return updated, err
 		}
 	} else {
 		// Update record to new value and update index.
 		if err := t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-				return false, nil
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
+				return false, ec.HandleError(err)
 			}
 			return false, err
 		}
@@ -304,7 +306,7 @@ func rebaseAutoRandomValue(
 	shardFmt := autoid.NewShardIDFormat(&col.FieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & shardFmt.IncrementalMask()
-	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
+	return t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.
@@ -339,7 +341,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 	}
 	if variable.EnableCheckConstraint.Load() {
 		type CheckConstraintTable interface {
-			CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
+			CheckRowConstraint(ctx expression.EvalContext, rowToCheck []types.Datum) error
 		}
 		cc, ok := pt.(CheckConstraintTable)
 		if !ok {

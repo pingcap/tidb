@@ -135,3 +135,53 @@ show create table t;
 alter table t partition by key(a) partitions 5;
 show create table t;
 
+# Related issue TiDB#50972, partition expression should ignore schema and table name when restore
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+CREATE TABLE test.issue50972_1 (id1 int) PARTITION BY HASH( test.issue50972_1.id1 ) PARTITIONS 4;
+CREATE TABLE test.issue50972_2 (id2 int) PARTITION BY RANGE (test.issue50972_2.id2) ( PARTITION p0 VALUES LESS THAN (6));
+CREATE TABLE test.issue50972_3 (id3 int) PARTITION BY LIST (test.issue50972_3.id3) ( PARTITION p0 VALUES IN (1, 2) );
+show create table test.issue50972_1;
+show create table test.issue50972_2;
+show create table test.issue50972_3;
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+CREATE TABLE test.issue50972_1 (id1 int);
+CREATE TABLE test.issue50972_2 (id2 int);
+CREATE TABLE test.issue50972_3 (id3 int);
+ALTER TABLE test.issue50972_1 PARTITION BY HASH( test.issue50972_1.id1 ) PARTITIONS 4;
+ALTER TABLE test.issue50972_2 PARTITION BY RANGE (test.issue50972_2.id2) ( PARTITION p0 VALUES LESS THAN (6));
+ALTER TABLE test.issue50972_3 PARTITION BY LIST (test.issue50972_3.id3) ( PARTITION p0 VALUES IN (1, 2) );
+show create table test.issue50972_1;
+show create table test.issue50972_2;
+show create table test.issue50972_3;
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+
+# TestCreateKeyPartitonWithEmptyColumn
+drop table if exists k1, k2, k3, k4;
+CREATE TABLE k1 (
+    id INT NOT NULL PRIMARY KEY,
+    name VARCHAR(20))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k1;
+CREATE TABLE k2 (
+    id INT NOT NULL,
+    name VARCHAR(20),
+    UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k2;
+CREATE TABLE k3 (
+    id INT NOT NULL PRIMARY KEY NONCLUSTERED,
+    name VARCHAR(20),
+    UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k3;
+--error 1105
+CREATE TABLE k4(
+    id INT NOT NULL,
+    id1 int,
+    name VARCHAR(20),
+    UNIQUE KEY (id, id1))
+PARTITION BY KEY()
+PARTITIONS 2;

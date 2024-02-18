@@ -404,7 +404,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.NoError(t, err)
 
 	maxID := 1<<(64-15-1) - 1
-	err = tb.Allocators(tk.Session()).Get(autoid.RowIDAllocType).Rebase(context.Background(), int64(maxID), false)
+	err = tb.Allocators(tk.Session().GetSessionVars()).Get(autoid.RowIDAllocType).Rebase(context.Background(), int64(maxID), false)
 	require.NoError(t, err)
 
 	_, err = tables.AllocHandle(context.Background(), tk.Session(), tb)
@@ -426,12 +426,6 @@ func TestHiddenColumn(t *testing.T) {
 	colInfo[1].Hidden = true
 	colInfo[3].Hidden = true
 	colInfo[5].Hidden = true
-	tc := tb.(*tables.TableCommon)
-	// Reset related caches
-	tc.VisibleColumns = nil
-	tc.WritableColumns = nil
-	tc.HiddenColumns = nil
-	tc.FullHiddenColsAndVisibleColumns = nil
 
 	// Basic test
 	cols := tb.VisibleCols()
@@ -796,7 +790,7 @@ func TestTxnAssertion(t *testing.T) {
 			tk.MustExec("create table t(id int primary key, v int, v2 int, v3 int, v4 varchar(64), index(v2), unique index(v3), index(v4))")
 		}
 
-		var id1, id2, id3 interface{}
+		var id1, id2, id3 any
 		if useCommonHandle {
 			id1, id2, id3 = "1", "2", "3"
 		} else {
@@ -1672,7 +1666,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				data := rowcodec.RowData{Cols: cols}
 				sort.Sort(data)
-				checksum, err := data.Checksum()
+				checksum, err := data.Checksum(time.Local)
 				assert.NoError(t, err)
 				expectChecksums = append(expectChecksums, checksum)
 			}

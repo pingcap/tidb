@@ -26,7 +26,7 @@ import (
 func TestShowPlacementLabelsBuilder(t *testing.T) {
 	cases := []struct {
 		stores  [][]*pd.StoreLabel
-		expects [][]interface{}
+		expects [][]any
 	}{
 		{
 			stores:  nil,
@@ -41,7 +41,7 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 				nil,
 				{{Key: "k1", Value: "v1"}},
 			},
-			expects: [][]interface{}{
+			expects: [][]any{
 				{"host", []string{"h1", "h2"}},
 				{"k1", []string{"v1"}},
 				{"rack", []string{"r1", "r2", "r3"}},
@@ -51,7 +51,7 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 	}
 
 	b := &showPlacementLabelsResultBuilder{}
-	toBinaryJSON := func(obj interface{}) (bj types.BinaryJSON) {
+	toBinaryJSON := func(obj any) (bj types.BinaryJSON) {
 		d, err := gjson.Marshal(obj)
 		require.NoError(t, err)
 		err = bj.UnmarshalJSON(d)

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -37,7 +39,7 @@ import (
 type MockDataSourceParameters struct {
 	Ctx         sessionctx.Context
 	DataSchema  *expression.Schema
-	GenDataFunc func(row int, typ *types.FieldType) interface{}
+	GenDataFunc func(row int, typ *types.FieldType) any
 	Ndvs        []int
 	Orders      []bool
 	Rows        int
@@ -45,15 +47,15 @@ type MockDataSourceParameters struct {
 
 // MockDataSource mocks data source
 type MockDataSource struct {
-	P       MockDataSourceParameters
 	GenData []*chunk.Chunk
 	Chunks  []*chunk.Chunk
+	P       MockDataSourceParameters
 	exec.BaseExecutor
 	ChunkPtr int
 }
 
 // GenColDatums get column datums
-func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
+func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 	typ := mds.RetFieldTypes()[col]
 	order := false
 	if col < len(mds.P.Orders) {
@@ -64,7 +66,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 	if col < len(mds.P.Ndvs) {
 		ndv = mds.P.Ndvs[col]
 	}
-	results = make([]interface{}, 0, rows)
+	results = make([]any, 0, rows)
 	if ndv == 0 {
 		if mds.P.GenDataFunc == nil {
 			for i := 0; i < rows; i++ {
@@ -77,7 +79,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 		}
 	} else {
 		datumSet := make(map[string]bool, ndv)
-		datums := make([]interface{}, 0, ndv)
+		datums := make([]any, 0, ndv)
 		for len(datums) < ndv {
 			d := mds.RandDatum(typ)
 			str := fmt.Sprintf("%v", d)
@@ -116,7 +118,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 }
 
 // RandDatum rand datum
-func (*MockDataSource) RandDatum(typ *types.FieldType) interface{} {
+func (*MockDataSource) RandDatum(typ *types.FieldType) any {
 	val, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	switch typ.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
@@ -159,6 +161,7 @@ func (mds *MockDataSource) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	dataChk := mds.Chunks[mds.ChunkPtr]
 	dataChk.SwapColumns(req)
+
 	mds.ChunkPtr++
 	return nil
 }
@@ -230,9 +233,10 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		ChunkPtr:     0,
 		P:            opt,
 		GenData:      nil,
-		Chunks:       nil}
+		Chunks:       nil,
+	}
 	rTypes := exec.RetTypes(m)
-	colData := make([][]interface{}, len(rTypes))
+	colData := make([][]any, len(rTypes))
 	for i := 0; i < len(rTypes); i++ {
 		colData[i] = m.GenColDatums(i)
 	}
@@ -272,4 +276,25 @@ func BuildMockDataSourceWithIndex(opt MockDataSourceParameters, index []int) *Mo
 		opt.Orders[idx] = true
 	}
 	return BuildMockDataSource(opt)
+}
+
+// MockActionOnExceed is for test.
+type MockActionOnExceed struct {
+	memory.BaseOOMAction
+	triggeredNum atomic.Int32
+}
+
+// Action add the triggered number.
+func (m *MockActionOnExceed) Action(*memory.Tracker) {
+	m.triggeredNum.Add(1)
+}
+
+// GetPriority get the priority of the Action.
+func (*MockActionOnExceed) GetPriority() int64 {
+	return memory.DefLogPriority
+}
+
+// GetTriggeredNum get the triggered number of the Action
+func (m *MockActionOnExceed) GetTriggeredNum() int {
+	return int(m.triggeredNum.Load())
 }

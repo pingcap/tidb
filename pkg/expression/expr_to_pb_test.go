@@ -322,18 +322,20 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 		require.Equalf(t, jsons[funcNames[i]], string(js), "%v\n", funcNames[i])
 	}
 
-	funcNames = []string{ast.IntDiv} // cannot be pushed down
-	for _, funcName := range funcNames {
-		fc, err := NewFunction(
-			mock.NewContext(),
-			funcName,
-			types.NewFieldType(mysql.TypeUnspecified),
-			genColumn(mysql.TypeDouble, 1),
-			genColumn(mysql.TypeDouble, 2))
-		require.NoError(t, err)
-		_, err = ExpressionsToPBList(ctx, []Expression{fc}, client)
-		require.Error(t, err)
-	}
+	// IntDiv
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.IntDiv,
+		types.NewFieldType(mysql.TypeUnspecified),
+		genColumn(mysql.TypeLonglong, 1),
+		genColumn(mysql.TypeLonglong, 2))
+	require.NoError(t, err)
+	pbExprs, err = ExpressionsToPBList(ctx, []Expression{fc}, client)
+	require.NoError(t, err)
+	js, err := json.Marshal(pbExprs[0])
+	require.NoError(t, err)
+	expectedJs := "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":213,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}"
+	require.Equalf(t, expectedJs, string(js), "%v\n", ast.IntDiv)
 }
 
 func TestDateFunc2Pb(t *testing.T) {
@@ -637,6 +639,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// CastDecimalAsDouble
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// CastStringAsInt
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
@@ -807,6 +814,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// ScalarFuncSig_Pow
 	function, err = NewFunction(mock.NewContext(), ast.Pow, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Pow, Power is a synonym for Pow
+	function, err = NewFunction(mock.NewContext(), ast.Power, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1432,7 +1444,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 
 	//jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
-	//realColumn := genColumn(mysql.TypeDouble, 3)
+	realColumn := genColumn(mysql.TypeDouble, 3)
 	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := genColumn(mysql.TypeString, 5)
 	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
@@ -1608,6 +1620,16 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.Lower,
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Pow,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{realColumn, realColumn},
+		},
+		{
+			functionName: ast.Power,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{realColumn, realColumn},
 		},
 	}
 

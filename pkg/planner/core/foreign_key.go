@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -175,7 +176,7 @@ func (p *Insert) buildOnInsertFKTriggers(ctx sessionctx.Context, is infoschema.I
 		if fk.Version < 1 {
 			continue
 		}
-		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
+		failedErr := plannererrors.ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
 		fkCheck, err := buildFKCheckOnModifyChildTable(ctx, is, fk, failedErr)
 		if err != nil {
 			return err
@@ -225,7 +226,7 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx sessionctx.Context, is infoschem
 	fkCascades := make(map[int64][]*FKCascade)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
+		dbInfo, exist := infoschema.SchemaByTable(is, tblInfo)
 		if !exist {
 			// Normally, it should never happen. Just check here to avoid panic here.
 			return infoschema.ErrDatabaseNotExists
@@ -265,7 +266,7 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 	fkCascades := make(map[int64][]*FKCascade)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
+		dbInfo, exist := infoschema.SchemaByTable(is, tblInfo)
 		if !exist {
 			return infoschema.ErrDatabaseNotExists
 		}
@@ -319,7 +320,7 @@ func buildOnUpdateChildFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema
 		if !isMapContainAnyCols(updateCols, fk.Cols...) {
 			continue
 		}
-		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
+		failedErr := plannererrors.ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
 		fkCheck, err := buildFKCheckOnModifyChildTable(ctx, is, fk, failedErr)
 		if err != nil {
 			return nil, err
@@ -420,7 +421,7 @@ func buildFKCheckOnModifyChildTable(ctx sessionctx.Context, is infoschema.InfoSc
 }
 
 func buildFKCheckForReferredFK(ctx sessionctx.Context, childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
-	failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
+	failedErr := plannererrors.ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 	fkCheck, err := buildFKCheck(ctx, childTable, fk.Cols, failedErr)
 	if err != nil {
 		return nil, err

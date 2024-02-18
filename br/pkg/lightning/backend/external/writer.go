@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 
@@ -44,9 +45,9 @@ var (
 
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
-	MergeSortOverlapThreshold int64 = 1000
+	MergeSortOverlapThreshold int64 = 4000
 	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
-	MergeSortFileCountStep = 1000
+	MergeSortFileCountStep = 4000
 )
 
 const (
@@ -87,6 +88,7 @@ type WriterSummary struct {
 	Min                tidbkv.Key
 	Max                tidbkv.Key
 	TotalSize          uint64
+	TotalCnt           uint64
 	MultipleFilesStats []MultipleFilesStat
 }
 
@@ -208,8 +210,8 @@ func (b *WriterBuilder) Build(
 	return ret
 }
 
-// BuildOneFile builds a new one file Writer. The writer will create only one file under the prefix
-// of "{prefix}/{writerID}".
+// BuildOneFile builds a new one file Writer. The writer will create only one
+// file under the prefix of "{prefix}/{writerID}".
 func (b *WriterBuilder) BuildOneFile(
 	store storage.ExternalStorage,
 	prefix string,
@@ -230,6 +232,7 @@ func (b *WriterBuilder) BuildOneFile(
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
 		kvStore:        nil,
+		onClose:        b.onClose,
 		closed:         false,
 	}
 	return ret
@@ -239,10 +242,30 @@ func (b *WriterBuilder) BuildOneFile(
 // every 500 files). It is used to estimate the data overlapping, and per-file
 // statistic information maybe too big to loaded into memory.
 type MultipleFilesStat struct {
-	MinKey            tidbkv.Key  `json:"min-key"`
-	MaxKey            tidbkv.Key  `json:"max-key"`
-	Filenames         [][2]string `json:"filenames"` // [dataFile, statFile]
+	MinKey tidbkv.Key `json:"min-key"`
+	MaxKey tidbkv.Key `json:"max-key"`
+	// Filenames is a list of [dataFile, statFile] paris, and it's sorted by the
+	// first key of the data file.
+	Filenames         [][2]string `json:"filenames"`
 	MaxOverlappingNum int64       `json:"max-overlapping-num"`
+}
+
+type startKeysAndFiles struct {
+	startKeys []tidbkv.Key
+	files     [][2]string
+}
+
+func (s *startKeysAndFiles) Len() int {
+	return len(s.startKeys)
+}
+
+func (s *startKeysAndFiles) Less(i, j int) bool {
+	return s.startKeys[i].Cmp(s.startKeys[j]) < 0
+}
+
+func (s *startKeysAndFiles) Swap(i, j int) {
+	s.startKeys[i], s.startKeys[j] = s.startKeys[j], s.startKeys[i]
+	s.files[i], s.files[j] = s.files[j], s.files[i]
 }
 
 func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
@@ -259,6 +282,9 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 			m.MaxKey = endKeys[i]
 		}
 	}
+	// make Filenames sorted by startKeys
+	s := &startKeysAndFiles{startKeys, m.Filenames}
+	sort.Sort(s)
 
 	points := make([]Endpoint, 0, len(startKeys)*2)
 	for _, k := range startKeys {
@@ -315,6 +341,7 @@ type Writer struct {
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
+	totalCnt  uint64
 }
 
 // WriteRow implements ingest.Writer.
@@ -346,6 +373,7 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	w.kvLocations = append(w.kvLocations, loc)
 	w.kvSize += int64(encodedKeyLen + len(idxVal))
 	w.batchSize += uint64(length)
+	w.totalCnt += 1
 	return nil
 }
 
@@ -383,6 +411,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		Min:                w.minKey,
 		Max:                w.maxKey,
 		TotalSize:          w.totalSize,
+		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: w.multiFileStats,
 	})
 	return nil

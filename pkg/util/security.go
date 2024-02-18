@@ -46,7 +46,7 @@ func addVerifyPeerCertificate(tlsCfg *tls.Config, verifyCN []string) {
 			checkCN[cn] = struct{}{}
 		}
 		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
-		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		tlsCfg.VerifyPeerCertificate = func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
 			cns := make([]string, 0, len(verifiedChains))
 			for _, chains := range verifiedChains {
 				for _, chain := range chains {
@@ -94,7 +94,7 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 	}
 	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS10,
+		MinVersion:   tls.VersionTLS12,
 		Certificates: certificates,
 		RootCAs:      certPool,
 		ClientCAs:    certPool,
@@ -183,7 +183,7 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 
 	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:         tls.VersionTLS10,
+		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"h2", "http/1.2"}, // specify `h2` to let Go use HTTP/2.
 	}
@@ -204,7 +204,7 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 		tlsCfg.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 			return loadCert()
 		}
-		tlsCfg.GetCertificate = func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		tlsCfg.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return loadCert()
 		}
 	}

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
@@ -47,13 +47,13 @@ var (
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
 
 	// GetRowCountByIndexRanges is a function type to get row count by index ranges.
-	GetRowCountByIndexRanges func(sctx sessionctx.Context, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByIndexRanges func(sctx context.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error)
 
 	// GetRowCountByIntColumnRanges is a function type to get row count by int column ranges.
-	GetRowCountByIntColumnRanges func(sctx sessionctx.Context, coll *HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByIntColumnRanges func(sctx context.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error)
 
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
-	GetRowCountByColumnRanges func(sctx sessionctx.Context, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByColumnRanges func(sctx context.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
 )
 
 // Table represents statistics for a table.
@@ -106,7 +106,11 @@ type HistColl struct {
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
 	ColID2IdxIDs map[int64][]int64
-	PhysicalID   int64
+	// MVIdx2Columns maps the index id to its columns by expression.Column.
+	// For normal index, the column id is enough, as we already have in Idx2ColumnIDs. But currently, mv index needs more
+	// information to match the filter against the mv index columns, and we need this map to provide this information.
+	MVIdx2Columns map[int64][]*expression.Column
+	PhysicalID    int64
 	// TODO: add AnalyzeCount here
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
@@ -432,6 +436,29 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 	return -1
 }
 
+// GetScaledRealtimeAndModifyCnt scale the RealtimeCount and ModifyCount for some special indexes where the total row
+// count is different from the total row count of the table. Currently, only the mv index is this case.
+// Because we will use the RealtimeCount and ModifyCount during the estimation for ranges on this index (like the upper
+// bound for the out-of-range estimation logic and the IncreaseFactor logic), we can't directly use the RealtimeCount and
+// ModifyCount of the table. Instead, we should scale them before using.
+// For example, if the table analyze row count is 1000 and realtime row count is 1500, and the mv index total count is 5000,
+// when calculating the IncreaseFactor, it should be 1500/1000 = 1.5 for normal columns/indexes, and we should use the
+// same 1.5 for mv index. But obviously, use 1500/5000 would be wrong, the correct calculation should be 7500/5000 = 1.5.
+// So we add this function to get this 7500.
+func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCnt, modifyCnt int64) {
+	// In theory, we can apply this scale logic on all indexes. But currently, we only apply it on the mv index to avoid
+	// any unexpected changes caused by factors like precision difference.
+	if idxStats == nil || idxStats.Info == nil || !idxStats.Info.MVIndex || !idxStats.IsFullLoad() {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	analyzeRowCount := coll.GetAnalyzeRowCount()
+	if analyzeRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := idxStats.TotalRowCount() / analyzeRowCount
+	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
+}
+
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
 // If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
@@ -568,6 +595,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	newIdxHistMap := make(map[int64]*Index)
 	idx2Columns := make(map[int64][]int64)
 	colID2IdxIDs := make(map[int64][]int64)
+	mvIdx2Columns := make(map[int64][]*expression.Column)
 	for id, idxHist := range coll.Indices {
 		idxInfo := idxID2idxInfo[id]
 		if idxInfo == nil {
@@ -588,6 +616,12 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		colID2IdxIDs[ids[0]] = append(colID2IdxIDs[ids[0]], idxHist.ID)
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
+		if idxInfo.MVIndex {
+			cols, ok := PrepareCols4MVIndex(tblInfo, idxInfo, columns)
+			if ok {
+				mvIdx2Columns[id] = cols
+			}
+		}
 	}
 	for _, idxIDs := range colID2IdxIDs {
 		slices.Sort(idxIDs)
@@ -602,6 +636,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		Indices:        newIdxHistMap,
 		ColID2IdxIDs:   colID2IdxIDs,
 		Idx2ColumnIDs:  idx2Columns,
+		MVIdx2Columns:  mvIdx2Columns,
 	}
 	return newColl
 }
@@ -683,3 +718,12 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	// This table has no statistics yet. We can directly return true.
 	return true
 }
+
+// PrepareCols4MVIndex helps to identify the columns of an MV index. We need this information for estimation.
+// This logic is shared between the estimation logic and the access path generation logic. We'd like to put the mv index
+// related functions together in the planner/core package. So we use this trick here to avoid the import cycle.
+var PrepareCols4MVIndex func(
+	tableInfo *model.TableInfo,
+	mvIndex *model.IndexInfo,
+	tblCols []*expression.Column,
+) (idxCols []*expression.Column, ok bool)

@@ -53,22 +53,22 @@ func (p *policyGetter) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 type bundleInfoBuilder struct {
 	deltaUpdate bool
 	// tables or partitions that need to update placement bundle
-	updateTables map[int64]interface{}
+	updateTables map[int64]any
 	// all tables or partitions referring these policies should update placement bundle
-	updatePolicies map[int64]interface{}
+	updatePolicies map[int64]any
 	// partitions that need to update placement bundle
-	updatePartitions map[int64]interface{}
+	updatePartitions map[int64]any
 }
 
 func (b *bundleInfoBuilder) ensureMap() {
 	if b.updateTables == nil {
-		b.updateTables = make(map[int64]interface{})
+		b.updateTables = make(map[int64]any)
 	}
 	if b.updatePartitions == nil {
-		b.updatePartitions = make(map[int64]interface{})
+		b.updatePartitions = make(map[int64]any)
 	}
 	if b.updatePolicies == nil {
-		b.updatePolicies = make(map[int64]interface{})
+		b.updatePolicies = make(map[int64]any)
 	}
 }
 
@@ -531,7 +531,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			// TODO: Check how this would work with ADD/REMOVE Partitioning,
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
-			oldAllocs, _ := b.is.AllocByID(oldTableID)
+			oldAllocs, _ := allocByID(b.is, oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
 
@@ -1149,12 +1149,14 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error)) *B
 	return &Builder{
 		Requirement: r,
 		is: &infoSchema{
-			schemaMap:             map[string]*schemaTables{},
-			policyMap:             map[string]*model.PolicyInfo{},
-			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-			ruleBundleMap:         map[int64]*placement.Bundle{},
-			sortedTablesBuckets:   make([]sortedTables, bucketCount),
-			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+			infoSchemaMisc: infoSchemaMisc{
+				policyMap:             map[string]*model.PolicyInfo{},
+				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
+				ruleBundleMap:         map[int64]*placement.Bundle{},
+				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+			},
+			schemaMap:           map[string]*schemaTables{},
+			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
 		dirtyDB: make(map[string]bool),
 		factory: factory,

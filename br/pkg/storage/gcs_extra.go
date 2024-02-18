@@ -144,7 +144,7 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 		select {
 		case <-w.ctx.Done():
 			data.cleanup()
-			return
+			w.err.CompareAndSwap(nil, w.ctx.Err())
 		default:
 			part := &xmlMPUPart{
 				uploadBase: w.uploadBase,
@@ -194,6 +194,9 @@ func (w *GCSWriter) Close() error {
 		return err
 	}
 
+	if len(w.xmlMPUParts) == 0 {
+		return nil
+	}
 	err := w.finalizeXMLMPU()
 	if err == nil {
 		return nil

@@ -94,11 +94,9 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	bytes, err := json.Marshal(meta)
 	s.NoError(err)
 	sch := importScheduler{
-		BaseScheduler: &scheduler.BaseScheduler{
-			Task: &proto.Task{
-				Meta: bytes,
-			},
-		},
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+			Meta: bytes,
+		}, scheduler.Param{}),
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*ImportSchedulerExt).GlobalSort)
@@ -107,11 +105,9 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	bytes, err = json.Marshal(meta)
 	s.NoError(err)
 	sch = importScheduler{
-		BaseScheduler: &scheduler.BaseScheduler{
-			Task: &proto.Task{
-				Meta: bytes,
-			},
-		},
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+			Meta: bytes,
+		}, scheduler.Param{}),
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*ImportSchedulerExt).GlobalSort)
@@ -122,41 +118,30 @@ func (s *importIntoSuite) TestGetNextStep() {
 		Step: proto.StepInit,
 	}
 	ext := &ImportSchedulerExt{}
-	for _, nextStep := range []proto.Step{StepImport, StepPostProcess, proto.StepDone} {
+	for _, nextStep := range []proto.Step{proto.ImportStepImport, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 
 	task.Step = proto.StepInit
 	ext = &ImportSchedulerExt{GlobalSort: true}
-	for _, nextStep := range []proto.Step{StepEncodeAndSort, StepMergeSort,
-		StepWriteAndIngest, StepPostProcess, proto.StepDone} {
+	for _, nextStep := range []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
+		proto.ImportStepWriteAndIngest, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 }
 
-func (s *importIntoSuite) TestStr() {
-	s.Equal("init", stepStr(proto.StepInit))
-	s.Equal("import", stepStr(StepImport))
-	s.Equal("post-process", stepStr(StepPostProcess))
-	s.Equal("merge-sort", stepStr(StepMergeSort))
-	s.Equal("encode&sort", stepStr(StepEncodeAndSort))
-	s.Equal("write&ingest", stepStr(StepWriteAndIngest))
-	s.Equal("done", stepStr(proto.StepDone))
-	s.Equal("unknown", stepStr(111))
-}
-
 func (s *importIntoSuite) TestGetStepOfEncode() {
-	s.Equal(StepImport, getStepOfEncode(false))
-	s.Equal(StepEncodeAndSort, getStepOfEncode(true))
+	s.Equal(proto.ImportStepImport, getStepOfEncode(false))
+	s.Equal(proto.ImportStepEncodeAndSort, getStepOfEncode(true))
 }
 
 func TestIsImporting2TiKV(t *testing.T) {
 	ext := &ImportSchedulerExt{}
-	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepEncodeAndSort}))
-	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepMergeSort}))
-	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepPostProcess}))
-	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: StepImport}))
-	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: StepWriteAndIngest}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepEncodeAndSort}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepMergeSort}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepPostProcess}))
+	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepImport}))
+	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepWriteAndIngest}))
 }

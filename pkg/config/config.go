@@ -412,7 +412,7 @@ func (b nullableBool) MarshalText() ([]byte, error) {
 
 func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	var err error
-	var v interface{}
+	var v any
 	if err = json.Unmarshal(data, &v); err != nil {
 		return err
 	}
@@ -694,9 +694,10 @@ type Status struct {
 type Performance struct {
 	MaxProcs uint `toml:"max-procs" json:"max-procs"`
 	// Deprecated: use ServerMemoryQuota instead
-	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota   uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
-	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	MaxMemory         uint64 `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota uint64 `toml:"server-memory-quota" json:"server-memory-quota"`
+	StatsLease        string `toml:"stats-lease" json:"stats-lease"`
+	// Deprecated: transaction auto retry is deprecated.
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
@@ -712,6 +713,7 @@ type Performance struct {
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
+	// Deprecated: this config will not have any effect
 	IndexUsageSyncLease               string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                              int    `toml:"gogc" json:"gogc"`
@@ -983,25 +985,23 @@ var defaultConf = Config{
 		GRPCMaxSendMsgSize:    math.MaxInt32,
 	},
 	Performance: Performance{
-		MaxMemory:             0,
-		ServerMemoryQuota:     0,
-		MemoryUsageAlarmRatio: DefMemoryUsageAlarmRatio,
-		TCPKeepAlive:          true,
-		TCPNoDelay:            true,
-		CrossJoin:             true,
-		StatsLease:            "3s",
-		StmtCountLimit:        5000,
-		PseudoEstimateRatio:   0.8,
-		ForcePriority:         "NO_PRIORITY",
-		BindInfoLease:         "3s",
-		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
-		DistinctAggPushDown:   false,
-		ProjectionPushDown:    false,
-		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
-		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
-		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:               "0s",
+		MaxMemory:                         0,
+		ServerMemoryQuota:                 0,
+		MemoryUsageAlarmRatio:             DefMemoryUsageAlarmRatio,
+		TCPKeepAlive:                      true,
+		TCPNoDelay:                        true,
+		CrossJoin:                         true,
+		StatsLease:                        "3s",
+		StmtCountLimit:                    5000,
+		PseudoEstimateRatio:               0.8,
+		ForcePriority:                     "NO_PRIORITY",
+		BindInfoLease:                     "3s",
+		TxnEntrySizeLimit:                 DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:                 DefTxnTotalSizeLimit,
+		DistinctAggPushDown:               false,
+		ProjectionPushDown:                false,
+		CommitterConcurrency:              defTiKVCfg.CommitterConcurrency,
+		MaxTxnTTL:                         defTiKVCfg.MaxTxnTTL, // 1hour
 		GOGC:                              100,
 		EnforceMPP:                        false,
 		PlanReplayerGCLease:               "10m",
@@ -1497,7 +1497,7 @@ func GetJSONConfig() (string, error) {
 		return "", err
 	}
 
-	jsonValue := make(map[string]interface{})
+	jsonValue := make(map[string]any)
 	err = json.Unmarshal(j, &jsonValue)
 	if err != nil {
 		return "", err
@@ -1519,7 +1519,7 @@ func GetJSONConfig() (string, error) {
 			if curValue[key] == nil {
 				break
 			}
-			mapValue, ok := curValue[key].(map[string]interface{})
+			mapValue, ok := curValue[key].(map[string]any)
 			if !ok {
 				break
 			}

@@ -56,6 +56,8 @@ type Executor interface {
 	AllChildren() []Executor
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.Chunk) error
+
+	// `Close()` may be called at any time after `Open()` and it may be called with `Next()` at the same time
 	Close() error
 	Schema() *expression.Schema
 	RetFieldTypes() []*types.FieldType
@@ -87,7 +89,7 @@ func NewBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
-		AllocPool:    ctx.GetSessionVars().ChunkPool.Alloc,
+		AllocPool:    ctx.GetSessionVars().GetChunkAllocator(),
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id > 0 {
@@ -249,7 +251,7 @@ func (e *BaseExecutor) NewChunk() *chunk.Chunk {
 
 // NewChunkWithCapacity allows the caller to allocate the chunk with any types, capacity and max size in the pool
 func (e *BaseExecutor) NewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
-	return e.ctx.GetSessionVars().GetNewChunkWithCapacity(fields, capacity, maxCachesize, e.AllocPool)
+	return e.AllocPool.Alloc(fields, capacity, maxCachesize)
 }
 
 // HandleSQLKillerSignal handles the signal sent by SQLKiller
@@ -292,7 +294,12 @@ func Open(ctx context.Context, e Executor) (err error) {
 }
 
 // Next is a wrapper function on e.Next(), it handles some common codes.
-func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
+func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
 	if e.RuntimeStats() != nil {
 		start := time.Now()
 		defer func() { e.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
@@ -306,7 +313,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	defer r.End()
 
 	e.RegisterSQLAndPlanInExecForTopSQL()
-	err := e.Next(ctx, req)
+	err = e.Next(ctx, req)
 
 	if err != nil {
 		return err

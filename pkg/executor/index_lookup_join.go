@@ -227,7 +227,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.outerCtx,
 		taskCh:        taskCh,
 		ctx:           e.Ctx(),
-		executorChk:   e.Ctx().GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.MaxChunkSize(), e.MaxChunkSize(), e.AllocPool),
+		executorChk:   e.AllocPool.Alloc(e.innerCtx.rowTypes, e.MaxChunkSize(), e.MaxChunkSize()),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 		stats:         innerStats,
@@ -284,7 +284,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
 			if e.innerIter == nil {
-				e.innerIter = chunk.NewIterator4Slice(task.matchedInners).(*chunk.Iterator4Slice)
+				e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
 			}
 			e.innerIter.Reset(task.matchedInners)
 			e.innerIter.Begin()

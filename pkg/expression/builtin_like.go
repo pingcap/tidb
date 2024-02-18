@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -35,7 +34,7 @@ type likeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *likeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -80,7 +79,7 @@ func (b *builtinLikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 		return 0, isNull, err
 	}
 	var pattern collate.WildcardPattern
-	if b.args[1].ConstItem(false) && b.args[2].ConstItem(false) {
+	if b.args[1].ConstLevel() >= ConstOnlyInContext && b.args[2].ConstLevel() >= ConstOnlyInContext {
 		pattern, err = b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
 			ret := b.collator().Pattern()
 			ret.Compile(patternStr, byte(escape))

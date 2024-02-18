@@ -258,7 +258,7 @@
   },
   "gofmt": {
     "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
+      "pkg/parser/": "parser/*.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
@@ -548,7 +548,8 @@
       "pkg/resourcemanager/": "resourcemanager code",
       "pkg/keyspace/": "keyspace code",
       "pkg/owner/": "owner code",
-      "pkg/timer/": "timer code"
+      "pkg/timer/": "timer code",
+      "pkg/domain": "domain code"
     }
   },
   "shift": {
@@ -734,6 +735,7 @@
       ".*mock.go$": "ignore generated code",
       "pkg/server/tidb_test.go": "ignore test code",
       "pkg/server/tests/tidb_test.go": "ignore test code",
+      "pkg/server/tests/commontest/tidb_test.go": "ignore test code",
       "pkg/server/tests/tidb_serial_test.go": "ignore test code",
       "pkg/server/tidb_serial_test.go": "ignore test code",
       "pkg/server/statistics_handler_test.go": "ignore test code",
@@ -1072,7 +1074,8 @@
       "pkg/server/": "server code",
       "pkg/owner/": "owner code",
       "pkg/meta": "meta code",
-      "pkg/timer/": "timer code"
+      "pkg/timer/": "timer code",
+      "pkg/statistics/": "statistics code"
     }
   },
   "SA1029": {

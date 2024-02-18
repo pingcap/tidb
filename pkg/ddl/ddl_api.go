@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -213,11 +214,12 @@ func (d *ddl) CreateSchemaWithInfo(
 	dbInfo.ID = genIDs[0]
 
 	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		SchemaName: dbInfo.Name.L,
-		Type:       model.ActionCreateSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo},
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionCreateSchema,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{dbInfo},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -250,11 +252,12 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 	}
 	// Do the DDL job.
 	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		SchemaName: dbInfo.Name.L,
-		Type:       model.ActionModifySchemaCharsetAndCollate,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{toCharset, toCollate},
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionModifySchemaCharsetAndCollate,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{toCharset, toCollate},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -280,11 +283,12 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 
 	// Do the DDL job.
 	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		SchemaName: dbInfo.Name.L,
-		Type:       model.ActionModifySchemaDefaultPlacement,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{placementPolicyRef},
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionModifySchemaDefaultPlacement,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{placementPolicyRef},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -437,12 +441,13 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		}
 
 		job := &model.Job{
-			SchemaID:   dbInfo.ID,
-			SchemaName: dbInfo.Name.L,
-			TableID:    tbl.ID,
-			Type:       model.ActionSetTiFlashReplica,
-			BinlogInfo: &model.HistoryInfo{},
-			Args:       []interface{}{*tiflashReplica},
+			SchemaID:       dbInfo.ID,
+			SchemaName:     dbInfo.Name.L,
+			TableID:        tbl.ID,
+			Type:           model.ActionSetTiFlashReplica,
+			BinlogInfo:     &model.HistoryInfo{},
+			Args:           []any{*tiflashReplica},
+			CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		}
 		err := d.DoDDLJob(sctx, job)
 		err = d.callHookOnChanged(job, err)
@@ -491,13 +496,14 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tblInfo.Name.L,
-		Type:       model.ActionAlterTablePlacement,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{placementPolicyRef},
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionAlterTablePlacement,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{placementPolicyRef},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -617,12 +623,13 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		return err
 	}
 	job := &model.Job{
-		SchemaID:    old.ID,
-		SchemaName:  old.Name.L,
-		SchemaState: old.State,
-		Type:        model.ActionDropSchema,
-		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{fkCheck},
+		SchemaID:       old.ID,
+		SchemaName:     old.Name.L,
+		SchemaState:    old.State,
+		Type:           model.ActionDropSchema,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{fkCheck},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -654,9 +661,10 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
 	recoverSchemaInfo.State = model.StateNone
 	job := &model.Job{
-		Type:       model.ActionRecoverSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{recoverSchemaInfo, recoverCheckFlagNone},
+		Type:           model.ActionRecoverSchema,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{recoverSchemaInfo, recoverCheckFlagNone},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: recoverSchemaInfo.Name.L,
 			Table:    model.InvolvingAll,
@@ -999,7 +1007,7 @@ func buildColumnAndConstraint(
 // In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
 // In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
 // In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
-func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, interface{}, error) {
+func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value any) (bool, any, error) {
 	hasDefaultValue := true
 	if value != nil && (col.GetType() == mysql.TypeJSON ||
 		col.GetType() == mysql.TypeTinyBlob || col.GetType() == mysql.TypeMediumBlob ||
@@ -1043,7 +1051,7 @@ func checkSequenceDefaultValue(col *table.Column) error {
 	return dbterror.ErrColumnTypeUnsupportedNextValue.GenWithStackByArgs(col.ColumnInfo.Name.O)
 }
 
-func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interface{}, col *table.Column) (interface{}, error) {
+func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal any, col *table.Column) (any, error) {
 	if defaultVal == nil || col.GetType() != mysql.TypeTimestamp {
 		return defaultVal, nil
 	}
@@ -1256,8 +1264,19 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
+func restoreFuncCall(expr *ast.FuncCallExpr) (string, error) {
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	if err := expr.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
 // getFuncCallDefaultValue gets the default column value of function-call expression.
-func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (interface{}, bool, error) {
+func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (any, bool, error) {
 	switch expr.FnName.L {
 	case ast.CurrentTimestamp, ast.CurrentDate:
 		tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
@@ -1284,15 +1303,42 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		col.DefaultIsExpr = true
-		var sb strings.Builder
-		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		if err := expr.Restore(restoreCtx); err != nil {
-			return "", false, err
+		str, err := restoreFuncCall(expr)
+		if err != nil {
+			return nil, false, errors.Trace(err)
 		}
-		return sb.String(), false, nil
+		col.DefaultIsExpr = true
+		return str, false, nil
+	case ast.Replace:
+		// Support REPLACE(UPPER(UUID()), '-', '').
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		funcCall := expr.Args[0]
+		// Support REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', ''))
+		if convertFunc, ok := funcCall.(*ast.FuncCallExpr); ok && convertFunc.FnName.L == ast.Convert {
+			if err := expression.VerifyArgsWrapper(convertFunc.FnName.L, len(convertFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			funcCall = convertFunc.Args[0]
+		}
+		if upperFunc, ok := funcCall.(*ast.FuncCallExpr); ok && upperFunc.FnName.L == ast.Upper {
+			if err := expression.VerifyArgsWrapper(upperFunc.FnName.L, len(upperFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			if uuidFunc, ok := upperFunc.Args[0].(*ast.FuncCallExpr); ok && uuidFunc.FnName.L == ast.UUID {
+				if err := expression.VerifyArgsWrapper(uuidFunc.FnName.L, len(uuidFunc.Args)); err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				str, err := restoreFuncCall(expr)
+				if err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				col.DefaultIsExpr = true
+				return str, false, nil
+			}
+		}
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -1301,7 +1347,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 // getDefaultValue will get the default value for column.
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
-func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (interface{}, bool, error) {
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (any, bool, error) {
 	// handle default value with function call
 	tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
 	if x, ok := option.Expr.(*ast.FuncCallExpr); ok {
@@ -1333,7 +1379,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	// evaluate the non-function-call expr to a certain value.
-	v, err := expression.EvalAstExpr(ctx, option.Expr)
+	v, err := expression.EvalSimpleAst(ctx, option.Expr)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -2296,7 +2342,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			return errors.Trace(err)
 		}
 		if s.Partition != nil {
-			if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
+			if err := checkPartitionFuncType(ctx, s.Partition.Expr, s.Table.Schema.O, tbInfo); err != nil {
 				return errors.Trace(err)
 			}
 			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
@@ -2656,7 +2702,7 @@ func (d *ddl) createTableWithInfoJob(
 	}
 
 	var actionType model.ActionType
-	args := []interface{}{tbInfo}
+	args := []any{tbInfo}
 	switch {
 	case tbInfo.View != nil:
 		actionType = model.ActionCreateView
@@ -2669,13 +2715,14 @@ func (d *ddl) createTableWithInfoJob(
 	}
 
 	job = &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tbInfo.Name.L,
-		Type:       actionType,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       args,
+		SchemaID:       schema.ID,
+		TableID:        tbInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tbInfo.Name.L,
+		Type:           actionType,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           args,
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	return job, nil
 }
@@ -2765,7 +2812,8 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	c := GetCreateTableWithInfoConfig(cs)
 
 	jobs := &model.Job{
-		BinlogInfo: &model.HistoryInfo{},
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	args := make([]*model.TableInfo, 0, len(infos))
 
@@ -2865,6 +2913,55 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	return nil
 }
 
+// BatchCreateTableWithJobs combine CreateTableJobs to BatchCreateTableJob.
+func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
+	if len(jobs) == 0 {
+		return nil, errors.Trace(fmt.Errorf("expect non-empty jobs"))
+	}
+
+	var combinedJob *model.Job
+
+	args := make([]*model.TableInfo, 0, len(jobs))
+	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(jobs))
+	var foreignKeyChecks bool
+
+	// if there is any duplicated table name
+	duplication := make(map[string]struct{})
+	for _, job := range jobs {
+		if combinedJob == nil {
+			combinedJob = job.Clone()
+			combinedJob.Type = model.ActionCreateTables
+			combinedJob.Args = combinedJob.Args[:0]
+			foreignKeyChecks = job.Args[1].(bool)
+		}
+		// append table job args
+		info, ok := job.Args[0].(*model.TableInfo)
+		if !ok {
+			return nil, errors.Trace(fmt.Errorf("expect model.TableInfo, but got %T", job.Args[0]))
+		}
+		args = append(args, info)
+
+		if _, ok := duplication[info.Name.L]; ok {
+			// return err even if create table if not exists
+			return nil, infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
+		}
+
+		duplication[info.Name.L] = struct{}{}
+
+		involvingSchemaInfo = append(involvingSchemaInfo,
+			model.InvolvingSchemaInfo{
+				Database: job.SchemaName,
+				Table:    info.Name.L,
+			})
+	}
+
+	combinedJob.Args = append(combinedJob.Args, args)
+	combinedJob.Args = append(combinedJob.Args, foreignKeyChecks)
+	combinedJob.InvolvingSchemaInfo = involvingSchemaInfo
+
+	return combinedJob, nil
+}
+
 func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
@@ -2902,12 +2999,13 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 		SchemaName: policy.Name.L,
 		Type:       model.ActionCreatePlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{policy, onExist == OnExistReplace},
+		Args:       []any{policy, onExist == OnExistReplace},
 		// CREATE PLACEMENT does not affect any schemas or tables.
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
 		}},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -2960,9 +3058,9 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		Type:       model.ActionFlashbackCluster,
 		BinlogInfo: &model.HistoryInfo{},
 		// The value for global variables is meaningless, it will cover during flashback cluster.
-		Args: []interface{}{
+		Args: []any{
 			flashbackTS,
-			map[string]interface{}{},
+			map[string]any{},
 			true,         /* tidb_gc_enable */
 			variable.On,  /* tidb_enable_auto_analyze */
 			variable.Off, /* tidb_super_read_only */
@@ -2971,6 +3069,7 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 			0,            /* commitTS */
 			variable.On,  /* tidb_ttl_job_enable */
 			[]kv.KeyRange{} /* flashback key_ranges */},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		// FLASHBACK CLUSTER affects all schemas and tables.
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingAll,
@@ -3004,9 +3103,10 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 		SchemaName: schema.Name.L,
 		TableName:  tbInfo.Name.L,
 
-		Type:       model.ActionRecoverTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{recoverInfo, recoverCheckFlagNone},
+		Type:           model.ActionRecoverTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{recoverInfo, recoverCheckFlagNone},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -3192,11 +3292,11 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 }
 
 func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (bool, error) {
-	lexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, l, tbInfo, &colInfo.FieldType)
+	lexpr, err := expression.ParseSimpleExpr(ctx, l, expression.WithTableInfo("", tbInfo), expression.WithCastExprTo(&colInfo.FieldType))
 	if err != nil {
 		return false, err
 	}
-	rexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, r, tbInfo, &colInfo.FieldType)
+	rexpr, err := expression.ParseSimpleExpr(ctx, r, expression.WithTableInfo("", tbInfo), expression.WithCastExprTo(&colInfo.FieldType))
 	if err != nil {
 		return false, err
 	}
@@ -3932,7 +4032,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	}
 
 	if !force {
-		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx, t, tp, newBase)
+		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx.GetSessionVars(), t, tp, newBase)
 		if err != nil {
 			return err
 		}
@@ -3945,20 +4045,21 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		newBase = newBaseTemp
 	}
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tbInfo.Name.L,
-		Type:       actionType,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newBase, force},
+		SchemaID:       schema.ID,
+		TableID:        tbInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tbInfo.Name.L,
+		Type:           actionType,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{newBase, force},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
 
-func adjustNewBaseToNextGlobalID(ctx sessionctx.Context, t table.Table, tp autoid.AllocatorType, newBase int64) (int64, error) {
+func adjustNewBaseToNextGlobalID(ctx table.AllocatorContext, t table.Table, tp autoid.AllocatorType, newBase int64) (int64, error) {
 	alloc := t.Allocators(ctx).Get(tp)
 	if alloc == nil {
 		return newBase, nil
@@ -3997,13 +4098,14 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		return err
 	}
 	job := &model.Job{
-		Type:       model.ActionShardRowID,
-		SchemaID:   schema.ID,
-		TableID:    tbInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tbInfo.Name.L,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{uVal},
+		Type:           model.ActionShardRowID,
+		SchemaID:       schema.ID,
+		TableID:        tbInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tbInfo.Name.L,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{uVal},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -4118,7 +4220,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 						return nil, errors.Trace(err)
 					}
 					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
-				case ast.Rand, ast.UUID, ast.UUIDToBin:
+				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.Replace:
 					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 				}
 			}
@@ -4179,14 +4281,27 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bdrRole, err := meta.NewMeta(txn).GetBDRRole()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) {
+		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+	}
+
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tbInfo.Name.L,
-		Type:       model.ActionAddColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0, spec.IfNotExists},
+		SchemaID:       schema.ID,
+		TableID:        tbInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tbInfo.Name.L,
+		Type:           model.ActionAddColumn,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{col, spec.Position, 0, spec.IfNotExists},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -4259,13 +4374,14 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionAddTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partInfo},
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionAddTablePartition,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{partInfo},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
@@ -4420,14 +4536,15 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	newPartInfo.DDLType = piOld.Type
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionAlterTablePartitioning,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partNames, newPartInfo},
-		ReorgMeta:  NewDDLReorgMeta(ctx),
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionAlterTablePartitioning,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{partNames, newPartInfo},
+		ReorgMeta:      NewDDLReorgMeta(ctx),
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4484,14 +4601,15 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionReorganizePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partNames, partInfo},
-		ReorgMeta:  NewDDLReorgMeta(ctx),
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionReorganizePartition,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{partNames, partInfo},
+		ReorgMeta:      NewDDLReorgMeta(ctx),
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4548,14 +4666,15 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	partInfo.NewTableID = partInfo.Definitions[0].ID
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  meta.Name.L,
-		Type:       model.ActionRemovePartitioning,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partNames, partInfo},
-		ReorgMeta:  NewDDLReorgMeta(ctx),
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      meta.Name.L,
+		Type:           model.ActionRemovePartitioning,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{partNames, partInfo},
+		ReorgMeta:      NewDDLReorgMeta(ctx),
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4755,14 +4874,15 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     meta.ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: model.StatePublic,
-		TableName:   t.Meta().Name.L,
-		Type:        model.ActionTruncateTablePartition,
-		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{pids, genIDs},
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		SchemaState:    model.StatePublic,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionTruncateTablePartition,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{pids, genIDs},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -4850,14 +4970,15 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     meta.ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: model.StatePublic,
-		TableName:   meta.Name.L,
-		Type:        model.ActionDropTablePartition,
-		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{partNames},
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		SchemaState:    model.StatePublic,
+		TableName:      meta.Name.L,
+		Type:           model.ActionDropTablePartition,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{partNames},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5058,14 +5179,15 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	job := &model.Job{
-		SchemaID:   ntSchema.ID,
-		TableID:    ntMeta.ID,
-		SchemaName: ntSchema.Name.L,
-		TableName:  ntMeta.Name.L,
-		Type:       model.ActionExchangeTablePartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
-		CtxVars:    []interface{}{[]int64{ntSchema.ID, ptSchema.ID}, []int64{ntMeta.ID, ptMeta.ID}},
+		SchemaID:       ntSchema.ID,
+		TableID:        ntMeta.ID,
+		SchemaName:     ntSchema.Name.L,
+		TableName:      ntMeta.Name.L,
+		Type:           model.ActionExchangeTablePartition,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
+		CtxVars:        []any{[]int64{ntSchema.ID, ptSchema.ID}, []int64{ntMeta.ID, ptMeta.ID}},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: ptSchema.Name.L, Table: ptMeta.Name.L},
 			{Database: ntSchema.Name.L, Table: ntMeta.Name.L},
@@ -5102,14 +5224,15 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	}
 
 	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     t.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: model.StatePublic,
-		TableName:   t.Meta().Name.L,
-		Type:        model.ActionDropColumn,
-		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{colName, spec.IfExists},
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		SchemaState:    model.StatePublic,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionDropColumn,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{colName, spec.IfExists},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5281,7 +5404,7 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	return hasDefaultValue, nil
 }
 
-func setDefaultValueWithBinaryPadding(col *table.Column, value interface{}) error {
+func setDefaultValueWithBinaryPadding(col *table.Column, value any) error {
 	err := col.SetDefaultValue(value)
 	if err != nil {
 		return err
@@ -5298,7 +5421,7 @@ func setDefaultValueWithBinaryPadding(col *table.Column, value interface{}) erro
 }
 
 func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := expression.EvalAstExpr(ctx, option.Expr)
+	value, err := expression.EvalSimpleAst(ctx, option.Expr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5716,16 +5839,30 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bdrRole, err := meta.NewMeta(txn).GetBDRRole()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if bdrRole == string(ast.BDRRolePrimary) &&
+		deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options) {
+		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+	}
+
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionModifyColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  NewDDLReorgMeta(sctx),
-		CtxVars:    []interface{}{needChangeColData},
-		Args:       []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionModifyColumn,
+		BinlogInfo:     &model.HistoryInfo{},
+		ReorgMeta:      NewDDLReorgMeta(sctx),
+		CtxVars:        []any{needChangeColData},
+		Args:           []any{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 	}
 	return job, nil
 }
@@ -5979,14 +6116,15 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbl.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tbl.Meta().Name.L,
-		Type:       model.ActionModifyColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  NewDDLReorgMeta(ctx),
-		Args:       []interface{}{&newCol, oldColName, spec.Position, 0, 0},
+		SchemaID:       schema.ID,
+		TableID:        tbl.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tbl.Meta().Name.L,
+		Type:           model.ActionModifyColumn,
+		BinlogInfo:     &model.HistoryInfo{},
+		ReorgMeta:      NewDDLReorgMeta(ctx),
+		Args:           []any{&newCol, oldColName, spec.Position, 0, 0},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6067,13 +6205,14 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionSetDefaultValue,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col},
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionSetDefaultValue,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{col},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6098,13 +6237,14 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionModifyTableComment,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{spec.Comment},
+		SchemaID:       schema.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionModifyTableComment,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{spec.Comment},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6125,13 +6265,14 @@ func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, new
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionModifyTableAutoIdCache,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newCache},
+		SchemaID:       schema.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionModifyTableAutoIdCache,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{newCache},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6178,13 +6319,14 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionModifyTableCharsetAndCollate,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{toCharset, toCollate, needsOverwriteCols},
+		SchemaID:       schema.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionModifyTableCharsetAndCollate,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{toCharset, toCollate, needsOverwriteCols},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6248,13 +6390,14 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionSetTiFlashReplica,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{*replicaInfo},
+		SchemaID:       schema.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionSetTiFlashReplica,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{*replicaInfo},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6303,13 +6446,14 @@ func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident,
 	}
 
 	job = &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tableID,
-		SchemaName: schema.Name.L,
-		TableName:  tableName,
-		Type:       model.ActionAlterTTLInfo,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{ttlInfo, ttlEnable, ttlCronJobSchedule},
+		SchemaID:       schema.ID,
+		TableID:        tableID,
+		SchemaName:     schema.Name.L,
+		TableName:      tableName,
+		Type:           model.ActionAlterTTLInfo,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{ttlInfo, ttlEnable, ttlCronJobSchedule},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6336,12 +6480,13 @@ func (d *ddl) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error
 
 	if tblInfo.TTLInfo != nil {
 		job := &model.Job{
-			SchemaID:   schema.ID,
-			TableID:    tableID,
-			SchemaName: schema.Name.L,
-			TableName:  tableName,
-			Type:       model.ActionAlterTTLRemove,
-			BinlogInfo: &model.HistoryInfo{},
+			SchemaID:       schema.ID,
+			TableID:        tableID,
+			SchemaName:     schema.Name.L,
+			TableName:      tableName,
+			Type:           model.ActionAlterTTLRemove,
+			BinlogInfo:     &model.HistoryInfo{},
+			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		}
 		err = d.DoDDLJob(ctx, job)
 		err = d.callHookOnChanged(job, err)
@@ -6461,19 +6606,20 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		return nil
 	}
 
-	db, ok := is.SchemaByTable(tbInfo)
+	db, ok := infoschema.SchemaByTable(is, tbInfo)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
 	}
 
 	job := &model.Job{
-		SchemaID:   db.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: db.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionUpdateTiFlashReplicaStatus,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{available, physicalID},
+		SchemaID:       db.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     db.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionUpdateTiFlashReplicaStatus,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{available, physicalID},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6572,13 +6718,14 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionRenameIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{spec.FromKey, spec.ToKey},
+		SchemaID:       schema.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionRenameIndex,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{spec.FromKey, spec.ToKey},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6627,14 +6774,14 @@ func (d *ddl) dropTableObject(
 		jobType        model.ActionType
 	)
 
-	var jobArgs []interface{}
+	var jobArgs []any
 	switch tableObjectType {
 	case tableObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropTable
 		objectIdents := make([]ast.Ident, len(objects))
 		fkCheck := ctx.GetSessionVars().ForeignKeyChecks
-		jobArgs = []interface{}{objectIdents, fkCheck}
+		jobArgs = []any{objectIdents, fkCheck}
 		for i, tn := range objects {
 			objectIdents[i] = ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		}
@@ -6714,14 +6861,15 @@ func (d *ddl) dropTableObject(
 		}
 
 		job := &model.Job{
-			SchemaID:    schema.ID,
-			TableID:     tableInfo.Meta().ID,
-			SchemaName:  schema.Name.L,
-			SchemaState: schema.State,
-			TableName:   tableInfo.Meta().Name.L,
-			Type:        jobType,
-			BinlogInfo:  &model.HistoryInfo{},
-			Args:        jobArgs,
+			SchemaID:       schema.ID,
+			TableID:        tableInfo.Meta().ID,
+			SchemaName:     schema.Name.L,
+			SchemaState:    schema.State,
+			TableName:      tableInfo.Meta().Name.L,
+			Type:           jobType,
+			BinlogInfo:     &model.HistoryInfo{},
+			Args:           jobArgs,
+			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		}
 
 		err = d.DoDDLJob(ctx, job)
@@ -6794,13 +6942,14 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	newTableID := genIDs[0]
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionTruncateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newTableID, fkCheck, genIDs[1:]},
+		SchemaID:       schema.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionTruncateTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{newTableID, fkCheck, genIDs[1:]},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
@@ -6867,14 +7016,15 @@ func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	}
 
 	job := &model.Job{
-		SchemaID:   schemas[1].ID,
-		TableID:    tableID,
-		SchemaName: schemas[1].Name.L,
-		TableName:  oldIdent.Name.L,
-		Type:       model.ActionRenameTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{schemas[0].ID, newIdent.Name, schemas[0].Name},
-		CtxVars:    []interface{}{[]int64{schemas[0].ID, schemas[1].ID}, []int64{tableID}},
+		SchemaID:       schemas[1].ID,
+		TableID:        tableID,
+		SchemaName:     schemas[1].Name.L,
+		TableName:      oldIdent.Name.L,
+		Type:           model.ActionRenameTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{schemas[0].ID, newIdent.Name, schemas[0].Name},
+		CtxVars:        []any{[]int64{schemas[0].ID, schemas[1].ID}, []int64{tableID}},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: schemas[0].Name.L, Table: oldIdent.Name.L},
 			{Database: schemas[1].Name.L, Table: newIdent.Name.L},
@@ -6932,8 +7082,9 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		SchemaName:          schemas[1].Name.L,
 		Type:                model.ActionRenameTables,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
-		CtxVars:             []interface{}{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		Args:                []any{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
+		CtxVars:             []any{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
 		InvolvingSchemaInfo: involveSchemaInfo,
 	}
 
@@ -6968,7 +7119,7 @@ func ExtractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		return nil, 0, nil
 	}
 	//View can be renamed only in the same schema. Compatible with mysql
-	if is.TableIsView(oldIdent.Schema, oldIdent.Name) {
+	if infoschema.TableIsView(is, oldIdent.Schema, oldIdent.Name) {
 		if oldIdent.Schema != newIdent.Schema {
 			return nil, 0, infoschema.ErrForbidSchemaChange.GenWithStackByArgs(oldIdent.Schema, newIdent.Schema)
 		}
@@ -7120,15 +7271,16 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionAddPrimaryKey,
-		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  nil,
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionAddPrimaryKey,
+		BinlogInfo:     &model.HistoryInfo{},
+		ReorgMeta:      nil,
+		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
+		Priority:       ctx.GetSessionVars().DDLReorgPriority,
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -7195,7 +7347,10 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		expr, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, idxPart.Expr, true)
+		expr, err := expression.BuildSimpleExpr(ctx, idxPart.Expr,
+			expression.WithTableInfo(ctx.GetSessionVars().CurrentDB, tblInfo),
+			expression.WithAllowCastArray(true),
+		)
 		if err != nil {
 			// TODO: refine the error message.
 			return nil, err
@@ -7375,17 +7530,18 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  nil,
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
-		Charset:    chs,
-		Collate:    coll,
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionAddIndex,
+		BinlogInfo:     &model.HistoryInfo{},
+		ReorgMeta:      nil,
+		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Priority:       ctx.GetSessionVars().DDLReorgPriority,
+		Charset:        chs,
+		Collate:        coll,
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -7574,13 +7730,14 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionAddForeignKey,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{fkInfo, fkCheck},
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionAddForeignKey,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{fkInfo, fkCheck},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7601,14 +7758,15 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	}
 
 	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     t.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: model.StatePublic,
-		TableName:   t.Meta().Name.L,
-		Type:        model.ActionDropForeignKey,
-		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{fkName},
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		SchemaState:    model.StatePublic,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionDropForeignKey,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{fkName},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7692,14 +7850,15 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     t.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: indexInfo.State,
-		TableName:   t.Meta().Name.L,
-		Type:        jobTp,
-		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{indexName, ifExists},
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		SchemaState:    indexInfo.State,
+		TableName:      t.Meta().Name.L,
+		Type:           jobTp,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{indexName, ifExists},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7772,7 +7931,7 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 	}
 	if len(*comment) > maxLen {
 		err := errTooLongComment.GenWithStackByArgs(name, maxLen)
-		if vars.StrictSQLMode {
+		if vars.SQLMode.HasStrictMode() {
 			// may be treated like an error.
 			return "", err
 		}
@@ -7885,7 +8044,7 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 			continue
 		}
 		colType := colTypes[i]
-		val, err := expression.EvalAstExpr(ctx, colExpr)
+		val, err := expression.EvalSimpleAst(ctx, colExpr)
 		if err != nil {
 			return nil, err
 		}
@@ -7976,11 +8135,12 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		SessionInfo:  sessionInfo,
 	}
 	job := &model.Job{
-		SchemaID:   lockTables[0].SchemaID,
-		TableID:    lockTables[0].TableID,
-		Type:       model.ActionLockTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{arg},
+		SchemaID:       lockTables[0].SchemaID,
+		TableID:        lockTables[0].TableID,
+		Type:           model.ActionLockTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{arg},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 
 		InvolvingSchemaInfo: involveSchemaInfo,
 	}
@@ -8008,11 +8168,12 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 		},
 	}
 	job := &model.Job{
-		SchemaID:   unlockTables[0].SchemaID,
-		TableID:    unlockTables[0].TableID,
-		Type:       model.ActionUnlockTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{arg},
+		SchemaID:       unlockTables[0].SchemaID,
+		TableID:        unlockTables[0].TableID,
+		Type:           model.ActionUnlockTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{arg},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err := d.DoDDLJob(ctx, job)
@@ -8037,7 +8198,7 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 		TableID:    unlockTables[0].TableID,
 		Type:       model.ActionUnlockTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{arg},
+		Args:       []any{arg},
 	}
 
 	ctx, err := d.sessPool.Get()
@@ -8100,11 +8261,12 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		IsCleanup:    true,
 	}
 	job := &model.Job{
-		SchemaID:   cleanupTables[0].SchemaID,
-		TableID:    cleanupTables[0].TableID,
-		Type:       model.ActionUnlockTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{arg},
+		SchemaID:       cleanupTables[0].SchemaID,
+		TableID:        cleanupTables[0].TableID,
+		Type:           model.ActionUnlockTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{arg},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err := d.DoDDLJob(ctx, job)
 	if err == nil {
@@ -8186,13 +8348,14 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStm
 	newTableInfo.State = model.StateNone
 
 	job := &model.Job{
-		SchemaID:   oldDBInfo.ID,
-		TableID:    newTableInfo.ID,
-		SchemaName: oldDBInfo.Name.L,
-		TableName:  newTableInfo.Name.L,
-		Type:       model.ActionRepairTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newTableInfo},
+		SchemaID:       oldDBInfo.ID,
+		TableID:        newTableInfo.ID,
+		SchemaName:     oldDBInfo.Name.L,
+		TableName:      newTableInfo.Name.L,
+		Type:           model.ActionRepairTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{newTableInfo},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
 	if err == nil {
@@ -8265,13 +8428,14 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 	}
 
 	job := &model.Job{
-		SchemaID:   db.ID,
-		TableID:    tbl.Meta().ID,
-		SchemaName: db.Name.L,
-		TableName:  tbl.Meta().Name.L,
-		Type:       model.ActionAlterSequence,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{ident, stmt.SeqOptions},
+		SchemaID:       db.ID,
+		TableID:        tbl.Meta().ID,
+		SchemaName:     db.Name.L,
+		TableName:      tbl.Meta().Name.L,
+		Type:           model.ActionAlterSequence,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{ident, stmt.SeqOptions},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8303,13 +8467,14 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
-		Type:       model.ActionAlterIndexVisibility,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexName, invisible},
+		SchemaID:       schema.ID,
+		TableID:        tb.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tb.Meta().Name.L,
+		Type:           model.ActionAlterIndexVisibility,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{indexName, invisible},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8333,13 +8498,14 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  meta.Name.L,
-		Type:       model.ActionAlterTableAttributes,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{rule},
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      meta.Name.L,
+		Type:           model.ActionAlterTableAttributes,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{rule},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8375,13 +8541,14 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		TableName:  meta.Name.L,
-		Type:       model.ActionAlterTablePartitionAttributes,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partitionID, rule},
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      meta.Name.L,
+		Type:           model.ActionAlterTablePartitionAttributes,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{partitionID, rule},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8444,13 +8611,14 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tblInfo.Name.L,
-		Type:       model.ActionAlterTablePartitionPlacement,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partitionID, policyRefInfo},
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionAlterTablePartitionPlacement,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{partitionID, policyRefInfo},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8607,10 +8775,11 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 	groupInfo.ID = groupIDs[0]
 
 	job := &model.Job{
-		SchemaName: groupName.L,
-		Type:       model.ActionCreateResourceGroup,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{groupInfo, false},
+		SchemaName:     groupName.L,
+		Type:           model.ActionCreateResourceGroup,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{groupInfo, false},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
@@ -8656,11 +8825,12 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 	}
 
 	job := &model.Job{
-		SchemaID:   group.ID,
-		SchemaName: group.Name.L,
-		Type:       model.ActionDropResourceGroup,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{groupName},
+		SchemaID:       group.ID,
+		SchemaName:     group.Name.L,
+		Type:           model.ActionDropResourceGroup,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{groupName},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
@@ -8712,11 +8882,12 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 	logutil.BgLogger().Debug("alter resource group", zap.String("name", groupName.L), zap.Stringer("new resource group settings", newGroupInfo.ResourceGroupSettings))
 
 	job := &model.Job{
-		SchemaID:   newGroupInfo.ID,
-		SchemaName: newGroupInfo.Name.L,
-		Type:       model.ActionAlterResourceGroup,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newGroupInfo},
+		SchemaID:       newGroupInfo.ID,
+		SchemaName:     newGroupInfo.Name.L,
+		Type:           model.ActionAlterResourceGroup,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{newGroupInfo},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
@@ -8776,11 +8947,12 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 	}
 
 	job := &model.Job{
-		SchemaID:   policy.ID,
-		SchemaName: policy.Name.L,
-		Type:       model.ActionDropPlacementPolicy,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{policyName},
+		SchemaID:       policy.ID,
+		SchemaName:     policy.Name.L,
+		Type:           model.ActionDropPlacementPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{policyName},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
@@ -8814,11 +8986,12 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 	}
 
 	job := &model.Job{
-		SchemaID:   policy.ID,
-		SchemaName: policy.Name.L,
-		Type:       model.ActionAlterPlacementPolicy,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newPolicyInfo},
+		SchemaID:       policy.ID,
+		SchemaName:     policy.Name.L,
+		Type:           model.ActionAlterPlacementPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{newPolicyInfo},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
@@ -8872,13 +9045,14 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 	sctx.SetValue(sessionctx.QueryString, ddlQuery)
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		TableID:    t.Meta().ID,
-		Type:       model.ActionAlterCacheTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{},
+		SchemaID:       schema.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		TableID:        t.Meta().ID,
+		Type:           model.ActionAlterCacheTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(sctx, job)
@@ -8889,7 +9063,7 @@ func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
 	const cacheTableSizeLimit = 64 * (1 << 20) // 64M
 	succ := true
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		txn.SetOption(kv.RequestSourceType, kv.InternalTxnCacheTable)
 		prefix := tablecodec.GenTablePrefix(tableID)
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
@@ -8931,13 +9105,14 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		TableID:    t.Meta().ID,
-		Type:       model.ActionAlterNoCacheTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{},
+		SchemaID:       schema.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		TableID:        t.Meta().ID,
+		Type:           model.ActionAlterNoCacheTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		Args:           []any{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -9021,14 +9196,15 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 		return err
 	}
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tblInfo.Name.L,
-		Type:       model.ActionAddCheckConstraint,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{constraintInfo},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionAddCheckConstraint,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{constraintInfo},
+		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -9054,13 +9230,14 @@ func (d *ddl) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrNa
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tblInfo.Name.L,
-		Type:       model.ActionDropCheckConstraint,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{constrName},
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionDropCheckConstraint,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{constrName},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -9086,13 +9263,14 @@ func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrN
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tblInfo.Name.L,
-		Type:       model.ActionAlterCheckConstraint,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{constrName, enforced},
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionAlterCheckConstraint,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		Args:           []any{constrName, enforced},
 	}
 
 	err = d.DoDDLJob(ctx, job)

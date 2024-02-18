@@ -83,6 +83,8 @@ const (
 	defaultIndexConcurrency           = 2
 	DefaultRegionCheckBackoffLimit    = 1800
 	DefaultRegionSplitBatchSize       = 4096
+	defaultLogicalImportBatchSize     = 96 * units.KiB
+	defaultLogicalImportBatchRows     = 65536
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
@@ -100,6 +102,7 @@ const (
 
 	DefaultEngineMemCacheSize      = 512 * units.MiB
 	DefaultLocalWriterMemCacheSize = 128 * units.MiB
+	DefaultBlockSize               = 16 * units.KiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
@@ -187,7 +190,7 @@ func (d *DBStore) adjust(
 		if d.Security.TLSConfig == nil {
 			/* #nosec G402 */
 			d.Security.TLSConfig = &tls.Config{
-				MinVersion:         tls.VersionTLS10,
+				MinVersion:         tls.VersionTLS12,
 				InsecureSkipVerify: true,
 				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 			}
@@ -215,8 +218,18 @@ func (d *DBStore) adjust(
 			d.Port = int(settings.Port)
 		}
 		if len(d.PdAddr) == 0 {
+			// verify that it is not a empty string
 			pdAddrs := strings.Split(settings.Path, ",")
-			d.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
+			for _, ip := range pdAddrs {
+				ipPort := strings.Split(ip, ":")
+				if len(ipPort[0]) == 0 {
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
+				}
+				if len(ipPort[1]) == 0 || ipPort[1] == "0" {
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
+				}
+			}
+			d.PdAddr = settings.Path
 		}
 	}
 
@@ -341,7 +354,7 @@ const (
 )
 
 // UnmarshalTOML implements toml.Unmarshaler interface.
-func (t *PostOpLevel) UnmarshalTOML(v interface{}) error {
+func (t *PostOpLevel) UnmarshalTOML(v any) error {
 	switch val := v.(type) {
 	case bool:
 		if val {
@@ -415,7 +428,7 @@ const (
 )
 
 // UnmarshalTOML implements toml.Unmarshaler interface.
-func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
+func (t *CheckpointKeepStrategy) UnmarshalTOML(v any) error {
 	switch val := v.(type) {
 	case bool:
 		if val {
@@ -511,7 +524,7 @@ type MaxError struct {
 }
 
 // UnmarshalTOML implements toml.Unmarshaler interface.
-func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
+func (cfg *MaxError) UnmarshalTOML(v any) error {
 	defaultValMap := map[string]int64{
 		"syntax":  0,
 		"charset": math.MaxInt64,
@@ -529,9 +542,9 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 			cfg.Type.Store(val)
 		}
 		return nil
-	case map[string]interface{}:
+	case map[string]any:
 		// support stuff like `max-error = { charset = 1000, type = 1000 }`.
-		getVal := func(k string, v interface{}) int64 {
+		getVal := func(k string, v any) int64 {
 			defaultVal, ok := defaultValMap[k]
 			if !ok {
 				return 0
@@ -606,7 +619,7 @@ const (
 )
 
 // UnmarshalTOML implements the toml.Unmarshaler interface.
-func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
+func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v any) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
 	}
@@ -672,7 +685,7 @@ const (
 )
 
 // UnmarshalTOML implements toml.Unmarshaler.
-func (t *CompressionType) UnmarshalTOML(v interface{}) error {
+func (t *CompressionType) UnmarshalTOML(v any) error {
 	if val, ok := v.(string); ok {
 		return t.FromStringValue(val)
 	}
@@ -745,11 +758,11 @@ func (p *PostRestore) adjust(i *TikvImporter) {
 type StringOrStringSlice []string
 
 // UnmarshalTOML implements the toml.Unmarshaler interface.
-func (s *StringOrStringSlice) UnmarshalTOML(in interface{}) error {
+func (s *StringOrStringSlice) UnmarshalTOML(in any) error {
 	switch v := in.(type) {
 	case string:
 		*s = []string{v}
-	case []interface{}:
+	case []any:
 		*s = make([]string, 0, len(v))
 		for _, vv := range v {
 			vs, ok := vv.(string)
@@ -1068,8 +1081,12 @@ type TikvImporter struct {
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
+	LogicalImportBatchSize  ByteSize `toml:"logical-import-batch-size" json:"logical-import-batch-size"`
+	LogicalImportBatchRows  int      `toml:"logical-import-batch-rows" json:"logical-import-batch-rows"`
+
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
+	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1083,6 +1100,16 @@ func (t *TikvImporter) adjust() error {
 	}
 	switch t.Backend {
 	case BackendTiDB:
+		if t.LogicalImportBatchSize <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.logical-import-batch-size` got %d, should be larger than 0",
+				t.LogicalImportBatchSize)
+		}
+		if t.LogicalImportBatchRows <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
+				t.LogicalImportBatchRows)
+		}
 		t.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
@@ -1103,6 +1130,9 @@ func (t *TikvImporter) adjust() error {
 		}
 		if t.LocalWriterMemCacheSize == 0 {
 			t.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
+		}
+		if t.BlockSize == 0 {
+			t.BlockSize = DefaultBlockSize
 		}
 
 		if t.ParallelImport && t.AddIndexBySQL {
@@ -1336,9 +1366,9 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
 	if c.Strategy != "" {
-		if i.ParallelImport {
+		if i.ParallelImport && i.Backend == BackendLocal {
 			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.parallel-import",
+				`%s cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`,
 				strategyConfigFrom)
 		}
 		if i.DuplicateResolution != DupeResAlgNone {
@@ -1457,6 +1487,9 @@ func NewConfig() *Config {
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
+			BlockSize:               16 * 1024,
+			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
+			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

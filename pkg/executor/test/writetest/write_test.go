@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -236,8 +237,9 @@ func TestIssue18681(t *testing.T) {
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 
 	sc := ctx.GetSessionVars().StmtCtx
 	oldTypeFlags := sc.TypeFlags()
@@ -323,11 +325,6 @@ func TestLatch(t *testing.T) {
 	tk1.MustExec("update t set id = id + 1")
 	tk2.MustExec("update t set id = id + 1")
 	tk1.MustGetDBError("commit", kv.ErrWriteConflictInTiDB)
-
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("update t set id = id + 1")
-	tk2.MustExec("update t set id = id + 1")
-	tk1.MustExec("commit")
 }
 
 func TestReplaceLog(t *testing.T) {

@@ -22,8 +22,7 @@ import (
 // Using 1 readAllData and 1 writer.
 func MergeOverlappingFilesV2(
 	ctx context.Context,
-	dataFiles []string,
-	statFiles []string,
+	multiFileStat []MultipleFilesStat,
 	store storage.ExternalStorage,
 	startKey []byte,
 	endKey []byte,
@@ -38,9 +37,12 @@ func MergeOverlappingFilesV2(
 	concurrency int,
 	checkHotspot bool,
 ) (err error) {
+	fileCnt := 0
+	for _, m := range multiFileStat {
+		fileCnt += len(m.Filenames)
+	}
 	task := log.BeginTask(logutil.Logger(ctx).With(
-		zap.Int("data-file-count", len(dataFiles)),
-		zap.Int("stat-file-count", len(statFiles)),
+		zap.Int("file-count", fileCnt),
 		zap.Binary("start-key", startKey),
 		zap.Binary("end-key", endKey),
 		zap.String("new-file-prefix", newFilePrefix),
@@ -57,8 +59,7 @@ func MergeOverlappingFilesV2(
 
 	splitter, err := NewRangeSplitter(
 		ctx,
-		dataFiles,
-		statFiles,
+		multiFileStat,
 		store,
 		int64(rangesGroupSize),
 		math.MaxInt64,
@@ -76,10 +77,7 @@ func MergeOverlappingFilesV2(
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
-		BuildOneFile(
-			store,
-			newFilePrefix,
-			writerID)
+		BuildOneFile(store, newFilePrefix, writerID)
 	defer func() {
 		err = splitter.Close()
 		if err != nil {
@@ -101,7 +99,6 @@ func MergeOverlappingFilesV2(
 	loaded := &memKVsAndBuffers{}
 	curStart := kv.Key(startKey).Clone()
 	var curEnd kv.Key
-	var maxKey, minKey kv.Key
 
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err1 := splitter.SplitOneRangesGroup()
@@ -122,12 +119,14 @@ func MergeOverlappingFilesV2(
 			curStart,
 			curEnd,
 			bufPool,
+			bufPool,
 			loaded,
 		)
 		if err1 != nil {
 			logutil.Logger(ctx).Warn("read all data failed", zap.Error(err1))
 			return
 		}
+		loaded.build(ctx)
 		readTime := time.Since(now)
 		now = time.Now()
 		sorty.MaxGor = uint64(concurrency)
@@ -157,10 +156,6 @@ func MergeOverlappingFilesV2(
 			zap.Duration("write time", writeTime),
 			zap.Int("key len", len(loaded.keys)))
 
-		if len(minKey) == 0 {
-			minKey = kv.Key(loaded.keys[0]).Clone()
-		}
-		maxKey = kv.Key(loaded.keys[len(loaded.keys)-1]).Clone()
 		curStart = curEnd.Clone()
 		loaded.keys = nil
 		loaded.values = nil
@@ -169,22 +164,6 @@ func MergeOverlappingFilesV2(
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
-	}
-
-	var stat MultipleFilesStat
-	stat.Filenames = append(stat.Filenames,
-		[2]string{writer.dataFile, writer.statFile})
-
-	stat.build([]kv.Key{minKey}, []kv.Key{curEnd})
-	if onClose != nil {
-		onClose(&WriterSummary{
-			WriterID:           writer.writerID,
-			Seq:                0,
-			Min:                minKey,
-			Max:                maxKey,
-			TotalSize:          writer.totalSize,
-			MultipleFilesStats: []MultipleFilesStat{stat},
-		})
 	}
 	return
 }

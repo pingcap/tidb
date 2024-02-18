@@ -180,7 +180,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(ctx context.C
 // Drawbacks: If the data has been changed since the ts we used, we need to retry.
 // One exception is insert operation, when it has no select plan, we do not fetch the latest ts immediately. We only update ts
 // if write conflict is incurred.
-func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
+func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val any) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}

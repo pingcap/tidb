@@ -17,13 +17,14 @@ package table
 import (
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -130,18 +131,20 @@ func TestHandleBadNull(t *testing.T) {
 	col := newCol("a")
 	sc := stmtctx.NewStmtCtx()
 	d := types.Datum{}
-	err := col.HandleBadNull(&d, sc, 0)
+	err := col.HandleBadNull(sc.ErrCtx(), &d, 0)
 	require.NoError(t, err)
 	cmp, err := d.Compare(sc.TypeCtx(), &types.Datum{}, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
 	col.AddFlag(mysql.NotNullFlag)
-	err = col.HandleBadNull(&types.Datum{}, sc, 0)
+	err = col.HandleBadNull(sc.ErrCtx(), &types.Datum{}, 0)
 	require.Error(t, err)
 
-	sc.BadNullAsWarning = true
-	err = col.HandleBadNull(&types.Datum{}, sc, 0)
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	sc.SetErrLevels(levels)
+	err = col.HandleBadNull(sc.ErrCtx(), &types.Datum{}, 0)
 	require.NoError(t, err)
 }
 
@@ -333,8 +336,14 @@ func TestGetDefaultValue(t *testing.T) {
 	var nilDt types.Datum
 	nilDt.SetNull()
 	ctx := mock.NewContext()
+	tz, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	ctx.ResetSessionAndStmtTimeZone(tz)
 	zeroTimestamp := types.ZeroTimestamp
 	timestampValue := types.NewTime(types.FromDate(2019, 5, 6, 12, 48, 49, 0), mysql.TypeTimestamp, types.DefaultFsp)
+	timestampValueUTC := types.NewTime(timestampValue.CoreTime(), timestampValue.Type(), timestampValue.Fsp())
+	err = timestampValueUTC.ConvertTimeZone(tz, time.UTC)
+	require.NoError(t, err)
 
 	tp0 := types.FieldType{}
 	tp0.SetType(mysql.TypeLonglong)
@@ -410,8 +419,9 @@ func TestGetDefaultValue(t *testing.T) {
 		{
 			&model.ColumnInfo{
 				FieldType:          tp3,
-				OriginDefaultValue: timestampValue.String(),
-				DefaultValue:       timestampValue.String(),
+				OriginDefaultValue: timestampValueUTC.String(),
+				DefaultValue:       timestampValueUTC.String(),
+				Version:            model.ColumnInfoVersion2,
 			},
 			true,
 			types.NewDatum(timestampValue),
@@ -455,16 +465,27 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 	}
 
-	exp := expression.EvalAstExpr
-	expression.EvalAstExpr = func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+	exp := expression.EvalSimpleAst
+	expression.EvalSimpleAst = func(sctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
 		return types.NewIntDatum(1), nil
 	}
 	defer func() {
-		expression.EvalAstExpr = exp
+		expression.EvalSimpleAst = exp
 	}()
 
+	defaultMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+	require.True(t, defaultMode.HasStrictMode())
 	for _, tt := range tests {
-		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
+		sc := ctx.GetSessionVars().StmtCtx
+		if tt.strict {
+			ctx.GetSessionVars().SQLMode = defaultMode
+		} else {
+			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
+		}
+		levels := sc.ErrLevels()
+		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
+		sc.SetErrLevels(levels)
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			require.Errorf(t, tt.err, "%v", err)
@@ -478,7 +499,15 @@ func TestGetDefaultValue(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
+		sc := ctx.GetSessionVars().StmtCtx
+		if tt.strict {
+			ctx.GetSessionVars().SQLMode = defaultMode
+		} else {
+			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
+		}
+		levels := sc.ErrLevels()
+		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
+		sc.SetErrLevels(levels)
 		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			require.Errorf(t, tt.err, "%v", err)

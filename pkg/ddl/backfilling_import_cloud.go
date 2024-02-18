@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -30,6 +31,7 @@ import (
 )
 
 type cloudImportExecutor struct {
+	taskexecutor.EmptyStepExecutor
 	job           *model.Job
 	jobID         int64
 	index         *model.IndexInfo
@@ -105,10 +107,5 @@ func (*cloudImportExecutor) Cleanup(ctx context.Context) error {
 
 func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor finish subtask")
-	return nil
-}
-
-func (*cloudImportExecutor) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("cloud import executor rollback subtask")
 	return nil
 }

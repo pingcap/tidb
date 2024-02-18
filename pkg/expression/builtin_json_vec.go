@@ -241,9 +241,9 @@ func (b *builtinJSONArraySig) vectorized() bool {
 
 func (b *builtinJSONArraySig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
-	jsons := make([][]interface{}, nr)
+	jsons := make([][]any, nr)
 	for i := 0; i < nr; i++ {
-		jsons[i] = make([]interface{}, 0, len(b.args))
+		jsons[i] = make([]any, 0, len(b.args))
 	}
 	for _, arg := range b.args {
 		j, err := b.bufAllocator.get()
@@ -607,9 +607,9 @@ func (b *builtinJSONObjectSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 		return err
 	}
 
-	jsons := make([]map[string]interface{}, nr)
+	jsons := make([]map[string]any, nr)
 	for i := 0; i < nr; i++ {
-		jsons[i] = make(map[string]interface{}, len(b.args)>>1)
+		jsons[i] = make(map[string]any, len(b.args)>>1)
 	}
 
 	argBuffers := make([]*chunk.Column, len(b.args))
@@ -814,6 +814,9 @@ func (b *builtinJSONLengthSig) vectorized() bool {
 func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
 
+	result.ResizeInt64(nr, false)
+	resI64s := result.Int64s()
+
 	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -822,8 +825,7 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	if err := b.args[0].VecEvalJSON(ctx, input, jsonBuf); err != nil {
 		return err
 	}
-	result.ResizeInt64(nr, false)
-	resI64s := result.Int64s()
+	result.MergeNulls(jsonBuf)
 
 	if len(b.args) == 2 {
 		pathBuf, err := b.bufAllocator.get()
@@ -834,21 +836,10 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 		if err := b.args[1].VecEvalString(ctx, input, pathBuf); err != nil {
 			return err
 		}
+		result.MergeNulls(pathBuf)
 
-		result.MergeNulls(jsonBuf)
 		for i := 0; i < nr; i++ {
 			if result.IsNull(i) {
-				continue
-			}
-			jsonItem := jsonBuf.GetJSON(i)
-
-			if jsonItem.TypeCode != types.JSONTypeCodeObject && jsonItem.TypeCode != types.JSONTypeCodeArray {
-				resI64s[i] = 1
-				continue
-			}
-
-			if pathBuf.IsNull(i) {
-				result.SetNull(i, true)
 				continue
 			}
 
@@ -860,6 +851,7 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 				return types.ErrInvalidJSONPathMultipleSelection
 			}
 
+			jsonItem := jsonBuf.GetJSON(i)
 			obj, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})
 			if !exists {
 				result.SetNull(i, true)
@@ -872,7 +864,6 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 			resI64s[i] = int64(obj.GetElemCount())
 		}
 	} else {
-		result.MergeNulls(jsonBuf)
 		for i := 0; i < nr; i++ {
 			if result.IsNull(i) {
 				continue
@@ -1103,7 +1094,8 @@ func (b *builtinJSONMergeSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 			if result.IsNull(i) {
 				continue
 			}
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE"))
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE"))
 		}
 	}
 

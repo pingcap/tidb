@@ -1012,3 +1012,27 @@ select * from test1 where partition_no >= 200000;
 drop database issue43459;
 
 
+# TestIssue50082
+use planner__core__partition_pruner;
+drop table if exists t;
+create table t(a bigint unsigned)
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (5086706),
+ PARTITION `p1` VALUES LESS THAN (7268292),
+ PARTITION `p2` VALUES LESS THAN (16545422),
+ PARTITION `p3` VALUES LESS THAN (9223372036854775810));
+desc select * from t where a BETWEEN -6895222 AND 3125507;
+desc select * from t where a > 9223372036854775808;
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
+
+drop table if exists t;
+create table t(a bigint)
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (5086706),
+ PARTITION `p1` VALUES LESS THAN (7268292),
+ PARTITION `p2` VALUES LESS THAN (16545422),
+ PARTITION `p3` VALUES LESS THAN (9223372036854775807));
+desc select * from t where a BETWEEN -6895222 AND 3125507;
+desc select * from t where a > 9223372036854775808;
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
+

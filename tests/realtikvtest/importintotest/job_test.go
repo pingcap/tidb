@@ -35,14 +35,14 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/tikv/client-go/v2/util"
 )
 
-func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []interface{}) {
+func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []any) {
 	s.Equal(strconv.Itoa(int(jobInfo.ID)), row[0])
 
 	urlExpected, err := url.Parse(jobInfo.Parameters.FileLocation)
@@ -148,7 +148,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Equal(result2, rows)
 
 	// show import jobs with root
-	checkJobsMatch := func(rows [][]interface{}) {
+	checkJobsMatch := func(rows [][]any) {
 		s.GreaterOrEqual(len(rows), 2) // other cases may create import jobs
 		var matched int
 		for _, r := range rows {
@@ -449,7 +449,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel a job created by test_cancel_job1 using test_cancel_job2, should fail
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
-	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), core.ErrSpecificAccessDenied)
+	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), plannererrors.ErrSpecificAccessDenied)
 	// cancel by root, should pass privilege check
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
@@ -459,7 +459,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitCtxDone", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone", "return(true)")
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
 	s.Len(result2, 1)
@@ -508,12 +508,12 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.Require().Eventually(func() bool {
 		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		subtasks, err2 := taskManager.GetSubtasksForImportInto(ctx, task2.ID, importinto.StepPostProcess)
+		subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task2.ID, proto.ImportStepPostProcess)
 		s.NoError(err2)
-		s.Len(subtasks, 2) // framework will generate a subtask when canceling
+		s.Len(subtasks, 1)
 		var cancelled bool
 		for _, st := range subtasks {
-			if st.State == proto.TaskStateCanceled {
+			if st.State == proto.SubtaskStateCanceled {
 				cancelled = true
 				break
 			}
@@ -523,7 +523,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel a pending job created by test_cancel_job2 using root
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess"))
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitCtxDone"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone"))
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustExec("truncate table t2")
@@ -595,13 +595,13 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		SourceFileSize: 3,
 		Status:         "failed",
 		Step:           importer.JobStepValidating,
-		ErrorMessage:   "injected error after StepImport",
+		ErrorMessage:   "injected error after ImportStepImport",
 	}
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchPostProcessSubtask", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	err = s.tk.QueryToErr(fmt.Sprintf(`import into t1 FROM 'gs://fail_job_after_import/t.csv?endpoint=%s'`, gcsEndpoint))
-	s.ErrorContains(err, "injected error after StepImport")
+	s.ErrorContains(err, "injected error after ImportStepImport")
 	result1 := s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 	s.Len(result1, 1)
 	jobID1, err := strconv.Atoi(result1[0][0].(string))

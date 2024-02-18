@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "refresher",
+    srcs = ["refresher.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "refresher_test",
+    timeout = "short",
+    srcs = ["refresher_test.go"],
+    embed = [":refresher"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

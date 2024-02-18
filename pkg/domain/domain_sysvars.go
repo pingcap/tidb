@@ -69,10 +69,19 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) {
 			break
 		}
 		variable.EnableTSOFollowerProxy.Store(val)
+	case variable.PDEnableFollowerHandleRegion:
+		val := variable.TiDBOptOn(sVal)
+		// Note: EnableFollowerHandle is only used for region API now.
+		// If pd support more APIs in follower, the pd option may be changed.
+		err := do.updatePDClient(pd.EnableFollowerHandle, val)
+		if err != nil {
+			break
+		}
+		variable.EnablePDFollowerHandleRegion.Store(val)
 	}
 }
 
-func (do *Domain) setGlobalResourceControl(enable bool) {
+func (*Domain) setGlobalResourceControl(enable bool) {
 	if enable {
 		variable.EnableGlobalResourceControlFunc()
 	} else {
@@ -81,7 +90,7 @@ func (do *Domain) setGlobalResourceControl(enable bool) {
 }
 
 // updatePDClient is used to set the dynamic option into the PD client.
-func (do *Domain) updatePDClient(option pd.DynamicOption, val interface{}) error {
+func (do *Domain) updatePDClient(option pd.DynamicOption, val any) error {
 	store, ok := do.store.(interface{ GetPDClient() pd.Client })
 	if !ok {
 		return nil

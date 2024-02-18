@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -127,7 +128,7 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *h.TableHintInfo
+	hintInfo            *h.PlanHints
 	preferJoinType      uint
 	preferJoinOrder     bool
 	leftPreferJoinType  uint
@@ -728,7 +729,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 				}
 			}
 			if !find {
-				return nil, ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
+				return nil, plannererrors.ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
 			}
 		}
 	}
@@ -916,8 +917,9 @@ type LogicalAggregation struct {
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 
-	// aggHints stores aggregation hint information.
-	aggHints h.AggHintInfo
+	// PreferAggType And PreferAggToCop stores aggregation hint information.
+	PreferAggType  uint
+	PreferAggToCop bool
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -1077,7 +1079,8 @@ func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
 	// partialAgg (in cascades planner) should share the same hint, instead
 	// of a copy.
-	la.aggHints = agg.aggHints
+	la.PreferAggType = agg.PreferAggType
+	la.PreferAggToCop = agg.PreferAggToCop
 }
 
 // IsPartialModeAgg returns if all of the AggFuncs are partialMode.
@@ -1187,7 +1190,7 @@ func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) intset.FastIntSet {
+func extractConstantCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) intset.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -1214,7 +1217,7 @@ func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Con
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]intset.FastIntSet {
+func extractEquivalenceCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) [][]intset.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]intset.FastIntSet, 0, len(equivObjsPair))
@@ -1407,12 +1410,17 @@ type LogicalUnionScan struct {
 	handleCols HandleCols
 }
 
+// GetAllConds Exported for unit test.
+func (ds *DataSource) GetAllConds() []expression.Expression {
+	return ds.allConds
+}
+
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
-	IndexHints    []h.IndexHintInfo
+	IndexHints    []h.HintedIndex
 	table         table.Table
 	tableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
@@ -1420,7 +1428,7 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []h.IndexHintInfo
+	indexMergeHints []h.HintedIndex
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -1608,12 +1616,17 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	return gathers
 }
 
-func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, conds []expression.Expression) error {
+func detachCondAndBuildRangeForPath(
+	sctx PlanContext,
+	path *util.AccessPath,
+	conds []expression.Expression,
+	histColl *statistics.HistColl,
+) error {
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
 		return nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx(), conds, path.IdxCols, path.IdxColLens, ds.SCtx().GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return err
 	}
@@ -1629,7 +1642,7 @@ func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, cond
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(ds.SCtx(), ds.tableStats.HistColl, path.Index.ID, path.Ranges)
+	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
 	return err
 }
 
@@ -1641,7 +1654,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	if len(conds) == 0 {
 		return nil
 	}
-	if err := ds.detachCondAndBuildRangeForPath(path, conds); err != nil {
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.tableStats.HistColl); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
@@ -1786,7 +1799,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			}
 		}
 	}
-	err := ds.detachCondAndBuildRangeForPath(path, conds)
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.tableStats.HistColl)
 	return err
 }
 
@@ -1907,10 +1920,10 @@ type LogicalTopN struct {
 
 	ByItems []*util.ByItems
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  h.LimitHintInfo
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -1936,11 +1949,11 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  h.LimitHintInfo
-	IsPartial   bool
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
+	IsPartial        bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -2077,7 +2090,7 @@ func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualPartitionBy(newWindow *LogicalWindow) bool {
 	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
 		return false
 	}
@@ -2094,7 +2107,7 @@ func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *Logica
 }
 
 // EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
-func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualOrderBy(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
 	if len(p.OrderBy) != len(newWindow.OrderBy) {
 		return false
 	}
@@ -2108,7 +2121,7 @@ func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalW
 }
 
 // EqualFrame checks whether two LogicalWindow.Frames are equal.
-func (p *LogicalWindow) EqualFrame(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualFrame(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
 	if (p.Frame == nil && newWindow.Frame != nil) ||
 		(p.Frame != nil && newWindow.Frame == nil) {
 		return false

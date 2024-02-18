@@ -26,25 +26,24 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
-func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
+func rewriteSimpleExpr(ctx expression.BuildContext, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	if str == "" {
 		return nil, nil
 	}
-	filters, err := expression.ParseSimpleExprsWithNames(ctx, str, schema, names)
+	filter, err := expression.ParseSimpleExpr(ctx, str, expression.WithInputSchemaAndNames(schema, names, nil))
 	if err != nil {
 		return nil, err
 	}
-	if sf, ok := filters[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
-		filters = expression.FlattenCNFConditions(sf)
+	if sf, ok := filter.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+		return expression.FlattenCNFConditions(sf), nil
 	}
-	return filters, nil
+	return []expression.Expression{filter}, nil
 }
 
 type indexJoinContext struct {
@@ -182,7 +181,7 @@ type indexJoinTestCase struct {
 	compareFilters string
 }
 
-func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...interface{}) *indexJoinBuildHelper {
+func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...any) *indexJoinBuildHelper {
 	ctx := testCtx.dataSourceNode.SCtx()
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode
@@ -340,7 +339,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	}
 }
 
-func checkRangeFallbackAndReset(t *testing.T, ctx sessionctx.Context, expectedRangeFallback bool) {
+func checkRangeFallbackAndReset(t *testing.T, ctx PlanContext, expectedRangeFallback bool) {
 	require.Equal(t, expectedRangeFallback, ctx.GetSessionVars().StmtCtx.RangeFallback)
 	ctx.GetSessionVars().StmtCtx.RangeFallback = false
 }
