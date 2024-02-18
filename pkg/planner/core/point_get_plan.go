@@ -576,7 +576,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			}
 		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
-		// `PhysicalUnionAll` which children are `PointGet` if exists a unique key (a, b, c) in table `t`
+		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
@@ -654,6 +654,12 @@ func newBatchPointGetPlan(
 ) *BatchPointGetPlan {
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
+	// TODO: for this PR!
+	// Add back the check for getPartitionExpr(ctx, tbl) != nil
+	// && partitionExpr.Expr != nil
+	// && partitionExpr.Expr.(*expression.column)
+	// and remove it in a follow up PR, to not make more changes
+	// than necessary in this PR, since it is already quite big.
 
 	if handleCol != nil {
 		// condition key of where is primary key
