@@ -163,8 +163,8 @@ func WithCertAndKeyContent(certContent, keyContent []byte) TLSConfigOption {
 	}
 }
 
-// WithTLSVersion sets the min tls version to build a tls.Config.
-func WithTLSVersion(minTLSVersion uint16) TLSConfigOption {
+// WithMinTLSVersion sets the min tls version to build a tls.Config.
+func WithMinTLSVersion(minTLSVersion uint16) TLSConfigOption {
 	return func(builder *tlsConfigBuilder) {
 		builder.minTLSVersion = minTLSVersion
 	}
