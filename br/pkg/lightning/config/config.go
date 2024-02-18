@@ -84,6 +84,8 @@ const (
 	defaultIndexConcurrency           = 2
 	DefaultRegionCheckBackoffLimit    = 1800
 	DefaultRegionSplitBatchSize       = 4096
+	defaultLogicalImportBatchSize     = 96 * units.KiB
+	defaultLogicalImportBatchRows     = 65536
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
@@ -1069,6 +1071,9 @@ type TikvImporter struct {
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
+	LogicalImportBatchSize  ByteSize `toml:"logical-import-batch-size" json:"logical-import-batch-size"`
+	LogicalImportBatchRows  int      `toml:"logical-import-batch-rows" json:"logical-import-batch-rows"`
+
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 }
@@ -1084,6 +1089,16 @@ func (t *TikvImporter) adjust() error {
 	}
 	switch t.Backend {
 	case BackendTiDB:
+		if t.LogicalImportBatchSize <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.logical-import-batch-size` got %d, should be larger than 0",
+				t.LogicalImportBatchSize)
+		}
+		if t.LogicalImportBatchRows <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
+				t.LogicalImportBatchRows)
+		}
 		t.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
@@ -1458,6 +1473,12 @@ func NewConfig() *Config {
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
+<<<<<<< HEAD
+=======
+			BlockSize:               16 * 1024,
+			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
+			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
+>>>>>>> 2d57455a4f9 (lightning: allow configure the desired size and number of rows of each INSERT statement for logical mode (#46997))
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
