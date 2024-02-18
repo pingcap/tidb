@@ -33,7 +33,7 @@ type InfoCache struct {
 	cache []schemaAndTimestamp
 
 	r    autoid.Requirement
-	Data *InfoSchemaData
+	Data *Data
 }
 
 type schemaAndTimestamp struct {
@@ -43,7 +43,7 @@ type schemaAndTimestamp struct {
 
 // NewCache creates a new InfoCache.
 func NewCache(r autoid.Requirement, capacity int) *InfoCache {
-	infoData := NewInfoSchemaData()
+	infoData := NewData()
 	return &InfoCache{
 		cache: make([]schemaAndTimestamp, 0, capacity),
 		r:     r,

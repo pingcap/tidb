@@ -20,6 +20,7 @@ import (
 
 var enableV2 atomic.Bool
 
+// Item is the btree item sorted by name or by id.
 type Item struct {
 	dbName        string
 	dbID          int64
@@ -37,12 +38,13 @@ func (si *schemaItem) Name() string {
 	return si.dbInfo.Name.L
 }
 
-type VersionAndTimestamp struct {
+// versionAndTimestamp is the tuple of schema version and timestamp.
+type versionAndTimestamp struct {
 	schemaVersion int64
 	timestamp     uint64
 }
 
-type InfoSchemaData struct {
+type Data struct {
 	// For the TableByName API, sorted by {dbName, tableName, tableID} => schemaVersion
 	//
 	// If the schema version +1 but a specific table does not change, the old record is
@@ -70,21 +72,21 @@ type InfoSchemaData struct {
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
 		sync.RWMutex
-		versionTimestamps []VersionAndTimestamp
+		versionTimestamps []versionAndTimestamp
 	}
 
 	// For information_schema/metrics_schema/performance_schema etc
 	specials map[string]*schemaTables
 }
 
-func (isd *InfoSchemaData) getVersionByTS(ts uint64) (int64, bool) {
+func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
 	isd.mu.RLock()
 	defer isd.mu.RUnlock()
 
 	return isd.getVersionByTSNoLock(ts)
 }
 
-func (isd *InfoSchemaData) getVersionByTSNoLock(ts uint64) (int64, bool) {
+func (isd *Data) getVersionByTSNoLock(ts uint64) (int64, bool) {
 	// search one by one instead of binary search, because the timestamp of a schema could be 0
 	// this is ok because the size of h.cache is small (currently set to 16)
 	// moreover, the most likely hit element in the array is the first one in steady mode
@@ -118,8 +120,8 @@ type cacheKey struct {
 	schemaVersion int64
 }
 
-func NewInfoSchemaData() *InfoSchemaData {
-	ret := &InfoSchemaData{
+func NewData() *Data {
+	ret := &Data{
 		byID:      btree.NewBTreeG[Item](compareByID),
 		name2id:   btree.NewBTreeG[Item](compareByName),
 		schemaMap: btree.NewBTreeG[schemaItem](compareBySchema),
@@ -130,17 +132,17 @@ func NewInfoSchemaData() *InfoSchemaData {
 	return ret
 }
 
-func (isd *InfoSchemaData) add(item Item, tbl table.Table) {
+func (isd *Data) add(item Item, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.name2id.Set(item)
 	isd.cache.Set(cacheKey{item.tableID, item.schemaVersion}, tbl)
 }
 
-func (isd *InfoSchemaData) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
+func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 	isd.specials[di.Name.L] = tables
 }
 
-func (isd *InfoSchemaData) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
+func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
@@ -190,7 +192,7 @@ type infoschemaV2 struct {
 	r             autoid.Requirement
 	ts            uint64
 	schemaVersion int64
-	*InfoSchemaData
+	*Data
 }
 
 func search(bt *btree.BTreeG[Item], schemaVersion int64, end Item, eq func(a, b *Item) bool) (Item, bool) {
@@ -239,7 +241,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.InfoSchemaData, id, itm.dbID, is.ts)
+	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts)
 	if err == nil {
 		is.cache.Set(key, ret)
 		return ret, true
@@ -272,7 +274,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.InfoSchemaData, itm.tableID, itm.dbID, is.ts)
+	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -376,7 +378,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	return
 }
 
-func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID int64, ts uint64) (table.Table, error) {
+func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := sf.Do(fmt.Sprintf("%d-%d", dbID, tblID), func() (ret any, err error) {
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))

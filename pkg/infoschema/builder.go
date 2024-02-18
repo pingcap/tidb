@@ -189,7 +189,7 @@ type Builder struct {
 
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
-	infoData *InfoSchemaData
+	infoData *Data
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -972,10 +972,10 @@ func (b *Builder) Build() InfoSchema {
 	if enableV2.Load() {
 		return &infoschemaProxy{
 			infoschemaV2: infoschemaV2{
-				ts:             math.MaxUint64, // TODO: should be the correct TS
-				r:              b.Requirement,
-				InfoSchemaData: b.infoData,
-				schemaVersion:  b.is.SchemaMetaVersion(),
+				ts:            math.MaxUint64, // TODO: should be the correct TS
+				r:             b.Requirement,
+				Data:          b.infoData,
+				schemaVersion: b.is.SchemaMetaVersion(),
 			},
 			v1: b.is,
 		}
@@ -1199,7 +1199,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *InfoSchemaData) *Builder {
+func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
 	return &Builder{
 		Requirement: r,
 		is: &infoSchema{
