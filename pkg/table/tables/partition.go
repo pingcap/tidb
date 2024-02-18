@@ -383,7 +383,7 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx expression.BuildContext, exp
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return expression.BuildExprWithAst(ctx, exprNode, expression.WithInputSchemaAndNames(schema, names))
+	return expression.BuildSimpleExpr(ctx, exprNode, expression.WithInputSchemaAndNames(schema, names, nil))
 }
 
 // ForKeyPruning is used for key partition pruning.
@@ -780,12 +780,12 @@ func extractPartitionExprColumns(ctx sessionctx.Context, expr string, partCols [
 	var partExpr expression.Expression
 	if len(partCols) == 0 {
 		schema := expression.NewSchema(columns...)
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, expr, schema, names)
+		expr, err := expression.ParseSimpleExpr(ctx, expr, expression.WithInputSchemaAndNames(schema, names, nil))
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		cols = expression.ExtractColumns(exprs[0])
-		partExpr = exprs[0]
+		cols = expression.ExtractColumns(expr)
+		partExpr = expr
 	} else {
 		for _, col := range partCols {
 			idx := expression.FindFieldNameIdxByColName(names, col.L)
@@ -1191,7 +1191,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, exprStr string,
 	if err != nil {
 		return nil, err
 	}
-	exprs, err := rewritePartitionExpr(ctx, origExpr, schema, names)
+	exprs, err := expression.BuildSimpleExpr(ctx, origExpr, expression.WithInputSchemaAndNames(schema, names, nil))
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
@@ -1365,7 +1365,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.BuildContex
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
 		var valueMsg string
 		if t.meta.Partition.Expr != "" {
-			e, err := expression.ParseSimpleExprWithTableInfo(ctx, t.meta.Partition.Expr, t.meta)
+			e, err := expression.ParseSimpleExpr(ctx, t.meta.Partition.Expr, expression.WithTableInfo("", t.meta))
 			if err == nil {
 				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
@@ -1430,7 +1430,7 @@ func (t *partitionedTable) locateRangePartition(ctx expression.BuildContext, par
 		var valueMsg string
 		// TODO: Test with ALTER TABLE t PARTITION BY with a different expression / type
 		if t.meta.Partition.Expr != "" {
-			e, err := expression.ParseSimpleExprWithTableInfo(ctx, t.meta.Partition.Expr, t.meta)
+			e, err := expression.ParseSimpleExpr(ctx, t.meta.Partition.Expr, expression.WithTableInfo("", t.meta))
 			if err == nil {
 				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
@@ -1869,11 +1869,6 @@ func parseExpr(p *parser.Parser, exprStr string) (ast.ExprNode, error) {
 	}
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	return fields[0].Expr, nil
-}
-
-func rewritePartitionExpr(ctx sessionctx.Context, field ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
-	expr, err := expression.RewriteSimpleExprWithNames(ctx, field, schema, names)
-	return expr, err
 }
 
 func compareUnsigned(v1, v2 int64) int {

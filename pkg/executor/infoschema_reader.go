@@ -201,6 +201,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTiDBCheckConstraints(sctx, dbs)
 		case infoschema.TableKeywords:
 			err = e.setDataFromKeywords()
+		case infoschema.TableTiDBIndexUsage:
+			e.setDataFromIndexUsage(sctx, dbs)
+		case infoschema.ClusterTableTiDBIndexUsage:
+			err = e.setDataForClusterIndexUsage(sctx, dbs)
 		}
 		if err != nil {
 			return nil, err
@@ -3092,7 +3096,7 @@ type TiFlashSystemTableRetriever struct {
 	outputCols    []*model.ColumnInfo
 	instanceCount int
 	instanceIdx   int
-	instanceIds   []string
+	instanceIDs   []string
 	rowIdx        int
 	retrieved     bool
 	initialized   bool
@@ -3126,7 +3130,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 }
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
-	storeInfo, err := infoschema.GetStoreServerInfo(sctx)
+	storeInfo, err := infoschema.GetStoreServerInfo(sctx.GetStore())
 	if err != nil {
 		return err
 	}
@@ -3143,7 +3147,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 		if len(hostAndStatusPort) != 2 {
 			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
 		}
-		e.instanceIds = append(e.instanceIds, info.Address)
+		e.instanceIDs = append(e.instanceIDs, info.Address)
 		e.instanceCount++
 	}
 	e.initialized = true
@@ -3189,7 +3193,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
 	}
 	// send request to tiflash, timeout is 1s
-	instanceID := e.instanceIds[e.instanceIdx]
+	instanceID := e.instanceIDs[e.instanceIdx]
 	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, time.Second)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -3513,6 +3517,58 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 	for _, kw := range parser.Keywords {
 		row := types.MakeDatums(kw.Word, kw.Reserved)
 		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromIndexUsage(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	dom := domain.GetDomain(ctx)
+	rows := make([][]types.Datum, 0, 100)
+	checker := privilege.GetPrivilegeManager(ctx)
+
+	for _, schema := range schemas {
+		for _, tbl := range schema.Tables {
+			allowed := checker == nil || checker.RequestVerification(
+				ctx.GetSessionVars().ActiveRoles,
+				schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask)
+			if !allowed {
+				continue
+			}
+
+			for _, idx := range tbl.Indices {
+				row := make([]types.Datum, 0, 14)
+
+				usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
+				row = append(row, types.NewStringDatum(schema.Name.O))
+				row = append(row, types.NewStringDatum(tbl.Name.O))
+				row = append(row, types.NewStringDatum(idx.Name.O))
+				row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
+				row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
+				row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))
+				for _, percentage := range usage.PercentageAccess {
+					row = append(row, types.NewIntDatum(int64(percentage)))
+				}
+				lastUsedAt := types.Datum{}
+				lastUsedAt.SetNull()
+				if !usage.LastUsedAt.IsZero() {
+					t := types.NewTime(types.FromGoTime(usage.LastUsedAt), mysql.TypeTimestamp, 0)
+					lastUsedAt = types.NewTimeDatum(t)
+				}
+				row = append(row, lastUsedAt)
+				rows = append(rows, row)
+			}
+		}
+	}
+
+	e.rows = rows
+}
+
+func (e *memtableRetriever) setDataForClusterIndexUsage(ctx sessionctx.Context, schemas []*model.DBInfo) error {
+	e.setDataFromIndexUsage(ctx, schemas)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
 	}
 	e.rows = rows
 	return nil

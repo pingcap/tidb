@@ -41,7 +41,7 @@ func BenchmarkChecksum(b *testing.B) {
 	}
 	row := rowcodec.RowData{Cols: cols}
 	for i := 0; i < b.N; i++ {
-		_, err := row.Checksum()
+		_, err := row.Checksum(time.Local)
 		if err != nil {
 			b.Fatal(err)
 		}

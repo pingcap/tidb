@@ -16,11 +16,13 @@ package chunk
 
 import (
 	"io"
+	"math/rand"
 	"os"
 	"strconv"
 	"unsafe"
 
 	errors2 "github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -82,6 +84,10 @@ func (d *DataInDiskByChunks) GetDiskTracker() *disk.Tracker {
 // Add adds a chunk to the DataInDiskByChunks. Caller must make sure the input chk has the same field types.
 // Warning: Do not concurrently call this function.
 func (d *DataInDiskByChunks) Add(chk *Chunk) (err error) {
+	if err := injectChunkInDiskRandomError(); err != nil {
+		return err
+	}
+
 	if chk.NumRows() == 0 {
 		return errors2.New("Chunk spilled to disk should have at least 1 row")
 	}
@@ -123,6 +129,10 @@ func (d *DataInDiskByChunks) getChunkSize(chkIdx int) int64 {
 
 // GetChunk gets a Chunk from the DataInDiskByChunks by chkIdx.
 func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
+	if err := injectChunkInDiskRandomError(); err != nil {
+		return nil, err
+	}
+
 	reader := d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx])
 	chkSize := d.getChunkSize(chkIdx)
 
@@ -314,4 +324,17 @@ func (d *DataInDiskByChunks) NumRows() int64 {
 // NumChunks returns total spilled chunk number
 func (d *DataInDiskByChunks) NumChunks() int {
 	return len(d.offsetOfEachChunk)
+}
+
+func injectChunkInDiskRandomError() error {
+	var err error
+	failpoint.Inject("ChunkInDiskError", func(val failpoint.Value) {
+		if val.(bool) {
+			randNum := rand.Int31n(10000)
+			if randNum < 3 {
+				err = errors2.New("random error is triggered")
+			}
+		}
+	})
+	return err
 }

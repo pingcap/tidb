@@ -78,7 +78,7 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	ts.Server.SetDomain(ts.Domain)
 	ts.Domain.InfoSyncer().SetSessionManager(ts.Server)
 	go func() {
-		err := ts.Server.Run()
+		err := ts.Server.Run(nil)
 		require.NoError(t, err)
 	}()
 	ts.WaitUntilServerOnline()

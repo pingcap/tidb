@@ -115,7 +115,12 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	var genCols []GeneratedCol
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
-			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr.Internal(), schema, names, true)
+			expr, err := expression.BuildSimpleExpr(
+				se,
+				col.GeneratedExpr.Internal(),
+				expression.WithInputSchemaAndNames(schema, names, meta),
+				expression.WithAllowCastArray(true),
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -348,37 +353,6 @@ func (kvs *Pairs) ClassifyAndAppend(
 
 	*data = dataKVs
 	*indices = indexKVs
-}
-
-// SplitIntoChunks splits the key-value pairs into chunks.
-func (kvs *Pairs) SplitIntoChunks(splitSize int) []encode.Rows {
-	if len(kvs.Pairs) == 0 {
-		return nil
-	}
-
-	res := make([]encode.Rows, 0, 1)
-	i := 0
-	cumSize := 0
-	for j, pair := range kvs.Pairs {
-		size := len(pair.Key) + len(pair.Val)
-		if i < j && cumSize+size > splitSize {
-			res = append(res, &Pairs{Pairs: kvs.Pairs[i:j]})
-			i = j
-			cumSize = 0
-		}
-		cumSize += size
-	}
-
-	if i == 0 {
-		res = append(res, kvs)
-	} else {
-		res = append(res, &Pairs{
-			Pairs:    kvs.Pairs[i:],
-			BytesBuf: kvs.BytesBuf,
-			MemBuf:   kvs.MemBuf,
-		})
-	}
-	return res
 }
 
 // Clear clears the key-value pairs.

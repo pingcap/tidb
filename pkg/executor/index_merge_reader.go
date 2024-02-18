@@ -912,14 +912,13 @@ func (e *IndexMergeReaderExecutor) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.indexUsageReporter != nil {
-		tableID := e.table.Meta().ID
 		for _, p := range e.partialPlans {
 			is, ok := p[0].(*plannercore.PhysicalIndexScan)
 			if !ok {
 				continue
 			}
 
-			e.indexUsageReporter.ReportCopIndexUsage(tableID, is.Index.ID, is.ID())
+			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID())
 		}
 	}
 	if e.finished == nil {

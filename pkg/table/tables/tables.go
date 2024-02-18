@@ -751,11 +751,11 @@ func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
 		return nil
 	}
 	pkIdx := FindPrimaryIndex(tbl)
-	pkColIds := make([]int64, 0, len(pkIdx.Columns))
+	pkColIDs := make([]int64, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
-		pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+		pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
 	}
-	return pkColIds
+	return pkColIDs
 }
 
 // PrimaryPrefixColumnIDs get prefix column ids in primary key.
@@ -1811,11 +1811,14 @@ func (t *TableCommon) calcChecksums(sctx table.MutateContext, h kv.Handle, data 
 	}
 	checksums := make([]uint32, len(data))
 	for i, cols := range data {
-		row := rowcodec.RowData{Cols: cols, Data: buf}
+		row := rowcodec.RowData{
+			Cols: cols,
+			Data: buf,
+		}
 		if !sort.IsSorted(row) {
 			sort.Sort(row)
 		}
-		checksum, err := row.Checksum()
+		checksum, err := row.Checksum(sctx.GetSessionVars().StmtCtx.TimeZone())
 		buf = row.Data
 		if err != nil {
 			logWithContext(sctx.GetSessionVars(), logutil.BgLogger().Error,
@@ -2271,11 +2274,11 @@ func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
 
 // BuildTableScanFromInfos build tipb.TableScan with *model.TableInfo and *model.ColumnInfo.
 func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo) *tipb.TableScan {
-	pkColIds := TryGetCommonPkColumnIds(tableInfo)
+	pkColIDs := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.TableScan{
 		TableId:          tableInfo.ID,
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false),
-		PrimaryColumnIds: pkColIds,
+		PrimaryColumnIds: pkColIDs,
 	}
 	if tableInfo.IsCommonHandle {
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
@@ -2285,11 +2288,11 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 
 // BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
 func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo, fastScan bool) *tipb.PartitionTableScan {
-	pkColIds := TryGetCommonPkColumnIds(tableInfo)
+	pkColIDs := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false),
-		PrimaryColumnIds: pkColIds,
+		PrimaryColumnIds: pkColIDs,
 		IsFastScan:       &fastScan,
 	}
 	if tableInfo.IsCommonHandle {
