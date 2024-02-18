@@ -1588,7 +1588,7 @@ func (m *Meta) DropTableName(dbName string, tableName string) error {
 func (m *Meta) DropDatabaseName(dbName string) error {
 	// iterate all tables
 	prefix := m.TableNameKey(dbName, "")
-	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
 		return m.txn.Clear(key)
 	})
 }
@@ -1596,7 +1596,7 @@ func (m *Meta) DropDatabaseName(dbName string) error {
 // ClearAllTableNames clears all table names.
 func (m *Meta) ClearAllTableNames() error {
 	prefix := kv.Key(fmt.Sprintf("%s:", mNames))
-	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
 		return m.txn.Clear(key)
 	})
 }

@@ -150,7 +150,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 		Logger: logger,
 	}
 
-	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
+	err = s.Transact(ctx, "fetch table columns", func(_ context.Context, tx *sql.Tx) error {
 		var versionStr string
 		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
 			return err

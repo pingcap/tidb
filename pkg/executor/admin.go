@@ -779,7 +779,7 @@ func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 		}
 		e.scanRowCnt = 0
 		e.batchKeys = e.batchKeys[:0]
-		e.idxValues.Range(func(h kv.Handle, val any) bool {
+		e.idxValues.Range(func(h kv.Handle, _ any) bool {
 			e.idxValues.Delete(h)
 			return true
 		})
