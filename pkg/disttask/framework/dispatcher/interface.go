@@ -43,6 +43,8 @@ type TaskManager interface {
 	GetSchedulerIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
 	GetSucceedSubtasksByStep(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error)
 	GetSchedulerIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
+	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
+	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.TaskState]int64, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error

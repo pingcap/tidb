@@ -1436,6 +1436,28 @@ func TestIssue37932(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIssue48991(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer store.Close()
+	tk.MustExec("use test")
+	tk.MustExec("create table tbl_3 ( col_11 mediumint unsigned not null default 8346281 ,col_12 enum ( 'Alice','Bob','Charlie','David' ) ,col_13 time not null default '07:10:30.00' ,col_14 timestamp ,col_15 varbinary ( 194 ) not null default '-ZpCzjqdl4hsyo' , key idx_5 ( col_14 ,col_11 ,col_12 ) ,primary key ( col_11 ,col_15 ) /*T![clustered_index] clustered */ ) charset utf8mb4 collate utf8mb4_bin partition by range ( col_11 ) ( partition p0 values less than (530262), partition p1 values less than (9415740), partition p2 values less than (11007444), partition p3 values less than (maxvalue) );")
+
+	tk.MustExec("insert into tbl_3 values ( 8838143,'David','23:41:27.00','1993-02-23','g0q~Z0b*PpMPKJxYbIE' ), ( 9082223,'Alice','02:25:16.00','2035-11-08','i' ), ( 2483729,'Charlie','14:43:13.00','1970-09-10','w6o6WFYyL5' ), ( 4135401,'Charlie','19:30:34.00','2017-06-07','2FZmy9lanL8' ), ( 1479390,'Alice','20:40:08.00','1984-06-10','LeoVONgN~iJz&inj' ), ( 10427825,'Charlie','15:27:35.00','1986-12-25','tWJ' ), ( 12794792,'Charlie','04:10:08.00','2034-08-08','hvpXVQyuP' ), ( 4696775,'Charlie','05:07:43.00','1984-07-31','SKOW9I^sM$4xNk' ), ( 8963236,'Alice','08:18:31.00','2022-04-17','v4DsE' ), ( 9048951,'Alice','05:19:47.00','2018-09-22','sJ!vs' );")
+
+	tk.MustQuery(`SELECT col_14
+FROM 
+    tbl_3 
+WHERE 
+    (
+	(tbl_3.col_15 < 'dV')
+        AND tbl_3.col_12 IN (
+	    SELECT col_12 FROM tbl_3 WHERE NOT (ISNULL(tbl_3.col_12))
+	)
+    ) 
+ORDER BY IF(ISNULL(col_14),0,1),col_14;`).Sort().Check(testkit.Rows("1984-06-10 00:00:00", "1984-07-31 00:00:00", "2017-06-07 00:00:00"))
+}
+
 func TestIssue49033(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

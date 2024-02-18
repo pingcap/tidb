@@ -100,7 +100,7 @@ func (mock *Cluster) Start() error {
 	}
 	mock.Server = svr
 	go func() {
-		if err1 := svr.Run(); err1 != nil {
+		if err1 := svr.Run(nil); err1 != nil {
 			panic(err1)
 		}
 	}()
