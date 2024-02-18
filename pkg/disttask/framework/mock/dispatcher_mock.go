@@ -290,6 +290,21 @@ func (mr *MockTaskManagerMockRecorder) GetSchedulerIDsByTaskIDAndStep(arg0, arg1
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSchedulerIDsByTaskIDAndStep", reflect.TypeOf((*MockTaskManager)(nil).GetSchedulerIDsByTaskIDAndStep), arg0, arg1, arg2)
 }
 
+// GetSubtaskCntGroupByStates mocks base method.
+func (m *MockTaskManager) GetSubtaskCntGroupByStates(arg0 context.Context, arg1 int64, arg2 proto.Step) (map[proto.TaskState]int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSubtaskCntGroupByStates", arg0, arg1, arg2)
+	ret0, _ := ret[0].(map[proto.TaskState]int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSubtaskCntGroupByStates indicates an expected call of GetSubtaskCntGroupByStates.
+func (mr *MockTaskManagerMockRecorder) GetSubtaskCntGroupByStates(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskCntGroupByStates", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskCntGroupByStates), arg0, arg1, arg2)
+}
+
 // GetSubtaskInStatesCnt mocks base method.
 func (m *MockTaskManager) GetSubtaskInStatesCnt(arg0 context.Context, arg1 int64, arg2 ...any) (int64, error) {
 	m.ctrl.T.Helper()

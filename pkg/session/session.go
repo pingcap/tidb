@@ -1138,21 +1138,32 @@ func (*session) isTxnRetryableError(err error) bool {
 	return kv.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
+func isEndTxnStmt(stmt ast.StmtNode, vars *variable.SessionVars) (bool, error) {
+	switch n := stmt.(type) {
+	case *ast.RollbackStmt, *ast.CommitStmt:
+		return true, nil
+	case *ast.ExecuteStmt:
+		ps, err := plannercore.GetPreparedStmt(n, vars)
+		if err != nil {
+			return false, err
+		}
+		return isEndTxnStmt(ps.PreparedAst.Stmt, vars)
+	}
+	return false, nil
+}
+
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
-	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) == 0 {
 		return nil
 	}
-	err = kv.ErrLockExpire
 	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
 	// because they are used to finish the aborted transaction.
-	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+	if ok, err := isEndTxnStmt(stmt.(*executor.ExecStmt).StmtNode, s.sessionVars); err == nil && ok {
 		return nil
+	} else if err != nil {
+		return err
 	}
-	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
-		return nil
-	}
-	return err
+	return kv.ErrLockExpire
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
@@ -1192,6 +1203,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PlanCacheParams.Reset()
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -1908,6 +1920,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	metrics.SessionRestrictedSQLCounter.Inc()
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
+	ctx = context.WithValue(ctx, tikvutil.RUDetailsCtxKey, tikvutil.NewRUDetails())
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		se.sessionVars.StmtCtx.AppendError(err)

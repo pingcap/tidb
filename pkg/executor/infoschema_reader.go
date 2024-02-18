@@ -2131,7 +2131,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 				totalCnt = float64(statsTbl.RealtimeCount)
 			}
 		}
-		if tid > 0 && totalCnt == 0 {
+		if tid > 0 && totalCnt == 0 || float64(processedRows) > totalCnt {
 			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
 		}
 		remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
