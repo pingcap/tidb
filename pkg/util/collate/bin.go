@@ -65,22 +65,9 @@ func (*binPaddingCollator) Pattern() WildcardPattern {
 	return &binPattern{}
 }
 
+// binPureCollator match pattern in bytes
 type binPureCollator struct {
-}
-
-// Compare implement Collator interface.
-func (*binPureCollator) Compare(a, b string) int {
-	return strings.Compare(a, b)
-}
-
-// Key implement Collator interface.
-func (*binPureCollator) Key(str string) []byte {
-	return []byte(str)
-}
-
-// KeyWithoutTrimRightSpace implement Collator interface.
-func (*binPureCollator) KeyWithoutTrimRightSpace(str string) []byte {
-	return []byte(str)
+	binCollator
 }
 
 // Pattern implements Collator interface.

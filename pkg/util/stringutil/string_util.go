@@ -158,6 +158,7 @@ func CompilePattern(pattern string, escape byte) (patWeights []rune, patTypes []
 
 // CompilePatternInner handles escapes and wild cards convert pattern characters and
 // pattern types.
+// Note: if anything changes in this method, please double-check CompilePatternInnerBytes
 func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
 	runes := []rune(pattern)
 	escapeRune := rune(escape)
@@ -204,6 +205,8 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 
 // CompilePatternInnerBytes handles escapes and wild cards convert pattern characters and
 // pattern types in bytes.
+// The main algorithm is the same as CompilePatternInner. However, it's not easy to use interface to hide the different details here.
+// Note: if anything changes in this method, please double-check CompilePatternInner
 func CompilePatternInnerBytes(pattern string, escape byte) (patWeights, patTypes []byte) {
 	bytes := []byte(pattern)
 	lenBytes := len(bytes)
@@ -300,12 +303,17 @@ func DoMatchInner(str string, patWeights []rune, patTypes []byte, matcher func(a
 	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
 	runes := []rune(str)
 	lenRunes := len(runes)
+	lenPatWeights := len(patWeights)
+	return DoMatchInnerCore(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matcher(runes[a], patWeights[b]) })
+}
+
+func DoMatchInnerCore(lenPatWeights int, lenRunes int, patTypes []byte, matcher func(a, b int) bool) bool {
 	var rIdx, pIdx, nextRIdx, nextPIdx int
-	for pIdx < len(patWeights) || rIdx < lenRunes {
-		if pIdx < len(patWeights) {
+	for pIdx < lenPatWeights || rIdx < lenRunes {
+		if pIdx < lenPatWeights {
 			switch patTypes[pIdx] {
 			case PatMatch:
-				if rIdx < lenRunes && matcher(runes[rIdx], patWeights[pIdx]) {
+				if rIdx < lenRunes && matcher(rIdx, pIdx) {
 					pIdx++
 					rIdx++
 					continue
@@ -345,42 +353,8 @@ func DoMatchInnerBytes(str string, patWeights, patTypes []byte) bool {
 	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
 	bytes := []byte(str)
 	lenBytes := len(bytes)
-	var rIdx, pIdx, nextRIdx, nextPIdx int
-	for pIdx < len(patWeights) || rIdx < lenBytes {
-		if pIdx < len(patWeights) {
-			switch patTypes[pIdx] {
-			case PatMatch:
-				if rIdx < lenBytes && bytes[rIdx] == patWeights[pIdx] {
-					pIdx++
-					rIdx++
-					continue
-				}
-			case PatOne:
-				if rIdx < lenBytes {
-					pIdx++
-					rIdx++
-					continue
-				}
-			case PatAny:
-				// Try to match at sIdx.
-				// If that doesn't work out,
-				// restart at sIdx+1 next.
-				nextPIdx = pIdx
-				nextRIdx = rIdx + 1
-				pIdx++
-				continue
-			}
-		}
-		// Mismatch. Maybe restart.
-		if 0 < nextRIdx && nextRIdx <= lenBytes {
-			pIdx = nextPIdx
-			rIdx = nextRIdx
-			continue
-		}
-		return false
-	}
-	// Matched all of pattern to all of name. Success.
-	return true
+	lenPatWeights := len(patWeights)
+	return DoMatchInnerCore(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patWeights[b] })
 }
 
 // IsExactMatch return true if no wildcard character
