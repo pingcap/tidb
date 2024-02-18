@@ -228,7 +228,7 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 		return 0, false, err
 	}
 	if isNullTimeout {
-		timeout = 0 // Observed in MySQL, gets converted to 1s in TiDB because of min timeout.
+		timeout = 0 // Observed in MySQL, gets converted to 1s in TiDB because of minute timeout.
 	}
 	// A timeout less than zero is expected to be treated as unlimited.
 	// Because of our implementation being based on pessimistic locks,

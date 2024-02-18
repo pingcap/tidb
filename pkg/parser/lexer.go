@@ -954,13 +954,13 @@ func (s *Scanner) scanDigits() string {
 
 // scanVersionDigits scans for `min` to `max` digits (range inclusive) used in
 // `/*!12345 ... */` comments.
-func (s *Scanner) scanVersionDigits(min, max int) {
+func (s *Scanner) scanVersionDigits(mini, maxv int) {
 	pos := s.r.pos()
-	for i := 0; i < max; i++ {
+	for i := 0; i < maxv; i++ {
 		ch := s.r.peek()
 		if isDigit(ch) {
 			s.r.inc()
-		} else if i < min {
+		} else if i < mini {
 			s.r.updatePos(pos)
 			return
 		} else {
