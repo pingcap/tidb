@@ -1,8 +1,8 @@
 # Priority Queue for Auto Analyze
 
 - Author(s): [Rustin Liu](http://github.com/hi-rustin)
-- Discussion PR: TBD
-- Tracking Issue: TBD
+- Discussion PR: <https://github.com/pingcap/tidb/pull/49018/>
+- Tracking Issue: <https://github.com/pingcap/tidb/issues/50132>
 
 ## Table of Contents
 
