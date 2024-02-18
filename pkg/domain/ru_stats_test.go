@@ -63,7 +63,7 @@ func TestWriteRUStatistics(t *testing.T) {
 	testInfo := &testInfoschema{
 		groups: infoGroups,
 	}
-	testInfoCache := infoschema.NewCache(1)
+	testInfoCache := infoschema.NewCache(nil, 1)
 	testInfoCache.Insert(testInfo, uint64(time.Now().Unix()))
 	testRUWriter.RMClient = testRMClient
 	testRUWriter.InfoCache = testInfoCache
