@@ -1617,7 +1617,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			urlsWithoutScheme = append(urlsWithoutScheme, u)
 		}
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", urlsWithoutScheme, rc.keyspaceName),
+			fmt.Sprintf(
+				"tikv://%s?disableGC=true&keyspaceName=%s",
+				strings.Join(urlsWithoutScheme, ","), rc.keyspaceName,
+			),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {
