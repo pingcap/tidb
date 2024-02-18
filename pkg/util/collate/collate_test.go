@@ -167,7 +167,7 @@ func TestRewriteAndRestoreCollationID(t *testing.T) {
 func TestGetCollator(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
-	require.IsType(t, &binCollator{}, GetCollator("binary"))
+	require.IsType(t, &binPureCollator{}, GetCollator("binary"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8mb4_bin"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8_bin"))
 	require.IsType(t, &generalCICollator{}, GetCollator("utf8mb4_general_ci"))
@@ -178,7 +178,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &unicode0900AICICollator{}, GetCollator("utf8mb4_0900_ai_ci"))
 	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_0900_bin"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("default_test"))
-	require.IsType(t, &binCollator{}, GetCollatorByID(63))
+	require.IsType(t, &binPureCollator{}, GetCollatorByID(63))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(46))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(83))
 	require.IsType(t, &generalCICollator{}, GetCollatorByID(45))
