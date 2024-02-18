@@ -1371,12 +1371,8 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
 		} else {
-<<<<<<< HEAD
-			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
-=======
 			val, _, err = constExpr.EvalInt(sctx, chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
->>>>>>> 7893f1637e1 (planner: fix range partition prune with an unsigned column (#50113))
 		}
 		if err != nil {
 			return pruner.fullRange()
