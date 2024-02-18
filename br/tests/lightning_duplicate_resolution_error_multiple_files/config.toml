@@ -10,7 +10,7 @@ add-index-by-sql = false
 enable = false
 
 [mydumper]
-batch-size = 1
+batch-size = 2
 # ensure each file is its own engine to facilitate cross-engine detection.
 
 [mydumper.csv]
