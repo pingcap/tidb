@@ -1439,7 +1439,6 @@ func TestIssue37932(t *testing.T) {
 func TestIssue48991(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	defer store.Close()
 	tk.MustExec("use test")
 	tk.MustExec("create table tbl_3 ( col_11 mediumint unsigned not null default 8346281 ,col_12 enum ( 'Alice','Bob','Charlie','David' ) ,col_13 time not null default '07:10:30.00' ,col_14 timestamp ,col_15 varbinary ( 194 ) not null default '-ZpCzjqdl4hsyo' , key idx_5 ( col_14 ,col_11 ,col_12 ) ,primary key ( col_11 ,col_15 ) /*T![clustered_index] clustered */ ) charset utf8mb4 collate utf8mb4_bin partition by range ( col_11 ) ( partition p0 values less than (530262), partition p1 values less than (9415740), partition p2 values less than (11007444), partition p3 values less than (maxvalue) );")
 
