@@ -617,7 +617,7 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
 	err = iterateSnapshotKeys(ctx, d.store, priority, tbl.RecordPrefix(), snapshotVer, nil, nil,
-		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
+		func(_ kv.Handle, rowKey kv.Key, _ []byte) (bool, error) {
 			startHandleKey = rowKey
 			return false, nil
 		})

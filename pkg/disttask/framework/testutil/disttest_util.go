@@ -42,7 +42,7 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerExt schedu
 	mockStepExecutor := GetMockStepExecutor(ctrl)
 	if runSubtaskFn == nil {
 		mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, subtask *proto.Subtask) error {
+			func(_ context.Context, subtask *proto.Subtask) error {
 				switch subtask.Step {
 				case proto.StepOne, proto.StepTwo:
 					testContext.CollectSubtask(subtask)

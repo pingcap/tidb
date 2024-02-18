@@ -131,7 +131,7 @@ func (txn *LazyTxn) flushStmtBuf() {
 	buf := txn.Transaction.GetMemBuffer()
 
 	if txn.lazyUniquenessCheckEnabled {
-		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
+		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(_ kv.Key, flags kv.KeyFlags, _ []byte) bool {
 			return flags.HasPresumeKeyNotExists()
 		})
 		for _, key := range keysNeedSetPersistentPNE {

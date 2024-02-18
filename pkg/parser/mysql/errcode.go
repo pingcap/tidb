@@ -667,7 +667,7 @@ const (
 	WarnCondItemTruncated                                    = 1647
 	ErrCondItemTooLong                                       = 1648
 	ErrUnknownLocale                                         = 1649
-	ErrSlaveIgnoreServerIds                                  = 1650
+	ErrSlaveIgnoreServerIDs                                  = 1650
 	ErrQueryCacheDisabled                                    = 1651
 	ErrSameNamePartitionField                                = 1652
 	ErrPartitionColumnList                                   = 1653

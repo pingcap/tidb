@@ -467,7 +467,7 @@ func (s *BaseScheduler) scheduleSubTask(
 
 	backoffer := backoff.NewExponential(RetrySQLInterval, 2, RetrySQLMaxInterval)
 	return handle.RunWithRetry(s.ctx, RetrySQLTimes, backoffer, s.logger,
-		func(ctx context.Context) (bool, error) {
+		func(context.Context) (bool, error) {
 			err := fn(s.ctx, task, proto.TaskStateRunning, subtaskStep, subTasks)
 			if errors.Cause(err) == storage.ErrUnstableSubtasks {
 				return false, err
