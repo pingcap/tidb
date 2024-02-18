@@ -1002,7 +1002,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 	case config.DupeResAlgNone:
 		logger.Warn("skipping resolution due to selected algorithm. this table will become inconsistent!", zap.String("category", "resolve-dupe"), zap.Stringer("algorithm", algorithm))
 		return nil
-	case config.DupeResAlgReplace:
+	case config.DupeResAlgReplace, config.DupeResAlgErr:
 	default:
 		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}
@@ -1016,24 +1016,31 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 	logger.Debug("got tblInfo from tbl",
 		zap.ByteString("tblInfo", tblInfo))
 
-	err = local.errorMgr.ReplaceConflictKeys(
-		ctx, tbl, tableName, pool,
-		func(ctx context.Context, key []byte) ([]byte, error) {
-			value, err := local.getLatestValue(ctx, logger, key)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			return value, nil
-		},
-		func(ctx context.Context, key []byte) error {
-			err := local.deleteDuplicateRow(ctx, logger, key)
-			if err != nil {
-				logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-				return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
-			}
-			return nil
-		},
-	)
+	switch algorithm {
+	case config.DupeResAlgReplace:
+		err = local.errorMgr.ReplaceConflictKeys(
+			ctx, tbl, tableName, pool,
+			func(ctx context.Context, key []byte) ([]byte, error) {
+				value, err := local.getLatestValue(ctx, logger, key)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				return value, nil
+			},
+			func(ctx context.Context, key []byte) error {
+				err := local.deleteDuplicateRow(ctx, logger, key)
+				if err != nil {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
+				}
+				return nil
+			},
+		)
+	case config.DupeResAlgErr:
+		err = local.errorMgr.ResolveConflictKeysError(
+			ctx, tableName,
+		)
+	}
 
 	return errors.Trace(err)
 }
