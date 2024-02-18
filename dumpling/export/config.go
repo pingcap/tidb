@@ -180,10 +180,11 @@ type Config struct {
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
 
-	Labels       prometheus.Labels       `json:"-"`
-	PromFactory  promutil.Factory        `json:"-"`
-	PromRegistry promutil.Registry       `json:"-"`
-	ExtStorage   storage.ExternalStorage `json:"-"`
+	Labels        prometheus.Labels       `json:"-"`
+	PromFactory   promutil.Factory        `json:"-"`
+	PromRegistry  promutil.Registry       `json:"-"`
+	ExtStorage    storage.ExternalStorage `json:"-"`
+	MinTLSVersion uint16                  `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
@@ -754,6 +755,7 @@ func buildTLSConfig(conf *Config) error {
 		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
 		util.WithCAContent(conf.Security.SSLCABytes),
 		util.WithCertAndKeyContent(conf.Security.SSLCertBytes, conf.Security.SSLKeyBytes),
+		util.WithTLSVersion(conf.MinTLSVersion),
 	)
 	if err != nil {
 		return errors.Trace(err)
