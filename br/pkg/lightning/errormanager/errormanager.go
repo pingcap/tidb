@@ -794,7 +794,9 @@ func (em *ErrorManager) ResolveConflictKeysError(
 		if err := kvRows.Scan(&kvRowsCount); err != nil {
 			return errors.Trace(err)
 		}
-
+	}
+	if err := kvRows.Err(); err != nil {
+		return errors.Trace(err)
 	}
 
 	em.logger.Debug("got kv rows count from table",
@@ -816,6 +818,9 @@ func (em *ErrorManager) ResolveConflictKeysError(
 			em.logger.Debug("got raw_key, raw_row from table",
 				logutil.Key("raw_key", rawKey),
 				zap.Binary("raw_row", rawRow))
+		}
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
 		}
 		return common.ErrFoundDuplicateKeys.FastGenByArgs(rawKey, rawRow)
 	}
