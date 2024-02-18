@@ -1976,7 +1976,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	return
 }
 
-func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPlan) []PhysicalPlan {
+func filterIndexJoinBySessionVars(sc PlanContext, indexJoins []PhysicalPlan) []PhysicalPlan {
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}
