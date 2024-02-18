@@ -22,6 +22,7 @@ go_library(
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/planner/context",
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/debugtrace",

@@ -3130,7 +3130,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 }
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
-	storeInfo, err := infoschema.GetStoreServerInfo(sctx)
+	storeInfo, err := infoschema.GetStoreServerInfo(sctx.GetStore())
 	if err != nil {
 		return err
 	}
