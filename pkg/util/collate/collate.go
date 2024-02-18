@@ -400,8 +400,8 @@ func init() {
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 
-	newCollatorMap["binary"] = &binCollator{}
-	newCollatorIDMap[CollationName2ID("binary")] = &binCollator{}
+	newCollatorMap["binary"] = &binPureCollator{}
+	newCollatorIDMap[CollationName2ID("binary")] = &binPureCollator{}
 	newCollatorMap["ascii_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("ascii_bin")] = &binPaddingCollator{}
 	newCollatorMap["latin1_bin"] = &binPaddingCollator{}

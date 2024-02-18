@@ -65,6 +65,29 @@ func (*binPaddingCollator) Pattern() WildcardPattern {
 	return &binPattern{}
 }
 
+type binPureCollator struct {
+}
+
+// Compare implement Collator interface.
+func (*binPureCollator) Compare(a, b string) int {
+	return strings.Compare(a, b)
+}
+
+// Key implement Collator interface.
+func (*binPureCollator) Key(str string) []byte {
+	return []byte(str)
+}
+
+// KeyWithoutTrimRightSpace implement Collator interface.
+func (*binPureCollator) KeyWithoutTrimRightSpace(str string) []byte {
+	return []byte(str)
+}
+
+// Pattern implements Collator interface.
+func (*binPureCollator) Pattern() WildcardPattern {
+	return &binPurePattern{}
+}
+
 type binPattern struct {
 	patChars []rune
 	patTypes []byte
@@ -78,4 +101,19 @@ func (p *binPattern) Compile(patternStr string, escape byte) {
 // DoMatch implements WildcardPattern interface.
 func (p *binPattern) DoMatch(str string) bool {
 	return stringutil.DoMatch(str, p.patChars, p.patTypes)
+}
+
+type binPurePattern struct {
+	patChars []byte
+	patTypes []byte
+}
+
+// Compile implements WildcardPattern interface.
+func (p *binPurePattern) Compile(patternStr string, escape byte) {
+	p.patChars, p.patTypes = stringutil.CompilePatternPureBytes(patternStr, escape)
+}
+
+// DoMatch implements WildcardPattern interface.
+func (p *binPurePattern) DoMatch(str string) bool {
+	return stringutil.DoMatchPureBytes(str, p.patChars, p.patTypes)
 }

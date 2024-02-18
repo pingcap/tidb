@@ -146,6 +146,11 @@ func CompilePatternBytes(pattern string, escape byte) (patChars, patTypes []byte
 	return patChars, patTypes
 }
 
+// CompilePatternPureBytes is used for binary strings.
+func CompilePatternPureBytes(pattern string, escape byte) (patChars, patTypes []byte) {
+	return CompilePatternInnerBytes(pattern, escape)
+}
+
 // CompilePattern is a adapter for `CompilePatternInner`, `pattern` can be any unicode string.
 func CompilePattern(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
 	return CompilePatternInner(pattern, escape)
@@ -197,6 +202,51 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 	return
 }
 
+// CompilePatternInnerBytes handles escapes and wild cards convert pattern characters and
+// pattern types in bytes.
+func CompilePatternInnerBytes(pattern string, escape byte) (patWeights, patTypes []byte) {
+	bytes := []byte(pattern)
+	lenBytes := len(bytes)
+	patWeights = make([]byte, lenBytes)
+	patTypes = make([]byte, lenBytes)
+	patLen := 0
+	for i := 0; i < lenBytes; i++ {
+		var tp byte
+		var b = bytes[i]
+		switch b {
+		case escape:
+			tp = PatMatch
+			if i < lenBytes-1 {
+				i++
+				b = bytes[i]
+			}
+		case '_':
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				tp = PatAny
+				b = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', PatOne
+			} else {
+				tp = PatOne
+			}
+		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				continue
+			}
+			tp = PatAny
+		default:
+			tp = PatMatch
+		}
+		patWeights[patLen] = b
+		patTypes[patLen] = tp
+		patLen++
+	}
+	patWeights = patWeights[:patLen]
+	patTypes = patTypes[:patLen]
+	return
+}
+
 func matchRune(a, b rune) bool {
 	return a == b
 	// We may reuse below code block when like function go back to case insensitive.
@@ -231,6 +281,11 @@ func CompileLike2Regexp(str string) string {
 // DoMatchBytes is a adapter for `DoMatchInner`, `str` can only be an ascii string.
 func DoMatchBytes(str string, patChars, patTypes []byte) bool {
 	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchRune)
+}
+
+// DoMatchPureBytes is used for binary strings.
+func DoMatchPureBytes(str string, patChars, patTypes []byte) bool {
+	return DoMatchInnerBytes(str, patChars, patTypes)
 }
 
 // DoMatch is a adapter for `DoMatchInner`, `str` can be any unicode string.
@@ -273,6 +328,51 @@ func DoMatchInner(str string, patWeights []rune, patTypes []byte, matcher func(a
 		}
 		// Mismatch. Maybe restart.
 		if 0 < nextRIdx && nextRIdx <= lenRunes {
+			pIdx = nextPIdx
+			rIdx = nextRIdx
+			continue
+		}
+		return false
+	}
+	// Matched all of pattern to all of name. Success.
+	return true
+}
+
+// DoMatchInnerBytes matches the string with patChars and patTypes in bytes.
+// The algorithm has linear time complexity.
+// https://research.swtch.com/glob
+func DoMatchInnerBytes(str string, patWeights, patTypes []byte) bool {
+	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
+	bytes := []byte(str)
+	lenBytes := len(bytes)
+	var rIdx, pIdx, nextRIdx, nextPIdx int
+	for pIdx < len(patWeights) || rIdx < lenBytes {
+		if pIdx < len(patWeights) {
+			switch patTypes[pIdx] {
+			case PatMatch:
+				if rIdx < lenBytes && bytes[rIdx] == patWeights[pIdx] {
+					pIdx++
+					rIdx++
+					continue
+				}
+			case PatOne:
+				if rIdx < lenBytes {
+					pIdx++
+					rIdx++
+					continue
+				}
+			case PatAny:
+				// Try to match at sIdx.
+				// If that doesn't work out,
+				// restart at sIdx+1 next.
+				nextPIdx = pIdx
+				nextRIdx = rIdx + 1
+				pIdx++
+				continue
+			}
+		}
+		// Mismatch. Maybe restart.
+		if 0 < nextRIdx && nextRIdx <= lenBytes {
 			pIdx = nextPIdx
 			rIdx = nextRIdx
 			continue
