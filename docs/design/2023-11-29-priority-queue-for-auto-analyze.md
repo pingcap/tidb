@@ -11,6 +11,9 @@
   - [Introduction](#introduction)
   - [Motivation or Background](#motivation-or-background)
   - [Detailed Design](#detailed-design)
+    - [Partitioned Table](#partitioned-table)
+    - [Failed analysis](#failed-analysis)
+    - [Dataflow](#dataflow)
     - [Frequently Asked Questions](#frequently-asked-questions)
   - [Test Design](#test-design)
     - [Functional Tests](#functional-tests)
@@ -78,20 +81,112 @@ Before we design the priority queue, we need to know the current auto analyze pr
 
 The above process is the current auto analyze process. We can see that the current auto analyze process is a random selection algorithm. We need to design a priority queue to solve the above problems.
 
-Since we perform analysis tasks synchronously on a single point for each table, we need to carry out weighted sorting on the tables that need analysis.
+Since we perform analysis tasks synchronously on a single node for each table, we need to carry out weighted sorting on the tables that need analysis.
 
-   1. We still use tidb_auto_analyze_ratio to determine if the table needs to be analyzed. The default value is 0.5. It means that auto-analyze is triggered when greater than 50% of the rows in a table have been modified.
-   2. For special events, it is necessary to put the table into the priority queue. For example, the table has a new index but it hasn't been analyzed yet.
-   3. If a table is added to the auto-analysis queue, a weight must be assigned to it to determine the execution order.
+1. Only the total count of the table more than 1000 rows will be considered.
+2. We still use tidb_auto_analyze_ratio to determine if the table needs to be analyzed. The default value is 0.5. It means that auto-analyze is triggered when greater than 50% of the rows in a table have been modified.
+3. If a table is added to the auto-analysis queue, a weight must be assigned to it to determine the execution order.
+
+The refresh time of the auto-analyze queue is not only determined by the frequency we set, but also depends on the execution time of the previous analysis task. Therefore, we can safely continue to use the old scheme of refreshing the queue every 3 seconds. This will only lead to excessive CPU consumption for auto-analyze checks when the entire cluster is idle, which is acceptable for us at the moment. In the future, we can completely solve this issue by updating the queue instead of rebuilding the entire queue.
 
 Weight table:
-| Name                 | Meaning                                                                 | Weight                                                                                                                                                                                                                                                                                                                                                            |
-|----------------------|-------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Percentage of Change | The percentage of change since the last analysis.                       | 50% <= x < 70%: 1 <br/> 70% <= x < 80%: 1.3 <br/> x >= 80%: 1.5  <br/>                                                                                                                                                                                                                                                                                            |
-| Last Failed Interval | The interval between now and the last failed analysis ends time.        | Here we cannot easily determine what interval is long and what interval is short. Therefore, we can decide by querying the interval between each automatic analysis in history. <br/> interval < average automatic analysis interval: 0 <br/> interval >=  average automatic analysis interval: 0.5 <br/> interval >=  2 * average automatic analysis interval: 1 |
-| Special Event        | For example, the table has a new index but it hasn't been analyzed yet. | HasNewIndexWithoutStats: 1.5 <br/> TableNeverBeenAnalyzed: 1.5                                                                                                                                                                                                                                                                                                    |
+| **Name**             | **Meaning**                                                                                                                                                                                   | **Weight**                                                                                                                                                                                                                                                           |
+|----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Percentage of Change | The percentage of change since the last analysis. Note: For unanalyzed tables, we set the percentage of changes to 100%.                                                                      | log10(1 + Change Ratio). [Check the graph](https://www.desmos.com/calculator/gb3i2cropz).  **Note: For unanalyzed tables, we set the percentage of changes to 100%**                                                                                                                                                                                                                          |
+| Table Size           | The size is equal to the number of rows multiplied by the number of columns in the table that are subject to analysis. The smaller tables should have a higher priority than the bigger ones. | Applying a logarithmic transformation, namely log10(1 + Table Size), and its 'penalty' is calculated as 1 - log10(1 + Table Size). [Check the graph.](https://www.desmos.com/calculator/x3fq76w8sb)                                                                                                                  |
+| Analysis Interval    | Time since the last analysis execution for the table. The bigger interval should have a higher priority than the smaller interval.                                                            | Applying a logarithmic transformation, namely log10(1 + Analysis Interval). To further compress the rate of growth for larger values, we can consider taking the logarithmic square root of x'. The final formula is log10(1 + √Analysis Interval). [Check the graph.](https://www.desmos.com/calculator/plhtkfqhx9) |
+| Special Event        | For example, the table has a new index but it hasn't been analyzed yet.                                                                                                                       | HasNewindexWithoutStats: 2                                                                                                                                                                                                                                           |
 
+We need to design a formula that ensures the three variables (Change Ratio of the table, Size of the table, and the Time Interval since the last analysis) maintain specific proportions when calculating weights. Here is a basic idea:
+
+- Table Change Ratio (Change Ratio): Accounts for 60%
+- Table Size (Size): Accounts for 10%
+- Analysis Interval (Analysis Interval): Accounts for 30%
+
+The calculation formula is: priority_score = ($$0.6 \times \log_{10}(1 + \text{Change Ratio}) + 0.1 \times (1 - \log_{10}(1 + \text{Table Size})) + 0.3 \times \log_{10}(1 + \sqrt{\text{Analysis Interval}})$$ + special_event[event])
 The calculation formula is: `priority_score = (change_percentage[size] * last_failed_time_weight[interval] * special_event[event])`
+
+The ratio mentioned above is determined based on our current sample data. We need more tests to ascertain a more accurate ratio. Furthermore, we will expose these ratios as some configurations, as more precise control and adjustments may be necessary in different scenarios.
+
+### Partitioned Table
+
+For partitioned tables, if the pruning mode is static, then we don't need to merge the global statistics, so we can consider it as a normal table and calculate the weight for it.
+But if the pruning mode is dynamic, then we need to get all the partitions that need to be analyzed and calculate the average percentage of changes, and consider it as a single item in the priority queue.
+
+Pseudocode:
+
+```go
+function calculateAvgChangeForPartitions(partitionStats, defs, autoAnalyzeRatio):
+    totalChangePercent = 0
+    count = 0
+    partitionNames = []
+
+    for each def in defs:
+        tblStats = partitionStats[def.ID]
+        changePercent = calculateChangePercentage(tblStats, autoAnalyzeRatio)
+        if changePercent is 0:
+            continue
+
+        totalChangePercent += changePercent
+        append def.Name.O to partitionNames
+        count += 1
+
+    avgChange = totalChangePercent / count
+    return avgChange, partitionNames
+
+function calculateChangePercentage(tblStats, autoAnalyzeRatio):
+    if tblStats.Pseudo or tblStats.RealtimeCount < AutoAnalyzeMinCnt:
+        return 0
+
+    if not TableAnalyzed(tblStats):
+        return 1
+
+    tblCnt = tblStats.RealtimeCount
+    if histCnt = tblStats.GetAnalyzeRowCount() > 0:
+        tblCnt = histCnt
+
+    res = tblStats.ModifyCount / tblCnt
+    if res > autoAnalyzeRatio:
+        return res
+
+    return 0
+```
+
+### Failed analysis
+
+Sometimes we may encounter some problem when we analyze a table, we need to avoid analyzing the same table again and again. So after we select a table from the priority queue. We need to make sure that it is valid to be analyzed.
+We check the interval between now and the last failed analysis ends time to determine if we need to analyze the selected table.
+
+**The calculation rule is: if interval >=  2 * average automatic analysis interval then we thought it was a valid table to be analyzed. We only compute it after we get it from the priority queue, which would help us save a lot of resources. Because getting this information from TiKV is very expensive.**
+
+Pseudocode:
+
+```go
+function IsValidToAnalyze(j):
+    if j.Weight is 0:
+        return false
+
+    lastFailedAnalysisDuration, err1 = getLastFailedAnalysisDuration(j.DBName, j.TableName, "")
+    if err1 is not nil:
+        return false
+
+    averageAnalysisDuration, err2 = getAverageAnalysisDuration(j.DBName, j.TableName, "")
+    if err2 is not nil:
+        return false
+
+    // Failed analysis duration is less than 2 times the average analysis duration.
+    // Skip this table to avoid too many failed analysis.
+    if lastFailedAnalysisDuration < 2 * averageAnalysisDuration:
+        return false
+
+    return true
+```
+
+### Dataflow
+
+Pick One Table From The Priority Queue (default: every 3s)
+
+![Dataflow](./imgs/analyze-dataflow.png)
 
 ### Frequently Asked Questions
 
