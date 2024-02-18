@@ -52,7 +52,7 @@ func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep in
 	}
 	if !threadSafe {
 		updateHashValue = func(pos uint64, rowAddress unsafe.Pointer) {
-			for true {
+			for {
 				prev := atomic.LoadPointer(&st.hashTable[pos])
 				if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
 					setNextRowOffset(rowAddress, prev)
