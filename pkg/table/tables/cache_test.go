@@ -574,9 +574,8 @@ func TestIssue49847(t *testing.T) {
 		if lastReadFromCache(tk) {
 			cacheUsed = true
 			break
-		} else {
-			time.Sleep(100 * time.Millisecond)
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	tk.MustExec("rollback")
 	require.True(t, cacheUsed)
