@@ -41,15 +41,15 @@ func (s *BaseScheduler) Switch2NextStep() (err error) {
 }
 
 func NewNodeManager() *NodeManager {
-	return newNodeManager()
+	return newNodeManager("")
 }
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	// Make test more fast.
-	checkTaskRunningInterval /= 10
-	checkTaskFinishedInterval /= 10
+	CheckTaskRunningInterval /= 10
+	CheckTaskFinishedInterval /= 10
 	RetrySQLInterval /= 20
 
 	opts := []goleak.Option{

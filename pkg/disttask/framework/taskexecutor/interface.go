@@ -113,7 +113,7 @@ type Extension interface {
 	// Note:
 	// 1. summary is the summary manager of all subtask of the same type now.
 	// 2. should not retry the error from it.
-	GetStepExecutor(task *proto.Task, summary *execute.Summary, resource *proto.StepResource) (execute.StepExecutor, error)
+	GetStepExecutor(task *proto.Task, resource *proto.StepResource) (execute.StepExecutor, error)
 	// IsRetryableError returns whether the error is transient.
 	// When error is transient, the framework won't mark subtasks as failed,
 	// then the TaskExecutor can load the subtask again and redo it.
@@ -134,6 +134,11 @@ func (*EmptyStepExecutor) Init(context.Context) error {
 
 // RunSubtask implements the StepExecutor interface.
 func (*EmptyStepExecutor) RunSubtask(context.Context, *proto.Subtask) error {
+	return nil
+}
+
+// RealtimeSummary implements the StepExecutor interface.
+func (*EmptyStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 

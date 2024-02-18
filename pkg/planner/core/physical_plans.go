@@ -804,7 +804,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 // For keepOrder with partition table,
 // we need use partitionHandle to distinct two handles,
 // the `_tidb_rowid` in different partitions can have the same value.
-func AddExtraPhysTblIDColumn(sctx sessionctx.Context, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+func AddExtraPhysTblIDColumn(sctx PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
 	// Not adding the ExtraPhysTblID if already exists
 	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
 		return columns, schema, false
@@ -1620,7 +1620,7 @@ type PhysicalExpand struct {
 }
 
 // Init only assigns type and context.
-func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
+func (p PhysicalExpand) Init(ctx PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
@@ -2146,7 +2146,7 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool 
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPointNonNullable(sctx)
+		p.Ranges[0].IsPointNonNullable(sctx.GetSessionVars().StmtCtx.TypeCtx())
 }
 
 // PhysicalSelection represents a filter.

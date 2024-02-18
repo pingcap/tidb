@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
@@ -25,13 +26,13 @@ import (
 type IndexUsageReporter struct {
 	reporter         *indexusage.StmtIndexUsageCollector
 	runtimeStatsColl *execdetails.RuntimeStatsColl
-	statsMap         map[int64]*stmtctx.UsedStatsInfoForTable
+	statsMap         *stmtctx.UsedStatsInfo
 }
 
 // NewIndexUsageReporter creates an index usage reporter util
 func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
-	statsMap map[int64]*stmtctx.UsedStatsInfoForTable) *IndexUsageReporter {
+	statsMap *stmtctx.UsedStatsInfo) *IndexUsageReporter {
 	return &IndexUsageReporter{
 		reporter:         reporter,
 		runtimeStatsColl: runtimeStatsColl,
@@ -39,9 +40,23 @@ func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 	}
 }
 
-// ReportCopIndexUsage reports the index usage to the inside collector
-func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, indexID int64, planID int) {
-	tableRowCount, ok := e.getTableRowCount(tableID)
+// ReportCopIndexUsageForTable wraps around `ReportCopIndexUsage` to get `tableID` and `physicalTableID` from the
+// `table.Table`. If it's expected to calculate the percentage according to the size of partition, the `tbl` argument
+// should be a `table.PhysicalTable`, or the percentage will be calculated using the size of whole table.
+func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexID int64, planID int) {
+	tableID := tbl.Meta().ID
+	physicalTableID := tableID
+	if physicalTable, ok := tbl.(table.PhysicalTable); ok {
+		physicalTableID = physicalTable.GetPhysicalID()
+	}
+
+	e.ReportCopIndexUsage(tableID, physicalTableID, indexID, planID)
+}
+
+// ReportCopIndexUsage reports the index usage to the inside collector. The index usage will be recorded in the
+// `tableID+indexID`, but the percentage is calculated using the size of the table specified by `physicalTableID`.
+func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
+	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
 		// skip if the table is empty or the stats is not valid
 		return
@@ -61,8 +76,8 @@ func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, indexID int64, p
 }
 
 // ReportPointGetIndexUsage reports the index usage of a point get or batch point get
-func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, indexID int64, planID int, kvRequestTotal int64) {
-	tableRowCount, ok := e.getTableRowCount(tableID)
+func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int, kvRequestTotal int64) {
+	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
 		// skip if the table is empty or the stats is not valid
 		return
@@ -80,8 +95,8 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, indexID int
 
 // getTableRowCount returns the `RealtimeCount` of a table
 func (e *IndexUsageReporter) getTableRowCount(tableID int64) (int64, bool) {
-	stats, ok := e.statsMap[tableID]
-	if !ok {
+	stats := e.statsMap.GetUsedInfo(tableID)
+	if stats == nil {
 		return 0, false
 	}
 	if stats.Version == statistics.PseudoVersion {

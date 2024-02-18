@@ -476,16 +476,16 @@ func (p *PhysicalIndexScan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Ex
 			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
 	}
-	var pkColIds []int64
+	var pkColIDs []int64
 	if p.NeedCommonHandle {
-		pkColIds = tables.TryGetCommonPkColumnIds(p.Table)
+		pkColIDs = tables.TryGetCommonPkColumnIds(p.Table)
 	}
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
 		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true),
 		Desc:             p.Desc,
-		PrimaryColumnIds: pkColIds,
+		PrimaryColumnIds: pkColIDs,
 	}
 	if p.isPartition {
 		idxExec.TableId = p.physicalTableID

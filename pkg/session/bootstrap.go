@@ -2483,7 +2483,7 @@ func upgradeToVer99After(s sessiontypes.Session) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
 	mustExecute(s, sql)
-	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return t.SetMetadataLock(true)
 	})
@@ -2868,7 +2868,7 @@ func upgradeToVer175(s sessiontypes.Session, ver int64) {
 		}
 		for i := 0; i < req.NumRows(); i++ {
 			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
-			newNormalizedSQL := parser.NormalizeForBinding(bindSQL)
+			newNormalizedSQL := parser.NormalizeForBinding(bindSQL, false)
 			// update `in (?)` to `in (...)`
 			if originalNormalizedSQL == newNormalizedSQL {
 				continue // no need to update
@@ -2910,7 +2910,7 @@ func upgradeToVer177(s sessiontypes.Session, ver int64) {
 func writeDDLTableVersion(s sessiontypes.Session) {
 	var err error
 	var ddlTableVersion meta.DDLTableVersion
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ddlTableVersion, err = t.CheckDDLTableVersion()
 		return err
