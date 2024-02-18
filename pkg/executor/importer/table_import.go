@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -220,10 +221,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (
 	}
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-
-	// todo: use a real region size getter
-	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, regionSizeGetter)
+	d := kvStore.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, d)
 	if err != nil {
 		return nil, err
 	}
