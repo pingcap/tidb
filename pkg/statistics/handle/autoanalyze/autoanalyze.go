@@ -467,7 +467,7 @@ func getPartitionStats(
 	partitionStats := make(map[int64]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		partitionStats[def.ID] = statsHandle.GetPartitionStats(tblInfo, def.ID)
+		partitionStats[def.ID] = statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, def.ID)
 	}
 
 	return partitionStats
@@ -599,10 +599,10 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 
 	for _, def := range partitionDefs {
 		partitionStatsTbl := partitionStats[def.ID]
-		// 1. If the stats are not loaded, we don't need to analyze it.
+		// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
 		// 2. If the table is too small, we don't want to waste time to analyze it.
 		//    Leave the opportunity to other bigger tables.
-		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
+		if partitionStatsTbl == nil || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
 		if needAnalyze, reason := NeedAnalyzeTable(
