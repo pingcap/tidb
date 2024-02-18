@@ -812,7 +812,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 
 func TestResolveConflictKeysError(t *testing.T) {
 	p := parser.New()
-	node, _, err := p.ParseSQL("create table a (a varchar(20) primary key clustered, b int not null, c text, unique key uni_b(b));")
+	node, _, err := p.ParseSQL("create table a (a varchar(20) primary key clustered, b int not null, c text, key uni_b(b));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
