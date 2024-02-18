@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/server/tests/servertestkit"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -30,16 +31,16 @@ import (
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func TestLoadData1(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
-	ts.RunTestLoadDataWithColumnList(t, ts.server)
-	ts.RunTestLoadData(t, ts.server)
+	ts.RunTestLoadDataWithColumnList(t, ts.Server)
+	ts.RunTestLoadData(t, ts.Server)
 	ts.RunTestLoadDataWithSelectIntoOutfile(t)
 	ts.RunTestLoadDataForSlowLog(t)
 }
 
 func TestConfigDefaultValue(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
 	ts.RunTestsOnNewDB(t, nil, "config", func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery("select @@tidb_slow_log_threshold;")
@@ -56,19 +57,19 @@ func TestLoadDataAutoRandom(t *testing.T) {
 		//nolint:errcheck
 		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/executor/BeforeCommitWork")
 	}()
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
 	ts.RunTestLoadDataAutoRandom(t)
 }
 
 func TestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
 	ts.RunTestLoadDataAutoRandomWithSpecialTerm(t)
 }
 
 func TestExplainFor(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
 	ts.RunTestExplainForConn(t)
 }
@@ -80,19 +81,19 @@ func TestStmtCount(t *testing.T) {
 	cfg.Status.StatusPort = 0
 	cfg.Status.RecordDBLabel = false
 	cfg.Performance.TCPKeepAlive = true
-	ts := createTidbTestSuiteWithCfg(t, cfg)
+	ts := servertestkit.CreateTidbTestSuiteWithCfg(t, cfg)
 
 	ts.RunTestStmtCount(t)
 }
 
 func TestDBStmtCount(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
 	ts.RunTestDBStmtCount(t)
 }
 
 func TestLoadDataListPartition(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
 	ts.RunTestLoadDataForListPartition(t)
 	ts.RunTestLoadDataForListPartition2(t)
@@ -101,9 +102,9 @@ func TestLoadDataListPartition(t *testing.T) {
 }
 
 func TestPrepareCount(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
 	ctx := context.Background()
@@ -124,9 +125,9 @@ func TestPrepareCount(t *testing.T) {
 }
 
 func TestPrepareExecute(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -164,11 +165,11 @@ func TestPrepareExecute(t *testing.T) {
 }
 
 func TestDefaultCharacterAndCollation(t *testing.T) {
-	ts := createTidbTestSuite(t)
+	ts := servertestkit.CreateTidbTestSuite(t)
 
 	// issue #21194
 	// 255 is the collation id of mysql client 8 default collation_connection
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil, nil)
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil, nil)
 	require.NoError(t, err)
 	testCase := []struct {
 		variable string
