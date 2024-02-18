@@ -2314,7 +2314,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		// TODO: propagate the index or partition def instead of this loop
 		for i := range defs {
 			if defs[i].ID == ds.physicalTableID {
-				pointGetPlan.PartitionDef = &defs[i]
+				idx := i
+				pointGetPlan.PGPPartitionIdx = &idx
 			}
 		}
 	}

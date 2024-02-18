@@ -307,8 +307,15 @@ func (p *PointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	if p.PartitionDef != nil {
-		res.Partitions = []string{p.PartitionDef.Name.O}
+	if idxPointer := p.PGPPartitionIdx; idxPointer != nil {
+		idx := *idxPointer
+		if idx < 0 {
+			res.Partitions = []string{"dual"}
+		} else {
+			if pi := p.TblInfo.GetPartitionInfo(); pi != nil {
+				res.Partitions = []string{pi.Definitions[idx].Name.O}
+			}
+		}
 	}
 	if p.IndexInfo != nil {
 		index := IndexAccess{

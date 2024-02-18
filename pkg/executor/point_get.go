@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -45,24 +44,20 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
-func (e *PointGetExecutor) getTableDualExec(p *plannercore.PointGetPlan) exec.Executor {
-	p.PartitionDef = &model.PartitionDefinition{
-		ID:      0,
-		Name:    model.NewCIStr("dual"),
-		Comment: "No matching partition in PointGet",
-	}
-	return &TableDualExec{
-		BaseExecutor: e.BaseExecutor,
-		numDualRows:  0,
-		numReturned:  0,
-	}
-}
-
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {
 	var err error
 	if err = b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
 		b.err = err
 		return nil
+	}
+
+	if p.PrunePartitions(b.ctx) {
+		// no matching partitions
+		return &TableDualExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
+			numDualRows:  0,
+			numReturned:  0,
+		}
 	}
 
 	if p.Lock && !b.inSelectLockStmt {
@@ -73,10 +68,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 
 	e := &PointGetExecutor{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
-		txnScope:         b.txnScope,
-		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
+		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		indexUsageReporter: b.buildIndexUsageReporter(p),
+		txnScope:           b.txnScope,
+		readReplicaScope:   b.readReplicaScope,
+		isStaleness:        b.isStaleness,
+		partitionNames:     p.PartitionNames,
 	}
 
 	e.SetInitCap(1)
@@ -126,92 +123,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		b.hasLock = true
 	}
 
-	// Static or Dynamic pruning mode does not affect PointGet!!!
-	pi := p.TblInfo.GetPartitionInfo()
-	if pi == nil {
-		e.indexUsageReporter = b.buildIndexUsageReporter(p)
-		return e
-	}
-	if p.IndexInfo != nil && p.IndexInfo.Global {
-		e.partitionNames = p.PartitionNames
-		e.indexUsageReporter = b.buildIndexUsageReporter(p)
-		return e
-	}
-	// If tryPointGetPlan did generate the plan,
-	// then PartitionDef is not set and needs to be set here!
-	// There are two ways to get here from static mode partition pruning:
-	// 1) Converting a set of partitions into a Union scan
-	//    - This should NOT be cached and should already be having PartitionDef set!
-	// 2) Converted to PointGet from checkTblIndexForPointPlan
-	//    and it does not have the PartitionDef set
-	if !p.SCtx().GetSessionVars().StmtCtx.UseCache && p.PartitionDef != nil {
-		e.indexUsageReporter = b.buildIndexUsageReporter(p)
-		return e
-	}
-	// Reset PartitionDef, should only be used if partitioned table.
-	// If nil and partitioned table, no partition matched!
-	// TODO: Should this be considered as 'depending on parameters'
-	// or as only static parts?
-	// I.e. if prepared statement, and partition columns are not parameterized, then it is depending on parameters,
-	// but if all partition columns are given as constants, then it is not... (Probably this is a non issue for Point Get...)
-	p.PartitionDef = nil
-
-	tbl, ok := b.is.TableByID(p.TblInfo.ID)
-	if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
-		// Can this happen?
-		intest.Assert(false)
-		e.indexUsageReporter = b.buildIndexUsageReporter(p)
-		return e
-	}
-	row := make([]types.Datum, len(p.TblInfo.Columns))
-
-	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
-		for i := range p.IndexInfo.Columns {
-			// TODO: Skip copying non-partitioning columns?
-			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
-		}
-	} else {
-		var dVal types.Datum
-		if p.UnsignedHandle {
-			dVal = types.NewUintDatum(uint64(p.Handle.IntValue()))
-		} else {
-			dVal = types.NewIntDatum(p.Handle.IntValue())
-		}
-		dVal.Copy(&row[p.HandleColOffset])
-	}
-
-	pt, ok := tbl.(table.PartitionedTable)
-	if pt == nil || !ok {
-		intest.Assert(false)
-		e.indexUsageReporter = b.buildIndexUsageReporter(p)
-		return e
-	}
-	// TODO: Handle overflow?
-	partIdx, err := pt.GetPartitionIdxByRow(b.ctx, row)
-	if err != nil {
-		if terror.ErrorEqual(err, table.ErrNoPartitionForGivenValue) {
-			return e.getTableDualExec(p)
-		}
-		intest.Assert(false)
-		b.err = err
-		return nil
-	}
-	def := &tbl.Meta().Partition.Definitions[partIdx]
-	if len(p.PartitionNames) > 0 {
-		found := false
-		for _, partName := range p.PartitionNames {
-			if partName.L == def.Name.L {
-				found = true
-			}
-		}
-		if !found {
-			return e.getTableDualExec(p)
-		}
-	}
-
-	p.PartitionDef = def
-	e.partitionDef = p.PartitionDef
-	e.indexUsageReporter = b.buildIndexUsageReporter(p)
 	return e
 }
 
@@ -223,7 +134,7 @@ type PointGetExecutor struct {
 	tblInfo          *model.TableInfo
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
-	partitionDef     *model.PartitionDefinition
+	partitionPGEDef  *int
 	partitionNames   []model.CIStr
 	idxKey           kv.Key
 	handleVal        []byte
@@ -249,6 +160,20 @@ type PointGetExecutor struct {
 	stats *runtimeStatsWithSnapshot
 }
 
+// GetPhysID returns the physical id used, ether the table's id or a partition's ID
+func GetPhysID(tblInfo *model.TableInfo, idx *int) int64 {
+	if idx != nil {
+		if *idx < 0 {
+			intest.Assert(false)
+		} else {
+			if pi := tblInfo.GetPartitionInfo(); pi != nil {
+				return pi.Definitions[*idx].ID
+			}
+		}
+	}
+	return tblInfo.ID
+}
+
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
 func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	decoder := NewRowDecoder(e.Ctx(), p.Schema(), p.TblInfo)
@@ -266,7 +191,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	e.partitionDef = p.PartitionDef
+	e.partitionPGEDef = p.PGPPartitionIdx
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 }
@@ -306,10 +231,7 @@ func (e *PointGetExecutor) Close() error {
 	}
 	if e.indexUsageReporter != nil && e.idxInfo != nil {
 		tableID := e.tblInfo.ID
-		physicalTableID := tableID
-		if e.partitionDef != nil {
-			physicalTableID = e.partitionDef.ID
-		}
+		physicalTableID := GetPhysID(e.tblInfo, e.partitionPGEDef)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
 		e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
 	}
@@ -325,13 +247,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.done = true
 
-	var tblID int64
 	var err error
-	if e.partitionDef != nil {
-		tblID = e.partitionDef.ID
-	} else {
-		tblID = e.tblInfo.ID
-	}
+	tblID := GetPhysID(e.tblInfo, e.partitionPGEDef)
 	if e.lock {
 		e.UpdateDeltaForTableID(tblID)
 	}
@@ -630,19 +547,13 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		return nil
 	}
 
-	var tblID int64
-	var tblName string
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	if e.partitionDef != nil {
-		tblID = e.partitionDef.ID
-		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
-		tblName = tblInfo.Meta().Name.String()
-		partName = partInfo.Name.String()
-	} else {
-		tblID = e.tblInfo.ID
-		tblInfo, _ := is.TableByID(tblID)
-		tblName = tblInfo.Meta().Name.String()
+	tblInfo, _ := is.TableByID((e.tblInfo.ID))
+	tblName := tblInfo.Meta().Name.String()
+	tblID := GetPhysID(tblInfo.Meta(), e.partitionPGEDef)
+	if tblID != tblInfo.Meta().ID {
+		partName = tblInfo.Meta().GetPartitionInfo().Definitions[*e.partitionPGEDef].Name.String()
 	}
 	valid := distsql.VerifyTxnScope(e.txnScope, tblID, is)
 	if valid {

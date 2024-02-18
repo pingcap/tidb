@@ -1844,15 +1844,12 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	var rowKeys []kv.Key //nolint: prealloc
 	isCommonHandle := make(map[string]bool, 0)
 
-	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+	handlePlan := func(sctx sessionctx.Context, p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			if v.PartitionDef != nil {
-				tableID = v.PartitionDef.ID
-			} else {
-				tableID = v.TblInfo.ID
-			}
+			v.PrunePartitions(sctx)
+			tableID = executor.GetPhysID(v.TblInfo, v.PGPPartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
 				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
@@ -1865,16 +1862,17 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
+			v.PrunePartitions(sctx)
 			pi := v.TblInfo.GetPartitionInfo()
 			if pi != nil && len(v.PartitionIdxs) == 0 {
 				// skip when PartitionIdxs is not initialized.
 				return nil
 			}
 			getPhysID := func(i int) int64 {
-				if pi == nil {
+				if pi == nil || i >= len(v.PartitionIdxs) {
 					return v.TblInfo.ID
 				}
-				return pi.Definitions[v.PartitionIdxs[i]].ID
+				return executor.GetPhysID(v.TblInfo, &v.PartitionIdxs[i])
 			}
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
@@ -1924,7 +1922,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
-			err = handlePlan(x.SelectPlan, func() {
+			err = handlePlan(cc.ctx.Session, x.SelectPlan, func() {
 				executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
 			})
 			if err != nil {
@@ -1937,7 +1935,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
-			err = handlePlan(x.SelectPlan, func() {
+			err = handlePlan(cc.ctx.Session, x.SelectPlan, func() {
 				executor.ResetDeleteStmtCtx(sc, deleteStmt, vars)
 			})
 			if err != nil {
