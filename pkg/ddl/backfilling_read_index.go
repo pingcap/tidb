@@ -93,12 +93,8 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
 
-	sm := &BackfillSubTaskMeta{}
-	err := json.Unmarshal(subtask.Meta, sm)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {
-		logutil.BgLogger().Error("unmarshal error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
 		return err
 	}
 
@@ -169,8 +165,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
-	var subtaskMeta BackfillSubTaskMeta
-	err := json.Unmarshal(subtask.Meta, &subtaskMeta)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -180,14 +175,14 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	for _, g := range s.metaGroups {
 		all.Merge(g)
 	}
-	subtaskMeta.MetaGroups = s.metaGroups
+	sm.MetaGroups = s.metaGroups
 
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("start", hex.EncodeToString(all.StartKey)),
 		zap.String("end", hex.EncodeToString(all.EndKey)),
 		zap.Int("fileCount", len(all.MultipleFilesStats)),
 		zap.Uint64("totalKVSize", all.TotalKVSize))
-	meta, err := json.Marshal(subtaskMeta)
+	meta, err := json.Marshal(sm)
 	if err != nil {
 		return err
 	}

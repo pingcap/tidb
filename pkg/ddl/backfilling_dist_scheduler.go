@@ -562,12 +562,14 @@ func forEachBackfillSubtaskMeta(
 		return errors.Trace(err)
 	}
 	for _, subTaskMeta := range subTaskMetas {
-		var subtask BackfillSubTaskMeta
-		err := json.Unmarshal(subTaskMeta, &subtask)
+		subtask, err := decodeBackfillSubTaskMeta(subTaskMeta)
 		if err != nil {
+			logutil.BgLogger().Error("unmarshal error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
 			return errors.Trace(err)
 		}
-		fn(&subtask)
+		fn(subtask)
 	}
 	return nil
 }

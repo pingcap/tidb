@@ -59,10 +59,32 @@ type BackfillSubTaskMeta struct {
 
 	// Used by global sort write & ingest step.
 	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
-	DataFiles      []string `json:"data_files,omitempty"`
-	StatFiles      []string `json:"stat_files,omitempty"`
+	DataFiles      []string `json:"data-files,omitempty"`
+	StatFiles      []string `json:"stat-files,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
+	// Only used for adding one single index.
+	// Keep this for compatibility with v7.5.
+	external.SortedKVMeta `json:",inline"`
+}
+
+func decodeBackfillSubTaskMeta(raw []byte) (*BackfillSubTaskMeta, error) {
+	var subtask BackfillSubTaskMeta
+	err := json.Unmarshal(raw, &subtask)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// For compatibility with old version TiDB.
+	if len(subtask.RowStart) == 0 {
+		subtask.RowStart = subtask.SortedKVMeta.StartKey
+		subtask.RowEnd = subtask.SortedKVMeta.EndKey
+	}
+	if len(subtask.MetaGroups) == 0 {
+		m := subtask.SortedKVMeta
+		subtask.MetaGroups = []*external.SortedKVMeta{&m}
+	}
+	return &subtask, nil
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.

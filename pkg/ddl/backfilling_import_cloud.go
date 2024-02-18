@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 type cloudImportExecutor struct {
@@ -67,12 +65,8 @@ func (*cloudImportExecutor) Init(ctx context.Context) error {
 func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	sm := &BackfillSubTaskMeta{}
-	err := json.Unmarshal(subtask.Meta, sm)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {
-		logutil.BgLogger().Error("unmarshal error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
 		return err
 	}
 
