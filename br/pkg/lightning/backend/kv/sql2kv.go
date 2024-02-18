@@ -153,6 +153,21 @@ type Pairs struct {
 	MemBuf   *MemBuf
 }
 
+// GroupedPairs is a map from index ID to KvPairs.
+type GroupedPairs map[int64][]common.KvPair
+
+// SplitIntoChunks implements the encode.Rows interface. It just satisfies the
+// type system and should never be called.
+func (GroupedPairs) SplitIntoChunks(int) []encode.Rows {
+	panic("not implemented")
+}
+
+// Clear implements the encode.Rows interface. It just satisfies the type system
+// and should never be called.
+func (GroupedPairs) Clear() encode.Rows {
+	panic("not implemented")
+}
+
 // MakeRowsFromKvPairs converts a KvPair slice into a Rows instance. This is
 // mainly used for testing only. The resulting Rows instance should only be used
 // for the importer backend.
@@ -171,7 +186,21 @@ func MakeRowFromKvPairs(pairs []common.KvPair) encode.Row {
 // back into a slice of KvPair. This method panics if the Rows is not
 // constructed in such way.
 func Rows2KvPairs(rows encode.Rows) []common.KvPair {
-	return rows.(*Pairs).Pairs
+	switch v := rows.(type) {
+	case *Pairs:
+		return v.Pairs
+	case GroupedPairs:
+		cnt := 0
+		for _, pairs := range v {
+			cnt += len(pairs)
+		}
+		res := make([]common.KvPair, 0, cnt)
+		for _, pairs := range v {
+			res = append(res, pairs...)
+		}
+		return res
+	}
+	panic(fmt.Sprintf("unknown Rows type %T", rows))
 }
 
 // Row2KvPairs converts a Row instance constructed from MakeRowFromKvPairs
