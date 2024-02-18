@@ -18,7 +18,24 @@ set -eux
 
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
-! run_lightning
+mydir=$(dirname "${BASH_SOURCE[0]}")
+
+run_sql 'DROP TABLE IF EXISTS dup_resolve.a'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
+
+! run_lightning --backend local --config "${mydir}/config1.toml"
+[ $? -eq 0 ]
+
+tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key"
+
+check_not_contains "the whole procedure completed" $TEST_DIR/lightning.log
+
+# import a second time
+
+run_sql 'DROP TABLE IF EXISTS dup_resolve.a'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
+
+! run_lightning --backend local --config "${mydir}/config2.toml"
 [ $? -eq 0 ]
 
 tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key"
