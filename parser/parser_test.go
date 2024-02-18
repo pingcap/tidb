@@ -1093,33 +1093,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"calibrate resource workload oltp_read_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY"},
 		{"calibrate resource workload oltp_write_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY"},
 		{"calibrate resource workload = oltp_read_write START_TIME '2023-04-01 13:00:00'", false, ""},
-<<<<<<< HEAD:parser/parser_test.go
-=======
-
-		// for query watch
-		{"query watch add SQL DIGEST b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377 ", true, "QUERY WATCH ADD SQL DIGEST `b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377`"},
-		{"query watch add SQL DIGEST b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377 ", true, "QUERY WATCH ADD SQL DIGEST `b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377`"},
-		{"query watch add SQL DIGEST 'b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377' ", true, "QUERY WATCH ADD SQL DIGEST _UTF8MB4'b13858789fce00208f9a262c99621b7045f4869807cd4e6568008ae7ca19a377'"},
-		{"query watch add PLAN DIGEST `5e3ddd388f6012e328233dbcdda5d48f404e0536c6c54d9618233210f3d5762a` ", true, "QUERY WATCH ADD PLAN DIGEST `5e3ddd388f6012e328233dbcdda5d48f404e0536c6c54d9618233210f3d5762a`"},
-		{"query watch add PLAN DIGEST @digest1 ", true, "QUERY WATCH ADD PLAN DIGEST @`digest1`"},
-		{"query watch add SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
-		{"query watch add SQL TEXT EXACT to 'select 1'", true, "QUERY WATCH ADD SQL TEXT EXACT TO _UTF8MB4'select 1'"},
-		{"query watch add SQL TEXT PLAN to 'select 1'", true, "QUERY WATCH ADD SQL TEXT PLAN TO _UTF8MB4'select 1'"},
-		{"query watch add resource group `default` SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD RESOURCE GROUP `default` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
-		{"query watch add resource group @rg SQL TEXT SIMILAR to @sql1", true, "QUERY WATCH ADD RESOURCE GROUP @`rg` SQL TEXT SIMILAR TO @`sql1`"},
-		{"query watch add resource group rg1 SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
-		{"query watch add SQL TEXT SIMILAR to 'select 1' resource group rg1", true, "QUERY WATCH ADD SQL TEXT SIMILAR TO _UTF8MB4'select 1' RESOURCE GROUP `rg1`"},
-		{"query watch add ACTION = KILL SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD ACTION = KILL SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
-		{"query watch add ACTION COOLDOWN resource group rg1 SQL TEXT SIMILAR to 'select 1'", true, "QUERY WATCH ADD ACTION = COOLDOWN RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select 1'"},
-		{"query watch add resource group `default` resource group `rg1` SQL TEXT SIMILAR to 'select 1'", false, ""},
-		{"query watch add SQL SIMILAR to 'select 1'", false, ""},
-		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
-		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
-		{"query watch remove", false, ""},
 
 		// for issue 34325, "replace into" with hints
 		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = ALLOW_INVALID_DATES)*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
->>>>>>> 494d9f07698 (parser: support hints in 'REPLACE INTO' statement (#50007)):pkg/parser/parser_test.go
 	}
 	RunTest(t, table, false)
 }
