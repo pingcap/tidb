@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	// "github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -40,35 +39,6 @@ import (
 
 var (
 	addingDDLJobConcurrent = "/tidb/ddl/add_ddl_job_general"
-)
-
-func (dc *ddlCtx) insertRunningDDLJobMap(id int64) {
-	dc.runningJobs.Lock()
-	defer dc.runningJobs.Unlock()
-	dc.runningJobs.ids[id] = struct{}{}
-}
-
-func (dc *ddlCtx) deleteRunningDDLJobMap(id int64) {
-	dc.runningJobs.Lock()
-	defer dc.runningJobs.Unlock()
-	delete(dc.runningJobs.ids, id)
-}
-
-func (dc *ddlCtx) excludeJobIDs() string {
-	dc.runningJobs.RLock()
-	defer dc.runningJobs.RUnlock()
-	if len(dc.runningJobs.ids) == 0 {
-		return ""
-	}
-	dc.runningJobIDs = dc.runningJobIDs[:0]
-	for id := range dc.runningJobs.ids {
-		dc.runningJobIDs = append(dc.runningJobIDs, strconv.Itoa(int(id)))
-	}
-	return fmt.Sprintf("and job_id not in (%s)", strings.Join(dc.runningJobIDs, ","))
-}
-
-const (
-	getJobSQL = "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) and %s reorg %s order by processing desc, job_id"
 )
 
 type jobType int
@@ -95,7 +65,14 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 		not = ""
 		label = "get_job_reorg"
 	}
-	sql := fmt.Sprintf(getJobSQL, not, d.excludeJobIDs())
+	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
+		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
+		and %s reorg %s order by processing desc, job_id`
+	var excludedJobIDs string
+	if ids := d.runningJobs.allIDs(); len(ids) > 0 {
+		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
+	}
+	sql := fmt.Sprintf(getJobSQL, not, excludedJobIDs)
 	rows, err := sess.execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -127,33 +104,37 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 
 func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
+		if !d.runningJobs.checkRunnable(job) {
+			return false, nil
+		}
 		if job.Type == model.ActionDropSchema {
 			// Check if there is any reorg job on this schema.
 			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
-			return d.checkJobIsRunnable(sess, sql)
+			rows, err := sess.execute(d.ctx, sql, "check conflict jobs")
+			return len(rows) == 0, err
 		}
 		// Check if there is any running job works on the same table.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where "+
 			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',', REPLACE(t1.table_ids, ',', '|'), ',') != 0)"+
 			"or (type = %d and processing)", job.ID, model.ActionFlashbackCluster)
-		return d.checkJobIsRunnable(sess, sql)
+		rows, err := sess.execute(d.ctx, sql, "check conflict jobs")
+		return len(rows) == 0, err
 	})
-}
-
-func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
-	rows, err := sess.execute(context.Background(), sql, "check_runnable")
-	return len(rows) == 0, err
 }
 
 func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
+		if !d.runningJobs.checkRunnable(job) {
+			return false, nil
+		}
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
 			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
 			"or (CONCAT(',', table_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing) "+
 			"or (type = %d and processing) limit 1",
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)), model.ActionFlashbackCluster)
-		return d.checkJobIsRunnable(sess, sql)
+		rows, err := sess.execute(d.ctx, sql, "check conflict jobs")
+		return len(rows) == 0, err
 	})
 }
 
@@ -226,11 +207,11 @@ func (d *ddl) loadDDLJobAndRun(sess *session, pool *workerPool, getJob func(*ses
 // delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
-	d.insertRunningDDLJobMap(job.ID)
+	d.runningJobs.add(job)
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
-			d.deleteRunningDDLJobMap(job.ID)
+			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
