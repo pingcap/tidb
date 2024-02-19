@@ -192,11 +192,7 @@ func TestInapplicableIndexJoinHint(t *testing.T) {
 
 	query := `select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
     (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;`
-<<<<<<< HEAD:pkg/executor/index_lookup_join_test.go
-	tk.MustHavePlan(query, "IndexJoin")
-=======
 	tk.HasPlan(query, "IndexJoin")
->>>>>>> 0c3bbc127c8 (planner: fix the issue that TIDB_INLJ hint cannot take effect when left joining two sub-queries (#46271)):executor/index_lookup_join_test.go
 }
 
 func TestIndexJoinOverflow(t *testing.T) {
