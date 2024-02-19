@@ -16,7 +16,7 @@ package scheduler
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/failpoint"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -32,7 +32,10 @@ func TestMaintainLiveNodes(t *testing.T) {
 	defer ctrl.Finish()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
 
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes"))
+	})
 
 	MockServerInfo.Store(&[]string{":4000"})
 
