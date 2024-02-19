@@ -632,7 +632,7 @@ func (r *builder) buildFromIn(
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := pointSorter{points: rangePoints,sc: r.sctx.GetSessionVars().StmtCtx, collator: collate.GetCollator(colCollate)}
+	sorter := pointSorter{points: rangePoints, sc: r.sctx.GetSessionVars().StmtCtx, collator: collate.GetCollator(colCollate)}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
