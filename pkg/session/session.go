@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -4050,7 +4051,7 @@ func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
 // Transaction infoschema is returned if inside an explicit txn.
 // Otherwise the latest infoschema is returned.
-func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (s *session) GetInfoSchema() infoschemactx.InfoSchemaMetaVersion {
 	vars := s.GetSessionVars()
 	var is infoschema.InfoSchema
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
@@ -4074,7 +4075,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
-func (s *session) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (s *session) GetDomainInfoSchema() infoschemactx.InfoSchemaMetaVersion {
 	is := domain.GetDomain(s).InfoSchema()
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)

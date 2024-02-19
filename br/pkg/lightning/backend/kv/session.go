@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/errctx"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -367,7 +368,7 @@ func (se *Session) Value(key fmt.Stringer) any {
 func (*Session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
 
 // GetInfoSchema implements the sessionctx.Context interface.
-func (*Session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (*Session) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
 	return nil
 }
 

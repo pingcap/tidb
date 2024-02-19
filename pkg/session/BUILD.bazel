@@ -32,6 +32,7 @@ go_library(
         "//pkg/extension",
         "//pkg/extension/extensionimpl",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/metrics",
