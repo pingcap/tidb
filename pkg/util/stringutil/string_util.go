@@ -138,7 +138,7 @@ const (
 	PatAny
 )
 
-// CompilePatternBytes is a adapter for `CompilePatternInner`, `pattern` can only be an ascii string.
+// CompilePatternBytes is an adapter for `CompilePatternInner`, `pattern` can only be an ascii string.
 func CompilePatternBytes(pattern string, escape byte) (patChars, patTypes []byte) {
 	patWeights, patTypes := CompilePatternInner(pattern, escape)
 	patChars = []byte(string(patWeights))
@@ -151,7 +151,7 @@ func CompilePatternPureBytes(pattern string, escape byte) (patChars, patTypes []
 	return CompilePatternInnerBytes(pattern, escape)
 }
 
-// CompilePattern is a adapter for `CompilePatternInner`, `pattern` can be any unicode string.
+// CompilePattern is an adapter for `CompilePatternInner`, `pattern` can be any unicode string.
 func CompilePattern(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
 	return CompilePatternInner(pattern, escape)
 }
@@ -281,47 +281,60 @@ func CompileLike2Regexp(str string) string {
 	return string(result)
 }
 
-// DoMatchBytes is a adapter for `DoMatchInner`, `str` can only be an ascii string.
+// DoMatchBytes is an adapter for `DoMatchInner`, `str` can only be an ascii string.
 func DoMatchBytes(str string, patChars, patTypes []byte) bool {
-	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchRune)
+	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
+	runes := []rune(str)
+	lenRunes := len(runes)
+	lenPatWeights := len(patChars)
+	patRunes := []rune(string(patChars))
+	return DoMatchInner(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matchRune(runes[a], patRunes[b]) })
 }
 
-// DoMatchPureBytes is used for binary strings.
+// DoMatchPureBytes is an adapter for `DoMatchInner`, `str` is binary strings.
 func DoMatchPureBytes(str string, patChars, patTypes []byte) bool {
-	return DoMatchInnerBytes(str, patChars, patTypes)
+	bytes := []byte(str)
+	lenBytes := len(bytes)
+	lenPatWeights := len(patChars)
+	return DoMatchInner(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patChars[b] })
 }
 
-// DoMatch is a adapter for `DoMatchInner`, `str` can be any unicode string.
+// DoMatch is an adapter for `DoMatchInner`, `str` can be any unicode string.
 func DoMatch(str string, patChars []rune, patTypes []byte) bool {
-	return DoMatchInner(str, patChars, patTypes, matchRune)
+	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
+	runes := []rune(str)
+	lenRunes := len(runes)
+	lenPatWeights := len(patChars)
+	return DoMatchInner(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matchRune(runes[a], patChars[b]) })
+}
+
+// DoMatchCustomized is an adapter for `DoMatchInner`, `str` can be any unicode string.
+func DoMatchCustomized(str string, patWeights []rune, patTypes []byte, matcher func(a, b rune) bool) bool {
+	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
+	runes := []rune(str)
+	lenRunes := len(runes)
+	lenPatWeights := len(patWeights)
+	return DoMatchInner(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matcher(runes[a], patWeights[b]) })
 }
 
 // DoMatchInner matches the string with patChars and patTypes.
 // The algorithm has linear time complexity.
 // https://research.swtch.com/glob
-func DoMatchInner(str string, patWeights []rune, patTypes []byte, matcher func(a, b rune) bool) bool {
-	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
-	runes := []rune(str)
-	lenRunes := len(runes)
-	lenPatWeights := len(patWeights)
-	return doMatchInnerCore(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matcher(runes[a], patWeights[b]) })
-}
-
-func doMatchInnerCore(lenPatWeights int, lenRunes int, patTypes []byte, matcher func(a, b int) bool) bool {
-	var rIdx, pIdx, nextRIdx, nextPIdx int
-	for pIdx < lenPatWeights || rIdx < lenRunes {
+func DoMatchInner(lenPatWeights int, lenChars int, patTypes []byte, matcher func(a, b int) bool) bool {
+	var cIdx, pIdx, nextCIdx, nextPIdx int
+	for pIdx < lenPatWeights || cIdx < lenChars {
 		if pIdx < lenPatWeights {
 			switch patTypes[pIdx] {
 			case PatMatch:
-				if rIdx < lenRunes && matcher(rIdx, pIdx) {
+				if cIdx < lenChars && matcher(cIdx, pIdx) {
 					pIdx++
-					rIdx++
+					cIdx++
 					continue
 				}
 			case PatOne:
-				if rIdx < lenRunes {
+				if cIdx < lenChars {
 					pIdx++
-					rIdx++
+					cIdx++
 					continue
 				}
 			case PatAny:
@@ -329,31 +342,21 @@ func doMatchInnerCore(lenPatWeights int, lenRunes int, patTypes []byte, matcher 
 				// If that doesn't work out,
 				// restart at sIdx+1 next.
 				nextPIdx = pIdx
-				nextRIdx = rIdx + 1
+				nextCIdx = cIdx + 1
 				pIdx++
 				continue
 			}
 		}
 		// Mismatch. Maybe restart.
-		if 0 < nextRIdx && nextRIdx <= lenRunes {
+		if 0 < nextCIdx && nextCIdx <= lenChars {
 			pIdx = nextPIdx
-			rIdx = nextRIdx
+			cIdx = nextCIdx
 			continue
 		}
 		return false
 	}
 	// Matched all of pattern to all of name. Success.
 	return true
-}
-
-// DoMatchInnerBytes matches the string with patChars and patTypes in bytes.
-// The algorithm has linear time complexity.
-// https://research.swtch.com/glob
-func DoMatchInnerBytes(str string, patWeights, patTypes []byte) bool {
-	bytes := []byte(str)
-	lenBytes := len(bytes)
-	lenPatWeights := len(patWeights)
-	return doMatchInnerCore(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patWeights[b] })
 }
 
 // IsExactMatch return true if no wildcard character
