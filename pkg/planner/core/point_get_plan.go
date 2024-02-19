@@ -679,7 +679,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 	if pi != nil && !p.SinglePartition {
 		p.PartitionIdxs = p.PartitionIdxs[:0]
 	}
-	if p.IndexInfo != nil && p.TblInfo.IsCommonHandle && p.IndexInfo.Primary {
+	if p.IndexInfo != nil && !(p.TblInfo.IsCommonHandle && p.IndexInfo.Primary) {
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
 			partitionsFound := 0

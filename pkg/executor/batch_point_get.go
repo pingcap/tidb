@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"slices"
 	"sync/atomic"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
