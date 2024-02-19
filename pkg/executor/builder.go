@@ -5110,6 +5110,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.lock {
 		b.hasLock = true
 	}
+	if pi := plan.TblInfo.GetPartitionInfo(); pi != nil && len(plan.PartitionIdxs) > 0 {
+		e.planPhysIDs = make([]int64, len(plan.PartitionIdxs))
+		defs := plan.TblInfo.GetPartitionInfo().Definitions
+		for i, idx := range plan.PartitionIdxs {
+			e.planPhysIDs[i] = defs[idx].ID
+		}
+	}
 
 	capacity := len(e.handles)
 	e.SetInitCap(capacity)
