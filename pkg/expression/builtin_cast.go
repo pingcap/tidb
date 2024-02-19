@@ -1419,7 +1419,7 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && res < 0 {
 		res = 0
 	}
-	res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
+	res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp)
 	return res, false, err
 }
 
@@ -2263,6 +2263,10 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		charset, collate := expr.CharsetAndCollation()
 		tp.SetCharset(charset)
 		tp.SetCollate(collate)
+	} else if exprTp.GetType() == mysql.TypeBit {
+		// Implicitly casting BIT to string will make it a binary
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
 	} else {
 		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 		tp.SetCharset(charset)
