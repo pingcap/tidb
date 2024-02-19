@@ -151,13 +151,8 @@ retry:
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-<<<<<<< HEAD
-			time.Sleep(backoffDuration)
-			sp.ResetConn(err)
-=======
 			sp.resetConn(ver, err)
-			bo.Backoff()
->>>>>>> d8298d59356 (meta/autoid: make autoid client ResetConn operation concurrency-safe (#50522))
+			time.Sleep(backoffDuration)
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -244,13 +239,8 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-<<<<<<< HEAD
-			time.Sleep(backoffDuration)
-			sp.ResetConn(err)
-=======
 			sp.resetConn(ver, err)
-			bo.Backoff()
->>>>>>> d8298d59356 (meta/autoid: make autoid client ResetConn operation concurrency-safe (#50522))
+			time.Sleep(backoffDuration)
 			goto retry
 		}
 		return errors.Trace(err)
