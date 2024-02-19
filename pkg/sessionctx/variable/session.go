@@ -2023,12 +2023,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
-<<<<<<< HEAD
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
-=======
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
-	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
->>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422))
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
