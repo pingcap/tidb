@@ -125,15 +125,20 @@ func InitInstanceAddr() string {
 	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
-// IsComplete checks if the task is complete.
+// CheckComplete checks if the task is complete.
 // This is called before the reader reads the data and decides whether to skip the current task.
-func (s *CheckpointManager) IsComplete(end kv.Key) bool {
+func (s *CheckpointManager) CheckComplete(taskID int, end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.minKeySyncGlobal) > 0 && end.Cmp(s.minKeySyncGlobal) <= 0 {
+		s.minTaskIDSynced = max(s.minTaskIDSynced, taskID)
 		return true
 	}
-	return s.localDataIsValid && len(s.minKeySyncLocal) > 0 && end.Cmp(s.minKeySyncLocal) <= 0
+	if s.localDataIsValid && len(s.minKeySyncLocal) > 0 && end.Cmp(s.minKeySyncLocal) <= 0 {
+		s.minTaskIDSynced = max(s.minTaskIDSynced, taskID)
+		return true
+	}
+	return false
 }
 
 // Status returns the status of the checkpoint.
@@ -238,14 +243,14 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	logutil.BgLogger().Info("reset checkpoint manager", zap.String("category", "ddl-ingest"),
 		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
 		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
-	if s.pidLocal != newPhysicalID {
+	if s.pidLocal != 0 && s.pidLocal != newPhysicalID {
 		s.minKeySyncLocal = nil
 		s.minKeySyncGlobal = nil
 		s.minTaskIDSynced = 0
-		s.pidLocal = newPhysicalID
 		s.startLocal = start
 		s.endLocal = end
 	}
+	s.pidLocal = newPhysicalID
 }
 
 // JobReorgMeta is the metadata for a reorg job.
