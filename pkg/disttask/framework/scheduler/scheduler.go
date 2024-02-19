@@ -52,7 +52,9 @@ const (
 )
 
 var (
-	checkTaskFinishedInterval = 500 * time.Millisecond
+	// CheckTaskFinishedInterval is the interval for scheduler.
+	// exported for testing.
+	CheckTaskFinishedInterval = 500 * time.Millisecond
 	nonRetrySQLTime           = 1
 	// RetrySQLTimes is the max retry times when executing SQL.
 	RetrySQLTimes = 30
@@ -149,7 +151,7 @@ func (s *BaseScheduler) refreshTask() error {
 
 // scheduleTask schedule the task execution step by step.
 func (s *BaseScheduler) scheduleTask() {
-	ticker := time.NewTicker(checkTaskFinishedInterval)
+	ticker := time.NewTicker(CheckTaskFinishedInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -465,7 +467,7 @@ func (s *BaseScheduler) scheduleSubTask(
 
 	backoffer := backoff.NewExponential(RetrySQLInterval, 2, RetrySQLMaxInterval)
 	return handle.RunWithRetry(s.ctx, RetrySQLTimes, backoffer, s.logger,
-		func(ctx context.Context) (bool, error) {
+		func(context.Context) (bool, error) {
 			err := fn(s.ctx, task, proto.TaskStateRunning, subtaskStep, subTasks)
 			if errors.Cause(err) == storage.ErrUnstableSubtasks {
 				return false, err

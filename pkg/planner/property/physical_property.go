@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -130,7 +129,7 @@ func (partitionCol *MPPPartitionColumn) MemoryUsage() (sum int64) {
 }
 
 // ExplainColumnList generates explain information for a list of columns.
-func ExplainColumnList(ctx sessionctx.Context, cols []*MPPPartitionColumn) []byte {
+func ExplainColumnList(ctx expression.EvalContext, cols []*MPPPartitionColumn) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, col := range cols {
 		buffer.WriteString("[name: ")

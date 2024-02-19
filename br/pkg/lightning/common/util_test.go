@@ -163,19 +163,6 @@ func TestSQLWithRetry(t *testing.T) {
 	require.Nil(t, mock.ExpectationsWereMet())
 }
 
-func TestStringSliceEqual(t *testing.T) {
-	assert.True(t, common.StringSliceEqual(nil, nil))
-	assert.True(t, common.StringSliceEqual(nil, []string{}))
-	assert.False(t, common.StringSliceEqual(nil, []string{"a"}))
-	assert.False(t, common.StringSliceEqual([]string{"a"}, nil))
-	assert.True(t, common.StringSliceEqual([]string{"a"}, []string{"a"}))
-	assert.False(t, common.StringSliceEqual([]string{"a"}, []string{"b"}))
-	assert.True(t, common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"}))
-	assert.False(t, common.StringSliceEqual([]string{"a"}, []string{"a", "b", "c"}))
-	assert.False(t, common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b"}))
-	assert.False(t, common.StringSliceEqual([]string{"a", "x", "y"}, []string{"a", "y", "x"}))
-}
-
 func TestInterpolateMySQLString(t *testing.T) {
 	assert.Equal(t, "'123'", common.InterpolateMySQLString("123"))
 	assert.Equal(t, "'1''23'", common.InterpolateMySQLString("1'23"))

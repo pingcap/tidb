@@ -140,7 +140,7 @@ func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statis
 	if !ok {
 		return nil
 	}
-	db, ok := is.SchemaByTable(table.Meta())
+	db, ok := infoschema.SchemaByTable(is, table.Meta())
 	if !ok {
 		return nil
 	}

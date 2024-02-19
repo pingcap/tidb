@@ -3715,7 +3715,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 			b.err = exeerrors.ErrBuildExecutor
 			return nil
 		}
-		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PlanPartInfo)
+		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, tbl, &v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -3913,7 +3913,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			b.err = exeerrors.ErrBuildExecutor
 			return nil
 		}
-		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PlanPartInfo)
+		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, tbl, &v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -4474,7 +4474,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		if !ok {
 			return nil, exeerrors.ErrBuildExecutor
 		}
-		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PlanPartInfo)
+		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, tbl, &v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4549,7 +4549,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		if !ok {
 			return nil, exeerrors.ErrBuildExecutor
 		}
-		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PlanPartInfo)
+		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, tbl, &v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -5234,9 +5234,9 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPa
 	return ret, nil
 }
 
-func getPartitionIdsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, physPlanPartInfo *plannercore.PhysPlanPartInfo) (map[int64]struct{}, error) {
+func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, physPlanPartInfo *plannercore.PhysPlanPartInfo) (map[int64]struct{}, error) {
 	if physPlanPartInfo == nil {
-		return nil, errors.New("physPlanPartInfo in getPartitionIdsAfterPruning must not be nil")
+		return nil, errors.New("physPlanPartInfo in getPartitionIDsAfterPruning must not be nil")
 	}
 	idxArr, err := plannercore.PartitionPruning(ctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
 	if err != nil {
