@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright 2023 PingCAP, Inc.
+# Copyright 2021 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,19 +16,16 @@
 
 set -eux
 
-CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
-run_lightning -d "$CUR/data1"
-run_sql 'admin check table test.t'
-run_sql 'select count(*) from test.t'
-check_contains 'count(*): 4'
-run_sql 'select count(*) from lightning_task_info.conflict_error_v2'
-check_contains 'count(*): 2'
+mydir=$(dirname "${BASH_SOURCE[0]}")
 
-run_sql 'truncate table test.t'
-run_lightning -d "$CUR/data2"
-run_sql 'admin check table test.t'
-run_sql 'select count(*) from test.t'
-check_contains 'count(*): 5'
+run_sql 'DROP TABLE IF EXISTS dup_resolve.a'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
+
+! run_lightning --backend local --config "${mydir}/config.toml"
+[ $? -eq 0 ]
+
+tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key"
+
+check_not_contains "the whole procedure completed" $TEST_DIR/lightning.log
