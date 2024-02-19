@@ -32,9 +32,9 @@ type parallelSortWorker struct {
 
 	lessRowFunc func(chunk.Row, chunk.Row) int
 
-	chunkChannel chan *chunk.Chunk
+	chunkChannel  chan *chunk.Chunk
 	errOutputChan chan rowWithError
-	finishCh     chan struct{}
+	finishCh      chan struct{}
 
 	timesOfRowCompare uint
 
@@ -61,7 +61,7 @@ func newParallelSortWorker(
 		workerIDForTest:    workerIDForTest,
 		lessRowFunc:        lessRowFunc,
 		chunkChannel:       chunkChannel,
-		errOutputChan:       errOutputChan,
+		errOutputChan:      errOutputChan,
 		finishCh:           finishCh,
 		timesOfRowCompare:  0,
 		memTracker:         memTracker,
