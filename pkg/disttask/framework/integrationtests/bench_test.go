@@ -18,9 +18,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
@@ -28,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/soheilhy/cmux"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -39,9 +44,34 @@ var (
 )
 
 // test overhead when starting multiple schedulers
-// GOOS=linux GOARCH=amd64 go test -c -o bench.test ./pkg/disttask/framework/integrationtests
+//
+// make failpoint-enable
+// GOOS=linux GOARCH=amd64 go test -tags intest -c -o bench.test ./pkg/disttask/framework/integrationtests
+// make failpoint-disable
+//
 // bench.test -run ^$ -test.bench=BenchmarkSchedulerOverhead -test.benchmem --with-tikv "upstream-pd:2379?disableGC=true"
 func BenchmarkSchedulerOverhead(b *testing.B) {
+	router := mux.NewRouter()
+	router.Handle("/metrics", promhttp.Handler())
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
+
+	statusListener, err := net.Listen("tcp", "127.0.0.1:10080")
+	require.NoError(b, err)
+	m := cmux.New(statusListener)
+	// Match connections in order:
+	// First HTTP, and otherwise grpc.
+	httpL := m.Match(cmux.HTTP1Fast())
+	statusServer := &http.Server{Handler: serverMux}
+	go func() {
+		if err := statusServer.Serve(httpL); err != nil {
+			b.Logf("status server serve failed: %v", err)
+		}
+	}()
+	defer func() {
+		_ = statusServer.Close()
+	}()
+
 	bak := proto.MaxConcurrentTask
 	b.Cleanup(func() {
 		proto.MaxConcurrentTask = bak
