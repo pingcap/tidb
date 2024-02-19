@@ -636,6 +636,15 @@ func (h *Handle) UpdateSessionVar() error {
 		return err
 	}
 	h.mu.ctx.GetSessionVars().AnalyzeVersion = int(ver)
+	verInString, err = h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMergePartitionStatsConcurrency)
+	if err != nil {
+		return err
+	}
+	ver2, err := strconv.ParseInt(verInString, 10, 64)
+	if err != nil {
+		return err
+	}
+	h.mu.ctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver2)
 	return err
 }
 
