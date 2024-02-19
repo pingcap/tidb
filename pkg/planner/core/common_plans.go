@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -1393,7 +1394,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 //  2. session is not InTxn
 //  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	if !IsAutoCommitTxn(ctx) {
+	if !IsAutoCommitTxn(ctx.GetSessionVars()) {
 		return false, nil
 	}
 
@@ -1442,8 +1443,8 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 
 // IsAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
-func IsAutoCommitTxn(ctx sessionctx.Context) bool {
-	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
+func IsAutoCommitTxn(vars *variable.SessionVars) bool {
+	return vars.IsAutocommit() && !vars.InTxn()
 }
 
 // AdminShowBDRRole represents a show bdr role plan.

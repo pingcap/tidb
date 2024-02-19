@@ -799,7 +799,7 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		return false, nil
 	}
 	// check auto commit
-	if !IsAutoCommitTxn(sctx) {
+	if !IsAutoCommitTxn(sctx.GetSessionVars()) {
 		return false, nil
 	}
 	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {

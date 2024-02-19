@@ -2484,7 +2484,7 @@ func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
-func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
+func BuildMergeJoinPlan(ctx PlanContext, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
 	baseJoin := basePhysicalJoin{
 		JoinType:      joinType,
 		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},

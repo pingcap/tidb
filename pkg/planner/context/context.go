@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
@@ -34,4 +35,13 @@ type PlanContext interface {
 	GetClient() kv.Client
 	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
+	// GetSessionManager gets the session manager.
+	GetSessionManager() util.SessionManager
+	// Txn returns the current transaction which is created before executing a statement.
+	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
+	// If the active parameter is true, call this function will wait for the pending txn
+	// to become valid.
+	Txn(active bool) (kv.Transaction, error)
+	// HasDirtyContent checks whether there's dirty update on the given table.
+	HasDirtyContent(tid int64) bool
 }

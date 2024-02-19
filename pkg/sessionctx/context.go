@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/util"
@@ -230,15 +231,15 @@ func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) er
 const allowedTimeFromNow = 100 * time.Millisecond
 
 // ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
-func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	currentTS, err := sctx.GetSessionVars().StmtCtx.GetStaleTSO()
+func ValidateStaleReadTS(ctx context.Context, sc *stmtctx.StatementContext, store kv.Storage, readTS uint64) error {
+	currentTS, err := sc.GetStaleTSO()
 	if currentTS == 0 || err != nil {
-		currentTS, err = sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+		currentTS, err = store.GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
 	}
 	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
 	if err != nil {
 		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+		currentVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
 		if err != nil {
 			return errors.Errorf("fail to validate read timestamp: %v", err)
 		}
