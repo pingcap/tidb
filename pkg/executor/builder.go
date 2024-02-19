@@ -5120,6 +5120,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	}
 
 	capacity := len(e.handles)
+	if capacity == 0 {
+		capacity = len(e.idxVals)
+	}
 	e.SetInitCap(capacity)
 	e.SetMaxChunkSize(capacity)
 	e.buildVirtualColumnInfo()
