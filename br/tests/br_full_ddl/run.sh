@@ -204,8 +204,7 @@ then
 else
   echo "TEST: [$TEST_NAME] fail due to stats are not equal"
   grep ERROR $LOG
-  cat $BACKUP_STAT | head -n 1000
-  cat $RESOTRE_STAT | head -n 1000
+  diff $BACKUP_STAT $RESOTRE_STAT
   exit 1
 fi
 
