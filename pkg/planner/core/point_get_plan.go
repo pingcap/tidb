@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/executor"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -665,65 +664,66 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 	return idxs
 }
 
-// DatumsContainNull return true if any value is null
-func DatumsContainNull(vals []types.Datum) bool {
-	for _, val := range vals {
-		if val.IsNull() {
-			return true
-		}
-	}
-	return false
-}
-
-// PrunePartitions will check which partition to use
-// returns true if no matching partition
-func (p *BatchPointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
+// PrunePartitionsAndValues will check which partition to use
+// returns:
+// slice of non-duplicated handles (or nil if IndexValues is used)
+// true if no matching partition (TableDual plan can be used)
+func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([]kv.Handle, bool) {
 	pi := p.TblInfo.GetPartitionInfo()
-	if pi == nil {
-		return false
-	}
 	if p.IndexInfo != nil && p.IndexInfo.Global {
 		// Reading from a global index, i.e. base table ID
 		// Skip pruning partitions here
-		return false
+		pi = nil
 	}
 	// reset the PartitionIDs
-	if !p.SinglePartition {
+	if pi != nil && !p.SinglePartition {
 		p.PartitionIdxs = p.PartitionIdxs[:0]
 	}
 	if p.IndexInfo != nil && p.TblInfo.IsCommonHandle && p.IndexInfo.Primary {
-		partIdxs := p.getPartitionIdxs(sctx)
-		for i, idx := range partIdxs {
-			if idx < 0 ||
-				(p.SinglePartition &&
-					idx != p.PartitionIdxs[0]) ||
-				!isInExplicitPartitions(pi, idx, p.PartitionNames) {
-				// Index value does not match any partitions,
-				// remove it from the plan
-				partIdxs[i] = -1
-			}
-		}
-		skipped := 0
-		for i, idx := range partIdxs {
-			if idx < 0 {
-				curr := i - skipped
-				next := curr + 1
-				p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[next:]...)
-			} else if !p.SinglePartition {
-				p.PartitionIdxs = append(p.PartitionIdxs, idx)
-			}
-		}
-	} else {
-		handles := make([]kv.Handle, 0, len(p.Handles))
-		dedup := kv.NewHandleMap()
-		if p.IndexInfo == nil {
-			for _, handle := range p.Handles {
-				if _, found := dedup.Get(handle); found {
-					continue
+		if pi != nil {
+			partIdxs := p.getPartitionIdxs(sctx)
+			partitionsFound := 0
+			for i, idx := range partIdxs {
+				if idx < 0 ||
+					(p.SinglePartition &&
+						idx != p.PartitionIdxs[0]) ||
+					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
+					// Index value does not match any partitions,
+					// remove it from the plan
+					partIdxs[i] = -1
+				} else {
+					partitionsFound++
 				}
-				dedup.Set(handle, true)
-				handles = append(handles, handle)
 			}
+			if partitionsFound == 0 {
+				return nil, true
+			}
+			skipped := 0
+			for i, idx := range partIdxs {
+				if idx < 0 {
+					curr := i - skipped
+					next := curr + 1
+					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[next:]...)
+				} else if !p.SinglePartition {
+					p.PartitionIdxs = append(p.PartitionIdxs, idx)
+				}
+			}
+			intest.Assert(partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(partitionsFound == len(p.IndexValues))
+		}
+		return nil, false
+	}
+	handles := make([]kv.Handle, 0, len(p.Handles))
+	dedup := kv.NewHandleMap()
+	if p.IndexInfo == nil {
+		for _, handle := range p.Handles {
+			if _, found := dedup.Get(handle); found {
+				continue
+			}
+			dedup.Set(handle, true)
+			handles = append(handles, handle)
+		}
+		if pi != nil {
 			is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 			tbl, ok := is.TableByID(p.TblInfo.ID)
 			intest.Assert(ok)
@@ -732,6 +732,7 @@ func (p *BatchPointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 			intest.Assert(pTbl != nil)
 			r := make([]types.Datum, p.HandleColOffset+1)
 			partIdxs := make([]int, 0, len(handles))
+			partitionsFound := 0
 			for _, handle := range handles {
 				var d types.Datum
 				if mysql.HasUnsignedFlag(p.TblInfo.Columns[p.HandleColOffset].GetFlag()) {
@@ -748,8 +749,13 @@ func (p *BatchPointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 					{
 						pIdx = -1
 					}
+				} else {
+					partitionsFound++
 				}
 				partIdxs = append(partIdxs, pIdx)
+			}
+			if partitionsFound == 0 {
+				return nil, true
 			}
 			skipped := 0
 			for i, idx := range partIdxs {
@@ -762,36 +768,40 @@ func (p *BatchPointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
-		} else {
-			usedValues := make([]bool, len(p.IndexValues))
-			for i, value := range p.IndexValues {
-				if DatumsContainNull(value) {
-					continue
-				}
-				// TODO: Break import cycle!
-				handleBytes, err := executor.EncodeUniqueIndexValuesForKey(sctx, p.TblInfo, p.IndexInfo, value)
-				if err != nil {
-					if kv.ErrNotExist.Equal(err) {
-						continue
-					}
-					intest.Assert(false)
-					continue
-				}
-				handle, err := kv.NewCommonHandle(handleBytes)
-				if err != nil {
-					intest.Assert(false)
-					continue
-				}
-				if _, found := dedup.Get(handle); found {
-					continue
-				}
-				dedup.Set(handle, true)
-				handles = append(handles, handle)
-				usedValues[i] = true
+			intest.Assert(partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(partitionsFound == len(handles))
+		}
+		p.Handles = handles
+	} else {
+		usedValues := make([]bool, len(p.IndexValues))
+		for i, value := range p.IndexValues {
+			if types.DatumsContainNull(value) {
+				continue
 			}
-			// to get handles -> indexes?
+			handleBytes, err := EncodeUniqueIndexValuesForKey(sctx, p.TblInfo, p.IndexInfo, value)
+			if err != nil {
+				if kv.ErrNotExist.Equal(err) {
+					continue
+				}
+				intest.Assert(false)
+				continue
+			}
+			handle, err := kv.NewCommonHandle(handleBytes)
+			if err != nil {
+				intest.Assert(false)
+				continue
+			}
+			if _, found := dedup.Get(handle); found {
+				continue
+			}
+			dedup.Set(handle, true)
+			handles = append(handles, handle)
+			usedValues[i] = true
+		}
+		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
 			skipped := 0
+			partitionsFound := 0
 			for i, idx := range partIdxs {
 				if !usedValues[i] {
 					skipped++
@@ -810,9 +820,15 @@ func (p *BatchPointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 				} else if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
+				partitionsFound++
 			}
+			if partitionsFound == 0 {
+				return nil, true
+			}
+			intest.Assert(partitionsFound == len(p.PartitionIdxs))
 		}
 	}
+	return handles, false
 }
 
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.

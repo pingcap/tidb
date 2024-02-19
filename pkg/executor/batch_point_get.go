@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"slices"
 	"sync/atomic"
 
@@ -220,7 +221,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
 		for i, idxVals := range e.idxVals {
 			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
-			if DatumsContainNull(idxVals) {
+			if types.DatumsContainNull(idxVals) {
 				continue
 			}
 
@@ -241,7 +242,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				}
 			}
 
-			idxKey, err1 := EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
+			idxKey, err1 := plannercore.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}

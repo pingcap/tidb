@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -76,7 +75,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -5025,7 +5023,6 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
 }
 
-
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) exec.Executor {
 	var err error
 	if err = b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
@@ -5040,7 +5037,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		}()
 	}
 	baseExec := exec.NewBaseExecutor(b.ctx, plan.Schema(), plan.ID())
-	if plan.PrunePartitions(b.ctx) {
+	handles, isTableDual := plan.PrunePartitionsAndValues(b.ctx)
+	if isTableDual {
 		// No matching partitions
 		return &TableDualExec{
 			BaseExecutor: baseExec,
@@ -5050,7 +5048,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
-		BaseExecutor: baseExec,,
+		BaseExecutor:       baseExec,
 		indexUsageReporter: b.buildIndexUsageReporter(plan),
 		tblInfo:            plan.TblInfo,
 		idxInfo:            plan.IndexInfo,
@@ -5060,7 +5058,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		lock:               plan.Lock,
 		waitTime:           plan.LockWaitTime,
 		columns:            plan.Columns,
-		partitionNames: plan.PartitionNames,
+		handles:            handles,
+		partitionNames:     plan.PartitionNames,
 	}
 
 	e.snapshot, err = b.getSnapshot()
@@ -5112,56 +5111,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.hasLock = true
 	}
 
-	pi := plan.TblInfo.GetPartitionInfo()
-	if pi != nil || plan.SinglePartition {
-			// Static prune mode, don't do any more partition pruning!
-			e.singlePartID = pi.Definitions[plan.PartitionIdxs[0]].ID
-	}
-	var capacity int
-	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
-		// duplicate IndexValues are filtered in e.initialize()
-		 e.idxVals = plan.IndexValues
-		capacity = len(e.idxVals)
-	} else {
-		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
-		handles := make([]kv.Handle, 0, len(plan.Handles))
-		dedup := kv.NewHandleMap()
-		if plan.IndexInfo == nil {
-			for _, handle := range plan.Handles {
-				if _, found := dedup.Get(handle); found {
-					continue
-				}
-				dedup.Set(handle, true)
-				handles = append(handles, handle)
-			}
-		} else {
-			for i, value := range plan.IndexValues {
-				if DatumsContainNull(value) {
-					continue
-				}
-				handleBytes, err := EncodeUniqueIndexValuesForKey(e.Ctx(), e.tblInfo, plan.IndexInfo, value)
-				if err != nil {
-					if kv.ErrNotExist.Equal(err) {
-						continue
-					}
-					b.err = err
-					return nil
-				}
-				handle, err := kv.NewCommonHandle(handleBytes)
-				if err != nil {
-					b.err = err
-					return nil
-				}
-				if _, found := dedup.Get(handle); found {
-					continue
-				}
-				dedup.Set(handle, true)
-				handles = append(handles, handle)
-			}
-		}
-		e.handles = handles
-		capacity = len(e.handles)
-	}
+	capacity := len(e.handles)
 	e.SetInitCap(capacity)
 	e.SetMaxChunkSize(capacity)
 	e.buildVirtualColumnInfo()
