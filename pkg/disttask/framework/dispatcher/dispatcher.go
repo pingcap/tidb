@@ -329,23 +329,22 @@ func (d *BaseDispatcher) onPending() error {
 // If subtasks finished, run into the next stage.
 func (d *BaseDispatcher) onRunning() error {
 	logutil.Logger(d.logCtx).Debug("on running state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
-	subTaskErrs, err := d.taskMgr.CollectSubTaskError(d.ctx, d.Task.ID)
-	if err != nil {
-		logutil.Logger(d.logCtx).Warn("collect subtask error failed", zap.Error(err))
-		return err
-	}
-	if len(subTaskErrs) > 0 {
-		logutil.Logger(d.logCtx).Warn("subtasks encounter errors")
-		return d.onErrHandlingStage(subTaskErrs)
-	}
-	// check current stage finished.
-	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.ctx, d.Task.ID, proto.TaskStatePending, proto.TaskStateRunning)
+	cntByStates, err := d.taskMgr.GetSubtaskCntGroupByStates(d.ctx, d.Task.ID, d.Task.Step)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
 	}
-
-	if cnt == 0 {
+	if cntByStates[proto.TaskStateFailed] > 0 || cntByStates[proto.TaskStateCanceled] > 0 {
+		subTaskErrs, err := d.taskMgr.CollectSubTaskError(d.ctx, d.Task.ID)
+		if err != nil {
+			logutil.Logger(d.logCtx).Warn("collect subtask error failed", zap.Error(err))
+			return err
+		}
+		if len(subTaskErrs) > 0 {
+			logutil.Logger(d.logCtx).Warn("subtasks encounter errors")
+			return d.onErrHandlingStage(subTaskErrs)
+		}
+	} else if d.isStepSucceed(cntByStates) {
 		return d.onNextStage()
 	}
 	// Check if any node are down.
@@ -743,6 +742,11 @@ func (d *BaseDispatcher) WithNewSession(fn func(se sessionctx.Context) error) er
 // WithNewTxn executes the fn in a new transaction.
 func (d *BaseDispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewTxn(ctx, fn)
+}
+
+func (*BaseDispatcher) isStepSucceed(cntByStates map[proto.TaskState]int64) bool {
+	_, ok := cntByStates[proto.TaskStateSucceed]
+	return len(cntByStates) == 0 || (len(cntByStates) == 1 && ok)
 }
 
 // IsCancelledErr checks if the error is a cancelled error.

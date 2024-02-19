@@ -93,7 +93,7 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 	srv.SetDomain(dom)
 	require.NoError(t, err)
 	go func() {
-		err := srv.Run()
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
 

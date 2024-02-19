@@ -501,6 +501,27 @@ func (stm *TaskManager) GetSubtaskInStatesCnt(ctx context.Context, taskID int64,
 	return rs[0].GetInt64(0), nil
 }
 
+// GetSubtaskCntGroupByStates gets the subtask count by states.
+func (stm *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.TaskState]int64, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx, `
+		select state, count(*)
+		from mysql.tidb_background_subtask
+		where task_key = %? and step = %?
+		group by state`,
+		taskID, step)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[proto.TaskState]int64, len(rs))
+	for _, r := range rs {
+		state := proto.TaskState(r.GetString(0))
+		res[state] = r.GetInt64(1)
+	}
+
+	return res, nil
+}
+
 // CollectSubTaskError collects the subtask error.
 func (stm *TaskManager) CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
