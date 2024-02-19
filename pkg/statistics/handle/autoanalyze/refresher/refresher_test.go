@@ -376,3 +376,93 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 		})
 	}
 }
+
+func TestCalculateIndicatorsForPartitions(t *testing.T) {
+	currentTs := oracle.ComposeTS((time.Hour.Nanoseconds()+time.Second.Nanoseconds())*1000, 0)
+
+	tests := []struct {
+		name                       string
+		tblInfo                    *model.TableInfo
+		partitionStats             map[int64]*statistics.Table
+		defs                       []model.PartitionDefinition
+		autoAnalyzeRatio           float64
+		currentTs                  uint64
+		wantAvgChangePercentage    float64
+		wantAvgSize                float64
+		wantAvgLastAnalyzeDuration time.Duration
+		wantPartitions             []string
+	}{
+		{
+			name: "Test Table not analyzed",
+			tblInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:    1,
+						Name:  model.NewCIStr("index1"),
+						State: model.StatePublic,
+					},
+				},
+				Columns: []*model.ColumnInfo{
+					{
+						ID: 1,
+					},
+					{
+						ID: 2,
+					},
+				},
+			},
+			partitionStats: map[int64]*statistics.Table{
+				1: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+					},
+					Version: currentTs,
+				},
+				2: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+					},
+					Version: currentTs,
+				},
+			},
+			defs: []model.PartitionDefinition{
+				{
+					ID:   1,
+					Name: model.NewCIStr("p0"),
+				},
+				{
+					ID:   2,
+					Name: model.NewCIStr("p1"),
+				},
+			},
+			autoAnalyzeRatio:           0.5,
+			currentTs:                  currentTs,
+			wantAvgChangePercentage:    1,
+			wantAvgSize:                2002,
+			wantAvgLastAnalyzeDuration: 0,
+			wantPartitions:             []string{"p0", "p1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotAvgChangePercentage,
+				gotAvgSize,
+				gotAvgLastAnalyzeDuration,
+				gotPartitions :=
+				calculateIndicatorsForPartitions(
+					tt.tblInfo,
+					tt.partitionStats,
+					tt.defs,
+					tt.autoAnalyzeRatio,
+					tt.currentTs,
+				)
+			require.Equal(t, tt.wantAvgChangePercentage, gotAvgChangePercentage)
+			require.Equal(t, tt.wantAvgSize, gotAvgSize)
+			require.Equal(t, tt.wantAvgLastAnalyzeDuration, gotAvgLastAnalyzeDuration)
+			require.Equal(t, tt.wantPartitions, gotPartitions)
+		})
+	}
+}
