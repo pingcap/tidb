@@ -205,7 +205,7 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 
 // CompilePatternInnerBytes handles escapes and wild cards convert pattern characters and
 // pattern types in bytes.
-// The main algorithm is the same as CompilePatternInner. However, it's not easy to use interface to hide the different details here.
+// The main algorithm is the same as CompilePatternInner. However, it's not easy to use interface/lambda to hide the different details here.
 // Note: if anything changes in this method, please double-check CompilePatternInner
 func CompilePatternInnerBytes(pattern string, escape byte) (patWeights, patTypes []byte) {
 	bytes := []byte(pattern)
@@ -304,10 +304,10 @@ func DoMatchInner(str string, patWeights []rune, patTypes []byte, matcher func(a
 	runes := []rune(str)
 	lenRunes := len(runes)
 	lenPatWeights := len(patWeights)
-	return DoMatchInnerCore(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matcher(runes[a], patWeights[b]) })
+	return doMatchInnerCore(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matcher(runes[a], patWeights[b]) })
 }
 
-func DoMatchInnerCore(lenPatWeights int, lenRunes int, patTypes []byte, matcher func(a, b int) bool) bool {
+func doMatchInnerCore(lenPatWeights int, lenRunes int, patTypes []byte, matcher func(a, b int) bool) bool {
 	var rIdx, pIdx, nextRIdx, nextPIdx int
 	for pIdx < lenPatWeights || rIdx < lenRunes {
 		if pIdx < lenPatWeights {
@@ -350,11 +350,10 @@ func DoMatchInnerCore(lenPatWeights int, lenRunes int, patTypes []byte, matcher 
 // The algorithm has linear time complexity.
 // https://research.swtch.com/glob
 func DoMatchInnerBytes(str string, patWeights, patTypes []byte) bool {
-	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
 	bytes := []byte(str)
 	lenBytes := len(bytes)
 	lenPatWeights := len(patWeights)
-	return DoMatchInnerCore(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patWeights[b] })
+	return doMatchInnerCore(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patWeights[b] })
 }
 
 // IsExactMatch return true if no wildcard character
