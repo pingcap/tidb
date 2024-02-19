@@ -2285,7 +2285,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			return errors.Trace(err)
 		}
 		if s.Partition != nil {
-			if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
+			if err := checkPartitionFuncType(ctx, s.Partition.Expr, s.Table.Schema, tbInfo); err != nil {
 				return errors.Trace(err)
 			}
 			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
@@ -7077,10 +7077,15 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  NewDDLReorgMeta(ctx),
+		ReorgMeta:  nil,
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
+	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return err
+	}
+	job.ReorgMeta = reorgMeta
 
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -7327,12 +7332,17 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  NewDDLReorgMeta(ctx),
+		ReorgMeta:  nil,
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 		Charset:    chs,
 		Collate:    coll,
 	}
+	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return err
+	}
+	job.ReorgMeta = reorgMeta
 
 	err = d.DoDDLJob(ctx, job)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
@@ -7343,6 +7353,30 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
+
+func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
+	reorgMeta := NewDDLReorgMeta(sctx)
+	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
+	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
+	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
+		return nil, dbterror.ErrUnsupportedDistTask
+	}
+	if hasSysDB(job) {
+		if reorgMeta.IsDistReorg {
+			logutil.BgLogger().Info("cannot use distributed task execution on system DB",
+				zap.String("category", "ddl"), zap.Stringer("job", job))
+		}
+		reorgMeta.IsDistReorg = false
+		reorgMeta.IsFastReorg = false
+		failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
+			LastReorgMetaFastReorgDisabled = true
+		})
+	}
+	return reorgMeta, nil
+}
+
+// LastReorgMetaFastReorgDisabled is used for test.
+var LastReorgMetaFastReorgDisabled bool
 
 func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	if len(keys) != len(refer.IndexPartSpecifications) {

@@ -100,6 +100,14 @@ func (c *EBSBasedBRMeta) GetStoreCount() uint64 {
 	return uint64(len(c.TiKVComponent.Stores))
 }
 
+func (c *EBSBasedBRMeta) GetTiKVVolumeCount() uint64 {
+	if c.TiKVComponent == nil || len(c.TiKVComponent.Stores) == 0 {
+		return 0
+	}
+	// Assume TiKV nodes are symmetric
+	return uint64(len(c.TiKVComponent.Stores[0].Volumes))
+}
+
 func (c *EBSBasedBRMeta) String() string {
 	cfg, err := json.Marshal(c)
 	if err != nil {

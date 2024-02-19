@@ -112,15 +112,24 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 // Close implements the Executor interface.
 func (e *CTEExec) Close() (err error) {
-	e.producer.resTbl.Lock()
-	if !e.producer.closed {
-		// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
-		// It means you can still read resTbl after call closeProducer().
-		// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
-		// Separating these three function calls is only to follow the abstraction of the volcano model.
-		err = e.producer.closeProducer()
-	}
-	e.producer.resTbl.Unlock()
+	func() {
+		e.producer.resTbl.Lock()
+		defer e.producer.resTbl.Unlock()
+		if !e.producer.closed {
+			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
+				ok := v.(bool)
+				if ok {
+					// mock an oom panic, returning ErrMemoryExceedForQuery for error identification in recovery work.
+					panic(memory.PanicMemoryExceedWarnMsg)
+				}
+			})
+			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
+			// It means you can still read resTbl after call closeProducer().
+			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
+			// Separating these three function calls is only to follow the abstraction of the volcano model.
+			err = e.producer.closeProducer()
+		}
+	}()
 	if err != nil {
 		return err
 	}
