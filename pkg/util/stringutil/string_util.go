@@ -281,31 +281,17 @@ func CompileLike2Regexp(str string) string {
 	return string(result)
 }
 
-// DoMatchBytes is an adapter for `DoMatchInner`, `str` can only be an ascii string.
+// DoMatchBytes is an adapter for `DoMatchInner`, `str` is binary strings or ascii string.
 func DoMatchBytes(str string, patChars, patTypes []byte) bool {
-	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
-	runes := []rune(str)
-	lenRunes := len(runes)
-	lenPatWeights := len(patChars)
-	patRunes := []rune(string(patChars))
-	return DoMatchInner(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matchRune(runes[a], patRunes[b]) })
-}
-
-// DoMatchPureBytes is an adapter for `DoMatchInner`, `str` is binary strings.
-func DoMatchPureBytes(str string, patChars, patTypes []byte) bool {
 	bytes := []byte(str)
 	lenBytes := len(bytes)
 	lenPatWeights := len(patChars)
 	return DoMatchInner(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patChars[b] })
 }
 
-// DoMatch is an adapter for `DoMatchInner`, `str` can be any unicode string.
+// DoMatch is an adapter for `DoMatchCustomized`, `str` can be any unicode string.
 func DoMatch(str string, patChars []rune, patTypes []byte) bool {
-	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
-	runes := []rune(str)
-	lenRunes := len(runes)
-	lenPatWeights := len(patChars)
-	return DoMatchInner(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matchRune(runes[a], patChars[b]) })
+	return DoMatchCustomized(str, patChars, patTypes, matchRune)
 }
 
 // DoMatchCustomized is an adapter for `DoMatchInner`, `str` can be any unicode string.

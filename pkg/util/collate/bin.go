@@ -102,5 +102,5 @@ func (p *binPurePattern) Compile(patternStr string, escape byte) {
 
 // DoMatch implements WildcardPattern interface.
 func (p *binPurePattern) DoMatch(str string) bool {
-	return stringutil.DoMatchPureBytes(str, p.patChars, p.patTypes)
+	return stringutil.DoMatchBytes(str, p.patChars, p.patTypes)
 }
