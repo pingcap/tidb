@@ -244,6 +244,7 @@ type SortedKVMeta struct {
 	StartKey           []byte              `json:"start-key"`
 	EndKey             []byte              `json:"end-key"` // exclusive
 	TotalKVSize        uint64              `json:"total-kv-size"`
+	TotalKVCnt         uint64              `json:"total-kv-cnt"`
 	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
 }
 
@@ -257,6 +258,7 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 		StartKey:           summary.Min.Clone(),
 		EndKey:             summary.Max.Clone().Next(),
 		TotalKVSize:        summary.TotalSize,
+		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
 	}
 }
@@ -274,6 +276,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.StartKey = BytesMin(m.StartKey, other.StartKey)
 	m.EndKey = BytesMax(m.EndKey, other.EndKey)
 	m.TotalKVSize += other.TotalKVSize
+	m.TotalKVCnt += other.TotalKVCnt
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
 }

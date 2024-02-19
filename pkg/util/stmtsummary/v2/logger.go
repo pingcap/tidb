@@ -41,7 +41,7 @@ func newStmtLogStorage(cfg *log.Config) *stmtLogStorage {
 	}
 	// Replace 2018-12-19-unified-log-format text encoder with statements encoder
 	newCore := log.NewTextCore(&stmtLogEncoder{}, prop.Syncer, prop.Level)
-	logger = logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+	logger = logger.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
 		return newCore
 	}))
 	return &stmtLogStorage{logger}

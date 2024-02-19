@@ -469,7 +469,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
 	go func() {
-		err := server.Run()
+		err := server.Run(ts.domain)
 		require.NoError(t, err)
 	}()
 	ts.WaitUntilServerOnline()

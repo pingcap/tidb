@@ -51,7 +51,7 @@ const (
 func getTiFlashStores(ctx sessionctx.Context) ([]infoschema.ServerInfo, error) {
 	// TODO: Don't use infoschema, to preserve StoreID information.
 	aliveTiFlashStores := make([]infoschema.ServerInfo, 0)
-	stores, err := infoschema.GetStoreServerInfo(ctx)
+	stores, err := infoschema.GetStoreServerInfo(ctx.GetStore())
 	if err != nil {
 		return nil, err
 	}

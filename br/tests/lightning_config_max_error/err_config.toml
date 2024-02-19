@@ -5,4 +5,4 @@ threshold = 4
 header = true
 
 [tikv-importer]
-duplicate-resolution = 'remove'
+duplicate-resolution = 'replace'

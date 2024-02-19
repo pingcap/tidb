@@ -459,13 +459,12 @@ func (c *BackendConfig) adjust() {
 
 // Backend is a local backend.
 type Backend struct {
-	pdCli            pd.Client
-	pdHTTPCli        pdhttp.Client
-	splitCli         split.SplitClient
-	tikvCli          *tikvclient.KVStore
-	tls              *common.TLS
-	regionSizeGetter TableRegionSizeGetter
-	tikvCodec        tikvclient.Codec
+	pdCli     pd.Client
+	pdHTTPCli pdhttp.Client
+	splitCli  split.SplitClient
+	tikvCli   *tikvclient.KVStore
+	tls       *common.TLS
+	tikvCodec tikvclient.Codec
 
 	BackendConfig
 	engineMgr *engineManager
@@ -500,10 +499,17 @@ func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	regionSizeGetter TableRegionSizeGetter,
+	pdSvcDiscovery pd.ServiceDiscovery,
 ) (b *Backend, err error) {
 	config.adjust()
-	pdAddrs := strings.Split(config.PDAddr, ",")
+	var pdAddrs []string
+	if pdSvcDiscovery != nil {
+		pdAddrs = pdSvcDiscovery.GetServiceURLs()
+		// TODO(lance6716): if PD client can support creating a client with external
+		// service discovery, we can directly pass pdSvcDiscovery.
+	} else {
+		pdAddrs = strings.Split(config.PDAddr, ",")
+	}
 	pdCli, err := pd.NewClientWithContext(
 		ctx, pdAddrs, tls.ToPDSecurityOption(),
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
@@ -552,13 +558,12 @@ func NewBackend(
 		writeLimiter = noopStoreWriteLimiter{}
 	}
 	local := &Backend{
-		pdCli:            pdCli,
-		pdHTTPCli:        pdHTTPCli,
-		splitCli:         splitCli,
-		tikvCli:          tikvCli,
-		tls:              tls,
-		regionSizeGetter: regionSizeGetter,
-		tikvCodec:        tikvCodec,
+		pdCli:     pdCli,
+		pdHTTPCli: pdHTTPCli,
+		splitCli:  splitCli,
+		tikvCli:   tikvCli,
+		tls:       tls,
+		tikvCodec: tikvCodec,
 
 		BackendConfig: config,
 

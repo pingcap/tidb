@@ -1810,3 +1810,95 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		ca.checker(extractor)
 	}
 }
+
+func TestInformSchemaTableExtract(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	var cases = []struct {
+		sql           string
+		skipRequest   bool
+		colPredicates map[string]set.StringSet
+	}{
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name='T';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("t"),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='TS';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet(),
+				"table_schema": set.NewStringSet("ts"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLES where table_name in ('TEST','t') and table_schema in ('A','b')",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("test", "t"),
+				"table_schema": set.NewStringSet("a", "b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLES where table_name ='t' or table_name ='A'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("t", "a"),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         "select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name ='t' or table_name ='A'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("t", "a"),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         "select * from information_schema.KEY_COLUMN_USAGE where table_name ='t' or table_name ='A'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("t", "a"),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         "select * from information_schema.STATISTICS where table_name ='t' or table_name ='A'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("t", "a"),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         "select * from information_schema.STATISTICS where table_name ='t' and table_name ='A'",
+			skipRequest: true,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet(),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         "select * from information_schema.STATISTICS where table_name ='t' and table_schema ='A' and table_schema = 'b'",
+			skipRequest: true,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet(),
+			},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTablesExtractor)
+		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
+		require.Equal(t, ca.colPredicates, columnsTableExtractor.ColPredicates, "SQL: %v", ca.sql)
+	}
+}

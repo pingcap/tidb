@@ -168,10 +168,9 @@ func (e *BatchPointGetExec) Close() error {
 	}
 	if e.indexUsageReporter != nil && e.idxInfo != nil {
 		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
-		// We cannot distinguish how many rows are coming from each partition. Here, we record all index usages on the
-		// table itself (but not for the partition physical table), which is different from how an index usage is
-		// treated for a local index.
-		e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+		// We cannot distinguish how many rows are coming from each partition. Here, we calculate all index usages
+		// percentage according to the row counts for the whole table.
+		e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
 	}
 	e.inited = 0
 	e.index = 0

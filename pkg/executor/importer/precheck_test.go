@@ -133,6 +133,10 @@ func TestCheckRequirements(t *testing.T) {
 	err = c.CheckRequirements(ctx, conn)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "found PiTR log streaming")
+	// disable precheck, should pass
+	c.DisablePrecheck = true
+	require.NoError(t, c.CheckRequirements(ctx, conn))
+	c.DisablePrecheck = false // revert back
 
 	// remove PiTR task, and mock a CDC task
 	_, err = etcdCli.Delete(ctx, pitrKey)

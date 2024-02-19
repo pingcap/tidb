@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +28,7 @@ type mockDataSource struct {
 	baseLogicalPlan
 }
 
-func (ds mockDataSource) Init(ctx sessionctx.Context) *mockDataSource {
+func (ds mockDataSource) Init(ctx PlanContext) *mockDataSource {
 	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockDS", &ds, 0)
 	return &ds
 }
@@ -66,7 +65,7 @@ type mockLogicalPlan4Test struct {
 	costOverflow bool
 }
 
-func (p mockLogicalPlan4Test) Init(ctx sessionctx.Context) *mockLogicalPlan4Test {
+func (p mockLogicalPlan4Test) Init(ctx PlanContext) *mockLogicalPlan4Test {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockPlan", &p, 0)
 	return &p
 }
@@ -118,7 +117,7 @@ type mockPhysicalPlan4Test struct {
 	planType int
 }
 
-func (p mockPhysicalPlan4Test) Init(ctx sessionctx.Context) *mockPhysicalPlan4Test {
+func (p mockPhysicalPlan4Test) Init(ctx PlanContext) *mockPhysicalPlan4Test {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, "mockPlan", &p, 0)
 	return &p
 }

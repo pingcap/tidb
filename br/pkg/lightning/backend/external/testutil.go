@@ -79,6 +79,7 @@ func testReadAndCompare(
 			curStart,
 			curEnd,
 			bufPool,
+			bufPool,
 			loaded,
 		)
 		require.NoError(t, err)

@@ -207,7 +207,6 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/session",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",

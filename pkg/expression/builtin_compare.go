@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -1338,7 +1337,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 }
 
 // GetCmpFunction get the compare function according to two arguments.
-func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
+func GetCmpFunction(ctx BuildContext, lhs, rhs Expression) CompareFunc {
 	switch GetAccurateCmpType(lhs, rhs) {
 	case types.ETInt:
 		return CompareInt

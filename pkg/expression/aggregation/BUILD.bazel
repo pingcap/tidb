@@ -1,5 +1,13 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
+package_group(
+    name = "aggregation_friend",
+    packages = [
+        "-//pkg/sessionctx/...",
+        "//...",
+    ],
+)
+
 go_library(
     name = "aggregation",
     srcs = [
@@ -21,7 +29,9 @@ go_library(
         "window_func.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression/aggregation",
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":aggregation_friend",
+    ],
     deps = [
         "//pkg/expression",
         "//pkg/kv",
@@ -30,7 +40,6 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/util",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
@@ -64,7 +73,6 @@ go_test(
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/testkit/testsetup",

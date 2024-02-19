@@ -56,6 +56,8 @@ type Executor interface {
 	AllChildren() []Executor
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.Chunk) error
+
+	// `Close()` may be called at any time after `Open()` and it may be called with `Next()` at the same time
 	Close() error
 	Schema() *expression.Schema
 	RetFieldTypes() []*types.FieldType

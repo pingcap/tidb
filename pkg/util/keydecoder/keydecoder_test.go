@@ -74,7 +74,7 @@ func TestDecodeKey(t *testing.T) {
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(1), decodedKey.TableID)
 	assert.Equal(t, "table1", decodedKey.TableName)
@@ -101,7 +101,7 @@ func TestDecodeKey(t *testing.T) {
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(2), decodedKey.TableID)
 	assert.Equal(t, "table2", decodedKey.TableName)
@@ -132,7 +132,7 @@ func TestDecodeKey(t *testing.T) {
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(1), decodedKey.TableID)
 	assert.Equal(t, "table1", decodedKey.TableName)
@@ -150,7 +150,7 @@ func TestDecodeKey(t *testing.T) {
 	key = []byte("t\x80\x00\x00\x00\x00\x00\x00\x05_r\x80\x00\x00\x00\x00\x00\x00\x0a")
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(3), decodedKey.TableID)
 	assert.Equal(t, "table3", decodedKey.TableName)
@@ -173,7 +173,7 @@ func TestDecodeKey(t *testing.T) {
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(3), decodedKey.TableID)
 	assert.Equal(t, "table3", decodedKey.TableName)

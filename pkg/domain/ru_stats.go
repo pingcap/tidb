@@ -190,7 +190,7 @@ func (r *RUStatsWriter) loadLatestRUStats() (*meta.RUStats, error) {
 
 func (r *RUStatsWriter) persistLatestRUStats(stats *meta.RUStats) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	return kv.RunInNewTxn(ctx, r.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(ctx, r.store, true, func(_ context.Context, txn kv.Transaction) error {
 		return meta.NewMeta(txn).SetRUStats(stats)
 	})
 }

@@ -767,7 +767,7 @@ func (c *reverseFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	bf.tp.SetFlen(args[0].GetType().GetFlen())
 	addBinFlag(bf.tp)
 	var sig builtinFunc
-	if types.IsBinaryStr(argTp) {
+	if types.IsBinaryStr(argTp) || types.IsTypeBit(argTp) {
 		sig = &builtinReverseSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {

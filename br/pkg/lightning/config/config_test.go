@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -738,19 +737,16 @@ func TestDurationMarshalJSON(t *testing.T) {
 
 func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	var dra DuplicateResolutionAlgorithm
-	require.NoError(t, dra.FromStringValue("record"))
-	require.Equal(t, DupeResAlgRecord, dra)
 	require.NoError(t, dra.FromStringValue("none"))
 	require.Equal(t, DupeResAlgNone, dra)
-	require.NoError(t, dra.FromStringValue("remove"))
-	require.Equal(t, DupeResAlgRemove, dra)
 	require.NoError(t, dra.FromStringValue("replace"))
 	require.Equal(t, DupeResAlgReplace, dra)
+	require.NoError(t, dra.FromStringValue("error"))
+	require.Equal(t, DupeResAlgErr, dra)
 
-	require.Equal(t, "record", DupeResAlgRecord.String())
 	require.Equal(t, "none", DupeResAlgNone.String())
-	require.Equal(t, "remove", DupeResAlgRemove.String())
 	require.Equal(t, "replace", DupeResAlgReplace.String())
+	require.Equal(t, "error", DupeResAlgErr.String())
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -996,14 +992,14 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
-	cfg.TikvImporter.DuplicateResolution = DupeResAlgRemove
+	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
 	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.duplicate-resolution")
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ""
 	cfg.TikvImporter.OnDuplicate = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
-	cfg.TikvImporter.DuplicateResolution = DupeResAlgRemove
+	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
 	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
 }
 
@@ -1221,35 +1217,22 @@ func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
 		[mydumper]
 		filter = ["db1.tbl1", "db2.*", "!db2.tbl1"]
 	`)))
-	require.Equal(t, 3, len(cfg1.Mydumper.Filter))
-	require.True(t, common.StringSliceEqual(
-		cfg1.Mydumper.Filter,
-		[]string{"db1.tbl1", "db2.*", "!db2.tbl1"},
-	))
-	require.True(t, common.StringSliceEqual(GetDefaultFilter(), originalDefaultCfg))
+	require.Equal(t, []string{"db1.tbl1", "db2.*", "!db2.tbl1"}, cfg1.Mydumper.Filter)
+	require.Equal(t, GetDefaultFilter(), originalDefaultCfg)
 
 	cfg2 := NewConfig()
-	require.True(t, common.StringSliceEqual(
-		cfg2.Mydumper.Filter,
-		originalDefaultCfg,
-	))
-	require.True(t, common.StringSliceEqual(GetDefaultFilter(), originalDefaultCfg))
+	require.Equal(t, originalDefaultCfg, cfg2.Mydumper.Filter)
+	require.Equal(t, GetDefaultFilter(), originalDefaultCfg)
 
 	gCfg1, err := LoadGlobalConfig([]string{"-f", "db1.tbl1", "-f", "db2.*", "-f", "!db2.tbl1"}, nil)
 	require.NoError(t, err)
-	require.True(t, common.StringSliceEqual(
-		gCfg1.Mydumper.Filter,
-		[]string{"db1.tbl1", "db2.*", "!db2.tbl1"},
-	))
-	require.True(t, common.StringSliceEqual(GetDefaultFilter(), originalDefaultCfg))
+	require.Equal(t, []string{"db1.tbl1", "db2.*", "!db2.tbl1"}, gCfg1.Mydumper.Filter)
+	require.Equal(t, GetDefaultFilter(), originalDefaultCfg)
 
 	gCfg2, err := LoadGlobalConfig([]string{}, nil)
 	require.NoError(t, err)
-	require.True(t, common.StringSliceEqual(
-		gCfg2.Mydumper.Filter,
-		originalDefaultCfg,
-	))
-	require.True(t, common.StringSliceEqual(GetDefaultFilter(), originalDefaultCfg))
+	require.Equal(t, originalDefaultCfg, gCfg2.Mydumper.Filter)
+	require.Equal(t, GetDefaultFilter(), originalDefaultCfg)
 }
 
 func TestCompressionType(t *testing.T) {

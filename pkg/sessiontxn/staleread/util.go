@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -41,7 +42,7 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr as
 		// this can be more accurate than `time.Now() - staleness`, because TiDB's local time can drift.
 		return sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
 	})
-	tsVal, err := expression.EvalAstExprWithPlanCtx(sctx, tsExpr)
+	tsVal, err := plannerutil.EvalAstExprWithPlanCtx(sctx, tsExpr)
 	if err != nil {
 		return 0, err
 	}

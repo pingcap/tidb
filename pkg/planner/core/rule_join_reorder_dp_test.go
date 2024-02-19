@@ -36,7 +36,7 @@ type mockLogicalJoin struct {
 	JoinType        JoinType
 }
 
-func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
+func (mj mockLogicalJoin) init(ctx PlanContext) *mockLogicalJoin {
 	mj.baseLogicalPlan = newBaseLogicalPlan(ctx, "MockLogicalJoin", &mj, 0)
 	return &mj
 }

@@ -334,7 +334,7 @@ func (rt *TimerGroupRuntime) getNextTryTriggerDuration(lastTryTriggerTime time.T
 	}
 
 	duration := maxDuration
-	rt.cache.iterTryTriggerTimers(func(timer *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {
+	rt.cache.iterTryTriggerTimers(func(_ *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {
 		if interval := tryTriggerTime.Sub(now); interval < duration {
 			duration = interval
 		}

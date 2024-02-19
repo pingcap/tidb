@@ -1108,3 +1108,12 @@ create temporary table t2(id int primary key, v int);
 select * from t2 where id=234;
 commit;
 disconnect conn1;
+
+# Test Generated column use Grouping function, issue #49909.
+drop table if exists t;
+--error 1111
+create table t(a int, b int as ((grouping(a))) stored);
+create table t(a int);
+--error 1111
+alter table t add column  b int as ((grouping(a))) stored;
+drop table t;

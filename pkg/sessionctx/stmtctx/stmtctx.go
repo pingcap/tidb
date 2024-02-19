@@ -383,7 +383,7 @@ type StatementContext struct {
 	IsReadOnly bool
 	// usedStatsInfo records version of stats of each table used in the query.
 	// It's a map of table physical id -> *UsedStatsInfoForTable
-	usedStatsInfo map[int64]*UsedStatsInfoForTable
+	usedStatsInfo atomic.Pointer[UsedStatsInfo]
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
@@ -1348,17 +1348,17 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 
 // GetUsedStatsInfo returns the map for recording the used stats during query.
 // If initIfNil is true, it will initialize it when this map is nil.
-func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) map[int64]*UsedStatsInfoForTable {
-	if sc.usedStatsInfo == nil && initIfNil {
-		sc.usedStatsInfo = make(map[int64]*UsedStatsInfoForTable)
+func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) *UsedStatsInfo {
+	if sc.usedStatsInfo.Load() == nil && initIfNil {
+		sc.usedStatsInfo.CompareAndSwap(nil, &UsedStatsInfo{})
 	}
-	return sc.usedStatsInfo
+	return sc.usedStatsInfo.Load()
 }
 
 // RecordedStatsLoadStatusCnt returns the total number of recorded column/index stats status, which is not full loaded.
 func (sc *StatementContext) RecordedStatsLoadStatusCnt() (cnt int) {
 	allStatus := sc.GetUsedStatsInfo(false)
-	for _, status := range allStatus {
+	for _, status := range allStatus.Values() {
 		if status == nil {
 			continue
 		}
@@ -1504,6 +1504,52 @@ func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
 
 func (s *UsedStatsInfoForTable) recordedColIdxCount() int {
 	return len(s.IndexStatsLoadStatus) + len(s.ColumnStatsLoadStatus)
+}
+
+// UsedStatsInfo is a map for recording the used stats during query.
+// The key is the table ID, and the value is the used stats info for the table.
+type UsedStatsInfo struct {
+	store sync.Map
+}
+
+// GetUsedInfo gets the used stats info for the table.
+func (u *UsedStatsInfo) GetUsedInfo(tableID int64) *UsedStatsInfoForTable {
+	v, ok := u.store.Load(tableID)
+	if !ok {
+		return nil
+	}
+	return v.(*UsedStatsInfoForTable)
+}
+
+// RecordUsedInfo records the used stats info for the table.
+func (u *UsedStatsInfo) RecordUsedInfo(tableID int64, info *UsedStatsInfoForTable) {
+	u.store.Store(tableID, info)
+}
+
+// Keys returns all the table IDs for the used stats info.
+func (u *UsedStatsInfo) Keys() []int64 {
+	var ret []int64
+	if u == nil {
+		return ret
+	}
+	u.store.Range(func(k, v any) bool {
+		ret = append(ret, k.(int64))
+		return true
+	})
+	return ret
+}
+
+// Values returns all the used stats info for the table.
+func (u *UsedStatsInfo) Values() []*UsedStatsInfoForTable {
+	var ret []*UsedStatsInfoForTable
+	if u == nil {
+		return ret
+	}
+	u.store.Range(func(k, v any) bool {
+		ret = append(ret, v.(*UsedStatsInfoForTable))
+		return true
+	})
+	return ret
 }
 
 // StatsLoadResult indicates result for StatsLoad

@@ -88,6 +88,7 @@ type WriterSummary struct {
 	Min                tidbkv.Key
 	Max                tidbkv.Key
 	TotalSize          uint64
+	TotalCnt           uint64
 	MultipleFilesStats []MultipleFilesStat
 }
 
@@ -211,8 +212,6 @@ func (b *WriterBuilder) Build(
 
 // BuildOneFile builds a new one file Writer. The writer will create only one
 // file under the prefix of "{prefix}/{writerID}".
-//
-// BuildOneFile will ignore SetOnCloseFunc.
 func (b *WriterBuilder) BuildOneFile(
 	store storage.ExternalStorage,
 	prefix string,
@@ -233,6 +232,7 @@ func (b *WriterBuilder) BuildOneFile(
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
 		kvStore:        nil,
+		onClose:        b.onClose,
 		closed:         false,
 	}
 	return ret
@@ -341,6 +341,7 @@ type Writer struct {
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
+	totalCnt  uint64
 }
 
 // WriteRow implements ingest.Writer.
@@ -372,6 +373,7 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	w.kvLocations = append(w.kvLocations, loc)
 	w.kvSize += int64(encodedKeyLen + len(idxVal))
 	w.batchSize += uint64(length)
+	w.totalCnt += 1
 	return nil
 }
 
@@ -409,6 +411,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		Min:                w.minKey,
 		Max:                w.maxKey,
 		TotalSize:          w.totalSize,
+		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: w.multiFileStats,
 	})
 	return nil

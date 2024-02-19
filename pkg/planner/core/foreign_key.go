@@ -226,7 +226,7 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx sessionctx.Context, is infoschem
 	fkCascades := make(map[int64][]*FKCascade)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
+		dbInfo, exist := infoschema.SchemaByTable(is, tblInfo)
 		if !exist {
 			// Normally, it should never happen. Just check here to avoid panic here.
 			return infoschema.ErrDatabaseNotExists
@@ -266,7 +266,7 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 	fkCascades := make(map[int64][]*FKCascade)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
+		dbInfo, exist := infoschema.SchemaByTable(is, tblInfo)
 		if !exist {
 			return infoschema.ErrDatabaseNotExists
 		}

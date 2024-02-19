@@ -342,5 +342,15 @@
       "set @@tidb_opt_fix_control = '44855:ON'",
       "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b"
     ]
+  },
+  {
+    "name": "TestSubsetIdxCardinality",
+    "cases": [
+      "explain format = 'brief' select distinct a from t",
+      "explain format = 'brief' select distinct b from t",
+      "explain format = 'brief' select distinct a, b, c from t",
+      "explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1",
+      "explain format = 'brief' select a, b from t where a = 1 and b = 1"
+    ]
   }
 ]

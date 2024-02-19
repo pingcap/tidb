@@ -21,14 +21,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAnalysisQueue(t *testing.T) {
+func TestAnalysisInnerQueue(t *testing.T) {
 	// Test data
 	job1 := &TableAnalysisJob{Weight: 10}
 	job2 := &TableAnalysisJob{Weight: 5}
 	job3 := &TableAnalysisJob{Weight: 15}
 
 	// Create an empty priority queue
-	queue := AnalysisQueue{}
+	queue := analysisInnerQueue{}
 
 	// Push items into the queue
 	heap.Push(&queue, job1)
@@ -46,13 +46,36 @@ func TestAnalysisQueue(t *testing.T) {
 	require.NotEqual(t, float64(15), queue[0].Weight, "Item at index 0 should not have weight 15 after swap")
 }
 
-func TestPushPop(t *testing.T) {
+func TestPushPopAnalysisInnerQueue(t *testing.T) {
 	// Test Push and Pop operations together
-	queue := AnalysisQueue{}
+	queue := analysisInnerQueue{}
 	heap.Push(&queue, &TableAnalysisJob{Weight: 10})
 	heap.Push(&queue, &TableAnalysisJob{Weight: 5})
 
 	poppedItem := heap.Pop(&queue).(*TableAnalysisJob)
 	require.Equal(t, float64(10), poppedItem.Weight, "Popped item should have weight 10")
 	require.Equal(t, 1, queue.Len(), "After Pop, length of the queue should be 1")
+}
+
+func TestAnalysisPriorityQueue(t *testing.T) {
+	// Test data
+	job1 := &TableAnalysisJob{Weight: 10}
+	job2 := &TableAnalysisJob{Weight: 5}
+	job3 := &TableAnalysisJob{Weight: 15}
+
+	// Create a priority queue
+	queue := NewAnalysisPriorityQueue()
+
+	// Push items into the queue
+	queue.Push(job1)
+	queue.Push(job2)
+	queue.Push(job3)
+
+	// Test Len()
+	require.Equal(t, 3, queue.Len(), "Length of the queue should be 3")
+
+	// Test Pop()
+	poppedItem := queue.Pop()
+	require.Equal(t, float64(15), poppedItem.Weight, "Popped item should have weight 15")
+	require.Equal(t, 2, queue.Len(), "After Pop, length of the queue should be 2")
 }

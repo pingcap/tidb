@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -130,7 +130,7 @@ func rangePointEqualValueLess(a, b *point) bool {
 	return a.excl && !b.excl
 }
 
-func pointsConvertToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+func pointsConvertToSortKey(sctx planctx.PlanContext, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
 	// Only handle normal string type here.
 	// Currently, set won't be pushed down and it shouldn't reach here in theory.
 	// For enum, we have separate logic for it, like handleEnumFromBinOp(). For now, it only supports point range,
@@ -152,7 +152,7 @@ func pointsConvertToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *ty
 }
 
 func pointConvertToSortKey(
-	sctx sessionctx.Context,
+	sctx planctx.PlanContext,
 	inputP *point,
 	newTp *types.FieldType,
 	trimTrailingSpace bool,
@@ -223,7 +223,7 @@ func NullRange() Ranges {
 // builder is the range builder struct.
 type builder struct {
 	err  error
-	sctx sessionctx.Context
+	sctx planctx.PlanContext
 }
 
 // build converts Expression on one column into point, which can be further built into Range.

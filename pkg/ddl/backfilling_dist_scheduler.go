@@ -222,7 +222,7 @@ func (sch *LitBackfillScheduler) Close() {
 }
 
 func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
-	err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(d.ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		tblInfo, err = meta.NewMeta(txn).GetTable(job.SchemaID, job.TableID)
 		return err
 	})
@@ -319,11 +319,11 @@ func generateNonPartitionPlan(
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
 	var regionBatch int
-	avgTasksPerInstance := totalRegionCnt / instanceCnt
+	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {
-		// Make subtask large enough to reduce the overhead of local/global flush.
 		regionBatch = avgTasksPerInstance
 	} else {
+		// For cloud storage, each subtask should contain no more than 100 regions.
 		regionBatch = min(100, avgTasksPerInstance)
 	}
 	regionBatch = max(regionBatch, 1)

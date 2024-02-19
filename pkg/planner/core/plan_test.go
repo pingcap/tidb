@@ -18,11 +18,13 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -720,4 +722,16 @@ func TestImportIntoBuildPlan(t *testing.T) {
 		plannererrors.ErrWrongValueCountOnRow)
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
 		plannererrors.ErrWrongValueCountOnRow)
+
+	time.Sleep(100 * time.Millisecond)
+	now := tk.MustQuery("select now(6)").Rows()[0][0].(string)
+	time.Sleep(100 * time.Millisecond)
+	tk.MustExec("create table t3 (a int, b int);")
+	// set tidb_snapshot will fail without this
+	tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
+	tk.MustExec("set tidb_snapshot = '" + now + "'")
+	require.ErrorContains(t, tk.ExecToErr("IMPORT INTO t1 FROM select * from t2"),
+		"can not execute write statement when 'tidb_snapshot' is set")
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t3 FROM select * from t2"),
+		infoschema.ErrTableNotExists)
 }

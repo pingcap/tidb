@@ -358,7 +358,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	start, end time.Time,
 ) bool {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	dbs := is.AllSchemaNames()
+	dbs := infoschema.AllSchemaNames(is)
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {

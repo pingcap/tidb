@@ -74,7 +74,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 	}
 
 	tags := []*ec2.Tag{
-		ec2Tag("TiDBCluster-BR", "new"),
+		ec2Tag("TiDBCluster-BR-Snapshot", "new"),
 	}
 
 	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")

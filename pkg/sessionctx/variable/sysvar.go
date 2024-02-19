@@ -2220,6 +2220,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableParallelHashaggSpill, Value: BoolToOnOff(DefTiDBEnableParallelHashaggSpill), Type: TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.EnableParallelHashaggSpill = TiDBOptOn(s)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMutationChecker, Hidden: true,
 		Value: BoolToOnOff(DefTiDBEnableMutationChecker), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {

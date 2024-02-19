@@ -28,7 +28,7 @@ import (
 
 var (
 	// balanceCheckInterval is the interval to check whether we need to balance the subtasks.
-	balanceCheckInterval = 3 * checkTaskFinishedInterval
+	balanceCheckInterval = 3 * CheckTaskFinishedInterval
 )
 
 // balancer is used to balance subtasks on managed nodes

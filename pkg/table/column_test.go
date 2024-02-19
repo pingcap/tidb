@@ -17,6 +17,7 @@ package table
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -335,8 +336,14 @@ func TestGetDefaultValue(t *testing.T) {
 	var nilDt types.Datum
 	nilDt.SetNull()
 	ctx := mock.NewContext()
+	tz, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	ctx.ResetSessionAndStmtTimeZone(tz)
 	zeroTimestamp := types.ZeroTimestamp
 	timestampValue := types.NewTime(types.FromDate(2019, 5, 6, 12, 48, 49, 0), mysql.TypeTimestamp, types.DefaultFsp)
+	timestampValueUTC := types.NewTime(timestampValue.CoreTime(), timestampValue.Type(), timestampValue.Fsp())
+	err = timestampValueUTC.ConvertTimeZone(tz, time.UTC)
+	require.NoError(t, err)
 
 	tp0 := types.FieldType{}
 	tp0.SetType(mysql.TypeLonglong)
@@ -412,8 +419,9 @@ func TestGetDefaultValue(t *testing.T) {
 		{
 			&model.ColumnInfo{
 				FieldType:          tp3,
-				OriginDefaultValue: timestampValue.String(),
-				DefaultValue:       timestampValue.String(),
+				OriginDefaultValue: timestampValueUTC.String(),
+				DefaultValue:       timestampValueUTC.String(),
+				Version:            model.ColumnInfoVersion2,
 			},
 			true,
 			types.NewDatum(timestampValue),
@@ -457,12 +465,12 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 	}
 
-	exp := expression.EvalAstExpr
-	expression.EvalAstExpr = func(sctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
+	exp := expression.EvalSimpleAst
+	expression.EvalSimpleAst = func(sctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
 		return types.NewIntDatum(1), nil
 	}
 	defer func() {
-		expression.EvalAstExpr = exp
+		expression.EvalSimpleAst = exp
 	}()
 
 	defaultMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)

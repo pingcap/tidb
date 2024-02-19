@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -90,7 +89,7 @@ func datumsToConstants(datums []types.Datum) []Expression {
 	return constants
 }
 
-func primitiveValsToConstants(ctx sessionctx.Context, args []any) []Expression {
+func primitiveValsToConstants(ctx BuildContext, args []any) []Expression {
 	cons := datumsToConstants(types.MakeDatums(args...))
 	char, col := ctx.GetSessionVars().GetCharsetInfo()
 	for i, arg := range args {

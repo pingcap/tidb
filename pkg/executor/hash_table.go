@@ -293,9 +293,10 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 		memDelta            int64
 	)
 	c.memTracker.Consume(-c.chkBufSizeForOneProbe)
+	defer func() { c.memTracker.Consume(memDelta) }()
 	if needTrackMemUsage {
 		c.memTracker.Consume(int64(cap(innerPtrs)) * rowPtrSize)
-		defer c.memTracker.Consume(-int64(cap(innerPtrs))*rowPtrSize + memDelta)
+		defer c.memTracker.Consume(-int64(cap(innerPtrs)) * rowPtrSize)
 	}
 	c.chkBufSizeForOneProbe = 0
 

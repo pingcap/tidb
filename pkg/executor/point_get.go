@@ -205,11 +205,12 @@ func (e *PointGetExecutor) Close() error {
 	}
 	if e.indexUsageReporter != nil && e.idxInfo != nil {
 		tableID := e.tblInfo.ID
+		physicalTableID := tableID
 		if e.partitionDef != nil {
-			tableID = e.partitionDef.ID
+			physicalTableID = e.partitionDef.ID
 		}
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
-		e.indexUsageReporter.ReportPointGetIndexUsage(tableID, e.idxInfo.ID, e.ID(), kvReqTotal)
+		e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
 	}
 	e.done = false
 	return nil
@@ -327,10 +328,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
 			!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
 			return (&consistency.Reporter{
-				HandleEncode: func(handle kv.Handle) kv.Key {
+				HandleEncode: func(kv.Handle) kv.Key {
 					return key
 				},
-				IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+				IndexEncode: func(*consistency.RecordData) kv.Key {
 					return e.idxKey
 				},
 				Tbl:  e.tblInfo,

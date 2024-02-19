@@ -16,11 +16,11 @@ package temptable
 
 import (
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 // AttachLocalTemporaryTableInfoSchema attach local temporary table information schema to is
-func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+func AttachLocalTemporaryTableInfoSchema(sctx variable.SessionVarsProvider, is infoschema.InfoSchema) infoschema.InfoSchema {
 	localTemporaryTables := getLocalTemporaryTables(sctx)
 	if localTemporaryTables == nil {
 		return is
@@ -47,7 +47,7 @@ func DetachLocalTemporaryTableInfoSchema(is infoschema.InfoSchema) infoschema.In
 	return is
 }
 
-func getLocalTemporaryTables(sctx sessionctx.Context) *infoschema.SessionTables {
+func getLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.SessionTables {
 	localTemporaryTables := sctx.GetSessionVars().LocalTemporaryTables
 	if localTemporaryTables == nil {
 		return nil
@@ -56,7 +56,7 @@ func getLocalTemporaryTables(sctx sessionctx.Context) *infoschema.SessionTables 
 	return localTemporaryTables.(*infoschema.SessionTables)
 }
 
-func ensureLocalTemporaryTables(sctx sessionctx.Context) *infoschema.SessionTables {
+func ensureLocalTemporaryTables(sctx variable.SessionVarsProvider) *infoschema.SessionTables {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.LocalTemporaryTables == nil {
 		localTempTables := infoschema.NewSessionTables()

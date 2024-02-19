@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -57,6 +58,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -1547,4 +1549,112 @@ func TestCreateBindingForPrepareToken(t *testing.T) {
 		planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
 		tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
 	}
+}
+
+func testIndexUsageTable(t *testing.T, clusterTable bool) {
+	var tk *testkit.TestKit
+	var tableName string
+
+	if clusterTable {
+		s := new(clusterTablesSuite)
+		s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+		s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+		s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+		s.startTime = time.Now()
+		defer s.httpServer.Close()
+		defer s.rpcserver.Stop()
+		tk = s.newTestKitWithRoot(t)
+		tableName = infoschema.ClusterTableTiDBIndexUsage
+	} else {
+		store := testkit.CreateMockStore(t)
+		tk = testkit.NewTestKit(t, store)
+		tableName = infoschema.TableTiDBIndexUsage
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id1 int unique, id2 int unique)")
+	tk.MustExec("create table t2(id1 int unique, id2 int unique)")
+
+	for i := 0; i < 100; i++ {
+		for j := 1; j <= 2; j++ {
+			tk.MustExec(fmt.Sprintf("insert into t%d values (?, ?)", j), i, i)
+		}
+	}
+	tk.MustExec("analyze table t1, t2")
+	tk.RefreshSession()
+	tk.MustExec("use test")
+	// range scan 0-10 through t1 id1
+	tk.MustQuery("select * from t1 use index(id1) where id1 >= 0 and id1 < 10")
+	// range scan 10-30 through t1 id2
+	tk.MustQuery("select * from t1 use index(id2) where id2 >= 10 and id2 < 30")
+	// range scan 30-60 through t2 id1
+	tk.MustQuery("select * from t2 use index(id1) where id1 >= 30 and id1 < 60")
+	// range scan 60-100 through t2 id2
+	tk.MustQuery("select * from t2 use index(id2) where id2 >= 60 and id2 < 100")
+	tk.RefreshSession()
+
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(fmt.Sprintf(`select
+			query_total,
+			rows_access_total,
+			percentage_access_0,
+			percentage_access_0_1,
+			percentage_access_1_10,
+			percentage_access_10_20,
+			percentage_access_20_50,
+			percentage_access_50_100,
+			percentage_access_100
+		from information_schema.%s
+		where table_schema='test' and
+		      (table_name='t1' or table_name='t2') and
+			(index_name='id1' or index_name='id2') and
+			last_access_time is not null
+		order by table_name, index_name;`, tableName))
+		expectedResult := testkit.Rows(
+			"1 10 0 0 0 1 0 0 0",
+			"1 20 0 0 0 0 1 0 0",
+			"1 30 0 0 0 0 1 0 0",
+			"1 40 0 0 0 0 1 0 0")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*5, time.Millisecond*100)
+
+	// use another less-privileged user to select
+	tk.MustExec("create user test_user")
+	tk.MustExec("grant all privileges on test.t1 to test_user")
+	tk.RefreshSession()
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "test_user",
+		Hostname: "127.0.0.1",
+	}, nil, nil, nil))
+	// `test_user` cannot see table `t2`.
+	tk.MustQuery(fmt.Sprintf(`select
+		query_total,
+		rows_access_total,
+		percentage_access_0,
+		percentage_access_0_1,
+		percentage_access_1_10,
+		percentage_access_10_20,
+		percentage_access_20_50,
+		percentage_access_50_100,
+		percentage_access_100
+	from information_schema.%s
+	where table_schema='test' and
+		  (table_name='t1' or table_name='t2') and
+		(index_name='id1' or index_name='id2') and
+		last_access_time is not null
+	order by table_name, index_name;`, tableName)).Check(testkit.Rows(
+		"1 10 0 0 0 1 0 0 0",
+		"1 20 0 0 0 0 1 0 0"))
+}
+
+func TestIndexUsageTable(t *testing.T) {
+	testIndexUsageTable(t, false)
+}
+
+func TestClusterIndexUsageTable(t *testing.T) {
+	testIndexUsageTable(t, true)
 }

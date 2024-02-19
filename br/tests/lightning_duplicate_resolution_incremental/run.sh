@@ -56,8 +56,8 @@ run_sql 'admin check table dup_resolve_detect.ta'
 
 # Check data correctness
 run_sql 'select count(*), sum(id) from dup_resolve_detect.ta where id < 100'
-check_contains 'count(*): 10'
-check_contains 'sum(id): 80'
+check_contains 'count(*): 15'
+check_contains 'sum(id): 120'
 
 run_sql 'select count(*), sum(id) from dup_resolve_detect.ta where id > 100'
 check_contains 'count(*): 16'

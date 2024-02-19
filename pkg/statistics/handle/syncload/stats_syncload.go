@@ -16,6 +16,7 @@ package syncload
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -196,7 +197,10 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 			case errExit:
 				return
 			default:
-				time.Sleep(s.statsHandle.Lease() / 10)
+				// To avoid the thundering herd effect
+				// thundering herd effect: Everyone tries to retry a large number of requests simultaneously when a problem occurs.
+				r := rand.Intn(500)
+				time.Sleep(s.statsHandle.Lease()/10 + time.Duration(r)*time.Microsecond)
 				continue
 			}
 		}

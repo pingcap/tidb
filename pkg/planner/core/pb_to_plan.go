@@ -98,7 +98,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblScan.TableId)
 	}
-	dbInfo, ok := b.is.SchemaByTable(tbl.Meta())
+	dbInfo, ok := infoschema.SchemaByTable(b.is, tbl.Meta())
 	if !ok {
 		return nil, infoschema.ErrDatabaseNotExists.GenWithStack("Database of table ID = %d does not exist.", tblScan.TableId)
 	}

@@ -123,7 +123,7 @@ func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtask
 		for _, subtask := range subtasks {
 			_, err := sqlexec.ExecSQL(ctx, se, `
 				update mysql.tidb_background_subtask
-				set state = %?, state_update_time = CURRENT_TIMESTAMP()
+				set state = %?, state_update_time = unix_timestamp()
 				where id = %? and exec_id = %? and state = %?`,
 				proto.SubtaskStatePending, subtask.ID, subtask.ExecID, proto.SubtaskStateRunning)
 			if err != nil {

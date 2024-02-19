@@ -20,6 +20,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -58,7 +58,7 @@ import (
 // 4. Executor sends requests to the target components instead of all of the components
 type MemTablePredicateExtractor interface {
 	// Extracts predicates which can be pushed down and returns the remained predicates
-	Extract(sessionctx.Context, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
+	Extract(PlanContext, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
 	explainInfo(p *PhysicalMemTable) string
 }
 
@@ -410,7 +410,7 @@ func (extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
 func (helper extractHelper) extractTimeRange(
-	ctx sessionctx.Context,
+	ctx PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -599,7 +599,7 @@ type ClusterTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
+func (e *ClusterTableExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -665,8 +665,7 @@ type ClusterLogTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ClusterLogTableExtractor) Extract(
-	ctx sessionctx.Context,
+func (e *ClusterLogTableExtractor) Extract(ctx PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -779,8 +778,7 @@ type HotRegionsHistoryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *HotRegionsHistoryTableExtractor) Extract(
-	ctx sessionctx.Context,
+func (e *HotRegionsHistoryTableExtractor) Extract(ctx PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -898,8 +896,7 @@ func newMetricTableExtractor() *MetricTableExtractor {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *MetricTableExtractor) Extract(
-	ctx sessionctx.Context,
+func (e *MetricTableExtractor) Extract(ctx PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -969,7 +966,7 @@ func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTable) string {
 }
 
 // GetMetricTablePromQL uses to get the promQL of metric table.
-func (e *MetricTableExtractor) GetMetricTablePromQL(sctx sessionctx.Context, lowerTableName string) string {
+func (e *MetricTableExtractor) GetMetricTablePromQL(sctx PlanContext, lowerTableName string) string {
 	quantiles := e.Quantiles
 	def, err := infoschema.GetMetricTableDef(lowerTableName)
 	if err != nil {
@@ -980,7 +977,7 @@ func (e *MetricTableExtractor) GetMetricTablePromQL(sctx sessionctx.Context, low
 	}
 	var buf bytes.Buffer
 	for i, quantile := range quantiles {
-		promQL := def.GenPromQL(sctx, e.LabelConditions, quantile)
+		promQL := def.GenPromQL(sctx.GetSessionVars().MetricSchemaRangeDuration, e.LabelConditions, quantile)
 		if i > 0 {
 			buf.WriteByte(',')
 		}
@@ -999,8 +996,7 @@ type MetricSummaryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *MetricSummaryTableExtractor) Extract(
-	_ sessionctx.Context,
+func (e *MetricSummaryTableExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1032,8 +1028,7 @@ type InspectionResultTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionResultTableExtractor) Extract(
-	_ sessionctx.Context,
+func (e *InspectionResultTableExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1070,8 +1065,7 @@ type InspectionSummaryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionSummaryTableExtractor) Extract(
-	_ sessionctx.Context,
+func (e *InspectionSummaryTableExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1129,8 +1123,7 @@ type InspectionRuleTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionRuleTableExtractor) Extract(
-	_ sessionctx.Context,
+func (e *InspectionRuleTableExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1174,8 +1167,7 @@ type TimeRange struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *SlowQueryExtractor) Extract(
-	ctx sessionctx.Context,
+func (e *SlowQueryExtractor) Extract(ctx PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1278,8 +1270,7 @@ type TableStorageStatsExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface.
-func (e *TableStorageStatsExtractor) Extract(
-	_ sessionctx.Context,
+func (e *TableStorageStatsExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1349,7 +1340,7 @@ type TiFlashSystemTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
+func (e *TiFlashSystemTableExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1411,8 +1402,7 @@ type StatementsSummaryExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *StatementsSummaryExtractor) Extract(
-	sctx sessionctx.Context,
+func (e *StatementsSummaryExtractor) Extract(sctx PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1465,7 +1455,7 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 }
 
 func (e *StatementsSummaryExtractor) findCoarseTimeRange(
-	sctx sessionctx.Context,
+	sctx PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1513,7 +1503,7 @@ type TikvRegionPeersExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TikvRegionPeersExtractor) Extract(_ sessionctx.Context,
+func (e *TikvRegionPeersExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1571,7 +1561,7 @@ type ColumnsTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
+func (e *ColumnsTableExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1634,7 +1624,7 @@ type TiKVRegionStatusExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
+func (e *TiKVRegionStatusExtractor) Extract(_ PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1675,4 +1665,71 @@ func (e *TiKVRegionStatusExtractor) explainInfo(_ *PhysicalMemTable) string {
 // GetTablesID returns TablesID
 func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
+}
+
+// InfoSchemaTablesExtractor is used to extract infoSchema tables related predicates.
+type InfoSchemaTablesExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	colNames      []string
+	ColPredicates map[string]set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *InfoSchemaTablesExtractor) Extract(_ PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	var resultSet set.StringSet
+	e.colNames = []string{"table_schema", "table_name"}
+	e.ColPredicates = make(map[string]set.StringSet)
+	remained = predicates
+	for _, colName := range e.colNames {
+		remained, e.SkipRequest, resultSet = e.extractCol(schema, names, remained, colName, true)
+		e.ColPredicates[colName] = resultSet
+		if e.SkipRequest {
+			break
+		}
+	}
+	return remained
+}
+
+func (e *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	colNames := make([]string, 0, len(e.ColPredicates))
+	for colName := range e.ColPredicates {
+		colNames = append(colNames, colName)
+	}
+	sort.Strings(colNames)
+	for _, colName := range colNames {
+		if len(e.ColPredicates[colName]) > 0 {
+			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
+		}
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// Filter use the col predicates to filter records.
+func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
+	if e.SkipRequest {
+		return true
+	}
+	predVals, ok := e.ColPredicates[colName]
+	if ok && len(predVals) > 0 {
+		return !predVals.Exist(val)
+	}
+	// No need to filter records since no predicate for the column exists.
+	return false
 }

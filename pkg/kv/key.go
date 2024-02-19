@@ -464,7 +464,7 @@ func calcStrsMemUsage(strs map[string]strHandleVal) int64 {
 	return res
 }
 
-func calcIntsMemUsage(ints map[int64]interface{}) int64 {
+func calcIntsMemUsage(ints map[int64]any) int64 {
 	return int64(len(ints)) * (size.SizeOfInt64 + size.SizeOfInterface)
 }
 

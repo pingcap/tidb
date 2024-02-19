@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -79,7 +78,7 @@ func (p *mockVecPlusIntBuiltinFunc) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	return nil
 }
 
-func genMockVecPlusIntBuiltinFunc(ctx sessionctx.Context) (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *chunk.Column) {
+func genMockVecPlusIntBuiltinFunc(ctx BuildContext) (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *chunk.Column) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	col1 := newColumn(0)
 	col1.Index, col1.RetType = 0, tp
@@ -430,7 +429,7 @@ func convertETType(eType types.EvalType) (mysqlType byte) {
 	return
 }
 
-func genMockRowDouble(ctx sessionctx.Context, eType types.EvalType, enableVec bool) (builtinFunc, *chunk.Chunk, *chunk.Column, error) {
+func genMockRowDouble(ctx BuildContext, eType types.EvalType, enableVec bool) (builtinFunc, *chunk.Chunk, *chunk.Column, error) {
 	mysqlType := convertETType(eType)
 	tp := types.NewFieldType(mysqlType)
 	col1 := newColumn(1)

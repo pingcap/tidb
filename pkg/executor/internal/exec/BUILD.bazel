@@ -16,6 +16,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/table",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",

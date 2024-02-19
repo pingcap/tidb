@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -851,13 +850,13 @@ func (p *PhysicalWindow) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalShuffle) ExplainInfo() string {
-	explainIds := make([]fmt.Stringer, len(p.DataSources))
+	explainIDs := make([]fmt.Stringer, len(p.DataSources))
 	for i := range p.DataSources {
-		explainIds[i] = p.DataSources[i].ExplainID()
+		explainIDs[i] = p.DataSources[i].ExplainID()
 	}
 
 	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "execution info: concurrency:%v, data sources:%v", p.Concurrency, explainIds)
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, data sources:%v", p.Concurrency, explainIDs)
 	return buffer.String()
 }
 
@@ -1002,7 +1001,7 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 	return buffer.String()
 }
 
-func explainByItems(ctx sessionctx.Context, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
+func explainByItems(ctx expression.EvalContext, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		if item.Desc {
 			fmt.Fprintf(buffer, "%s:desc", item.Expr.ExplainInfo(ctx))

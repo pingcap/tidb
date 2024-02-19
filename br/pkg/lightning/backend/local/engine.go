@@ -263,7 +263,7 @@ func (e *Engine) unlock() {
 // TotalMemorySize returns the total memory size of the engine.
 func (e *Engine) TotalMemorySize() int64 {
 	var memSize int64
-	e.localWriters.Range(func(k, v any) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		w := k.(*Writer)
 		if w.kvBuffer != nil {
 			w.Lock()
@@ -528,7 +528,7 @@ func (e *Engine) getEngineFileSize() backend.EngineFileSize {
 		total = metrics.Total()
 	}
 	var memSize int64
-	e.localWriters.Range(func(k, v any) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		w := k.(*Writer)
 		memSize += int64(w.EstimatedSize())
 		return true
@@ -886,7 +886,7 @@ func (e *Engine) ingestSSTs(metas []*sstMeta) error {
 
 func (e *Engine) flushLocalWriters(parentCtx context.Context) error {
 	eg, ctx := errgroup.WithContext(parentCtx)
-	e.localWriters.Range(func(k, v any) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		eg.Go(func() error {
 			w := k.(*Writer)
 			return w.flush(ctx)

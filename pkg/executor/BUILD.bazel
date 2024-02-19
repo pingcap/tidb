@@ -150,6 +150,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/planner",
         "//pkg/planner/cardinality",
+        "//pkg/planner/context",
         "//pkg/planner/core",
         "//pkg/planner/util",
         "//pkg/planner/util/fixcontrol",

@@ -10,9 +10,9 @@ go_library(
     visibility = ["//pkg/planner/core:__subpackages__"],
     deps = [
         "//pkg/domain",
+        "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/parser/model",
-        "//pkg/sessionctx",
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/unistore",
         "@com_github_pingcap_kvproto//pkg/metapb",

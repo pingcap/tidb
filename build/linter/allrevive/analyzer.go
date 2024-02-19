@@ -89,7 +89,7 @@ var allRules = append([]lint.Rule{
 	&rule.ConstantLogicalExprRule{},
 	&rule.BoolLiteralRule{},
 	//&rule.RedefinesBuiltinIDRule{},
-	&rule.ImportsBlacklistRule{},
+	&rule.BlankImportsRule{},
 	//&rule.FunctionResultsLimitRule{},
 	//&rule.MaxPublicStructsRule{},
 	&rule.RangeValInClosureRule{},

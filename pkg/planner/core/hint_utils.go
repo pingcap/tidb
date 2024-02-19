@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -97,7 +96,7 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	return nil, nil
 }
 
-func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType h.NodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
+func getJoinHints(sctx PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	if parentOffset == -1 {
 		return res
 	}

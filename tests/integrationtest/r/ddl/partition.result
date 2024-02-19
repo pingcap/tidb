@@ -177,3 +177,106 @@ t	CREATE TABLE `t` (
   KEY `b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`a`) PARTITIONS 5
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+CREATE TABLE test.issue50972_1 (id1 int) PARTITION BY HASH( test.issue50972_1.id1 ) PARTITIONS 4;
+CREATE TABLE test.issue50972_2 (id2 int) PARTITION BY RANGE (test.issue50972_2.id2) ( PARTITION p0 VALUES LESS THAN (6));
+CREATE TABLE test.issue50972_3 (id3 int) PARTITION BY LIST (test.issue50972_3.id3) ( PARTITION p0 VALUES IN (1, 2) );
+show create table test.issue50972_1;
+Table	Create Table
+issue50972_1	CREATE TABLE `issue50972_1` (
+  `id1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id1`) PARTITIONS 4
+show create table test.issue50972_2;
+Table	Create Table
+issue50972_2	CREATE TABLE `issue50972_2` (
+  `id2` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id2`)
+(PARTITION `p0` VALUES LESS THAN (6))
+show create table test.issue50972_3;
+Table	Create Table
+issue50972_3	CREATE TABLE `issue50972_3` (
+  `id3` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (`id3`)
+(PARTITION `p0` VALUES IN (1,2))
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+CREATE TABLE test.issue50972_1 (id1 int);
+CREATE TABLE test.issue50972_2 (id2 int);
+CREATE TABLE test.issue50972_3 (id3 int);
+ALTER TABLE test.issue50972_1 PARTITION BY HASH( test.issue50972_1.id1 ) PARTITIONS 4;
+ALTER TABLE test.issue50972_2 PARTITION BY RANGE (test.issue50972_2.id2) ( PARTITION p0 VALUES LESS THAN (6));
+ALTER TABLE test.issue50972_3 PARTITION BY LIST (test.issue50972_3.id3) ( PARTITION p0 VALUES IN (1, 2) );
+show create table test.issue50972_1;
+Table	Create Table
+issue50972_1	CREATE TABLE `issue50972_1` (
+  `id1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id1`) PARTITIONS 4
+show create table test.issue50972_2;
+Table	Create Table
+issue50972_2	CREATE TABLE `issue50972_2` (
+  `id2` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id2`)
+(PARTITION `p0` VALUES LESS THAN (6))
+show create table test.issue50972_3;
+Table	Create Table
+issue50972_3	CREATE TABLE `issue50972_3` (
+  `id3` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (`id3`)
+(PARTITION `p0` VALUES IN (1,2))
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+drop table if exists k1, k2, k3, k4;
+CREATE TABLE k1 (
+id INT NOT NULL PRIMARY KEY,
+name VARCHAR(20))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k1;
+Table	Create Table
+k1	CREATE TABLE `k1` (
+  `id` int(11) NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k2 (
+id INT NOT NULL,
+name VARCHAR(20),
+UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k2;
+Table	Create Table
+k2	CREATE TABLE `k2` (
+  `id` int(11) NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k3 (
+id INT NOT NULL PRIMARY KEY NONCLUSTERED,
+name VARCHAR(20),
+UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k3;
+Table	Create Table
+k3	CREATE TABLE `k3` (
+  `id` int(11) NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  UNIQUE KEY `id` (`id`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k4(
+id INT NOT NULL,
+id1 int,
+name VARCHAR(20),
+UNIQUE KEY (id, id1))
+PARTITION BY KEY()
+PARTITIONS 2;
+Error 1105 (HY000): Table partition metadata not correct, neither partition expression or list of partition columns

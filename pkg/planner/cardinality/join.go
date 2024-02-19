@@ -18,12 +18,12 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // EstimateFullJoinRowCount estimates the row count of a full join.
-func EstimateFullJoinRowCount(sctx sessionctx.Context,
+func EstimateFullJoinRowCount(sctx context.PlanContext,
 	isCartesian bool,
 	leftProfile, rightProfile *property.StatsInfo,
 	leftJoinKeys, rightJoinKeys []*expression.Column,

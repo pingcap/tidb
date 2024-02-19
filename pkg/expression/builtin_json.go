@@ -1770,10 +1770,6 @@ func (b *builtinJSONLengthSig) evalInt(ctx EvalContext, row chunk.Row) (res int6
 		return res, isNull, err
 	}
 
-	if obj.TypeCode != types.JSONTypeCodeObject && obj.TypeCode != types.JSONTypeCodeArray {
-		return 1, false, nil
-	}
-
 	if len(b.args) == 2 {
 		path, isNull, err := b.args[1].EvalString(ctx, row)
 		if isNull || err != nil {
@@ -1793,9 +1789,10 @@ func (b *builtinJSONLengthSig) evalInt(ctx EvalContext, row chunk.Row) (res int6
 		if !exists {
 			return res, true, nil
 		}
-		if obj.TypeCode != types.JSONTypeCodeObject && obj.TypeCode != types.JSONTypeCodeArray {
-			return 1, false, nil
-		}
+	}
+
+	if obj.TypeCode != types.JSONTypeCodeObject && obj.TypeCode != types.JSONTypeCodeArray {
+		return 1, false, nil
 	}
 	return int64(obj.GetElemCount()), false, nil
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -41,20 +40,10 @@ const (
 	ScalarSubQFlag     byte = 5
 )
 
-// EvalAstExpr evaluates ast expression directly.
-// Note: initialized in planner/core
-// import expression and planner/core together to use EvalAstExpr
-var EvalAstExpr func(ctx BuildContext, expr ast.ExprNode) (types.Datum, error)
-
-// EvalAstExprWithPlanCtx evaluates ast expression directly with plan ctx
-// Note: initialized in planner/core
-// import expression and planner/core together to use EvalAstExpr
-var EvalAstExprWithPlanCtx func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
-
-// RewriteAstExpr rewrites ast expression directly.
-// Note: initialized in planner/core
-// import expression and planner/core together to use EvalAstExpr
-var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
+// EvalSimpleAst evaluates a simple ast expression directly.
+// This function is used to evaluate some "simple" expressions with limited context.
+// See `BuildSimpleExpr` for more details about the differences.
+var EvalSimpleAst func(ctx BuildContext, expr ast.ExprNode) (types.Datum, error)
 
 // BuildOptions is used to provide optional settings to build an expression
 type BuildOptions struct {
@@ -62,28 +51,34 @@ type BuildOptions struct {
 	InputSchema *Schema
 	// InputNames is the input names for expression to build
 	InputNames types.NameSlice
+	// SourceTableDB is the database that the source table located
+	SourceTableDB model.CIStr
 	// SourceTable is used to provide some extra column info.
 	SourceTable *model.TableInfo
 	// AllowCastArray specifies whether to allow casting to an array type.
 	AllowCastArray bool
+	// TargetFieldType indicates to cast the expression to the target field type if it is not nil
+	TargetFieldType *types.FieldType
 }
 
 // BuildOption is a function to apply optional settings
 type BuildOption func(*BuildOptions)
 
-// WithSourceTable specifies the table info to provide some extra column info when building expressions.
-// When `WithInputSchemaAndNames` is not sepecified, it also use the table info to build input schema and names.
-func WithSourceTable(tblInfo *model.TableInfo) BuildOption {
+// WithTableInfo specifies table meta for the expression to build.
+// When this option is specified, it will use the table meta to resolve column names.
+func WithTableInfo(db string, tblInfo *model.TableInfo) BuildOption {
 	return func(options *BuildOptions) {
+		options.SourceTableDB = model.NewCIStr(db)
 		options.SourceTable = tblInfo
 	}
 }
 
 // WithInputSchemaAndNames specifies the input schema and names for the expression to build.
-func WithInputSchemaAndNames(schema *Schema, names types.NameSlice) BuildOption {
+func WithInputSchemaAndNames(schema *Schema, names types.NameSlice, table *model.TableInfo) BuildOption {
 	return func(options *BuildOptions) {
 		options.InputSchema = schema
 		options.InputNames = names
+		options.SourceTable = table
 	}
 }
 
@@ -94,8 +89,26 @@ func WithAllowCastArray(allow bool) BuildOption {
 	}
 }
 
-// BuildExprWithAst builds an expression from an ast.
-var BuildExprWithAst func(ctx BuildContext, expr ast.ExprNode, opts ...BuildOption) (Expression, error)
+// WithCastExprTo indicates that we need to the cast the generated expression to the target type
+func WithCastExprTo(targetFt *types.FieldType) BuildOption {
+	return func(options *BuildOptions) {
+		options.TargetFieldType = targetFt
+	}
+}
+
+// BuildSimpleExpr builds a simple expression from an ast node.
+// This function is used to build some "simple" expressions with limited context.
+// The below expressions are not supported:
+//   - Subquery
+//   - Param marker (e.g. `?`)
+//   - Variable (e.g. `@a`)
+//   - Window functions
+//   - Aggregate functions
+//   - Other special functions such as `GROUPING`
+//
+// If you want to build a more complex expression, you should use `EvalAstExprWithPlanCtx` or `RewriteAstExprWithPlanCtx`
+// in `github.com/pingcap/tidb/pkg/planner/util`. They are more powerful but need planner context to build expressions.
+var BuildSimpleExpr func(ctx BuildContext, expr ast.ExprNode, opts ...BuildOption) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -848,7 +861,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
+func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
 	}
@@ -859,7 +872,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	return evaluateExprWithNull(ctx, schema, expr)
 }
 
-func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
+func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
@@ -884,7 +897,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 // If the Expression is a non-constant value, it means the result is unknown.
 // The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
 // when the value is Null Constant.
-func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schema, expr Expression) (Expression, bool) {
+func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
@@ -946,7 +959,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
 	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
@@ -1037,7 +1050,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, 
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := BuildExprWithAst(ctx, expr, WithInputSchemaAndNames(mockSchema, names), WithSourceTable(tblInfo), WithAllowCastArray(true))
+			e, err := BuildSimpleExpr(ctx, expr, WithInputSchemaAndNames(mockSchema, names, tblInfo), WithAllowCastArray(true))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

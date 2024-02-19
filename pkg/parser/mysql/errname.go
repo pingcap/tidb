@@ -676,7 +676,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	WarnCondItemTruncated:                                    Message("Data truncated for condition item '%s'", nil),
 	ErrCondItemTooLong:                                       Message("Data too long for condition item '%s'", nil),
 	ErrUnknownLocale:                                         Message("Unknown locale: '%-.64s'", nil),
-	ErrSlaveIgnoreServerIds:                                  Message("The requested server id %d clashes with the slave startup option --replicate-same-server-id", nil),
+	ErrSlaveIgnoreServerIDs:                                  Message("The requested server id %d clashes with the slave startup option --replicate-same-server-id", nil),
 	ErrQueryCacheDisabled:                                    Message("Query cache is disabled; restart the server with queryCacheType=1 to enable it", nil),
 	ErrSameNamePartitionField:                                Message("Duplicate partition field name '%-.192s'", nil),
 	ErrPartitionColumnList:                                   Message("Inconsistency in usage of column lists for partitioning", nil),

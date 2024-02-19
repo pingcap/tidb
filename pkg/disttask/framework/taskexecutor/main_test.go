@@ -23,13 +23,13 @@ import (
 )
 
 func ReduceCheckInterval(t *testing.T) {
-	checkIntervalBak := defaultCheckInterval
-	maxIntervalBak := maxCheckInterval
+	checkIntervalBak := DefaultCheckInterval
+	maxIntervalBak := MaxCheckInterval
 	t.Cleanup(func() {
-		defaultCheckInterval = checkIntervalBak
-		maxCheckInterval = maxIntervalBak
+		DefaultCheckInterval = checkIntervalBak
+		MaxCheckInterval = maxIntervalBak
 	})
-	maxCheckInterval, defaultCheckInterval = time.Millisecond, time.Millisecond
+	MaxCheckInterval, DefaultCheckInterval = time.Millisecond, time.Millisecond
 }
 
 func TestMain(m *testing.M) {

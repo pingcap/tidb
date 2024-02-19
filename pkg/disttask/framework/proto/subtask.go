@@ -51,6 +51,16 @@ const (
 	SubtaskStatePaused   SubtaskState = "paused"
 )
 
+// AllSubtaskStates is all subtask state.
+var AllSubtaskStates = []SubtaskState{
+	SubtaskStatePending,
+	SubtaskStateRunning,
+	SubtaskStateSucceed,
+	SubtaskStateFailed,
+	SubtaskStateCanceled,
+	SubtaskStatePaused,
+}
+
 type (
 	// SubtaskState is the state of subtask.
 	SubtaskState string

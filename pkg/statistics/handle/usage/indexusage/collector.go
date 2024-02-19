@@ -257,6 +257,8 @@ func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sa
 	s.Lock()
 	defer s.Unlock()
 
+	// If the usage of the table/index has been recorded in the statement, it'll not update the `QueryTotal`. Before the
+	// execution of each statement, the `StmtIndexUsageCollector` and internal map will be re-created.
 	idxID := GlobalIndexID{IndexID: indexID, TableID: tableID}
 	if _, ok := s.recordedIndex[idxID]; !ok {
 		sample.QueryTotal = 1

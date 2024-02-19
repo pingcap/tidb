@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -2493,7 +2492,7 @@ func (c *nowFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 }
 
 // GetStmtTimestamp directly calls getTimeZone with timezone
-func GetStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
+func GetStmtTimestamp(ctx EvalContext) (time.Time, error) {
 	tz := getTimeZone(ctx)
 	tVal, err := getStmtTimestamp(ctx)
 	if err != nil {

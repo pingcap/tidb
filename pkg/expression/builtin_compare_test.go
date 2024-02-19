@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -71,13 +70,10 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 		{"-123456789123456789123456789.12345 < a", "1"},
 		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
-	require.NoError(t, err)
-	schema := NewSchema(cols...)
 	for _, test := range tests {
-		f, err := ParseSimpleExprsWithNames(ctx, test.exprStr, schema, names)
+		f, err := ParseSimpleExpr(ctx, test.exprStr, WithTableInfo("", tblInfo))
 		require.NoError(t, err)
-		require.Equal(t, test.result, f[0].String())
+		require.Equal(t, test.result, f.String())
 	}
 }
 

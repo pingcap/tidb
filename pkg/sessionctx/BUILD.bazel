@@ -14,6 +14,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/util",
+        "//pkg/util/context",
         "//pkg/util/kvcache",
         "//pkg/util/plancache",
         "//pkg/util/sli",

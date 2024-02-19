@@ -120,7 +120,7 @@ func checkTTLIntervalExpr(ctx sessionctx.Context, ttlInfo *model.TTLInfo) error 
 		return errors.Trace(err)
 	}
 	nowAddIntervalExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	_, err = expression.EvalAstExpr(ctx, nowAddIntervalExpr)
+	_, err = expression.EvalSimpleAst(ctx, nowAddIntervalExpr)
 	return err
 }
 

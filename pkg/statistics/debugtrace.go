@@ -17,8 +17,8 @@ package statistics
 import (
 	"slices"
 
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"golang.org/x/exp/maps"
 )
@@ -183,7 +183,7 @@ type locateBucketInfo struct {
 }
 
 func debugTraceLocateBucket(
-	s sessionctx.Context,
+	s context.PlanContext,
 	value *types.Datum,
 	exceed bool,
 	bucketIdx int,
@@ -212,7 +212,7 @@ type bucketInfo struct {
 }
 
 // DebugTraceBuckets is used to trace the buckets used in the histogram.
-func DebugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
+func DebugTraceBuckets(s context.PlanContext, hg *Histogram, bucketIdxs []int) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	buckets := make([]bucketInfo, len(bucketIdxs))
 	for i := range buckets {
@@ -242,7 +242,7 @@ type topNRangeInfo struct {
 	LastIdx      int
 }
 
-func debugTraceTopNRange(s sessionctx.Context, t *TopN, startIdx, endIdx int) {
+func debugTraceTopNRange(s context.PlanContext, t *TopN, startIdx, endIdx int) {
 	if endIdx <= startIdx {
 		return
 	}

@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -465,7 +465,7 @@ func (hg *Histogram) ToString(idxCols int) string {
 // EqualRowCount estimates the row count where the column equals to value.
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) EqualRowCount(sctx sessionctx.Context, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
+func (hg *Histogram) EqualRowCount(sctx context.PlanContext, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -515,7 +515,7 @@ func (hg *Histogram) GreaterRowCount(value types.Datum) float64 {
 // locateBucket(val2): false, 2, false, false
 // locateBucket(val3): false, 2, true, false
 // locateBucket(val4): true, 3, false, false
-func (hg *Histogram) LocateBucket(sctx sessionctx.Context, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
+func (hg *Histogram) LocateBucket(sctx context.PlanContext, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		defer func() {
 			debugTraceLocateBucket(sctx, &value, exceed, bucketIdx, inBucket, matchLastValue)
@@ -548,7 +548,7 @@ func (hg *Histogram) LocateBucket(sctx sessionctx.Context, value types.Datum) (e
 
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types.Datum) (result float64, bucketIdx int) {
+func (hg *Histogram) LessRowCountWithBktIdx(sctx context.PlanContext, value types.Datum) (result float64, bucketIdx int) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -583,14 +583,14 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types
 
 // LessRowCount estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) LessRowCount(sctx sessionctx.Context, value types.Datum) float64 {
+func (hg *Histogram) LessRowCount(sctx context.PlanContext, value types.Datum) float64 {
 	result, _ := hg.LessRowCountWithBktIdx(sctx, value)
 	return result
 }
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) BetweenRowCount(sctx sessionctx.Context, a, b types.Datum) float64 {
+func (hg *Histogram) BetweenRowCount(sctx context.PlanContext, a, b types.Datum) float64 {
 	lessCountA := hg.LessRowCount(sctx, a)
 	lessCountB := hg.LessRowCount(sctx, b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
@@ -935,7 +935,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 // leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 // You can find more details at https://github.com/pingcap/tidb/pull/47966#issuecomment-1778866876
 func (hg *Histogram) OutOfRangeRowCount(
-	sctx sessionctx.Context,
+	sctx context.PlanContext,
 	lDatum, rDatum *types.Datum,
 	modifyCount, histNDV int64,
 ) (result float64) {

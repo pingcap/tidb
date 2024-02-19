@@ -541,6 +541,8 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	DBID int64 `json:"-"`
 }
 
 // TableNameInfo provides meta data describing a table name info.
@@ -1194,6 +1196,10 @@ type PartitionInfo struct {
 	// yet supported back then. When Enable is true, write/read need use tid
 	// rather than pid.
 	Enable bool `json:"enable"`
+
+	// IsEmptyColumns is for syntax like `partition by key()`.
+	// When IsEmptyColums is true, it will not display column name in `show create table` stmt.
+	IsEmptyColumns bool `json:"is_empty_columns"`
 
 	Definitions []PartitionDefinition `json:"definitions"`
 	// AddingDefinitions is filled when adding partitions that is in the mid state.

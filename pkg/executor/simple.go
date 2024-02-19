@@ -2692,11 +2692,11 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	} else {
 		if len(s.PartitionNames) == 0 {
 			for _, table := range s.Tables {
-				partitionStatIds, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
+				partitionStatIDs, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
 				if err != nil {
 					return err
 				}
-				statsIDs = append(statsIDs, partitionStatIds...)
+				statsIDs = append(statsIDs, partitionStatIDs...)
 				statsIDs = append(statsIDs, table.TableInfo.ID)
 			}
 		} else {
