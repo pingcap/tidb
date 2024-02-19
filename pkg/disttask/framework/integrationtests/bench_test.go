@@ -34,12 +34,12 @@ import (
 var (
 	maxConcurrentTask = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
 	waitDuration      = flag.Duration("task-wait-duration", 5*time.Minute, "task wait duration")
-	taskMetaSize      = flag.Int("task-meta-size", 1<<24, "task meta size")
+	taskMetaSize      = flag.Int("task-meta-size", 1<<10, "task meta size")
 )
 
 // test overhead when starting multiple schedulers
 // GOOS=linux GOARCH=amd64 go test -c -o bench.test ./pkg/disttask/framework/integrationtests
-// bench.test -test.bench=BenchmarkSchedulerOverhead -test.benchmem --with-tikv "x.x.x.x:2379?disableGC=true"
+// bench.test -run ^$ -test.bench=BenchmarkSchedulerOverhead -test.benchmem --with-tikv "upstream-pd:2379?disableGC=true"
 func BenchmarkSchedulerOverhead(b *testing.B) {
 	bak := proto.MaxConcurrentTask
 	b.Cleanup(func() {
