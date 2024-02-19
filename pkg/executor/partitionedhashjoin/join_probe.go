@@ -128,7 +128,7 @@ type baseJoinProbe struct {
 	rightAsBuildSide bool
 	// lUsed/rUsed show which columns are used by father for left child and right child.
 	// NOTE:
-	// 1. every columns are used if lUsed/rUsed is nil.
+	// 1. all columns are used if lUsed/rUsed is nil.
 	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
 	lUsed, rUsed []int
 }
@@ -156,6 +156,11 @@ func (innerJoinProbe *innerJoinProbe) doProbeOneInt64(chk *chunk.Chunk, info *pr
 		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
 			if *(*int64)(unsafe.Pointer(&info.serializedKeys[info.currentProbeRow][0])) == *(*int64)(unsafe.Add(info.matchedRowsHeaders[info.currentProbeRow], keyOffset)) {
 				// key matched, construct result block
+				if innerJoinProbe.rightAsBuildSide {
+
+				} else {
+
+				}
 			}
 			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(info.matchedRowsHeaders[info.currentProbeRow])
 		} else {
