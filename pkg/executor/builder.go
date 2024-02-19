@@ -5059,6 +5059,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		waitTime:           plan.LockWaitTime,
 		columns:            plan.Columns,
 		handles:            handles,
+		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
 	}
 

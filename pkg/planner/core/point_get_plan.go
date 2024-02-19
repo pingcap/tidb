@@ -798,23 +798,26 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			handles = append(handles, handle)
 			usedValues[i] = true
 		}
+		skipped := 0
+		for i, use := range usedValues {
+			if !use {
+				curr := i - skipped
+				p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
+				skipped++
+			}
+		}
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
-			skipped := 0
+			skipped = 0
 			partitionsFound := 0
 			for i, idx := range partIdxs {
-				if !usedValues[i] {
-					skipped++
-					continue
-				}
 				if partIdxs[i] < 0 ||
 					(p.SinglePartition &&
 						partIdxs[i] != p.PartitionIdxs[0]) ||
 					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
 					curr := i - skipped
 					handles = append(handles[:curr], handles[curr+1:]...)
-					// TODO: remove non used value from
-					// p.IndexValues
+					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
 					skipped++
 					continue
 				} else if !p.SinglePartition {
