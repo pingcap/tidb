@@ -19,8 +19,6 @@ go_test(
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_snappy//:snappy",
         "@com_github_klauspost_compress//zstd",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
     ],
 )

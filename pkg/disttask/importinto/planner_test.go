@@ -18,9 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -167,10 +167,7 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 		external.MergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	encodeStepMetaBytes := genEncodeStepMetas(t, 3)
 	planCtx := planner.PlanCtx{
 		Ctx:    context.Background(),
@@ -238,10 +235,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 	require.Equal(t, []byte("x_2_c"), kvMetas2["data"].EndKey)
 
 	// force merge sort for data kv
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	allKVMetas, err := getSortedKVMetasForIngest(planner.PlanCtx{
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,

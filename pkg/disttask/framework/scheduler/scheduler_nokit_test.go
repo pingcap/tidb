@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"testing"
 	"time"
 
@@ -218,10 +219,7 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 }
 
 func TestSchedulerCleanupTask(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-	}()
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	taskMgr := mock.NewMockTaskManager(ctrl)
@@ -243,7 +241,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// fail in transfer
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "1*return()"))
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "1*return()")
 	mockErr := errors.New("transfer err")
 	taskMgr.EXPECT().GetTasksInStates(
 		mgr.ctx,

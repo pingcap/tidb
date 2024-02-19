@@ -228,7 +228,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
-			// do not handle the tasks with lower priority if current task is waiting tasks free.
+			// do not handle the tasks with lower rank if current task is waiting tasks free.
 			break
 		}
 
