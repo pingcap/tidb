@@ -27,6 +27,10 @@ type subTable struct {
 	posMask   uint64
 }
 
+func (st *subTable) lookup(hashValue uint64) unsafe.Pointer {
+	return st.hashTable[hashValue&st.posMask]
+}
+
 func nextPowerOfTwo(value uint64) uint64 {
 	ret := uint64(2)
 	for ; ret < value; ret = ret << 1 {
@@ -48,14 +52,14 @@ func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep in
 	updateHashValue := func(pos uint64, rowAddress unsafe.Pointer) {
 		prev := st.hashTable[pos]
 		st.hashTable[pos] = rowAddress
-		setNextRowOffset(rowAddress, prev)
+		setNextRowAddress(rowAddress, prev)
 	}
 	if !threadSafe {
 		updateHashValue = func(pos uint64, rowAddress unsafe.Pointer) {
 			for {
 				prev := atomic.LoadPointer(&st.hashTable[pos])
 				if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
-					setNextRowOffset(rowAddress, prev)
+					setNextRowAddress(rowAddress, prev)
 					break
 				}
 			}
@@ -72,14 +76,16 @@ func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep in
 }
 
 type joinHashTable struct {
-	isThreadSafe bool
-	tables       []*subTable
+	isThreadSafe    bool
+	tables          []*subTable
+	partitionNumber uint64
 }
 
 func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *joinHashTable {
 	jht := &joinHashTable{
-		isThreadSafe: isThreadSafe,
-		tables:       make([]*subTable, len(partitionedRowTables)),
+		isThreadSafe:    isThreadSafe,
+		tables:          make([]*subTable, len(partitionedRowTables)),
+		partitionNumber: uint64(len(partitionedRowTables)),
 	}
 	for i, rowTable := range partitionedRowTables {
 		jht.tables[i] = newSubTable(rowTable)
@@ -89,4 +95,9 @@ func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *join
 
 func (jht *joinHashTable) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
 	jht.tables[partitionIndex].build(jht.isThreadSafe, startSegmentIndex, segmentStep)
+}
+
+func (jht *joinHashTable) lookup(hashValue uint64) unsafe.Pointer {
+	partitionIndex := hashValue % jht.partitionNumber
+	return jht.tables[partitionIndex].lookup(hashValue)
 }

@@ -64,11 +64,11 @@ func (rts *rowTableSegment) validKeyCount() int64 {
 	return int64(len(rts.validJoinKeyPos))
 }
 
-func setNextRowOffset(rowStart unsafe.Pointer, nextRowOffset unsafe.Pointer) {
-	*(*unsafe.Pointer)(rowStart) = nextRowOffset
+func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
+	*(*unsafe.Pointer)(rowStart) = nextRowAddress
 }
 
-func getNextRowOffset(rowStart unsafe.Pointer) unsafe.Pointer {
+func getNextRowAddress(rowStart unsafe.Pointer) unsafe.Pointer {
 	return *(*unsafe.Pointer)(rowStart)
 }
 
