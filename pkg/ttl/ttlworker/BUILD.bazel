@@ -73,6 +73,7 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/ast",

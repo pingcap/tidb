@@ -15,7 +15,7 @@
 package context
 
 import (
-	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -24,7 +24,7 @@ import (
 
 // PlanContext is the context for building plan.
 type PlanContext interface {
-	expression.BuildContext
+	exprctx.BuildContext
 	contextutil.ValueStoreContext
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars

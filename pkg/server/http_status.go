@@ -438,7 +438,7 @@ func (s *Server) startHTTPServer() {
 		err            error
 	)
 	httpRouterPage.WriteString("<html><head><title>TiDB Status and Metrics Report</title></head><body><h1>TiDB Status and Metrics Report</h1><table>")
-	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+	err = router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 		pathTemplate, err = route.GetPathTemplate()
 		if err != nil {
 			logutil.BgLogger().Error("get HTTP router path failed", zap.Error(err))
@@ -456,7 +456,7 @@ func (s *Server) startHTTPServer() {
 	}
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
-	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
+	router.HandleFunc("/", func(responseWriter http.ResponseWriter, _ *http.Request) {
 		_, err = responseWriter.Write(httpRouterPage.Bytes())
 		if err != nil {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
@@ -534,7 +534,7 @@ func (s *Server) SetCNChecker(tlsConfig *tls.Config) *tls.Config {
 			cn = strings.TrimSpace(cn)
 			checkCN[cn] = struct{}{}
 		}
-		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		tlsConfig.VerifyPeerCertificate = func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
 			for _, chain := range verifiedChains {
 				if len(chain) != 0 {
 					if _, match := checkCN[chain[0].Subject.CommonName]; match {
