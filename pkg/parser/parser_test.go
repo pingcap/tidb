@@ -1141,12 +1141,8 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
 		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
 		{"query watch remove", false, ""},
-<<<<<<< HEAD
-=======
-
 		// for issue 34325, "replace into" with hints
 		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = 'ALLOW_INVALID_DATES')*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
->>>>>>> 5a2c79b4d87 (parser: restore set_var value to string instead of plain text (#50515))
 	}
 	RunTest(t, table, false)
 }

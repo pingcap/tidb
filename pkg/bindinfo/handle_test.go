@@ -607,8 +607,6 @@ func TestReloadBindings(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, 0, len(rows))
 }
-<<<<<<< HEAD:pkg/bindinfo/handle_test.go
-=======
 
 func TestSetVarFixControlWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -635,49 +633,3 @@ func TestSetVarFixControlWithBinding(t *testing.T) {
 			`  └─TableRowIDScan_9 10.10 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
-
-func TestRemoveDuplicatedPseudoBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	checkPseudoBinding := func(num int) {
-		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.bind_info where original_sql='%s'",
-			bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows(fmt.Sprintf("%d", num)))
-	}
-	insertPseudoBinding := func() {
-		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
-            VALUES ('%v', '%v', "mysql", '%v', "2000-01-01 00:00:00", "2000-01-01 00:00:00", "", "", '%v')`,
-			bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin))
-	}
-	removeDuplicated := func() {
-		tk.MustExec(bindinfo.StmtRemoveDuplicatedPseudoBinding)
-	}
-
-	checkPseudoBinding(1)
-	insertPseudoBinding()
-	checkPseudoBinding(2)
-	removeDuplicated()
-	checkPseudoBinding(1)
-
-	insertPseudoBinding()
-	insertPseudoBinding()
-	insertPseudoBinding()
-	checkPseudoBinding(4)
-	removeDuplicated()
-	checkPseudoBinding(1)
-	removeDuplicated()
-	checkPseudoBinding(1)
-}
-
-type mockSessionPool struct {
-	se sessiontypes.Session
-}
-
-func (p *mockSessionPool) Get() (pools.Resource, error) {
-	return p.se, nil
-}
-
-func (p *mockSessionPool) Put(pools.Resource) {
-}
->>>>>>> 5a2c79b4d87 (parser: restore set_var value to string instead of plain text (#50515)):pkg/bindinfo/global_handle_test.go
