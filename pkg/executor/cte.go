@@ -266,7 +266,10 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 			firstErr = setFirstErr(firstErr, err, "deref iterOutTbl err")
 		}
 	}
-	p.resetTracker()
+	// Reset to nil instead of calling Detach(),
+	// because ExplainExec still needs tracker to get mem usage info.
+	p.memTracker = nil
+	p.diskTracker = nil
 	p.closed = true
 	return
 }
