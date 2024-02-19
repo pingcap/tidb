@@ -180,6 +180,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
 
 	// create job
 	conn := tk.Session().(sqlexec.SQLExecutor)
