@@ -1628,7 +1628,15 @@ func TestDefaultColumnWithReplace(t *testing.T) {
 
 	// insert records
 	tk.MustExec("insert into t(c) values (1),(2),(3)")
-	tk.MustGetErrCode("insert into t1(c) values (1)", errno.ErrTruncatedWrongValue)
+	// Different UUID values will result in different error code.
+	_, err := tk.Exec("insert into t1(c) values (1)")
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	require.Truef(t, ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	sqlErr := terror.ToSQLError(tErr)
+	if int(sqlErr.Code) != errno.ErrTruncatedWrongValue {
+		require.Equal(t, errno.ErrDataOutOfRange, int(sqlErr.Code))
+	}
 
 	rows := tk.MustQuery("SELECT c1 from t").Rows()
 	for _, row := range rows {
