@@ -224,18 +224,6 @@ select /*+ no_index_merge() */ a from t where ('1' member of (j0->'$.path0')); ;
 select /*+ use_index_merge(t, j0_0) */ a from t where (1 member of (j0->'$.path0')); ;
 select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0')); ;
 
-
-<<<<<<< HEAD
-=======
-drop table if exists t;
-create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));
-insert into t value(1,1,1, '{"b":[1,2,3,4]}');
-insert into t value(2,2,2, '{"b":[3,4,5,6]}');
-set tidb_analyze_version=2;
-analyze table t;
-explain select * from t use index (iad) where a = 1;
-explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));
-
 # TestMultiValuedIndexWithoutRelatedColumnCondition
 drop table if exists t;
 create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
@@ -248,4 +236,3 @@ insert into t values ('[]');
 insert into t values ('["abc"]');
 select * from t use index (mvi) where json_contains(j, '[]');
 select * from t ignore index (mvi) where json_contains(j, '[]');
->>>>>>> e3bd0df35d3 (planner: avoid scanning multi-valued index when there is no condition related (#50183))

@@ -344,8 +344,8 @@ IndexMerge	0.00	root		type: union
 └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2;
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, 2)
+TableReader	0.10	root		data:Selection
+└─Selection	0.10	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, 2)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index_merge(t, idx) */ * from t where a=1;
 id	estRows	task	access object	operator info
@@ -364,8 +364,8 @@ IndexMerge	0.00	root		type: union
 └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2;
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, 2)
+TableReader	0.10	root		data:Selection
+└─Selection	0.10	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, 2)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where a=1;
 id	estRows	task	access object	operator info
@@ -384,8 +384,8 @@ IndexMerge	0.00	root		type: union
 └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index(t, idx) */ * from t where a=1 and b=2;
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, 2)
+TableReader	0.10	root		data:Selection
+└─Selection	0.10	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, 2)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t use index(idx) where a=1;
 id	estRows	task	access object	operator info
@@ -528,8 +528,8 @@ IndexMerge	0.01	root		type: union
   └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) or a=10;
 id	estRows	task	access object	operator info
-TableReader	19.99	root		data:Selection
-└─Selection	19.99	cop[tikv]		or(json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t.j), eq(planner__core__indexmerge_path.t.a, 10))
+TableReader	8002.00	root		data:Selection
+└─Selection	8002.00	cop[tikv]		or(json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t.j), eq(planner__core__indexmerge_path.t.a, 10))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ use_index_merge(t, kj) */ * from t;
 id	estRows	task	access object	operator info
@@ -671,24 +671,6 @@ a
 1
 select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0'));
 a
-<<<<<<< HEAD
-=======
-drop table if exists t;
-create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));
-insert into t value(1,1,1, '{"b":[1,2,3,4]}');
-insert into t value(2,2,2, '{"b":[3,4,5,6]}');
-set tidb_analyze_version=2;
-analyze table t;
-explain select * from t use index (iad) where a = 1;
-id	estRows	task	access object	operator info
-TableReader_7	1.00	root		data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1)
-  └─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
-explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));
-id	estRows	task	access object	operator info
-IndexMerge_7	1.00	root		type: union
-├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array))	range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]
-└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[d:unInitialized]
 drop table if exists t;
 create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
 insert into t value(1,'{"b":[]}'), (2,'{"b":[]}');
@@ -710,4 +692,3 @@ select * from t ignore index (mvi) where json_contains(j, '[]');
 j
 []
 ["abc"]
->>>>>>> e3bd0df35d3 (planner: avoid scanning multi-valued index when there is no condition related (#50183))

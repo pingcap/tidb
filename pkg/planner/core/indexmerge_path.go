@@ -81,7 +81,6 @@ func (ds *DataSource) generateIndexMergePath() error {
 		return err
 	}
 
-	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) != 0 {
 		// If len(indexMergeHints) > 0, then add warnings if index-merge hints cannot work.
 		if regularPathCount == len(ds.possibleAccessPaths) {
@@ -92,31 +91,21 @@ func (ds *DataSource) generateIndexMergePath() error {
 		}
 
 		// If len(indexMergeHints) > 0 and some index-merge paths were added, then prune all other non-index-merge paths.
-		// if len(ds.possibleAccessPaths) > oldIndexMergeCount, it means composed index merge path is generated, prune others.
-		if len(ds.possibleAccessPaths) > oldIndexMergeCount {
-			ds.possibleAccessPaths = ds.possibleAccessPaths[oldIndexMergeCount:]
-		} else {
-			ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+		minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
+		for _, path := range ds.possibleAccessPaths {
+			if minRowCount < path.CountAfterAccess {
+				minRowCount = path.CountAfterAccess
+			}
+		}
+		if ds.StatsInfo().RowCount > minRowCount {
+			ds.SetStats(ds.tableStats.ScaleByExpectCnt(minRowCount))
 		}
 	}
 
-<<<<<<< HEAD
-	// If len(indexMergeHints) > 0 and some index-merge paths were added, then prune all other non-index-merge paths.
-	ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
-	minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
-	for _, path := range ds.possibleAccessPaths {
-		if minRowCount < path.CountAfterAccess {
-			minRowCount = path.CountAfterAccess
-		}
-	}
-	if ds.StatsInfo().RowCount > minRowCount {
-		ds.SetStats(ds.tableStats.ScaleByExpectCnt(minRowCount))
-	}
-=======
 	// If there is a multi-valued index hint, remove all paths which don't use the specified index.
 	ds.cleanAccessPathForMVIndexHint()
 
->>>>>>> e3bd0df35d3 (planner: avoid scanning multi-valued index when there is no condition related (#50183))
 	return nil
 }
 
@@ -699,16 +688,10 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 	if virColID == -1 { // unexpected, no vir-col on this MVIndex
 		return nil, false, false, nil
 	}
-<<<<<<< HEAD
-	if len(accessFilters) <= virColID { // no filter related to the vir-col, build a partial path directly.
-		partialPath, ok, err := ds.buildPartialPath4MVIndex(accessFilters, idxCols, mvIndex)
-		return []*util.AccessPath{partialPath}, false, ok, err
-=======
 	if len(accessFilters) <= virColID {
 		// No filter related to the vir-col, cannot build a path for multi-valued index. Scanning on a multi-valued
 		// index will only produce the rows whose corresponding array is not empty.
 		return nil, false, false, nil
->>>>>>> e3bd0df35d3 (planner: avoid scanning multi-valued index when there is no condition related (#50183))
 	}
 	// If the condition is related with the array column, all following condition assumes that the array is not empty:
 	// `member of`, `json_contains`, `json_overlaps` all return false when the array is empty, except that
@@ -739,15 +722,10 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		virColVals = append(virColVals, v)
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
-<<<<<<< HEAD
 		virColVals, ok = jsonArrayExpr2Exprs(ds.SCtx(), sf.GetArgs()[1], jsonType)
-		if !ok || len(virColVals) == 0 { // json_contains(JSON, '[]') is TRUE
-=======
-		virColVals, ok = jsonArrayExpr2Exprs(sctx, sf.GetArgs()[1], jsonType)
 		if !ok || len(virColVals) == 0 {
 			// json_contains(JSON, '[]') is TRUE. If the row has an empty array, it'll not exist on multi-valued index,
 			// but the `json_contains(array, '[]')` is still true, so also don't try to scan on the index.
->>>>>>> e3bd0df35d3 (planner: avoid scanning multi-valued index when there is no condition related (#50183))
 			return nil, false, false, nil
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
@@ -879,83 +857,6 @@ func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, id
 	return accessFilters, remainingFilters
 }
 
-<<<<<<< HEAD
-=======
-// For idx(x, cast(a as array), z), `x=1 and (2 member of a) and (1 member of a) and z=1 and x+z>0` is split to:
-// accessFilters combination:
-// 1: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
-// 2: `x=1 and (1 member of a) and z=1`, remaining: `x+z>0`.
-//
-// Q: case like idx(x, cast(a as array), z), condition like: x=1 and x=2 and ( 2 member of a)? we can derive the x is invalid range?
-// A: no way to here, it will derive an empty range in table path by all these conditions, and the heuristic rule will pick the table-dual table path directly.
-//
-// Theoretically For idx(x, cast(a as array), z), `x=1 and x=2 and (2 member of a) and (1 member of a) and z=1 and x+z>0` here should be split to:
-// 1: `x=1 and x=2 and (2 member of a) and z=1`, remaining: `x+z>0`.
-// 2: `x=1 and x=2 and (1 member of a) and z=1`, remaining: `x+z>0`.
-// Note: x=1 and x=2 will derive an invalid range in ranger detach, for now because of heuristic rule above, we ignore this case here.
-//
-// just as the 3rd point as we said in generateIndexMerge4ComposedIndex
-//
-// 3: The predicate of mv index can not converge to a linear interval range at physical phase like EQ and
-// GT in normal index. Among the predicates in mv index (member-of/contains/overlap), multi conditions
-// about them should be built as self-independent index path, deriving the final intersection/union handles,
-// which means a mv index path may be reused for multi related conditions. Here means whether (2 member of a)
-// And (1 member of a) is valid composed range or empty range can't be told until runtime intersection/union.
-//
-// therefore, for multi condition about a single mv index virtual json col here: (2 member of a) and (1 member of a)
-// we should build indexMerge above them, and each of them can access to the same mv index. That's why
-// we should derive the mutations of virtual json col's access condition, output the accessFilter combination
-// for each mutation of it.
-//
-// In the first case:
-// the inputs will be:
-//
-//	filters:[x=1, (2 member of a), (1 member of a), z=1, x+z>0], idxCols: [x,a,z]
-//
-// the output will be:
-//
-//	accessFilters: [x=1, (2 member of a), z=1], remainingFilters: [x+z>0], mvColOffset: 1, mvFilterMutations[(2 member of a), (1 member of a)]
-//
-// the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
-func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expression,
-	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
-	usedAsAccess := make([]bool, len(filters))
-	// accessFilters [x, a<json>, z]
-	//                    |
-	//                    +----> it may have several substitutions in mvFilterMutations if it's json col.
-	mvFilterMutations = make([]expression.Expression, 0, 1)
-	mvColOffset = -1
-	for z, col := range idxCols {
-		found := false
-		for i, f := range filters {
-			if usedAsAccess[i] {
-				continue
-			}
-			if checkFilter4MVIndexColumn(ds.SCtx(), f, col) {
-				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
-					// assert jsonColOffset should always be the same.
-					// if the filter is from virtual expression, it means it is about the mv json col.
-					mvFilterMutations = append(mvFilterMutations, f)
-					mvColOffset = z
-				}
-				accessFilters = append(accessFilters, f)
-				usedAsAccess[i] = true
-				found = true
-				// shouldn't break once found here, because we want to collect all the mutation mv filters here.
-			}
-		}
-		if !found {
-			break
-		}
-	}
-	for i := range usedAsAccess {
-		if !usedAsAccess[i] {
-			remainingFilters = append(remainingFilters, filters[i])
-		}
-	}
-	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations
-}
-
 // cleanAccessPathForMVIndexHint removes all other access path if there is a multi-valued index hint, and this hint
 // has a valid path
 func (ds *DataSource) cleanAccessPathForMVIndexHint() {
@@ -1007,7 +908,6 @@ func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]st
 	return false
 }
 
->>>>>>> e3bd0df35d3 (planner: avoid scanning multi-valued index when there is no condition related (#50183))
 // checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
 func (ds *DataSource) checkFilter4MVIndexColumn(filter expression.Expression, idxCol *expression.Column) bool {
 	sf, ok := filter.(*expression.ScalarFunction)
