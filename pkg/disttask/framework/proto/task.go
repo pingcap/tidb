@@ -44,6 +44,8 @@ import (
 //	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
 //	 3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
+// TODO: we don't have revert_failed task for now.
+//
 // subtask state machine for normal subtask:
 //
 //	               ┌──────────────┐
@@ -135,9 +137,10 @@ type Task struct {
 	Error           error
 }
 
-// IsFinished checks if the task is finished.
-func (t *Task) IsFinished() bool {
-	return t.State == TaskStateSucceed || t.State == TaskStateReverted
+// IsDone checks if the task is done.
+func (t *Task) IsDone() bool {
+	return t.State == TaskStateSucceed || t.State == TaskStateReverted ||
+		t.State == TaskStateFailed
 }
 
 // Subtask represents the subtask of distribute framework.

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
@@ -764,8 +765,10 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 		return s.tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	taskManager := storage.NewTaskManager(context.Background(), pool)
-	subtasks, err := taskManager.GetSucceedSubtasksByStep(storage.TestLastTaskID.Load(), importinto.StepImport)
+	taskManager := storage.NewTaskManager(pool)
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	subtasks, err := taskManager.GetSucceedSubtasksByStep(ctx, storage.TestLastTaskID.Load(), importinto.StepImport)
 	s.NoError(err)
 	s.Len(subtasks, 1)
 	serverInfo, err := infosync.GetServerInfo()
@@ -780,7 +783,9 @@ func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 	s.Regexp(`[?&]access-key=xxxxxx`, string(globalTask.Meta))
 	s.Contains(string(globalTask.Meta), "secret-access-key=xxxxxx")

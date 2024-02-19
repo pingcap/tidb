@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -439,6 +440,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		}
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
+		job.InvolvingSchemaInfo = nil
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
@@ -574,6 +576,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		markJobFinish(job)
 	}()
 
 	if jobNeedGC(job) {
@@ -617,6 +620,15 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
+}
+
+func markJobFinish(job *model.Job) {
+	if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+		job.ReorgMeta != nil &&
+		job.ReorgMeta.IsFastReorg &&
+		ingest.LitBackCtxMgr != nil {
+		ingest.LitBackCtxMgr.MarkJobFinish()
+	}
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {

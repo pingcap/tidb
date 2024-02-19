@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
@@ -62,12 +63,12 @@ func (p *planErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatch
 	return nil, nil
 }
 
-func (p *planErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (p *planErrDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
 	if p.callTime == 1 {
 		p.callTime++
-		return nil, errors.New("not retryable err")
+		return errors.New("not retryable err")
 	}
-	return []byte("planErrTask"), nil
+	return nil
 }
 
 func (*planErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
@@ -100,8 +101,8 @@ func (p *planNotRetryableErrDispatcherExt) OnNextSubtasksBatch(_ context.Context
 	return nil, errors.New("not retryable err")
 }
 
-func (*planNotRetryableErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, errors.New("not retryable err")
+func (*planNotRetryableErrDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 func (*planNotRetryableErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
@@ -120,9 +121,12 @@ func TestPlanErr(t *testing.T) {
 	m := sync.Map{}
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.Close()
 }
 
@@ -131,9 +135,12 @@ func TestRevertPlanErr(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckSuccess("key1", t, &m)
+	DispatchTaskAndCheckSuccess(ctx, "key1", t, &m)
 	distContext.Close()
 }
 
@@ -141,8 +148,11 @@ func TestPlanNotRetryableErr(t *testing.T) {
 	m := sync.Map{}
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+
 	RegisterTaskMeta(t, ctrl, &m, &planNotRetryableErrDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
+	DispatchTaskAndCheckState(ctx, "key1", t, &m, proto.TaskStateFailed)
 	distContext.Close()
 }

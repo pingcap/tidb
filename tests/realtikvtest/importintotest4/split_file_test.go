@@ -15,6 +15,7 @@
 package importintotest
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -25,9 +26,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func (s *mockGCSSuite) TestSplitFile() {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	var allData []string
 	var content []byte
 	for j := 0; j < 500; j++ {
@@ -58,10 +62,10 @@ func (s *mockGCSSuite) TestSplitFile() {
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
 	s.NoError(err)
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 
-	subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, importinto.StepImport)
+	subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(ctx, globalTask.ID, importinto.StepImport)
 	s.NoError(err2)
 	s.Len(subtasks, 3)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))

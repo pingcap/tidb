@@ -169,6 +169,7 @@ func (dm *Manager) dispatchTaskLoop() {
 
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
 			tasks, err := dm.taskMgr.GetGlobalTasksInStates(
+				dm.ctx,
 				proto.TaskStatePending,
 				proto.TaskStateRunning,
 				proto.TaskStateReverting,
@@ -223,7 +224,7 @@ func (dm *Manager) failTask(task *proto.Task, err error) {
 	prevState := task.State
 	task.State = proto.TaskStateFailed
 	task.Error = err
-	if _, err2 := dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState); err2 != nil {
+	if _, err2 := dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(dm.ctx, task, nil, prevState); err2 != nil {
 		logutil.BgLogger().Warn("failed to update task state to failed",
 			zap.Int64("task-id", task.ID), zap.Error(err2))
 	}
@@ -248,7 +249,7 @@ func (dm *Manager) gcSubtaskHistoryTableLoop() {
 			logutil.BgLogger().Info("subtask history table gc loop exits", zap.Error(dm.ctx.Err()))
 			return
 		case <-ticker.C:
-			err := dm.taskMgr.GCSubtasks()
+			err := dm.taskMgr.GCSubtasks(dm.ctx)
 			if err != nil {
 				logutil.BgLogger().Warn("subtask history table gc failed", zap.Error(err))
 			} else {
@@ -318,6 +319,7 @@ func (dm *Manager) doCleanUpRoutine() {
 		logutil.BgLogger().Info("clean up nodes in framework meta since nodes shutdown", zap.Int("cnt", cnt))
 	}
 	tasks, err := dm.taskMgr.GetGlobalTasksInStates(
+		dm.ctx,
 		proto.TaskStateFailed,
 		proto.TaskStateReverted,
 		proto.TaskStateSucceed,
@@ -350,7 +352,7 @@ func (dm *Manager) CleanUpMeta() int {
 		return 0
 	}
 
-	oldNodes, err := dm.taskMgr.GetAllNodes()
+	oldNodes, err := dm.taskMgr.GetAllNodes(dm.ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get all nodes met error")
 		return 0
@@ -366,7 +368,7 @@ func (dm *Manager) CleanUpMeta() int {
 		return 0
 	}
 	logutil.BgLogger().Info("start to clean up dist_framework_meta")
-	err = dm.taskMgr.CleanUpMeta(cleanNodes)
+	err = dm.taskMgr.CleanUpMeta(dm.ctx, cleanNodes)
 	if err != nil {
 		logutil.BgLogger().Warn("clean up dist_framework_meta met error")
 		return 0
@@ -396,7 +398,7 @@ func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(errors.Trace(firstErr)))
 	}
 
-	return dm.taskMgr.TransferTasks2History(cleanedTasks)
+	return dm.taskMgr.TransferTasks2History(dm.ctx, cleanedTasks)
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.

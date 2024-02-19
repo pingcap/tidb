@@ -206,7 +206,7 @@ func Exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.Rec
 // ExecRows is a helper function to execute sql and return rows and fields.
 func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	if intest.InTest {
-		if v := sctx.Value(mock.MockRestrictedSQLExecutorKey{}); v != nil {
+		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
 				UseCurrentSessionOpt, sql, args...)
 		}
