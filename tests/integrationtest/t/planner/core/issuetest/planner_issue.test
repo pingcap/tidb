@@ -88,54 +88,71 @@ insert into t1 values(1,'tt','ttt','tttt'),(2,'dd','ddd','dddd');
 create table t2(id int,name varchar(10),name1 varchar(10),name2 varchar(10),`date1` date);
 insert into t2 values(1,'tt','ttt','tttt','2099-12-31'),(2,'dd','ddd','dddd','2099-12-31');
 WITH bzzs AS (
-  SELECT 
-    count(1) AS bzn 
-  FROM 
+  SELECT
+    count(1) AS bzn
+  FROM
     t c
-), 
+),
 tmp1 AS (
-  SELECT 
-    t1.* 
-  FROM 
-    t1 
-    LEFT JOIN bzzs ON 1 = 1 
-  WHERE 
-    name IN ('tt') 
+  SELECT
+    t1.*
+  FROM
+    t1
+    LEFT JOIN bzzs ON 1 = 1
+  WHERE
+    name IN ('tt')
     AND bzn <> 1
-), 
+),
 tmp2 AS (
-  SELECT 
-    tmp1.*, 
-    date('2099-12-31') AS endate 
-  FROM 
+  SELECT
+    tmp1.*,
+    date('2099-12-31') AS endate
+  FROM
     tmp1
-), 
+),
 tmp3 AS (
-  SELECT 
-    * 
-  FROM 
-    tmp2 
-  WHERE 
-    endate > CURRENT_DATE 
-  UNION ALL 
-  SELECT 
-    '1' AS id, 
-    'ss' AS name, 
-    'sss' AS name1, 
-    'ssss' AS name2, 
-    date('2099-12-31') AS endate 
-  FROM 
-    bzzs t1 
-  WHERE 
+  SELECT
+    *
+  FROM
+    tmp2
+  WHERE
+    endate > CURRENT_DATE
+  UNION ALL
+  SELECT
+    '1' AS id,
+    'ss' AS name,
+    'sss' AS name1,
+    'ssss' AS name2,
+    date('2099-12-31') AS endate
+  FROM
+    bzzs t1
+  WHERE
     bzn = 1
-) 
-SELECT 
-  c2.id, 
-  c3.id 
-FROM 
-  t2 db 
-  LEFT JOIN tmp3 c2 ON c2.id = '1' 
+)
+SELECT
+  c2.id,
+  c3.id
+FROM
+  t2 db
+  LEFT JOIN tmp3 c2 ON c2.id = '1'
   LEFT JOIN tmp3 c3 ON c3.id = '1';
+
+# https://github.com/pingcap/tidb/issues/48755
+drop table if exists t;
+create table t(a int, b int);
+set @@tidb_max_chunk_size = 32;
+# insert into more than 32 rows to the table.
+insert into t values(1, 1);
+insert into t select a+1, a+1 from t;
+insert into t select a+2, a+2 from t;
+insert into t select a+4, a+4 from t;
+insert into t select a+8, a+8 from t;
+insert into t select a+16, a+16 from t;
+insert into t select a+32, a+32 from t;
+--disable_result_log
+select a from (select 100 as a, 100 as b union all select * from t) t where b != 0;
+--enable_result_log
+set @@tidb_max_chunk_size = default;
 
 # https://github.com/pingcap/tidb/issues/48983
 drop table if exists t1, t2;
