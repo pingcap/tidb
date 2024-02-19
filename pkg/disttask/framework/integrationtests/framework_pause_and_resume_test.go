@@ -16,7 +16,6 @@ package integrationtests
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 

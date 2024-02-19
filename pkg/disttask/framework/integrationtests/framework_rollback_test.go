@@ -15,11 +15,11 @@
 package integrationtests
 
 import (
-	"github.com/pingcap/tidb/pkg/testkit"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
