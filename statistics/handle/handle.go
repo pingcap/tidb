@@ -641,7 +641,16 @@ func (h *Handle) UpdateSessionVar() error {
 		return err
 	}
 	h.mu.ctx.GetSessionVars().AnalyzeVersion = int(ver)
-	return err
+	verInString, err = h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMergePartitionStatsConcurrency)
+	if err != nil {
+		return err
+	}
+	ver, err = strconv.ParseInt(verInString, 10, 64)
+	if err != nil {
+		return err
+	}
+	h.mu.ctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
+	return nil
 }
 
 // GlobalStats is used to store the statistics contained in the global-level stats
