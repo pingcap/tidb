@@ -28,46 +28,57 @@ type probeProcessInfo struct {
 	chunk              *chunk.Chunk
 	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
 	currentRowsPos     []unsafe.Pointer // the current address of each matched rows
-	hashValues         []uint64         // the hash value of each rows
 	serializedKeys     [][]byte         // used for save serialized keys
 	filterVector       []bool           // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector      []bool           // nullKeyVector[i] = true if any of the key is null
+	currentProbeRow    int
 	init               bool
 }
 
+type probeMode int
+
+const (
+	OneInt64 probeMode = iota
+	OneFloat64
+	SerializeKey
+)
+
 type probeCtx struct {
-	keyIndex       []int
-	columnTypes    []*types.FieldType
-	filter         expression.CNFExprs
-	keyIsNullable  bool
-	buildTableMeta *tableMeta
-	typeCtx        types.Context
+	keyIndex           []int
+	columnTypes        []*types.FieldType
+	filter             expression.CNFExprs
+	postProbeCondition expression.CNFExprs
+	keyIsNullable      bool
+	joinHashTable      *joinHashTable
+	hashTableMeta      *tableMeta
+	typeCtx            types.Context
+	probeMode          probeMode
 }
 
-func (ppi *probeProcessInfo) initForCurrentChunk(info *probeCtx) error {
+func (probeCtx *probeCtx) hasPostProbeCondition() bool {
+	return probeCtx.postProbeCondition != nil
+}
+
+func (ppi *probeProcessInfo) initForCurrentChunk(ctx *probeCtx) error {
 	if ppi.init {
 		return nil
 	}
 	ppi.init = true
 	rows := ppi.chunk.NumRows()
+	ppi.currentProbeRow = 0
 	if cap(ppi.matchedRowsHeaders) >= rows {
 		ppi.matchedRowsHeaders = ppi.matchedRowsHeaders[:rows]
 	} else {
 		ppi.matchedRowsHeaders = make([]unsafe.Pointer, rows)
 	}
-	if cap(ppi.hashValues) >= rows {
-		ppi.hashValues = ppi.hashValues[:rows]
-	} else {
-		ppi.hashValues = make([]uint64, rows)
-	}
-	if info.filter != nil {
+	if ctx.filter != nil {
 		if cap(ppi.filterVector) >= rows {
 			ppi.filterVector = ppi.filterVector[:rows]
 		} else {
 			ppi.filterVector = make([]bool, rows)
 		}
 	}
-	if info.keyIsNullable {
+	if ctx.keyIsNullable {
 		if cap(ppi.nullKeyVector) >= rows {
 			ppi.nullKeyVector = ppi.nullKeyVector[:rows]
 		} else {
@@ -80,14 +91,14 @@ func (ppi *probeProcessInfo) initForCurrentChunk(info *probeCtx) error {
 		ppi.serializedKeys = make([][]byte, rows)
 	}
 	// todo support filter
-	if info.filter != nil {
+	if ctx.filter != nil {
 		return errors.New("Probe side filter is not supported yet")
 	}
 
 	// generate serialized key
-	for _, keyIndex := range info.keyIndex {
+	for _, keyIndex := range ctx.keyIndex {
 		// todo set ignoreSign to false for unsigned key join signed key
-		err := codec.SerializeKeys(info.typeCtx, ppi.chunk, info.columnTypes[keyIndex], keyIndex, ppi.filterVector, ppi.nullKeyVector, true, ppi.serializedKeys)
+		err := codec.SerializeKeys(ctx.typeCtx, ppi.chunk, ctx.columnTypes[keyIndex], keyIndex, ppi.filterVector, ppi.nullKeyVector, true, ppi.serializedKeys)
 		if err != nil {
 			return err
 		}
@@ -95,20 +106,74 @@ func (ppi *probeProcessInfo) initForCurrentChunk(info *probeCtx) error {
 	// generate hash value
 	hash := fnv.New64()
 	for i := 0; i < rows; i++ {
-		if (ppi.filterVector != nil && ppi.filterVector[i]) || (ppi.nullKeyVector != nil && ppi.nullKeyVector[i]) {
+		if (ppi.filterVector != nil && !ppi.filterVector[i]) || (ppi.nullKeyVector != nil && ppi.nullKeyVector[i]) {
 			continue
 		}
 		hash.Reset()
 		// As the golang doc described, `Hash.Write` never returns an error.
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(ppi.serializedKeys[i])
-		ppi.hashValues[i] = hash.Sum64()
+		ppi.matchedRowsHeaders[i] = ctx.joinHashTable.lookup(hash.Sum64())
 	}
 	return nil
 }
 
 type joinProbe interface {
+	doProbe(chk *chunk.Chunk, info *probeProcessInfo) (err error)
 }
 
 type baseJoinProbe struct {
+	ctx              *probeCtx
+	maxChunkSize     int
+	rightAsBuildSide bool
+	// lUsed/rUsed show which columns are used by father for left child and right child.
+	// NOTE:
+	// 1. every columns are used if lUsed/rUsed is nil.
+	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
+	lUsed, rUsed []int
+}
+
+func (baseJoinProbe *baseJoinProbe) getNext(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
+	if chk.NumRows() >= baseJoinProbe.maxChunkSize {
+		return nil
+	}
+	if !info.init {
+		err = info.initForCurrentChunk(baseJoinProbe.ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type innerJoinProbe struct {
+	baseJoinProbe
+}
+
+func (innerJoinProbe *innerJoinProbe) doProbeOneInt64(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
+	keyOffset := SizeOfNextPtr + innerJoinProbe.ctx.hashTableMeta.nullMapLength
+	for !chk.IsFull() && info.currentProbeRow < info.chunk.NumRows() {
+		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
+			if *(*int64)(unsafe.Pointer(&info.serializedKeys[info.currentProbeRow][0])) == *(*int64)(unsafe.Add(info.matchedRowsHeaders[info.currentProbeRow], keyOffset)) {
+				// key matched, construct result block
+			}
+			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(info.matchedRowsHeaders[info.currentProbeRow])
+		} else {
+			info.currentProbeRow++
+		}
+	}
+	return
+}
+
+func (innerJoinProbe *innerJoinProbe) doProbe(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
+	if innerJoinProbe.ctx.hasPostProbeCondition() {
+		return errors.New("join with other condition is not supported yet")
+	}
+	switch innerJoinProbe.ctx.probeMode {
+	case OneInt64:
+		err = innerJoinProbe.doProbeOneInt64(chk, info)
+	case OneFloat64, SerializeKey:
+		err = errors.New("unsupported")
+	}
+	return
 }
