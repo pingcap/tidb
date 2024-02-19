@@ -295,6 +295,7 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(500)")
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.HasMaxExecutionTime)
 	require.Equal(t, uint64(500), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	require.Equal(t, uint64(500), tk.Session().GetSessionVars().GetMaxExecutionTime())
 
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
@@ -305,6 +306,9 @@ func TestMaxExecutionTime(t *testing.T) {
 
 	tk.MustExec("set @@MAX_EXECUTION_TIME = 150;")
 	tk.MustQuery("select * FROM MaxExecTime;")
+	require.Equal(t, uint64(150), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(1000) */ * FROM MaxExecTime;")
+	require.Equal(t, uint64(1000), tk.Session().GetSessionVars().GetMaxExecutionTime())
 
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
