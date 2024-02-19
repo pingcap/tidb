@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
