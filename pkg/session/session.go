@@ -2279,7 +2279,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// current session is attached with a resource group.
 	resourceGroupName := s.GetSessionVars().StmtCtx.ResourceGroupName
 	if len(resourceGroupName) > 0 {
-		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
+		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName, resourceGroupName).Inc()
 	}
 
 	if err != nil {
