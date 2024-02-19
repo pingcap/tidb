@@ -399,7 +399,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 		if column.IsNull(index) {
 			nullVector[index] = true
 		}
-		return (filterVector != nil && filterVector[index]) || (nullVector != nil && nullVector[index])
+		return (filterVector != nil && !filterVector[index]) || (nullVector != nil && nullVector[index])
 	}
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
