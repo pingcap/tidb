@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -347,7 +346,10 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			continue
 		}
-		if c.idxInfo.Global && len(value) != 0 && !bytes.Equal(value, idxVal) {
+		// `insert ignore ... on duplicate update` / `update` may change a row's partition column.
+		// when a record row is modified from one partition to another partition,
+		// global index value(which contains partitionID) should be updated.
+		if c.idxInfo.Global && opt.CrossPartitionUpdate && len(value) != 0 && !bytes.Equal(value, idxVal) {
 			val := idxVal
 			err = txn.GetMemBuffer().Set(key, val)
 			if err != nil {
@@ -414,15 +416,12 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		// Only when pid in value equals to c.physicalID, the key can be deleted.
 		if c.idxInfo.Global {
 			if val, err := txn.GetMemBuffer().Get(context.Background(), key); err == nil {
-				segs := tablecodec.SplitIndexValue(val)
-				if len(segs.PartitionID) != 0 {
-					_, pid, err := codec.DecodeInt(segs.PartitionID)
-					if err != nil {
-						return err
-					}
-					if pid != c.phyTblID {
-						continue
-					}
+				pid, err := tablecodec.DecodePartitionIDInGlobalIndexValue(val)
+				if err != nil {
+					return err
+				}
+				if pid != c.phyTblID {
+					continue
 				}
 			}
 		}
@@ -551,7 +550,11 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 		return false, nil, err
 	}
 	if distinct {
+		// try decode partition id from index val
 		h, err := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommon)
+		if pid, err1 := tablecodec.DecodePartitionIDInGlobalIndexValue(val); err1 == nil && pid > 0 {
+			return true, kv.PartitionHandle{Handle: h, PartitionID: pid}, err
+		}
 		return true, h, err
 	}
 	return true, nil, nil

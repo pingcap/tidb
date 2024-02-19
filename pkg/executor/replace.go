@@ -20,10 +20,12 @@ import (
 	"runtime/trace"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -126,6 +128,16 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 		}
 		if handle == nil {
 			continue
+		}
+
+		if uk.globalIndex {
+			ph, ok := handle.(kv.PartitionHandle)
+			if !ok {
+				return false, true, errors.New("global index should have partition handle")
+			}
+			r.oldRowTable = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID)
+		} else {
+			r.oldRowTable = nil
 		}
 		rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 		if err != nil {

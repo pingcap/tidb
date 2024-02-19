@@ -1752,7 +1752,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
-		_, err = t.GetPartition(to).AddRecord(ctx, newData)
+		_, err = t.GetPartition(to).AddRecord(ctx, newData, table.CrossPartitionUpdate)
 		if err != nil {
 			return errors.Trace(err)
 		}

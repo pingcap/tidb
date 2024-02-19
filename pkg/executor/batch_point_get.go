@@ -314,8 +314,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if e.tblInfo.Partition != nil {
 				var pid int64
 				if e.idxInfo.Global {
-					segs := tablecodec.SplitIndexValue(handleVal)
-					_, pid, err = codec.DecodeInt(segs.PartitionID)
+					pid, err = tablecodec.DecodePartitionIDInGlobalIndexValue(handleVal)
 					if err != nil {
 						return err
 					}

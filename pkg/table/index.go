@@ -36,6 +36,8 @@ type CreateIdxOpt struct {
 	Untouched       bool // If true, the index key/value is no need to commit.
 	IgnoreAssertion bool
 	FromBackFill    bool
+
+	CrossPartitionUpdate bool // If true, this means record row is updated across partitions, then the global index value has to be updated.
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -59,6 +61,11 @@ var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
 // never be redirected to the temp index.
 var FromBackfill = func(opt *CreateIdxOpt) {
 	opt.FromBackFill = true
+}
+
+// CrossPartitionUpdate ues to indicate the record row is updated across partitions.
+var CrossPartitionUpdate CreateIdxOptFunc = func(opt *CreateIdxOpt) {
+	opt.CrossPartitionUpdate = true
 }
 
 // WithCtx returns a CreateIdxFunc.
