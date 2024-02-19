@@ -7620,7 +7620,6 @@
     ]
   },
   {
-<<<<<<< HEAD
     "Name": "TestIndexMergeOrderPushDown",
     "Cases": [
       {
@@ -7633,31 +7632,10 @@
           "  ├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
           "  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:true, stats:pseudo",
           "  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
-    "Name": "TestIssues49377Plan",
-    "Cases": [
-      {
-        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
-        "Plan": [
-          "Union 21.00 root  ",
-          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
-          "│ └─TableDual 1.00 root  rows:1",
-          "└─Projection 20.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13->Column#16, cast(Column#14, bigint(11) BINARY)->Column#17",
-          "  └─Sort 20.00 root  Column#12",
-          "    └─Union 20.00 root  ",
-          "      ├─TableReader 10.00 root  data:Selection",
-          "      │ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
-          "      │   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
-          "      └─Sort 10.00 root  test.employee.employee_id",
-          "        └─TableReader 10.00 root  data:Selection",
-          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
-          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
->>>>>>> 423834132da (parser, planner: fix embedded setOprStmt will be seen as SetOprSelectList item and lost its orderBy and Limit (#49421))
         ],
         "Warning": null
       },
       {
-<<<<<<< HEAD
         "SQL": "select * from t where a = 1 or b in (1, 2, 3) order by c limit 2",
         "Plan": [
           "TopN 2.00 root  test.t.c, offset:0, count:2",
@@ -7666,31 +7644,10 @@
           "  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
           "    └─TableRowIDScan 39.97 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
-        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
-        "Plan": [
-          "Union 2.00 root  ",
-          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
-          "│ └─TableDual 1.00 root  rows:1",
-          "└─Projection 1.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13->Column#16, cast(Column#14, bigint(11) BINARY)->Column#17",
-          "  └─TopN 1.00 root  Column#12, offset:0, count:1",
-          "    └─Union 2.00 root  ",
-          "      ├─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
-          "      │ └─TableReader 1.00 root  data:TopN",
-          "      │   └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
-          "      │     └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
-          "      │       └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
-          "      └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
-          "        └─TableReader 1.00 root  data:TopN",
-          "          └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
-          "            └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
-          "              └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
->>>>>>> 423834132da (parser, planner: fix embedded setOprStmt will be seen as SetOprSelectList item and lost its orderBy and Limit (#49421))
         ],
         "Warning": null
       },
       {
-<<<<<<< HEAD
         "SQL": "select * from t where a in (1, 2, 3) or b = 1 order by c limit 2",
         "Plan": [
           "TopN 2.00 root  test.t.c, offset:0, count:2",
@@ -7699,35 +7656,10 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[1,1], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 2.00 cop[tikv]  test.t.c, offset:0, count:2",
           "    └─TableRowIDScan 39.97 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
-        "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
-        "Plan": [
-          "Union 21.00 root  ",
-          "├─TableReader 10.00 root  data:Selection",
-          "│ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
-          "├─Sort 10.00 root  test.employee.employee_id",
-          "│ └─TableReader 10.00 root  data:Selection",
-          "│   └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
-          "└─Limit 1.00 root  offset:0, count:1",
-          "  └─Union 1.00 root  ",
-          "    ├─Limit 1.00 root  offset:0, count:1",
-          "    │ └─TableReader 1.00 root  data:Limit",
-          "    │   └─Limit 1.00 cop[tikv]  offset:0, count:1",
-          "    │     └─Selection 1.00 cop[tikv]  eq(test.employee.dept_id, 1)",
-          "    │       └─TableFullScan 1000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
-          "    └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
-          "      └─TableReader 1.00 root  data:TopN",
-          "        └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
-          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
-          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
->>>>>>> 423834132da (parser, planner: fix embedded setOprStmt will be seen as SetOprSelectList item and lost its orderBy and Limit (#49421))
         ],
         "Warning": null
       },
       {
-<<<<<<< HEAD
         "SQL": "select * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2",
         "Plan": [
           "TopN 2.00 root  test.t.c, offset:0, count:2",
@@ -8017,7 +7949,80 @@
         "Warning": [
           "Warning 1105 Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now."
         ]
-=======
+      }
+    ]
+  },
+  {
+    "Name": "TestIssues49377Plan",
+    "Cases": [
+      {
+        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection 20.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13->Column#16, cast(Column#14, bigint(11) BINARY)->Column#17",
+          "  └─Sort 20.00 root  Column#12",
+          "    └─Union 20.00 root  ",
+          "      ├─TableReader 10.00 root  data:Selection",
+          "      │ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "      └─Sort 10.00 root  test.employee.employee_id",
+          "        └─TableReader 10.00 root  data:Selection",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+        "Plan": [
+          "Union 2.00 root  ",
+          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection 1.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13->Column#16, cast(Column#14, bigint(11) BINARY)->Column#17",
+          "  └─TopN 1.00 root  Column#12, offset:0, count:1",
+          "    └─Union 2.00 root  ",
+          "      ├─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      │ └─TableReader 1.00 root  data:TopN",
+          "      │   └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "      │     └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "      │       └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "      └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "        └─TableReader 1.00 root  data:TopN",
+          "          └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "            └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "              └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─TableReader 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "├─Sort 10.00 root  test.employee.employee_id",
+          "│ └─TableReader 10.00 root  data:Selection",
+          "│   └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "└─Limit 1.00 root  offset:0, count:1",
+          "  └─Union 1.00 root  ",
+          "    ├─Limit 1.00 root  offset:0, count:1",
+          "    │ └─TableReader 1.00 root  data:Limit",
+          "    │   └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    │     └─Selection 1.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "    │       └─TableFullScan 1000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "    └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      └─TableReader 1.00 root  data:TopN",
+          "        └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
         "Plan": [
           "Union 21.00 root  ",
@@ -8042,7 +8047,6 @@
           "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
         ],
         "Warning": null
->>>>>>> 423834132da (parser, planner: fix embedded setOprStmt will be seen as SetOprSelectList item and lost its orderBy and Limit (#49421))
       }
     ]
   }

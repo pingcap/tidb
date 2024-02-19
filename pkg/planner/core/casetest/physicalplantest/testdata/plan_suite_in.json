@@ -1018,7 +1018,6 @@
     ]
   },
   {
-<<<<<<< HEAD
     "name": "TestIndexMergeOrderPushDown",
     "cases": [
       "select * from t where a = 1 or b = 1 order by c limit 2",
@@ -1051,14 +1050,15 @@
       "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1; -- index merge union case, sink limit to table side, because selection exists on table side",
       "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1; -- index merge intersection case, sink limit to table side because selection exists on table side",
       "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down"
-=======
+    ]
+  },
+  {
     "name": "TestIssues49377Plan",
     "cases": [
       "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
       "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
       "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
       "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);"
->>>>>>> 423834132da (parser, planner: fix embedded setOprStmt will be seen as SetOprSelectList item and lost its orderBy and Limit (#49421))
-    ]
+   ]
   }
 ]
