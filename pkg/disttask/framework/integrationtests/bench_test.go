@@ -68,8 +68,16 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 			b.Logf("status server serve failed: %v", err)
 		}
 	}()
+	lis4000, err := net.Listen("tcp", "127.0.0.1:4000")
+	server4000 := http.Server{}
+	go func() {
+		if err := server4000.Serve(lis4000); err != nil {
+			b.Logf("server serve failed: %v", err)
+		}
+	}()
 	defer func() {
 		_ = statusServer.Close()
+		_ = server4000.Close()
 	}()
 
 	bak := proto.MaxConcurrentTask
