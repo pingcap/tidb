@@ -807,3 +807,12 @@ disconnect joe;
 connection default;
 
 set global tidb_enable_resource_control = default;
+
+# TestAdmin
+create user without_super;
+connect (without_super,localhost,without_super,,);
+connection without_super;
+-- error 8121
+admin set bdr role primary;
+disconnect without_super;
+connection default;
