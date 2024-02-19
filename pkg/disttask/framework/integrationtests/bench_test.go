@@ -26,6 +26,7 @@ import (
 	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -51,6 +52,10 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	b.Logf("task meta size: %d", *taskMetaSize)
 
 	c := testutil.NewTestDXFContext(b, 1, 64)
+
+	tk := testkit.NewTestKit(c.T, c.Store)
+	tk.MustExec("delete from mysql.tidb_global_task")
+	tk.MustExec("delete from mysql.tidb_global_task_history")
 
 	stepTransition := map[proto.Step]proto.Step{
 		proto.StepInit: proto.StepOne,
