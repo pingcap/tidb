@@ -85,13 +85,7 @@ func NewTopnStatsMergeTask(start, end int) *TopnStatsMergeTask {
 
 // TopnStatsMergeResponse indicates topn merge worker response
 type TopnStatsMergeResponse struct {
-<<<<<<< HEAD:statistics/merge_worker.go
-	Err       error
-	TopN      *TopN
-	PopedTopn []TopNMeta
-=======
 	Err error
->>>>>>> 26db5909628 (*: fix wrong result when to concurrency merge global stats (#48852)):pkg/statistics/handle/globalstats/merge_worker.go
 }
 
 // Run runs topn merge like statistics.MergePartTopN2GlobalTopN
@@ -103,24 +97,11 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 		allTopNs := worker.statsWrapper.AllTopN
 		allHists := worker.statsWrapper.AllHg
 		resp := &TopnStatsMergeResponse{}
-<<<<<<< HEAD:statistics/merge_worker.go
-		if checkEmptyTopNs(checkTopNs) {
-			worker.respCh <- resp
-			return
-		}
-=======
-
->>>>>>> 26db5909628 (*: fix wrong result when to concurrency merge global stats (#48852)):pkg/statistics/handle/globalstats/merge_worker.go
 		partNum := len(allTopNs)
 
 		// datumMap is used to store the mapping from the string type to datum type.
 		// The datum is used to find the value in the histogram.
-<<<<<<< HEAD:statistics/merge_worker.go
-		datumMap := make(map[hack.MutableString]types.Datum)
-
-=======
-		datumMap := statistics.NewDatumMapCache()
->>>>>>> 26db5909628 (*: fix wrong result when to concurrency merge global stats (#48852)):pkg/statistics/handle/globalstats/merge_worker.go
+		datumMap := NewDatumMapCache()
 		for i, topN := range checkTopNs {
 			if atomic.LoadUint32(worker.killed) == 1 {
 				resp.Err = errors.Trace(ErrQueryInterrupted)
@@ -154,7 +135,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 						continue
 					}
 					// Get the encodedVal from the hists[j]
-					datum, exists := datumMap[encodedVal]
+					datum, exists := datumMap.Get(encodedVal)
 					if !exists {
 						// If the datumMap does not have the encodedVal datum,
 						// we should generate the datum based on the encoded value.
@@ -178,7 +159,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 								return
 							}
 						}
-						datumMap[encodedVal] = d
+						datumMap.Put(val, encodedVal, allHists[0].Tp.GetType(), isIndex, timeZone)
 						datum = d
 					}
 					worker.shardMutex[j].Lock()
@@ -186,40 +167,17 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 					count, _ := allHists[j].equalRowCount(datum, isIndex)
 					if count != 0 {
 						// Remove the value corresponding to encodedVal from the histogram.
-<<<<<<< HEAD:statistics/merge_worker.go
-						worker.shardMutex[j].Lock()
 						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
-						worker.shardMutex[j].Unlock()
-=======
-						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(statistics.TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
 					}
 					worker.shardMutex[j].Unlock()
 					if count != 0 {
 						worker.mu.Lock()
 						worker.counter[encodedVal] += count
 						worker.mu.Unlock()
->>>>>>> 26db5909628 (*: fix wrong result when to concurrency merge global stats (#48852)):pkg/statistics/handle/globalstats/merge_worker.go
 					}
 				}
 			}
 		}
-<<<<<<< HEAD:statistics/merge_worker.go
-
-		numTop := len(counter)
-		if numTop == 0 {
-			worker.respCh <- resp
-			continue
-		}
-		sorted := make([]TopNMeta, 0, numTop)
-		for value, cnt := range counter {
-			data := hack.Slice(string(value))
-			sorted = append(sorted, TopNMeta{Encoded: data, Count: uint64(cnt)})
-		}
-		globalTopN, leftTopN := getMergedTopNFromSortedSlice(sorted, n)
-		resp.TopN = globalTopN
-		resp.PopedTopn = leftTopN
-=======
->>>>>>> 26db5909628 (*: fix wrong result when to concurrency merge global stats (#48852)):pkg/statistics/handle/globalstats/merge_worker.go
 		worker.respCh <- resp
 	}
 }
