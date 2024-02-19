@@ -50,9 +50,11 @@ import (
 const maxCloudStorageConnections = 1000
 
 type memKVsAndBuffers struct {
-	mu           sync.Mutex
-	keys         [][]byte
-	values       [][]byte
+	mu     sync.Mutex
+	keys   [][]byte
+	values [][]byte
+	// memKVBuffers contains two types of buffer, first half are used for small block
+	// buffer, second half are used for large one.
 	memKVBuffers []*membuf.Buffer
 	size         int
 	droppedSize  int
@@ -92,14 +94,15 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
-	storage         storage.ExternalStorage
-	dataFiles       []string
-	statsFiles      []string
-	startKey        []byte
-	endKey          []byte
-	splitKeys       [][]byte
-	regionSplitSize int64
-	bufPool         *membuf.Pool
+	storage           storage.ExternalStorage
+	dataFiles         []string
+	statsFiles        []string
+	startKey          []byte
+	endKey            []byte
+	splitKeys         [][]byte
+	regionSplitSize   int64
+	smallBlockBufPool *membuf.Pool
+	largeBlockBufPool *membuf.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
 
@@ -126,7 +129,10 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 12 * units.GiB
+const (
+	memLimit       = 12 * units.GiB
+	smallBlockSize = units.MiB
+)
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
@@ -156,7 +162,12 @@ func NewExternalEngine(
 		endKey:          endKey,
 		splitKeys:       splitKeys,
 		regionSplitSize: regionSplitSize,
-		bufPool: membuf.NewPool(
+		smallBlockBufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(smallBlockSize),
+		),
+		largeBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
@@ -222,16 +233,28 @@ func getFilesReadConcurrency(
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
 	for i := range statsFiles {
-		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		expectedConc := (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
-		result[i] += 1
-		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-			zap.String("filename", statsFiles[i]),
-			zap.Uint64("startOffset", startOffs[i]),
-			zap.Uint64("endOffset", endOffs[i]),
-			zap.Uint64("expected concurrency", result[i]),
-		)
+		expectedConc += 1
+		// readAllData will enable concurrent read and use large buffer if result[i] > 1
+		// when expectedConc < readAllDataConcThreshold, we don't use concurrent read to
+		// reduce overhead
+		if expectedConc >= readAllDataConcThreshold {
+			result[i] = expectedConc
+		} else {
+			result[i] = 1
+		}
+		// only log for files with expected concurrency > 1, to avoid too many logs
+		if expectedConc > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffs[i]),
+				zap.Uint64("endOffset", endOffs[i]),
+				zap.Uint64("expectedConc", expectedConc),
+				zap.Uint64("concurrency", result[i]),
+			)
+		}
 	}
 	return result, startOffs, nil
 }
@@ -252,7 +275,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		e.statsFiles,
 		startKey,
 		endKey,
-		e.bufPool,
+		e.smallBlockBufPool,
+		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
 	)
 	if err != nil {
@@ -443,9 +467,13 @@ func (e *Engine) SplitRanges(
 
 // Close implements common.Engine.
 func (e *Engine) Close() error {
-	if e.bufPool != nil {
-		e.bufPool.Destroy()
-		e.bufPool = nil
+	if e.smallBlockBufPool != nil {
+		e.smallBlockBufPool.Destroy()
+		e.smallBlockBufPool = nil
+	}
+	if e.largeBlockBufPool != nil {
+		e.largeBlockBufPool.Destroy()
+		e.largeBlockBufPool = nil
 	}
 	e.storage.Close()
 	return nil
@@ -453,11 +481,21 @@ func (e *Engine) Close() error {
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	if e.bufPool != nil {
-		e.bufPool.Destroy()
-		memLimiter := membuf.NewLimiter(memLimit)
-		e.bufPool = membuf.NewPool(
+	memLimiter := membuf.NewLimiter(memLimit)
+	if e.smallBlockBufPool != nil {
+		e.smallBlockBufPool.Destroy()
+		e.smallBlockBufPool = membuf.NewPool(
+			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(smallBlockSize),
+		)
+	}
+	if e.largeBlockBufPool != nil {
+		e.largeBlockBufPool.Destroy()
+		e.largeBlockBufPool = membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 		)
 	}
 	return nil

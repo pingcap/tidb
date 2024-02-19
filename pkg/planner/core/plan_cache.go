@@ -618,7 +618,7 @@ func rebuildRange(p Plan) error {
 	return nil
 }
 
-func convertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+func convertConstant2Datum(ctx PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
 	val, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, err
@@ -636,7 +636,7 @@ func convertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, tar
 	return &dVal, nil
 }
 
-func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err error) {
+func buildRangeForTableScan(sctx PlanContext, ts *PhysicalTableScan) (err error) {
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))
@@ -701,7 +701,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 	return
 }
 
-func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
+func buildRangeForIndexScan(sctx PlanContext, is *PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
 		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
 			is.Ranges = ranger.FullRange()

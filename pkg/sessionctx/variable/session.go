@@ -663,6 +663,11 @@ type HookContext interface {
 	GetStore() kv.Storage
 }
 
+// SessionVarsProvider provides the session variables.
+type SessionVarsProvider interface {
+	GetSessionVars() *SessionVars
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -3201,7 +3206,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
+	UsedStats         *stmtctx.UsedStatsInfo
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 	ResourceGroupName string
@@ -3296,13 +3301,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(logItems.UsedStats) > 0 {
+	keys := logItems.UsedStats.Keys()
+	if len(keys) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
-		keys := maps.Keys(logItems.UsedStats)
 		slices.Sort(keys)
 		for _, id := range keys {
-			usedStatsForTbl := logItems.UsedStats[id]
+			usedStatsForTbl := logItems.UsedStats.GetUsedInfo(id)
 			if usedStatsForTbl == nil {
 				continue
 			}

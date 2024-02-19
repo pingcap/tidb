@@ -120,7 +120,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	promQLAPI := promv1.NewAPI(promClient)
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
-	promQL := e.tblDef.GenPromQL(sctx, e.extractor.LabelConditions, quantile)
+	promQL := e.tblDef.GenPromQL(sctx.GetSessionVars().MetricSchemaRangeDuration, e.extractor.LabelConditions, quantile)
 
 	// Add retry to avoid network error.
 	for i := 0; i < 5; i++ {

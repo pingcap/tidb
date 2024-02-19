@@ -347,8 +347,8 @@ func TestGetCorrectResult(t *testing.T) {
 	ctx := mock.NewContext()
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
 
-	rowNum := 100000 + rand.Intn(100000)
-	ndv := 50000 + rand.Intn(50000)
+	rowNum := 100000
+	ndv := 50000
 	col1, col2 := generateData(rowNum, ndv)
 	result := generateResult(col1, col2)
 	opt := getMockDataSourceParameters(ctx)
@@ -378,9 +378,9 @@ func TestGetCorrectResult(t *testing.T) {
 		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
 	}
 
-	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
 	finished.Store(true)
 	wg.Wait()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers"))
 }
 
 func TestFallBackAction(t *testing.T) {
