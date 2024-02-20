@@ -250,25 +250,13 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	return nil
 }
 
-<<<<<<< HEAD
-func (p *cteProducer) closeProducer() (err error) {
-	if err = p.seedExec.Close(); err != nil {
-		return err
-	}
-	if p.recursiveExec != nil {
-		if err = p.recursiveExec.Close(); err != nil {
-			return err
-		}
-=======
 func (p *cteProducer) closeProducer() (firstErr error) {
-	err := exec.Close(p.seedExec)
+	err := p.seedExec.Close()
 	firstErr = setFirstErr(firstErr, err, "close seedExec err")
-
 	if p.recursiveExec != nil {
-		err = exec.Close(p.recursiveExec)
+		err = p.recursiveExec.Close()
 		firstErr = setFirstErr(firstErr, err, "close recursiveExec err")
 
->>>>>>> fa340f3400a (executor: fix CTE goroutine leak when exceeds mem quota (#50828))
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
 		if p.iterOutTbl != nil {
