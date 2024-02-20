@@ -1166,3 +1166,20 @@ func (s *mockGCSSuite) TestAnalyze() {
 	}, 60*time.Second, time.Second)
 	s.tk.MustQuery("SHOW ANALYZE STATUS;").CheckContain("analyze_table")
 }
+
+func (s *mockGCSSuite) TestZeroDateTime() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS import_into;")
+	s.tk.MustExec("CREATE DATABASE import_into;")
+
+	s.tk.MustExec("create table import_into.zero_time_table(t datetime)")
+	s.tk.MustExec("set global sql_mode='STRICT_TRANS_TABLES'")
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "zero_time.csv"},
+		Content:     []byte("1990-01-00 00:00:00\n"),
+	})
+
+	sql := fmt.Sprintf(`IMPORT INTO import_into.zero_time_table FROM 'gs://test-load/zero_time.csv?endpoint=%s'`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM import_into.zero_time_table;").Sort().Check(testkit.Rows("1990-01-00 00:00:00"))
+}
