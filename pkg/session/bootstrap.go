@@ -3092,8 +3092,6 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateGlobalTask)
 	// Create tidb_global_task_history table
 	mustExecute(s, CreateGlobalTaskHistory)
-	// Create load_data_jobs
-	mustExecute(s, CreateLoadDataJobs)
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
 	// create runaway_watch
