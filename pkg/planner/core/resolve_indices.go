@@ -145,7 +145,8 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 
 	// Here we want to resolve all join schema columns directly as a merged schema, and you know same name
 	// col in join schema should be separately redirected to corresponded same col in child schema. But two
-	// column sets are all ordered, we are using mapping mechanism instead of moving j forward.
+	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
+	// we are using mapping mechanism instead of moving j forward.
 	marked := make([]bool, mergedSchema.Len())
 	for i := 0; i < colsNeedResolving; i++ {
 		findIdx := -1
