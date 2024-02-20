@@ -529,7 +529,11 @@ func (r *RunawayChecker) CheckCopRespError(err error) error {
 			if r.deadline.Before(now) && r.marked.CompareAndSwap(false, true) {
 				r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
 				r.markQuarantine(&now)
+				return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 			}
+		}
+		// Due to concurrency, check again.
+		if r.marked.Load() {
 			return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 		}
 	}
