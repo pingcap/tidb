@@ -180,7 +180,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 	// update meta, same as import into.
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
-		SortedKVMeta: external.SortedKVMeta{
+		MetaGroups: []*external.SortedKVMeta{{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
@@ -191,7 +191,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 					},
 				},
 			},
-		},
+		}},
 	}
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	gotSubtasks, err = mgr.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
-		SortedKVMeta: external.SortedKVMeta{
+		MetaGroups: []*external.SortedKVMeta{{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
@@ -231,7 +231,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 					},
 				},
 			},
-		},
+		}},
 	}
 	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
 	require.NoError(t, err)
