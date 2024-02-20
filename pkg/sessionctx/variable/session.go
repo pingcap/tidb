@@ -66,6 +66,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
+	"github.com/uber/jaeger-client-go"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
 )
@@ -1253,6 +1254,9 @@ type SessionVars struct {
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
 
+	// SpanContext is the external trace context.
+	SpanContext jaeger.SpanContext
+
 	// TiDBEnableExchangePartition indicates whether to enable exchange partition
 	TiDBEnableExchangePartition bool
 
@@ -2038,6 +2042,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+		SpanContext:                   jaeger.SpanContext{},
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -3148,6 +3153,8 @@ const (
 	SlowLogWRU = "Request_unit_write"
 	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
 	SlowLogWaitRUDuration = "Time_queued_by_rc"
+	// SlowLogTraceID is the trace ID of the timeline tracing.
+	SlowLogTraceID = "Trace_ID"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3207,6 +3214,7 @@ type SlowQueryLogItems struct {
 	RRU               float64
 	WRU               float64
 	WaitRUDuration    time.Duration
+	TraceID           string
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3420,6 +3428,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
+	}
+	if logItems.TraceID != "" {
+		writeSlowLogItem(&buf, SlowLogTraceID, logItems.TraceID)
 	}
 
 	if s.CurrentDBChanged {
