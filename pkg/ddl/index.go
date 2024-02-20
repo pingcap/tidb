@@ -2115,22 +2115,8 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		}
 
 		job := reorgInfo.Job
-<<<<<<< HEAD
 		taskMeta := &BackfillGlobalMeta{
-			Job:             *reorgInfo.Job.Clone(),
-=======
-		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
-		cpuCount, err := handle.GetCPUCountOfManagedNode(ctx)
-		if err != nil {
-			return err
-		}
-		concurrency := min(workerCntLimit, cpuCount)
-		logutil.BgLogger().Info("adjusted add-index task concurrency",
-			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
-			zap.String("task-key", taskKey))
-		taskMeta := &BackfillTaskMeta{
 			Job:             *job.Clone(),
->>>>>>> a257521b359 (ddl: use another way to get index uniqueness during task exec init (#50378))
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
