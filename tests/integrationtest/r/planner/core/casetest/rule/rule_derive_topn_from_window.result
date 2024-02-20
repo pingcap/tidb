@@ -289,7 +289,7 @@ Sort	0.89	root		planner__core__casetest__rule__rule_derive_topn_from_window.cust
       └─TableReader	1.11	root		data:TopN
         └─TopN	1.11	cop[tikv]		partition by planner__core__casetest__rule__rule_derive_topn_from_window.customer.primary_key, planner__core__casetest__rule__rule_derive_topn_from_window.customer.secondary_key order by planner__core__casetest__rule__rule_derive_topn_from_window.customer.c_timestamp, offset:0, count:10
           └─Selection	1.11	cop[tikv]		ge(planner__core__casetest__rule__rule_derive_topn_from_window.customer.c_timestamp, 1661883508511000000)
-            └─TableRangeScan	33.33	cop[tikv]	table:customer	range:[0x0002 0x0001,0x0002 +inf], keep order:false, stats:pseudo
+            └─TableRangeScan	33.33	cop[tikv]	table:customer	range:["\x00\x02" "\x00\x01","\x00\x02" +inf], keep order:false, stats:pseudo
 select * from (select *, row_number() over (partition by primary_key, secondary_key order by c_timestamp) as rownum from customer where primary_key = 0x002 and secondary_key >= 0x001 and c_timestamp >= 1661883508511000000) as nested where rownum <= 10 order by secondary_key desc;
 primary_key	secondary_key	c_timestamp	value	rownum
 explain format = 'brief' select * from (select row_number() over (partition by b) as rownumber from td) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key;
