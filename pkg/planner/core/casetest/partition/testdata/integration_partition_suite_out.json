@@ -680,8 +680,8 @@
         ],
         "StaticPlan": [
           "PartitionUnion 2.00 root  ",
-          "├─Batch_Point_Get 1.00 root table:t, partition:p1 handle:[1 2], keep order:false, desc:false",
-          "└─Batch_Point_Get 1.00 root table:t, partition:P2 handle:[1 2], keep order:false, desc:false"
+          "├─Batch_Point_Get 1.00 root table:t, partition:p1 handle:[1], keep order:false, desc:false",
+          "└─Batch_Point_Get 1.00 root table:t, partition:P2 handle:[2], keep order:false, desc:false"
         ]
       },
       {
@@ -1476,8 +1476,8 @@
         ],
         "StaticPlan": [
           "PartitionUnion 4.00 root  ",
-          "├─Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[1 2], keep order:false, desc:false",
-          "└─Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1 2], keep order:false, desc:false"
+          "├─Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[2], keep order:false, desc:false",
+          "└─Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1], keep order:false, desc:false"
         ],
         "Result": [
           "1 0",
@@ -1533,7 +1533,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [4,4], keep order:false"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[1 4], keep order:false, desc:false"
+          "Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[4], keep order:false, desc:false"
         ],
         "Result": [
           "4 0"
