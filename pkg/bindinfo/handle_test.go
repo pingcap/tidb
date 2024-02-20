@@ -622,7 +622,7 @@ func TestSetVarFixControlWithBinding(t *testing.T) {
 			`└─Selection_11(Probe) 0.01 cop[tikv]  eq(test.t.c, 10)`,
 			`  └─TableRowIDScan_9 0.02 cop[tikv] table:t keep order:false, stats:pseudo`))
 
-	tk.MustExec(`create global binding using select /*+ set_var(tidb_opt_fix_control='44389:ON') */ * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))`)
+	tk.MustExec(`create global binding for select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1)) using select /*+ set_var(tidb_opt_fix_control='44389:ON') */ * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
 
 	// the fix control can take effect
