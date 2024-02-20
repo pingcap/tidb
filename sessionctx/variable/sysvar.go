@@ -1041,7 +1041,10 @@ var defaultSysVars = []*SysVar{
 				if cfg.Security.EnableSEM {
 					return "", errors.New("require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
 				}
+<<<<<<< HEAD:sessionctx/variable/sysvar.go
 
+=======
+>>>>>>> 05450665c39 (session/variable: forbid changing @@global.require_secure_transport to 'on' with SEM enabled (#47677)):pkg/sessionctx/variable/sysvar.go
 				// Refuse to set RequireSecureTransport to ON if the connection
 				// issuing the change is not secure. This helps reduce the chance of users being locked out.
 				if vars.TLSConnectionState == nil {
