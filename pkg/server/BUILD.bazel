@@ -24,6 +24,7 @@ go_library(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/resourcegroup",
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/executor/mppcoordmanager",
@@ -139,7 +140,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":server"],
     flaky = True,
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//pkg/config",
         "//pkg/domain",

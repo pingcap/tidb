@@ -1481,6 +1481,7 @@ type SessionVars struct {
 	shardRand *rand.Rand
 
 	// Resource group name
+	// NOTE: all statement relate opeartion should use StmtCtx.ResourceGroupName instead.
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -2023,6 +2024,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
+	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,

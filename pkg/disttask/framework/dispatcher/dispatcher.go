@@ -458,6 +458,9 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 		if err == nil || !retryable {
 			break
 		}
+		if err1 := d.ctx.Err(); err1 != nil {
+			return err1
+		}
 		if i%10 == 0 {
 			logutil.Logger(d.logCtx).Warn("updateTask first failed", zap.Stringer("from", prevState), zap.Stringer("to", d.Task.State),
 				zap.Int("retry times", i), zap.Error(err))
