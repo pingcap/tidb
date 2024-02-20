@@ -14,6 +14,8 @@ header:
     - "LICENSES/"
     - "**/BUILD.bazel"
     - "WORKSPACE"
+    - "MODULE.bazel"
+    - "MODULE.bazel.lock"
     - ".bazelrc"
     - "**/*.key"
     - "**/*.md"
