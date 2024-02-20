@@ -116,8 +116,9 @@ type Server struct {
 	socket            net.Listener
 	concurrentLimiter *TokenLimiter
 
-	rwlock  sync.RWMutex
-	clients map[uint64]*clientConn
+	rwlock                 sync.RWMutex
+	clients                map[uint64]*clientConn
+	ConnNumByResourceGroup map[string]int
 
 	capability uint32
 	dom        *domain.Domain
@@ -235,14 +236,15 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
-		cfg:               cfg,
-		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		clients:           make(map[uint64]*clientConn),
-		internalSessions:  make(map[interface{}]struct{}, 100),
-		health:            uatomic.NewBool(true),
-		inShutdownMode:    uatomic.NewBool(false),
-		printMDLLogTime:   time.Now(),
+		cfg:                    cfg,
+		driver:                 driver,
+		concurrentLimiter:      NewTokenLimiter(cfg.TokenLimit),
+		clients:                make(map[uint64]*clientConn),
+		ConnNumByResourceGroup: make(map[string]int),
+		internalSessions:       make(map[interface{}]struct{}, 100),
+		health:                 uatomic.NewBool(true),
+		inShutdownMode:         uatomic.NewBool(false),
+		printMDLLogTime:        time.Now(),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -417,13 +419,16 @@ func (s *Server) reportConfig() {
 }
 
 // Run runs the server.
-func (s *Server) Run() error {
+func (s *Server) Run(dom *domain.Domain) error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
+	}
+	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
+		<-dom.StatsHandle().InitStatsDone
 	}
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
@@ -593,17 +598,27 @@ func (s *Server) Close() {
 func (s *Server) registerConn(conn *clientConn) bool {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	connections := len(s.clients)
+	connections := make(map[string]int, 0)
+	for _, conn := range s.clients {
+		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
+		connections[resourceGroup]++
+	}
 
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
-		terror.Log(closeConn(conn, connections))
+		for resourceGroupName, count := range s.ConnNumByResourceGroup {
+			metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
+		}
+		terror.Log(closeConn(conn, "", 0))
 		return false
 	}
 	s.clients[conn.connectionID] = conn
-	connections = len(s.clients)
-	metrics.ConnGauge.Set(float64(connections))
+	s.ConnNumByResourceGroup[conn.getCtx().GetSessionVars().ResourceGroupName]++
+
+	for name, count := range s.ConnNumByResourceGroup {
+		metrics.ConnGauge.WithLabelValues(name).Set(float64(count))
+	}
 	return true
 }
 

@@ -366,3 +366,11 @@ func TestHints(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 	}
 }
+
+func TestHintInReplace(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(d date)")
+	tk.MustExec("replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');")
+}

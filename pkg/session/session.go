@@ -1203,6 +1203,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PlanCacheParams.Reset()
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -1569,7 +1570,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
-		ResourceGroupName:     s.sessionVars.ResourceGroupName,
+		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
 	}
 	oldPi := s.ShowProcess()
@@ -1919,6 +1920,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	metrics.SessionRestrictedSQLCounter.Inc()
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
+	ctx = context.WithValue(ctx, tikvutil.RUDetailsCtxKey, tikvutil.NewRUDetails())
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		se.sessionVars.StmtCtx.AppendError(err)
@@ -1939,7 +1941,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 
 	vars := se.GetSessionVars()
 	for _, dbName := range GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 	}
 	return rows, rs.Fields(), err
 }
@@ -2115,7 +2117,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 
 		vars := se.GetSessionVars()
 		for _, dbName := range GetDBNames(vars) {
-			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.ResourceGroupName).Observe(time.Since(startTime).Seconds())
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(time.Since(startTime).Seconds())
 		}
 		return rows, rs.Fields(), err
 	})
@@ -2214,28 +2216,19 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
-	// Backup the original resource group name since sql hint might change it during optimization
-	originalResourceGroup := s.GetSessionVars().ResourceGroupName
-
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	// session resource-group might be changed by query hint, ensure restore it back when
-	// the execution finished.
-	if sessVars.ResourceGroupName != originalResourceGroup {
+	// check if resource group hint is valid, can't do this in planner.Optimize because we can access
+	// infoschema there.
+	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
 		// if target resource group doesn't exist, fallback to the origin resource group.
-		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.ResourceGroupName)); !ok {
-			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.ResourceGroupName))
-			sessVars.ResourceGroupName = originalResourceGroup
-			// if we are in a txn, should also reset the txn resource group.
+		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
+			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.StmtCtx.ResourceGroupName))
+			sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
 			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
-				kv.SetTxnResourceGroup(txn, originalResourceGroup)
+				kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
 			}
-		} else {
-			defer func() {
-				// Restore the resource group for the session
-				sessVars.ResourceGroupName = originalResourceGroup
-			}()
 		}
 	}
 	if err != nil {
@@ -2284,9 +2277,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Observe the resource group query total counter if the resource control is enabled and the
 	// current session is attached with a resource group.
-	resourceGroupName := s.GetSessionVars().ResourceGroupName
+	resourceGroupName := s.GetSessionVars().StmtCtx.ResourceGroupName
 	if len(resourceGroupName) > 0 {
-		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
+		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName, resourceGroupName).Inc()
 	}
 
 	if err != nil {
@@ -2404,23 +2397,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	sessVars := se.sessionVars
-
-	// Record diagnostic information for DML statements
-	if stmt, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
-		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
-		if showStmt, ok := stmt.(*ast.ShowStmt); !ok || showStmt.Tp != ast.ShowSessionStates {
-			defer func() {
-				sessVars.LastQueryInfo = sessionstates.QueryInfo{
-					TxnScope:    sessVars.CheckAndGetTxnScope(),
-					StartTS:     sessVars.TxnCtx.StartTS,
-					ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
-				}
-				if err != nil {
-					sessVars.LastQueryInfo.ErrMsg = err.Error()
-				}
-			}()
-		}
-	}
 
 	// Save origTxnCtx here to avoid it reset in the transaction retry.
 	origTxnCtx := sessVars.TxnCtx
@@ -3530,7 +3506,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
 	}
-	err = dom.InitDistTaskLoop(ctx)
+	err = dom.InitDistTaskLoop()
 	if err != nil {
 		return nil, err
 	}
