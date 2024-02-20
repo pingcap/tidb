@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/soheilhy/cmux"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -58,13 +57,11 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 
 	statusListener, err := net.Listen("tcp", "0.0.0.0:10080")
 	require.NoError(b, err)
-	m := cmux.New(statusListener)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
-	httpL := m.Match(cmux.HTTP1Fast())
 	statusServer := &http.Server{Handler: serverMux}
 	go func() {
-		if err := statusServer.Serve(httpL); err != nil {
+		if err := statusServer.Serve(statusListener); err != nil {
 			b.Logf("status server serve failed: %v", err)
 		}
 	}()
