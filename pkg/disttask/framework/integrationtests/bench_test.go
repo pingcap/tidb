@@ -56,7 +56,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 
-	statusListener, err := net.Listen("tcp", "127.0.0.1:10080")
+	statusListener, err := net.Listen("tcp", "0.0.0.0:10080")
 	require.NoError(b, err)
 	m := cmux.New(statusListener)
 	// Match connections in order:
@@ -68,7 +68,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 			b.Logf("status server serve failed: %v", err)
 		}
 	}()
-	lis4000, err := net.Listen("tcp", "127.0.0.1:4000")
+	lis4000, err := net.Listen("tcp", "0.0.0.0:4000")
 	server4000 := http.Server{}
 	go func() {
 		if err := server4000.Serve(lis4000); err != nil {
