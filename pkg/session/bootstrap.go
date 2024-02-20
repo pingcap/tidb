@@ -615,26 +615,6 @@ const (
         keyspace_id bigint(8) NOT NULL DEFAULT -1
     );`
 
-	// CreateLoadDataJobs is a table that LOAD DATA uses
-	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
-       job_id bigint(64) NOT NULL AUTO_INCREMENT,
-       expected_status ENUM('running', 'paused', 'canceled') NOT NULL DEFAULT 'running',
-       create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-       start_time TIMESTAMP(6) NULL DEFAULT NULL,
-       update_time TIMESTAMP(6) NULL DEFAULT NULL,
-       end_time TIMESTAMP(6) NULL DEFAULT NULL,
-       data_source TEXT NOT NULL,
-       table_schema VARCHAR(64) NOT NULL,
-       table_name VARCHAR(64) NOT NULL,
-       import_mode VARCHAR(64) NOT NULL,
-       create_user VARCHAR(32) NOT NULL,
-       progress TEXT DEFAULT NULL,
-       result_message TEXT DEFAULT NULL,
-       error_message TEXT DEFAULT NULL,
-       PRIMARY KEY (job_id),
-       KEY (create_time),
-       KEY (create_user));`
-
 	// CreateRunawayTable stores the query which is identified as runaway or quarantined because of in watch list.
 	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
 		resource_group_name varchar(32) not null,
@@ -977,6 +957,7 @@ const (
 	// version 138 set tidb_enable_null_aware_anti_join to true
 	version138 = 138
 	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
+	// deprecated in version184
 	version139 = 139
 	// version 140 add column task_key to mysql.tidb_global_task
 	version140 = 140
@@ -1063,11 +1044,15 @@ const (
 	// version 183
 	//   replace `mysql.tidb_mdl_view` table
 	version183 = 183
+
+	// version 184
+	//   remove `mysql.load_data_jobs` table
+	version184 = 184
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version183
+var currentBootstrapVersion int64 = version184
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1226,6 +1211,7 @@ var (
 		upgradeToVer181,
 		upgradeToVer182,
 		upgradeToVer183,
+		upgradeToVer184,
 	}
 )
 
@@ -2674,12 +2660,7 @@ func upgradeToVer138(s sessiontypes.Session, ver int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptimizerEnableNAAJ, variable.On)
 }
 
-func upgradeToVer139(s sessiontypes.Session, ver int64) {
-	if ver >= version139 {
-		return
-	}
-	mustExecute(s, CreateLoadDataJobs)
-}
+func upgradeToVer139(sessiontypes.Session, int64) {}
 
 func upgradeToVer140(s sessiontypes.Session, ver int64) {
 	if ver >= version140 {
@@ -2989,6 +2970,13 @@ func upgradeToVer183(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, CreateMDLView)
 }
 
+func upgradeToVer184(s sessiontypes.Session, ver int64) {
+	if ver >= version184 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.load_data_jobs")
+}
+
 func writeOOMAction(s sessiontypes.Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -3104,8 +3092,6 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateGlobalTask)
 	// Create tidb_global_task_history table
 	mustExecute(s, CreateGlobalTaskHistory)
-	// Create load_data_jobs
-	mustExecute(s, CreateLoadDataJobs)
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
 	// create runaway_watch
