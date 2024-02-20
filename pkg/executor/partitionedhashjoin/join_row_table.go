@@ -24,6 +24,7 @@ import (
 )
 
 const SizeOfNextPtr = int(unsafe.Sizeof(*new(unsafe.Pointer)))
+const SizeOfKeyLengthField = int(unsafe.Sizeof(uint64(1)))
 
 type rowTableSegment struct {
 	/*
@@ -94,6 +95,28 @@ type tableMeta struct {
 	// the first n columns in row is used for other condition, if a join has other condition, we only need to extract
 	// first n columns from the RowTable to evaluate other condition
 	columnCountNeededForOtherCondition int
+}
+
+func (meta *tableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
+	return *(*uint64)(unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength))
+}
+
+func (meta *tableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer {
+	if meta.isJoinKeysInlined {
+		// join key is inlined
+		if meta.isJoinKeysFixedLength {
+			return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength)
+		}
+		return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfKeyLengthField)
+	}
+	// join key is not inlined
+	return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfKeyLengthField+int(meta.getSerializedKeyLength(rowStart)))
+}
+
+func (meta *tableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
+	byteIndex := columnIndex / 8
+	bitIndex := columnIndex % 8
+	return *(*uint8)(unsafe.Add(rowStart, SizeOfNextPtr+byteIndex))&(uint8(1)<<(8-bitIndex)) != uint8(0)
 }
 
 type rowTable struct {
