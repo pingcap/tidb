@@ -288,7 +288,7 @@ func (c *CheckpointAdvancer) fetchRegionHint(ctx context.Context, startKey []byt
 	metrics.LogBackupCurrentLastRegionLeaderStoreID.Set(float64(l.StoreId))
 	return fmt.Sprintf("ID=%d,Leader=%d,ConfVer=%d,Version=%d,Peers=%v,RealRange=%s",
 		r.GetId(), l.GetStoreId(), r.GetRegionEpoch().GetConfVer(), r.GetRegionEpoch().GetVersion(),
-		prs, logutil.StringifyRangeOf(r.GetStartKey(), r.GetEndKey()))
+		prs, logutil.StringifyRange{StartKey: r.GetStartKey(), EndKey: r.GetEndKey()})
 }
 
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
