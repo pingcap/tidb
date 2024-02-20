@@ -106,6 +106,8 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	tk := testkit.NewTestKit(c.T, c.Store)
 	tk.MustExec("delete from mysql.tidb_global_task")
 	tk.MustExec("delete from mysql.tidb_global_task_history")
+	tk.MustExec("delete from mysql.tidb_background_subtask")
+	tk.MustExec("delete from mysql.tidb_background_subtask_history")
 
 	stepTransition := map[proto.Step]proto.Step{
 		proto.StepInit: proto.StepOne,
