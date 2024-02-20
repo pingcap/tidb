@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:executor/cte.go
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -28,22 +27,9 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-=======
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/cteutil"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
->>>>>>> fa340f3400a (executor: fix CTE goroutine leak when exceeds mem quota (#50828)):pkg/executor/cte.go
 )
 
 var _ Executor = &CTEExec{}
@@ -138,32 +124,14 @@ func setFirstErr(firstErr error, newErr error, msg string) error {
 }
 
 // Close implements the Executor interface.
-<<<<<<< HEAD:executor/cte.go
-func (e *CTEExec) Close() (err error) {
-	e.producer.resTbl.Lock()
-	if !e.producer.closed {
-		// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
-		// It means you can still read resTbl after call closeProducer().
-		// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
-		// Separating these three function calls is only to follow the abstraction of the volcano model.
-		err = e.producer.closeProducer()
-	}
-	e.producer.resTbl.Unlock()
-	if err != nil {
-		return err
-	}
-	return e.baseExecutor.Close()
-=======
 func (e *CTEExec) Close() (firstErr error) {
 	func() {
 		e.producer.resTbl.Lock()
 		defer e.producer.resTbl.Unlock()
 		if !e.producer.closed {
 			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
-				ok := v.(bool)
-				if ok {
-					// mock an oom panic, returning ErrMemoryExceedForQuery for error identification in recovery work.
-					panic(exeerrors.ErrMemoryExceedForQuery)
+				if ok := v.(bool); ok {
+					panic("mock mem oom panic")
 				}
 			})
 			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
@@ -174,10 +142,9 @@ func (e *CTEExec) Close() (firstErr error) {
 			firstErr = setFirstErr(firstErr, err, "close cte producer error")
 		}
 	}()
-	err := e.BaseExecutor.Close()
+	err := e.baseExecutor.Close()
 	firstErr = setFirstErr(firstErr, err, "close cte children error")
 	return
->>>>>>> fa340f3400a (executor: fix CTE goroutine leak when exceeds mem quota (#50828)):pkg/executor/cte.go
 }
 
 func (e *CTEExec) reset() {
@@ -245,14 +212,9 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 		return err
 	}
 
-<<<<<<< HEAD:executor/cte.go
+	p.resetTracker()
 	p.memTracker = memory.NewTracker(cteExec.id, -1)
 	p.diskTracker = disk.NewTracker(cteExec.id, -1)
-=======
-	p.resetTracker()
-	p.memTracker = memory.NewTracker(cteExec.ID(), -1)
-	p.diskTracker = disk.NewTracker(cteExec.ID(), -1)
->>>>>>> fa340f3400a (executor: fix CTE goroutine leak when exceeds mem quota (#50828)):pkg/executor/cte.go
 	p.memTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.MemTracker)
 	p.diskTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
@@ -284,25 +246,13 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	return nil
 }
 
-<<<<<<< HEAD:executor/cte.go
-func (p *cteProducer) closeProducer() (err error) {
-	if err = p.seedExec.Close(); err != nil {
-		return err
-	}
-	if p.recursiveExec != nil {
-		if err = p.recursiveExec.Close(); err != nil {
-			return err
-		}
-=======
 func (p *cteProducer) closeProducer() (firstErr error) {
-	err := exec.Close(p.seedExec)
+	err := p.seedExec.Close()
 	firstErr = setFirstErr(firstErr, err, "close seedExec err")
-
 	if p.recursiveExec != nil {
-		err = exec.Close(p.recursiveExec)
+		err = p.recursiveExec.Close()
 		firstErr = setFirstErr(firstErr, err, "close recursiveExec err")
 
->>>>>>> fa340f3400a (executor: fix CTE goroutine leak when exceeds mem quota (#50828)):pkg/executor/cte.go
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
 		if p.iterOutTbl != nil {
@@ -565,11 +515,11 @@ func (p *cteProducer) reset() {
 
 func (p *cteProducer) resetTracker() {
 	if p.memTracker != nil {
-		p.memTracker.Reset()
+		p.memTracker.Detach()
 		p.memTracker = nil
 	}
 	if p.diskTracker != nil {
-		p.diskTracker.Reset()
+		p.diskTracker.Detach()
 		p.diskTracker = nil
 	}
 }
