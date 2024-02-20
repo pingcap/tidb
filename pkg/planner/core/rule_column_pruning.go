@@ -291,8 +291,10 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 		}
 	}
 	for i, child := range p.Children() {
+		// fix liner: found captured reference to loop variable inside a closure (noloopclosure)
+		idx := i
 		err := child.PruneColumns(parentUsedCols, opt, func(plan LogicalPlan) {
-			p.Children()[i] = plan
+			p.Children()[idx] = plan
 		})
 		if err != nil {
 			return err
@@ -513,7 +515,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 		err        error
 		eliminated bool
 	)
-	allowEliminateApply = false
 	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin && parentSetNewChild != nil {
 		applyEliminateTraceStep(la.Children()[1], opt)
 		parentSetNewChild(la.Children()[0])
