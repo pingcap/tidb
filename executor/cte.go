@@ -253,9 +253,6 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 	err := p.seedExec.Close()
 	firstErr = setFirstErr(firstErr, err, "close seedExec err")
 	if p.recursiveExec != nil {
-		if err = p.recursiveExec.Close(); err != nil {
-			return err
-		}
 		err = p.recursiveExec.Close()
 		firstErr = setFirstErr(firstErr, err, "close recursiveExec err")
 
