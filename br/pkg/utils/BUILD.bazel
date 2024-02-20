@@ -40,9 +40,9 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/util",
         "//pkg/util/engine",
+        "//pkg/util/mathutil",
         "//pkg/util/sqlexec",
         "@com_github_cheggaaa_pb_v3//:pb",
-        "@com_github_cznic_mathutil//:mathutil",
         "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
@@ -94,11 +94,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 34,
-=======
-    shard_count = 37,
->>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
+    shard_count = 35,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
