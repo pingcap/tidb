@@ -950,6 +950,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogWaitRUDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
+	{name: variable.SlowLogTraceID, tp: mysql.TypeVarchar, size: 64, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},

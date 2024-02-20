@@ -45,6 +45,7 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
+        "@com_github_uber_jaeger_client_go//:jaeger-client-go",
         "@com_github_uber_jaeger_client_go//config",
         "@org_uber_go_goleak//:goleak",
     ],

@@ -79,6 +79,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_twmb_murmur3//:murmur3",
+        "@com_github_uber_jaeger_client_go//:jaeger-client-go",
         "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",

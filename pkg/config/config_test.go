@@ -32,6 +32,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/jaeger-client-go"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
@@ -915,8 +916,11 @@ spilled-file-encryption-method = "aes128-ctr"
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
 		Disabled: true,
-		Reporter: &tracing.ReporterConfig{},
-		Sampler:  &tracing.SamplerConfig{Type: "const", Param: 1.0},
+		Reporter: &tracing.ReporterConfig{
+			// when configure `local-agent-host-port` to empty, jaeger will set `localhost:6831` as default
+			LocalAgentHostPort: fmt.Sprintf("%s:%d", jaeger.DefaultUDPSpanServerHost, jaeger.DefaultUDPSpanServerPort),
+		},
+		Sampler: &tracing.SamplerConfig{Type: "const", Param: 1.0},
 	}
 	require.Equal(t, conf.OpenTracing.ToTracingConfig(), tracingConf)
 
