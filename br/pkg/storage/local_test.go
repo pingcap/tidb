@@ -237,3 +237,29 @@ func TestLocalFileReadRange(t *testing.T) {
 	n, _ := r.Read(smallBuf)
 	require.Equal(t, "23", string(smallBuf[:n]))
 }
+
+func TestWalkSymLinkFiles(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte("test1"), 0o644)
+	require.NoError(t, err)
+	subFolder := "subFolder"
+	subFolderPath := filepath.Join(dir, subFolder)
+	err = os.MkdirAll(subFolderPath, 0o755)
+	require.NoError(t, err)
+	err = os.Symlink(filepath.Join(dir, "test.txt"), filepath.Join(subFolderPath, "test.link"))
+	require.NoError(t, err)
+
+	sb, err := ParseBackend("file://"+filepath.ToSlash(dir), nil)
+	require.NoError(t, err)
+	store, err := New(ctx, sb, nil)
+	require.NoError(t, err)
+
+	files := map[string]int64{}
+	err = store.WalkDir(ctx, &WalkOption{SubDir: subFolder}, func(path string, size int64) error {
+		files[path] = size
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"subFolder/test.link": 5}, files)
+}
