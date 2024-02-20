@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"regexp"
 	"testing"
 	"time"
 
@@ -30,10 +29,10 @@ import (
 	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -43,17 +42,15 @@ var (
 	maxConcurrentTask = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
 	waitDuration      = flag.Duration("task-wait-duration", time.Minute, "task wait duration")
 	taskMetaSize      = flag.Int("task-meta-size", 1<<10, "task meta size")
+	noTask            = flag.Bool("no-task", false, "no task")
 )
 
 // we run this test on a k8s environment, so we need to mock the TiDB server status port
 // to have metrics.
 func mockTiDBStatusPort(b *testing.B, ctx context.Context) *util.WaitGroupWrapper {
 	var wg util.WaitGroupWrapper
-	prometheus.DefaultRegisterer.Unregister(collectors.NewGoCollector())
-	prometheus.MustRegister(collectors.NewGoCollector(
-		collectors.WithGoCollectorMemStatsMetricsDisabled(),
-		collectors.WithGoCollectorRuntimeMetrics(collectors.GoRuntimeMetricsRule{Matcher: regexp.MustCompile("/.*")}),
-	))
+	err := metricsutil.RegisterMetrics()
+	terror.MustNil(err)
 	router := mux.NewRouter()
 	router.Handle("/metrics", promhttp.Handler())
 	serverMux := http.NewServeMux()
@@ -143,15 +140,19 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		return nil
 	})
 
-	var wg util.WaitGroupWrapper
-	for i := 0; i < proto.MaxConcurrentTask; i++ {
-		taskKey := fmt.Sprintf("task-%d", i)
-		taskMeta := make([]byte, *taskMetaSize)
-		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
-		require.NoError(c.T, err)
-		wg.RunWithLog(func() {
-			testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
-		})
+	if *noTask {
+		time.Sleep(*waitDuration)
+	} else {
+		var wg util.WaitGroupWrapper
+		for i := 0; i < proto.MaxConcurrentTask; i++ {
+			taskKey := fmt.Sprintf("task-%d", i)
+			taskMeta := make([]byte, *taskMetaSize)
+			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
+			require.NoError(c.T, err)
+			wg.RunWithLog(func() {
+				testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
+			})
+		}
+		wg.Wait()
 	}
-	wg.Wait()
 }
