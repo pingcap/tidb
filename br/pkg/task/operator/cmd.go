@@ -210,6 +210,7 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
 		return err
 	}
 	cx.ReadyL("pause_gc", zap.Object("safepoint", sp))
+	//nolint:all_revive
 	defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
 		cancelSP := utils.BRServiceSafePoint{
 			ID:  sp.ID,
