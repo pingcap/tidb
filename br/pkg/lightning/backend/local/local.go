@@ -99,13 +99,14 @@ const (
 
 var (
 	// Local backend is compatible with TiDB [4.0.0, NextMajorVersion).
-	localMinTiDBVersion = *semver.New("4.0.0")
-	localMinTiKVVersion = *semver.New("4.0.0")
-	localMinPDVersion   = *semver.New("4.0.0")
-	localMaxTiDBVersion = version.NextMajorVersion()
-	localMaxTiKVVersion = version.NextMajorVersion()
-	localMaxPDVersion   = version.NextMajorVersion()
-	tiFlashMinVersion   = *semver.New("4.0.5")
+	localMinTiDBVersion    = *semver.New("4.0.0")
+	localMinTiKVVersion    = *semver.New("4.0.0")
+	localMinPDVersion      = *semver.New("4.0.0")
+	localMaxTiDBVersion    = version.NextMajorVersion()
+	localMaxTiKVVersion    = version.NextMajorVersion()
+	localMaxPDVersion      = version.NextMajorVersion()
+	tiFlashMinVersion      = *semver.New("4.0.5")
+	tikvSideFreeSpaceCheck = *semver.New("8.0.0")
 
 	errorEngineClosed     = errors.New("engine is closed")
 	maxRetryBackoffSecond = 30
@@ -582,6 +583,7 @@ func NewBackend(
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
+	local.checkTiKVSideFreeSpace(ctx)
 
 	return local, nil
 }
@@ -675,6 +677,24 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 	local.supportMultiIngest = true
 	log.FromContext(ctx).Info("multi ingest support")
 	return nil
+}
+
+var errorTiKVTooOld = errors.New("TiKV is too old")
+
+func (local *Backend) checkTiKVSideFreeSpace(ctx context.Context) {
+	err := tikv.ForTiKVVersions(
+		ctx,
+		local.pdHTTPCli,
+		func(version *semver.Version, _ string) error {
+			if version.Compare(tikvSideFreeSpaceCheck) < 0 {
+				return errorTiKVTooOld
+			}
+			return nil
+		},
+	)
+	if err == nil {
+		local.ShouldCheckTiKV = false
+	}
 }
 
 // Close the local backend.
