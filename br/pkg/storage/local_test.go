@@ -238,16 +238,10 @@ func TestLocalFileReadRange(t *testing.T) {
 	require.Equal(t, "23", string(smallBuf[:n]))
 }
 
-func TestWalkSymLinkFiles(t *testing.T) {
+func TestWalkDeadSymLink(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte("test1"), 0o644)
-	require.NoError(t, err)
-	subFolder := "subFolder"
-	subFolderPath := filepath.Join(dir, subFolder)
-	err = os.MkdirAll(subFolderPath, 0o755)
-	require.NoError(t, err)
-	err = os.Symlink(filepath.Join(dir, "test.txt"), filepath.Join(subFolderPath, "test.link"))
+	err := os.Symlink(filepath.Join(dir, "non-existing-file"), filepath.Join(dir, "file-that-should-be-ignored"))
 	require.NoError(t, err)
 
 	sb, err := ParseBackend("file://"+filepath.ToSlash(dir), nil)
@@ -256,10 +250,10 @@ func TestWalkSymLinkFiles(t *testing.T) {
 	require.NoError(t, err)
 
 	files := map[string]int64{}
-	err = store.WalkDir(ctx, &WalkOption{SubDir: subFolder}, func(path string, size int64) error {
+	err = store.WalkDir(ctx, nil, func(path string, size int64) error {
 		files[path] = size
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, map[string]int64{"subFolder/test.link": 5}, files)
+	require.Equal(t, map[string]int64{"file-that-should-be-ignored": 0}, files)
 }
