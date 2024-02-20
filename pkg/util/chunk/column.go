@@ -200,6 +200,11 @@ func (c *Column) CopyConstruct(dst *Column) *Column {
 	return newCol
 }
 
+// AppendNullBitmap xxx
+func (c *Column) AppendNullBitmap(notNull bool) {
+	c.appendNullBitmap(notNull)
+}
+
 func (c *Column) appendNullBitmap(notNull bool) {
 	idx := c.length >> 3
 	if idx >= len(c.nullBitmap) {
@@ -209,6 +214,25 @@ func (c *Column) appendNullBitmap(notNull bool) {
 		pos := uint(c.length) & 7
 		c.nullBitmap[idx] |= byte(1 << pos)
 	}
+}
+
+// BatchAppend append
+func (c *Column) BatchAppend(src *Column, pos, length int) {
+	c.appendMultiSameNullBitmap(src.IsNull(pos), length)
+	if c.isFixed() {
+		elemLen := len(src.elemBuf)
+		offset := pos * elemLen
+		for i := 0; i < length; i++ {
+			c.data = append(c.data, src.data[offset:offset+elemLen]...)
+		}
+	} else {
+		start, end := src.offsets[pos], src.offsets[pos+1]
+		for i := 0; i < length; i++ {
+			c.data = append(c.data, src.data[start:end]...)
+			c.offsets = append(c.offsets, int64(len(c.data)))
+		}
+	}
+	c.length += length
 }
 
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
