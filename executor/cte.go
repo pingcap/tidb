@@ -216,8 +216,8 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	}
 
 	p.resetTracker()
-	p.memTracker = memory.NewTracker(cteExec.ID(), -1)
-	p.diskTracker = disk.NewTracker(cteExec.ID(), -1)
+	p.memTracker = memory.NewTracker(cteExec.id, -1)
+	p.diskTracker = disk.NewTracker(cteExec.id, -1)
 	p.memTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.MemTracker)
 	p.diskTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
