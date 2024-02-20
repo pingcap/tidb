@@ -101,7 +101,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	b.Logf("taks wait duration: %s", *waitDuration)
 	b.Logf("task meta size: %d", *taskMetaSize)
 
-	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask)
+	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask, false)
 
 	tk := testkit.NewTestKit(c.T, c.Store)
 	tk.MustExec("delete from mysql.tidb_global_task")

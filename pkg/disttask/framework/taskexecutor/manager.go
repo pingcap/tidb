@@ -36,7 +36,7 @@ import (
 
 var (
 	// TaskCheckInterval is the interval to check whether there are tasks to run.
-	TaskCheckInterval = 3 * time.Second
+	TaskCheckInterval = 300 * time.Millisecond
 	// SubtaskCheckInterval is the interval to check whether there are subtasks to run.
 	// exported for testing.
 	SubtaskCheckInterval = 300 * time.Millisecond

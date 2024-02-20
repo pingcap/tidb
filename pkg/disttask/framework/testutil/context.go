@@ -73,14 +73,14 @@ func NewDXFContextWithRandomNodes(t testing.TB, minCnt, maxCnt int) *TestDXFCont
 	c := newTestDXFContext(t)
 	nodeNum := c.Rand.Intn(maxCnt-minCnt+1) + minCnt
 	t.Logf("dxf context with random node num: %d", nodeNum)
-	c.init(nodeNum, 16)
+	c.init(nodeNum, 16, true)
 	return c
 }
 
 // NewTestDXFContext creates a new TestDXFContext.
-func NewTestDXFContext(t testing.TB, nodeNum int, cpuCount int) *TestDXFContext {
+func NewTestDXFContext(t testing.TB, nodeNum int, cpuCount int, reduceCheckInterval bool) *TestDXFContext {
 	c := newTestDXFContext(t)
-	c.init(nodeNum, cpuCount)
+	c.init(nodeNum, cpuCount, reduceCheckInterval)
 	return c
 }
 
@@ -100,9 +100,11 @@ func newTestDXFContext(t testing.TB) *TestDXFContext {
 	return c
 }
 
-func (c *TestDXFContext) init(nodeNum, cpuCount int) {
-	// make test faster
-	ReduceCheckInterval(c.T)
+func (c *TestDXFContext) init(nodeNum, cpuCount int, reduceCheckInterval bool) {
+	if reduceCheckInterval {
+		// make test faster
+		ReduceCheckInterval(c.T)
+	}
 	// all nodes are isometric
 	term := fmt.Sprintf("return(%d)", cpuCount)
 	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", term)
