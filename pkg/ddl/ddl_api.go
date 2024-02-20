@@ -1339,6 +1339,17 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			}
 		}
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+	case ast.StrToDate:
+		// Support STR_TO_DATE('1980-01-01', '%Y-%m-%d').
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		str, err := restoreFuncCall(expr)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		return str, false, nil
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -4220,7 +4231,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 						return nil, errors.Trace(err)
 					}
 					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
-				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.Replace:
+				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.Replace, ast.StrToDate:
 					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 				}
 			}
@@ -5390,12 +5401,15 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		col.DefaultIsExpr = isSeqExpr
 	}
 
-	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-		return hasDefaultValue, errors.Trace(err)
-	}
-	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
-	if err != nil {
-		return hasDefaultValue, errors.Trace(err)
+	// When the default value is expression and the type is time, we skip check and convert.
+	if !col.DefaultIsExpr || !types.IsTypeTime(col.GetType()) {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
+		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+		if err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {

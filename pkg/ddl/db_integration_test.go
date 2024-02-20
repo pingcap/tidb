@@ -1621,9 +1621,9 @@ func TestDefaultColumnWithReplace(t *testing.T) {
 	tk.MustGetErrCode("create table t1 (c int(10), c1 varchar(256) default (UPPER(UUID())))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t1 (c int(10), c1 varchar(256) default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 
-	// add column with default expression for table t is forbidden in MySQL 8.0
 	tk.MustGetErrCode("alter table t add column c2 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''))", errno.ErrBinlogUnsafeSystemFunction)
 	tk.MustGetErrCode("alter table t add column c3 int default (UPPER(UUID()))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+	// Alter support "REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')", we need to support this DDL.
 	tk.MustGetErrCode("alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', ''))", errno.ErrBinlogUnsafeSystemFunction)
 
 	// insert records
@@ -1653,22 +1653,22 @@ func TestDefaultColumnWithReplace(t *testing.T) {
 		}
 	}
 
-	// TODO: Implement add the "convert" function when executing "show create table".
+	// Some MySQL versions of "show create table" have different results. For example, MySQL 8.0.18 has the following results:
 	// `c1` varchar(16) DEFAULT (replace(convert(upper(uuid()) using utf8mb4),_utf8mb4'-',_utf8mb4''))
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
+			"  `c1` varchar(256) DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
 		"t1 CREATE TABLE `t1` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` int(11) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
+			"  `c1` int(11) DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT replace(convert(upper(uuid()) using ''utf8mb4''), _utf8mb4''-'', _utf8mb4'''')\n" +
+			"  `c1` varchar(256) DEFAULT replace(convert(upper(uuid()) using 'utf8mb4'), _utf8mb4'-', _utf8mb4'')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
@@ -1680,7 +1680,79 @@ func TestDefaultColumnWithReplace(t *testing.T) {
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
 		"t1 CREATE TABLE `t1` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(32) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
+			"  `c1` varchar(32) DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestDefaultColumnWithStrToDate(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1, t2, t3")
+
+	// create table
+	tk.MustExec("create table t0 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')), c2 date default (str_to_date('9999-01-01','%Y-%m-%d')))")
+	tk.MustExec("create table t1 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), c2 int default (str_to_date('9999-01-01','%Y-%m-%d')))")
+	tk.MustExec("create table t2 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%m-%d')))")
+	tk.MustExec("create table t3 (c int(10), c1 varchar(32) default (str_to_date('01-01','%Y-%m-%d')))")
+
+	// TODO: We need to support it.
+	tk.MustGetErrCode("alter table t0 add column c3 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'))", errno.ErrBinlogUnsafeSystemFunction)
+	tk.MustGetErrCode("alter table t0 add column c4 int default (str_to_date('1980-01-01','%Y-%m-%d'))", errno.ErrBinlogUnsafeSystemFunction)
+
+	// insert records
+	tk.MustExec("insert into t0(c) values (1),(2),(3)")
+	tk.MustExec("insert into t1(c) values (1),(2),(3)")
+	tk.MustGetErrCode("insert into t2(c) values (1)", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("insert into t3(c) values (1)", errno.ErrTruncatedWrongValue)
+
+	for i := 0; i < 2; i++ {
+		rows := tk.MustQuery(fmt.Sprintf("SELECT c1, c2 from t%d", i)).Rows()
+		colVal1 := "1980-01-01"
+		colVal2 := "9999-01-01"
+		if i == 1 {
+			colVal1 = "19800101"
+			colVal2 = "99990101"
+		}
+		for _, row := range rows {
+			c1, ok := row[0].(string)
+			require.True(t, ok)
+			require.Equal(t, c1, colVal1)
+			if len(rows) == 2 {
+				c2, ok := row[1].(string)
+				require.True(t, ok)
+				require.Equal(t, c2, colVal2)
+			}
+		}
+	}
+
+	// Some MySQL versions of "show create table" have different results. For example, MySQL 8.0.18 has the following results:
+	// `c1` varchar(16) DEFAULT (replace(convert(upper(uuid()) using utf8mb4),_utf8mb4'-',_utf8mb4''))
+	tk.MustQuery("show create table t0").Check(testkit.Rows(
+		"t0 CREATE TABLE `t0` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` varchar(32) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),\n" +
+			"  `c2` date DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` int(11) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),\n" +
+			"  `c2` int(11) DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` varchar(30) DEFAULT 'xx',\n" +
+			"  `c2` int(11) DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t1 modify column c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));")
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` varchar(32) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),\n" +
+			"  `c2` int(11) DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
