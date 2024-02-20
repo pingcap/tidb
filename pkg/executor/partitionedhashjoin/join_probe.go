@@ -122,15 +122,20 @@ type joinProbe interface {
 	doProbe(chk *chunk.Chunk, info *probeProcessInfo) (err error)
 }
 
+type offsetAndLength struct {
+	offset int
+	length int
+}
 type baseJoinProbe struct {
 	ctx              *probeCtx
 	maxChunkSize     int
 	rightAsBuildSide bool
 	// lUsed/rUsed show which columns are used by father for left child and right child.
 	// NOTE:
-	// 1. all columns are used if lUsed/rUsed is nil.
+	// 1. lUsed/rUsed should never be nil.
 	// 2. no columns are used if lUsed/rUsed is not nil but the size of lUsed/rUsed is 0.
-	lUsed, rUsed []int
+	lUsed, rUsed         []int
+	offsetAndLengthArray []offsetAndLength
 }
 
 func (baseJoinProbe *baseJoinProbe) getNext(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
@@ -150,22 +155,100 @@ type innerJoinProbe struct {
 	baseJoinProbe
 }
 
+func (baseJoinProbe *baseJoinProbe) appendBuildRowToChunk(chk *chunk.Chunk, usedCols []int, rowStart unsafe.Pointer, rowData unsafe.Pointer, info *probeProcessInfo, colOffset int) (currentRowData unsafe.Pointer) {
+	if len(usedCols) == 0 {
+		return
+	}
+	if rowData == nil {
+		rowData = baseJoinProbe.ctx.hashTableMeta.advanceToRowData(rowStart)
+	}
+	return baseJoinProbe.appendBuildRowToChunkInternal(chk, usedCols, rowStart, rowData, 0, -1, info, colOffset)
+}
+
+func (baseJoinProbe *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols []int, rowStart, rowData unsafe.Pointer, columnStartIndexInRowData int, columnsToAppend int, info *probeProcessInfo, colOffset int) (currentRowData unsafe.Pointer) {
+	colIndexMap := make(map[int]int)
+	for index, value := range usedCols {
+		colIndexMap[value] = index + colOffset
+	}
+	meta := baseJoinProbe.ctx.hashTableMeta
+	if columnsToAppend < 0 {
+		columnsToAppend = len(meta.rowColumnsOrder)
+	}
+	for columnIndex := columnStartIndexInRowData; columnIndex < len(meta.rowColumnsOrder) && columnIndex < columnsToAppend; columnIndex++ {
+		index, ok := colIndexMap[meta.rowColumnsOrder[columnIndex]]
+		var currentColumn *chunk.Column
+		if ok {
+			currentColumn = chk.Column(index)
+			currentColumn.AppendNullBitmap(!meta.isColumnNull(rowStart, columnIndex))
+			rowData = chunk.AppendCellFromRawData(currentColumn, rowData)
+		} else {
+			// not used so don't need to insert into chk, but still need to advance rowData
+			if meta.columnsSize[columnIndex] < 0 {
+				size := *(*uint64)(rowData)
+				rowData = unsafe.Add(rowData, SizeOfKeyLengthField+int(size))
+			} else {
+				rowData = unsafe.Add(rowData, meta.columnsSize[columnIndex])
+			}
+		}
+	}
+	return rowData
+}
+
+func (baseJoinProbe *baseJoinProbe) appendProbeRowToChunk(chk *chunk.Chunk, probeChk *chunk.Chunk, used []int, collOffset int) {
+	if len(used) == 0 || len(baseJoinProbe.offsetAndLengthArray) == 0 {
+		return
+	}
+	for index, colIndex := range used {
+		srcCol := probeChk.Column(colIndex)
+		dstCol := chk.Column(index + collOffset)
+		for _, offsetAndLength := range baseJoinProbe.offsetAndLengthArray {
+			dstCol.BatchAppend(srcCol, offsetAndLength.offset, offsetAndLength.length)
+		}
+	}
+}
+
 func (innerJoinProbe *innerJoinProbe) doProbeOneInt64(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
 	keyOffset := SizeOfNextPtr + innerJoinProbe.ctx.hashTableMeta.nullMapLength
+	if innerJoinProbe.offsetAndLengthArray == nil {
+		innerJoinProbe.offsetAndLengthArray = make([]offsetAndLength, 0, info.chunk.NumRows())
+	} else {
+		innerJoinProbe.offsetAndLengthArray = innerJoinProbe.offsetAndLengthArray[:0]
+	}
+	length := 0
+	totalLength := 0
 	for !chk.IsFull() && info.currentProbeRow < info.chunk.NumRows() {
 		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
 			if *(*int64)(unsafe.Pointer(&info.serializedKeys[info.currentProbeRow][0])) == *(*int64)(unsafe.Add(info.matchedRowsHeaders[info.currentProbeRow], keyOffset)) {
-				// key matched, construct result block
+				// key matched, convert row to column for build side
 				if innerJoinProbe.rightAsBuildSide {
-
+					innerJoinProbe.appendBuildRowToChunk(chk, innerJoinProbe.rUsed, info.matchedRowsHeaders[info.currentProbeRow], nil, info, len(innerJoinProbe.lUsed))
 				} else {
-
+					innerJoinProbe.appendBuildRowToChunk(chk, innerJoinProbe.lUsed, info.matchedRowsHeaders[info.currentProbeRow], nil, info, 0)
 				}
+				length++
+				totalLength++
 			}
 			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(info.matchedRowsHeaders[info.currentProbeRow])
 		} else {
+			if length > 0 {
+				innerJoinProbe.offsetAndLengthArray = append(innerJoinProbe.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
+				length = 0
+			}
 			info.currentProbeRow++
 		}
+	}
+	if length > 0 {
+		innerJoinProbe.offsetAndLengthArray = append(innerJoinProbe.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
+	}
+	if innerJoinProbe.rightAsBuildSide {
+		innerJoinProbe.appendProbeRowToChunk(chk, info.chunk, innerJoinProbe.lUsed, 0)
+	} else {
+		innerJoinProbe.appendProbeRowToChunk(chk, info.chunk, innerJoinProbe.rUsed, len(innerJoinProbe.lUsed))
+	}
+	if chk.NumCols() == 0 {
+		chk.SetNumVirtualRows(chk.NumRows() + totalLength)
+	} else {
+		chk.SetNumVirtualRows(chk.NumRows())
 	}
 	return
 }
