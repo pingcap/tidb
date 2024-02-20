@@ -216,32 +216,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	batchGetter := e.batchGetter
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
-		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
 		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
 		for i, idxVals := range e.idxVals {
-			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
-			if types.DatumsContainNull(idxVals) {
-				continue
-			}
-
-			var physID int64
-			if len(e.planPhysIDs) == 0 || e.idxInfo.Global {
-				physID = e.tblInfo.ID
-			} else {
-				// If this BatchPointGetExec is built only for the specific table partition, skip those filters not matching this partition.
-				if e.singlePartID != 0 && e.singlePartID != e.planPhysIDs[i] {
-					// Static prune mode and idxVal is not matching this partition
-					continue
-				}
-
+			physID := e.tblInfo.ID
+			if e.singlePartID != 0 {
+				physID = e.singlePartID
+			} else if len(e.planPhysIDs) > i {
 				physID = e.planPhysIDs[i]
-				if physID == 0 {
-					// No matching partition!
-					continue
-				}
 			}
-
 			idxKey, err1 := plannercore.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
@@ -395,13 +378,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(e.physIDs) > 0 {
 			// Key lookup, read the row by handle
 			tID = e.physIDs[i]
+		} else if e.singlePartID != 0 {
+			tID = e.singlePartID
 		} else if len(e.planPhysIDs) > 0 {
 			// Direct handle read
 			tID = e.planPhysIDs[i]
-		}
-		if e.singlePartID != 0 && e.singlePartID != tID {
-			// Static pruning mode, and not matching this partition
-			continue
 		}
 		if tID <= 0 {
 			// not matching any partition

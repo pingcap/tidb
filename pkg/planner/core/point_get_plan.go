@@ -680,6 +680,14 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 		p.PartitionIdxs = p.PartitionIdxs[:0]
 	}
 	if p.IndexInfo != nil && !(p.TblInfo.IsCommonHandle && p.IndexInfo.Primary) {
+		filteredVals := p.IndexValues[:0]
+		for _, idxVals := range p.IndexValues {
+			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
+			if !types.DatumsContainNull(idxVals) {
+				filteredVals = append(filteredVals, idxVals)
+			}
+		}
+		p.IndexValues = filteredVals
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
 			partitionsFound := 0
@@ -709,7 +717,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				}
 			}
 			intest.Assert(p.SinglePartition || partitionsFound-skipped == len(p.PartitionIdxs))
-			intest.Assert(p.SinglePartition || partitionsFound-skipped == len(p.IndexValues))
+			intest.Assert(partitionsFound-skipped == len(p.IndexValues))
 		}
 		return nil, false
 	}
@@ -768,8 +776,8 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
-			intest.Assert(partitionsFound == len(p.PartitionIdxs))
-			intest.Assert(partitionsFound == len(handles))
+			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(p.SinglePartition || partitionsFound == len(handles))
 		}
 		p.Handles = handles
 	} else {
@@ -828,7 +836,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			if partitionsFound == 0 {
 				return nil, true
 			}
-			intest.Assert(partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 		}
 	}
 	return handles, false

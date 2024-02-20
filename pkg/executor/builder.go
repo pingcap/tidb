@@ -5112,10 +5112,14 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.hasLock = true
 	}
 	if pi := plan.TblInfo.GetPartitionInfo(); pi != nil && len(plan.PartitionIdxs) > 0 {
-		e.planPhysIDs = make([]int64, len(plan.PartitionIdxs))
 		defs := plan.TblInfo.GetPartitionInfo().Definitions
-		for i, idx := range plan.PartitionIdxs {
-			e.planPhysIDs[i] = defs[idx].ID
+		if plan.SinglePartition {
+			e.singlePartID = defs[plan.PartitionIdxs[0]].ID
+		} else {
+			e.planPhysIDs = make([]int64, len(plan.PartitionIdxs))
+			for i, idx := range plan.PartitionIdxs {
+				e.planPhysIDs[i] = defs[idx].ID
+			}
 		}
 	}
 
