@@ -187,7 +187,7 @@ func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
+func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
@@ -203,11 +203,11 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 			}
 		case config.GetGlobalConfig().Status.RecordDBLabel:
 			for dbLabel := range dbLabels {
-				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel).Inc()
+				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel, resourceGroup).Inc()
 			}
 		}
 	} else {
-		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "").Inc()
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "", resourceGroup).Inc()
 	}
 }
 
