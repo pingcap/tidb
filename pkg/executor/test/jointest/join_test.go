@@ -30,6 +30,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIssue30244(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1,t2,t3,t4;")
+	tk.MustExec("create table t1 (c int, b int);")
+	tk.MustExec("create table t2 (a int, b int);")
+	tk.MustExec("create table t3 (b int, c int);")
+	tk.MustExec("create table t4 (y int, c int);")
+
+	err := tk.ExecToErr("select * from t1 natural join (t3 cross join t4);")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'c' in from clause is ambiguous")
+	err = tk.ExecToErr("select * from (t3 cross join t4) natural join t1;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'c' in from clause is ambiguous")
+	err = tk.ExecToErr("select * from (t1 join t2 on t1.b=t2.b) natural join (t3 natural join t4);")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'b' in from clause is ambiguous")
+	err = tk.ExecToErr("select * from (t3 natural join t4) natural join (t1 join t2 on t1.b=t2.b);")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'b' in from clause is ambiguous")
+}
+
 func TestJoinInDisk(t *testing.T) {
 	origin := config.RestoreFunc()
 	defer origin()
@@ -1434,4 +1459,58 @@ func TestIssue37932(t *testing.T) {
 		}
 	}
 	require.NoError(t, err)
+}
+
+func TestIssue48991(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbl_3 ( col_11 mediumint unsigned not null default 8346281 ,col_12 enum ( 'Alice','Bob','Charlie','David' ) ,col_13 time not null default '07:10:30.00' ,col_14 timestamp ,col_15 varbinary ( 194 ) not null default '-ZpCzjqdl4hsyo' , key idx_5 ( col_14 ,col_11 ,col_12 ) ,primary key ( col_11 ,col_15 ) /*T![clustered_index] clustered */ ) charset utf8mb4 collate utf8mb4_bin partition by range ( col_11 ) ( partition p0 values less than (530262), partition p1 values less than (9415740), partition p2 values less than (11007444), partition p3 values less than (maxvalue) );")
+
+	tk.MustExec("insert into tbl_3 values ( 8838143,'David','23:41:27.00','1993-02-23','g0q~Z0b*PpMPKJxYbIE' ), ( 9082223,'Alice','02:25:16.00','2035-11-08','i' ), ( 2483729,'Charlie','14:43:13.00','1970-09-10','w6o6WFYyL5' ), ( 4135401,'Charlie','19:30:34.00','2017-06-07','2FZmy9lanL8' ), ( 1479390,'Alice','20:40:08.00','1984-06-10','LeoVONgN~iJz&inj' ), ( 10427825,'Charlie','15:27:35.00','1986-12-25','tWJ' ), ( 12794792,'Charlie','04:10:08.00','2034-08-08','hvpXVQyuP' ), ( 4696775,'Charlie','05:07:43.00','1984-07-31','SKOW9I^sM$4xNk' ), ( 8963236,'Alice','08:18:31.00','2022-04-17','v4DsE' ), ( 9048951,'Alice','05:19:47.00','2018-09-22','sJ!vs' );")
+
+	tk.MustQuery(`SELECT col_14
+FROM 
+    tbl_3 
+WHERE 
+    (
+	(tbl_3.col_15 < 'dV')
+        AND tbl_3.col_12 IN (
+	    SELECT col_12 FROM tbl_3 WHERE NOT (ISNULL(tbl_3.col_12))
+	)
+    ) 
+ORDER BY IF(ISNULL(col_14),0,1),col_14;`).Sort().Check(testkit.Rows("1984-06-10 00:00:00", "1984-07-31 00:00:00", "2017-06-07 00:00:00"))
+}
+
+func TestIssue49033(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t, s;")
+	tk.MustExec("create table t(a int, index(a));")
+	tk.MustExec("create table s(a int, index(a));")
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18), (19), (20), (21), (22), (23), (24), (25), (26), (27), (28), (29), (30), (31), (32), (33), (34), (35), (36), (37), (38), (39), (40), (41), (42), (43), (44), (45), (46), (47), (48), (49), (50), (51), (52), (53), (54), (55), (56), (57), (58), (59), (60), (61), (62), (63), (64), (65), (66), (67), (68), (69), (70), (71), (72), (73), (74), (75), (76), (77), (78), (79), (80), (81), (82), (83), (84), (85), (86), (87), (88), (89), (90), (91), (92), (93), (94), (95), (96), (97), (98), (99), (100), (101), (102), (103), (104), (105), (106), (107), (108), (109), (110), (111), (112), (113), (114), (115), (116), (117), (118), (119), (120), (121), (122), (123), (124), (125), (126), (127), (128);")
+	tk.MustExec("insert into s values(1), (128);")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
+	tk.MustExec("set @@tidb_index_join_batch_size=32;")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a;")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIssue49033", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIssue49033"))
+	}()
+
+	rs, err := tk.Exec("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;")
+	require.NoError(t, err)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	require.EqualError(t, err, "testIssue49033")
+	require.NoError(t, rs.Close())
+
+	rs, err = tk.Exec("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a")
+	require.NoError(t, err)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	require.EqualError(t, err, "testIssue49033")
+	require.NoError(t, rs.Close())
 }

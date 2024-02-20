@@ -937,7 +937,12 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			exit = true
 			return
 		case <-ticker.C:
-			if atomic.LoadUint32(it.vars.Killed) == 1 {
+			killed := atomic.LoadUint32(it.vars.Killed)
+			if killed != 0 {
+				logutil.Logger(ctx).Info(
+					"a killed signal is received",
+					zap.Uint32("signal", killed),
+				)
 				resp = &copResponse{err: derr.ErrQueryInterrupted}
 				ok = true
 				return
@@ -1685,7 +1690,14 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 				resp.pbResp.Range = nil
 			}
 		}
-		resp.detail.CoprCacheHit = true
+		// `worker.enableCollectExecutionInfo` is loaded from the instance's config. Because it's not related to the request,
+		// the cache key can be same when `worker.enableCollectExecutionInfo` is true or false.
+		// When `worker.enableCollectExecutionInfo` is false, the `resp.detail` is nil, and hit cache is still possible.
+		// Check `resp.detail` to avoid panic.
+		// Details: https://github.com/pingcap/tidb/issues/48212
+		if resp.detail != nil {
+			resp.detail.CoprCacheHit = true
+		}
 		return nil
 	}
 	copr_metrics.CoprCacheCounterMiss.Add(1)
@@ -1853,8 +1865,15 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 
 // finished checks the flags and finished channel, it tells whether the worker is finished.
 func (worker *copIteratorWorker) finished() bool {
-	if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
-		return true
+	if worker.vars != nil && worker.vars.Killed != nil {
+		killed := atomic.LoadUint32(worker.vars.Killed)
+		if killed != 0 {
+			logutil.BgLogger().Info(
+				"a killed signal is received in copIteratorWorker",
+				zap.Uint32("signal", killed),
+			)
+			return true
+		}
 	}
 	select {
 	case <-worker.finishCh:

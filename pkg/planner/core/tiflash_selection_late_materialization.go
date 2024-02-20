@@ -255,7 +255,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	// remove the pushed down conditions from selection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan
-	physicalTableScan.lateMaterializationFilterCondition = selectedConds
+	physicalTableScan.LateMaterializationFilterCondition = selectedConds
 	// Update the row count of table scan after pushing down the conditions.
 	physicalTableScan.StatsInfo().RowCount *= selectedSelectivity
 }

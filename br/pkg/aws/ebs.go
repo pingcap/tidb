@@ -28,6 +28,7 @@ import (
 const (
 	pollingPendingSnapshotInterval = 30 * time.Second
 	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
+	FsrApiSnapshotsThreshold       = 10
 )
 
 type EC2Session struct {
@@ -284,8 +285,6 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 	log.Info("delete snapshot end", zap.Int("need-to-del", len(snapIDMap)), zap.Int32("deleted", deletedCnt.Load()))
 }
 
-<<<<<<< HEAD
-=======
 // EnableDataFSR enables FSR for data volume snapshots
 func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) (map[string][]*string, error) {
 	snapshotsIDsMap := fetchTargetSnapshots(meta, targetAZ)
@@ -548,11 +547,10 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[s
 	return sourceSnapshotIDs
 }
 
->>>>>>> 711e95ff460 (ebs br: make sure fsr credit is full filled (#48627))
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string) (map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, encrypted bool, targetAZ string) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
 	}
@@ -562,6 +560,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	if throughput > 0 {
 		template.SetThroughput(throughput)
 	}
+	template.Encrypted = &encrypted
 
 	newVolumeIDMap := make(map[string]string)
 	var mutex sync.Mutex
@@ -645,7 +644,7 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 	for len(pendingVolumes) > 0 {
 		// check every 5 seconds
 		time.Sleep(5 * time.Second)
-		log.Info("check pending snapshots", zap.Int("count", len(pendingVolumes)))
+		log.Info("check pending volumes", zap.Int("count", len(pendingVolumes)))
 		resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{
 			VolumeIds: pendingVolumes,
 		})

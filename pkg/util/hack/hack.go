@@ -15,6 +15,8 @@
 package hack
 
 import (
+	"runtime"
+	"strings"
 	"unsafe"
 )
 
@@ -41,11 +43,20 @@ func Slice(s string) []byte {
 // Represent as LoadFactorNum/LoadFactorDen, to allow integer math.
 // They are from the golang definition. ref: https://github.com/golang/go/blob/go1.13.15/src/runtime/map.go#L68-L71
 const (
-	// LoadFactorNum is the numerator of load factor
-	LoadFactorNum = 13
 	// LoadFactorDen is the denominator of load factor
 	LoadFactorDen = 2
 )
+
+// LoadFactorNum is the numerator of load factor
+var LoadFactorNum = 13
+
+func init() {
+	// In go1.21, the load factor num becomes 12 and go team has decided not to backport the fix to 1.21.
+	// See more details in https://github.com/golang/go/issues/63438
+	if strings.Contains(runtime.Version(), `go1.21`) {
+		LoadFactorNum = 12
+	}
+}
 
 const (
 	// DefBucketMemoryUsageForMapStrToSlice = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize

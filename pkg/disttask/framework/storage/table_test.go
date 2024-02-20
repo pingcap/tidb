@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -144,13 +145,15 @@ func TestSubTaskTable(t *testing.T) {
 
 	subtask, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
-	require.Equal(t, proto.TaskTypeExample, subtask.Type)
+	require.Equal(t, proto.StepInit, subtask.Step)
 	require.Equal(t, int64(1), subtask.TaskID)
+	require.Equal(t, proto.TaskTypeExample, subtask.Type)
 	require.Equal(t, proto.TaskStatePending, subtask.State)
 	require.Equal(t, "tidb1", subtask.SchedulerID)
 	require.Equal(t, []byte("test"), subtask.Meta)
 	require.Zero(t, subtask.StartTime)
 	require.Zero(t, subtask.UpdateTime)
+	require.Equal(t, "{}", subtask.Summary)
 
 	subtask2, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending, proto.TaskStateReverted)
 	require.NoError(t, err)
@@ -418,43 +421,77 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(0), cnt)
 }
 
-func TestDistFrameworkMeta(t *testing.T) {
+// InsertSubtask adds a new subtask of any state to subtask table.
+func insertSubtask(t *testing.T, gm *storage.TaskManager, taskID int64, step proto.Step, execID string, meta []byte, state proto.TaskState, tp proto.TaskType) {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "table_test")
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, err := storage.ExecSQL(ctx, se, `
+			insert into mysql.tidb_background_subtask(step, task_key, exec_id, meta, state, type, state_update_time, checkpoint, summary) values`+
+			`(%?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+			step, taskID, execID, meta, state, proto.Type2Int(tp))
+		return err
+	}))
+}
+
+func TestGetSubtaskCntByStates(t *testing.T) {
 	pool := GetResourcePool(t)
 	sm := GetTaskManager(t, pool)
 	defer pool.Close()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStatePending, "test")
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStatePending, "test")
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStateRunning, "test")
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStateSucceed, "test")
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStateFailed, "test")
+	insertSubtask(t, sm, 1, proto.StepTwo, "tidb1", nil, proto.TaskStateFailed, "test")
+	cntByStates, err := sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, cntByStates, 4)
+	require.Equal(t, int64(2), cntByStates[proto.TaskStatePending])
+	require.Equal(t, int64(1), cntByStates[proto.TaskStateRunning])
+	require.Equal(t, int64(1), cntByStates[proto.TaskStateSucceed])
+	require.Equal(t, int64(1), cntByStates[proto.TaskStateFailed])
+	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepTwo)
+	require.NoError(t, err)
+	require.Len(t, cntByStates, 1)
+	require.Equal(t, int64(1), cntByStates[proto.TaskStateFailed])
+}
+
+func TestDistFrameworkMeta(t *testing.T) {
+	pool := GetResourcePool(t)
+	sm := GetTaskManager(t, pool)
+	defer pool.Close()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "table_test")
 	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
 	require.NoError(t, sm.StartManager(ctx, ":4001", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4002", ""))
-	require.NoError(t, sm.StartManager(ctx, ":4002", "background"))
+	require.NoError(t, sm.StartManager(ctx, ":4003", "background"))
+	require.NoError(t, sm.StartManager(ctx, ":4003", ""))
+	// :4003 won't change from "background" to "" since already have 4003 with ""
 
 	allNodes, err := sm.GetAllNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4000", ":4001", ":4002"}, allNodes)
+	require.Equal(t, []string{":4000", ":4001", ":4002", ":4003"}, allNodes)
 
 	nodes, err := sm.GetNodesByRole(ctx, "background")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{
-		":4000": true,
-		":4002": true,
+		":4003": true,
 	}, nodes)
 
 	nodes, err = sm.GetNodesByRole(ctx, "")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{
+		":4000": true,
 		":4001": true,
-	}, nodes)
-
-	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4000"}))
-	nodes, err = sm.GetNodesByRole(ctx, "background")
-	require.NoError(t, err)
-	require.Equal(t, map[string]bool{
 		":4002": true,
 	}, nodes)
 
-	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4002"}))
+	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4003"}))
 	nodes, err = sm.GetNodesByRole(ctx, "background")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{}, nodes)

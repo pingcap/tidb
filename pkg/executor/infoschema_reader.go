@@ -2052,7 +2052,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 		}
 
 		var remainDurationStr, progressDouble, estimatedRowCntStr interface{}
-		if state == statistics.AnalyzeRunning {
+		if state == statistics.AnalyzeRunning && !strings.HasPrefix(jobInfo, "merge global stats") {
 			startTime, ok := startTime.(types.Time)
 			if !ok {
 				return nil, errors.New("invalid start time")
@@ -2131,7 +2131,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 				totalCnt = float64(statsTbl.RealtimeCount)
 			}
 		}
-		if tid > 0 && totalCnt == 0 {
+		if tid > 0 && totalCnt == 0 || float64(processedRows) > totalCnt {
 			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(sctx, tid, dbName, tableName, partitionName)
 		}
 		remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)

@@ -3175,6 +3175,14 @@ func TestIsPointGet(t *testing.T) {
 	}
 }
 
+func TestPointGetOrderby(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key)")
+	require.Equal(t, tk.ExecToErr("select * from t where i = 1 order by j limit 10;").Error(), "[planner:1054]Unknown column 'j' in 'order clause'")
+}
+
 func TestClusteredIndexIsPointGet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4298,4 +4306,16 @@ func TestProcessInfoOfSubQuery(t *testing.T) {
 	time.Sleep(time.Second)
 	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
 	wg.Wait()
+}
+
+func TestIssue38756(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustQuery("SELECT SQRT(1) FROM t").Check(testkit.Rows("1", "1", "1"))
+	tk.MustQuery("(SELECT DISTINCT SQRT(1) FROM t)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT DISTINCT cast(1 as double) FROM t").Check(testkit.Rows("1"))
 }

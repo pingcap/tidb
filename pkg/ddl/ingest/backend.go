@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -214,16 +215,43 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 			}
 		}()
 	}
-
-	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
-		zap.String("usage info", bc.diskRoot.UsageInfo()))
-	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	err = bc.unsafeImportAndReset(ei)
 	if err != nil {
-		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
-			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return true, false, err
 	}
 	return true, true, nil
+}
+
+func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
+	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", ei.indexID),
+		zap.String("usage info", bc.diskRoot.UsageInfo()))
+	logger := log.FromContext(bc.ctx).With(
+		zap.Stringer("engineUUID", ei.uuid),
+	)
+
+	ei.closedEngine = backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
+
+	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
+	regionSplitKeys := int64(lightning.SplitRegionKeys)
+	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
+		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
+			zap.String("usage info", bc.diskRoot.UsageInfo()))
+		return err
+	}
+
+	err := bc.backend.ResetEngine(bc.ctx, ei.uuid)
+	if err != nil {
+		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
+		err1 := ei.closedEngine.Cleanup(bc.ctx)
+		if err1 != nil {
+			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err1),
+				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		}
+		ei.openedEngine = nil
+		ei.closedEngine = nil
+		return err
+	}
+	return nil
 }
 
 // ForceSyncFlagForTest is a flag to force sync only for test.

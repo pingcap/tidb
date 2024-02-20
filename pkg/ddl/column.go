@@ -53,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	kvutil "github.com/tikv/client-go/v2/util"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -1408,7 +1407,7 @@ func (w *updateColumnWorker) calcChecksums() []uint32 {
 		if !sort.IsSorted(w.checksumBuffer) {
 			sort.Sort(w.checksumBuffer)
 		}
-		checksum, err := w.checksumBuffer.Checksum()
+		checksum, err := w.checksumBuffer.Checksum(w.sessCtx.GetSessionVars().StmtCtx.TimeZone())
 		if err != nil {
 			logutil.BgLogger().Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
 			return nil
@@ -1696,8 +1695,8 @@ func (r *asAutoIDRequirement) Store() kv.Storage {
 	return r.store
 }
 
-func (r *asAutoIDRequirement) GetEtcdClient() *clientv3.Client {
-	return r.etcdCli
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
 }
 
 // applyNewAutoRandomBits set auto_random bits to TableInfo and

@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -64,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
@@ -139,6 +141,8 @@ type Domain struct {
 	exit            chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
+	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
+	autoidClient *autoid.ClientDiscover
 	// `unprefixedEtcdCli` will never set the etcd namespace prefix by keyspace.
 	// It is only used in storeMinStartTS and RemoveMinStartTS now.
 	// It must be used when the etcd path isn't needed to separate by keyspace.
@@ -152,7 +156,7 @@ type Domain struct {
 	// TODO: use Run for each process in future pr
 	wg                  *util.WaitGroupEnhancedWrapper
 	statsUpdating       atomicutil.Int32
-	cancel              context.CancelFunc
+	cancelFns           []context.CancelFunc
 	indexUsageSyncLease time.Duration
 	dumpFileGcChecker   *dumpFileGcChecker
 	planReplayerHandle  *planReplayerHandle
@@ -222,6 +226,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
 	}()
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
@@ -1023,8 +1030,8 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
-	if do.cancel != nil {
-		do.cancel()
+	for _, f := range do.cancelFns {
+		f()
 	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
@@ -1130,6 +1137,8 @@ func (do *Domain) Init(
 
 			do.etcdClient = cli
 
+			do.autoidClient = autoid.NewClientDiscover(cli)
+
 			unprefixedEtcdCli, err := newEtcdCli(addrs, ebd)
 			if err != nil {
 				return errors.Trace(err)
@@ -1149,7 +1158,7 @@ func (do *Domain) Init(
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	do.cancel = cancelFunc
+	do.cancelFns = append(do.cancelFns, cancelFunc)
 	var callback ddl.Callback
 	newCallbackFunc, err := ddl.GetCustomizedHook("default_hook")
 	if err != nil {
@@ -1161,6 +1170,7 @@ func (do *Domain) Init(
 		ctx,
 		ddl.WithEtcdClient(do.etcdClient),
 		ddl.WithStore(do.store),
+		ddl.WithAutoIDClient(do.autoidClient),
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
@@ -1442,7 +1452,8 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 }
 
 // InitDistTaskLoop initializes the distributed task framework.
-func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
+func (do *Domain) InitDistTaskLoop() error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)
@@ -1462,7 +1473,9 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
 	}
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
+	managerCtx, cancel := context.WithCancel(ctx)
+	do.cancelFns = append(do.cancelFns, cancel)
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(managerCtx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
@@ -1611,6 +1624,11 @@ func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
+}
+
+// AutoIDClient returns the autoid client.
+func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
+	return do.autoidClient
 }
 
 // GetPDClient returns the PD client.
@@ -1899,7 +1917,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 // in BootstrapSession.
 func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	err := telemetry.InitialRun(ctx, do.GetEtcdClient())
+	err := telemetry.InitialRun(ctx, do.etcdClient)
 	if err != nil {
 		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
 	}
@@ -1920,7 +1938,7 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 				if !owner.IsOwner() {
 					continue
 				}
-				err := telemetry.ReportUsageData(ctx, do.GetEtcdClient())
+				err := telemetry.ReportUsageData(ctx, do.etcdClient)
 				if err != nil {
 					// Only status update errors will be printed out
 					logutil.BgLogger().Warn("TelemetryReportLoop status update failed", zap.Error(err))
@@ -2368,7 +2386,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				logutil.BgLogger().Error("gc index usage failed", zap.String("category", "stats"), zap.Error(err))
+				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))
 			}
 		}
 	}
@@ -2399,7 +2417,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
-	deltaUpdateTicker := time.NewTicker(20 * lease)
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
