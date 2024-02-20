@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"testing"
 	"time"
 
@@ -31,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -42,14 +45,15 @@ var (
 	taskMetaSize      = flag.Int("task-meta-size", 1<<10, "task meta size")
 )
 
-// test overhead when starting multiple schedulers
-//
-// make failpoint-enable
-// GOOS=linux GOARCH=amd64 go test -tags intest -c -o bench.test ./pkg/disttask/framework/integrationtests
-// make failpoint-disable
-//
-// bench.test -run ^$ -test.bench=BenchmarkSchedulerOverhead -test.benchmem --with-tikv "upstream-pd:2379?disableGC=true"
-func BenchmarkSchedulerOverhead(b *testing.B) {
+// we run this test on a k8s environment, so we need to mock the TiDB server status port
+// to have metrics.
+func mockTiDBStatusPort(b *testing.B, ctx context.Context) *util.WaitGroupWrapper {
+	var wg util.WaitGroupWrapper
+	prometheus.DefaultRegisterer.Unregister(collectors.NewGoCollector())
+	prometheus.MustRegister(collectors.NewGoCollector(
+		collectors.WithGoCollectorMemStatsMetricsDisabled(),
+		collectors.WithGoCollectorRuntimeMetrics(collectors.GoRuntimeMetricsRule{Matcher: regexp.MustCompile("/.*")}),
+	))
 	router := mux.NewRouter()
 	router.Handle("/metrics", promhttp.Handler())
 	serverMux := http.NewServeMux()
@@ -57,26 +61,34 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 
 	statusListener, err := net.Listen("tcp", "0.0.0.0:10080")
 	require.NoError(b, err)
-	// Match connections in order:
-	// First HTTP, and otherwise grpc.
 	statusServer := &http.Server{Handler: serverMux}
-	go func() {
+	wg.RunWithLog(func() {
 		if err := statusServer.Serve(statusListener); err != nil {
 			b.Logf("status server serve failed: %v", err)
 		}
-	}()
-	lis4000, err := net.Listen("tcp", "0.0.0.0:4000")
-	server4000 := http.Server{}
-	go func() {
-		if err := server4000.Serve(lis4000); err != nil {
-			b.Logf("server serve failed: %v", err)
-		}
-	}()
-	defer func() {
+	})
+	wg.RunWithLog(func() {
+		<-ctx.Done()
 		_ = statusServer.Close()
-		_ = server4000.Close()
-	}()
+	})
 
+	return &wg
+}
+
+// test overhead when starting multiple schedulers
+//
+// make failpoint-enable
+// GOOS=linux GOARCH=amd64 go test -tags intest -c -o bench.test ./pkg/disttask/framework/integrationtests
+// make failpoint-disable
+//
+// bench.test -test.v -run ^$ -test.bench=BenchmarkSchedulerOverhead -test.benchmem --with-tikv "upstream-pd:2379?disableGC=true"
+func BenchmarkSchedulerOverhead(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	statusWG := mockTiDBStatusPort(b, ctx)
+	defer func() {
+		cancel()
+		statusWG.Wait()
+	}()
 	bak := proto.MaxConcurrentTask
 	b.Cleanup(func() {
 		proto.MaxConcurrentTask = bak
