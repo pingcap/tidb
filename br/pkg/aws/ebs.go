@@ -347,6 +347,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		return errors.Errorf("specified snapshot [%s] is not found", *snapShotIDs[0])
 	}
 
+	// Wait that all snapshot has enough fsr credit balance
 	log.Info("Start check and wait all snapshots have enough fsr credit balance")
 
 	startIdx := 0
