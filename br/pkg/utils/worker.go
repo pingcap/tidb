@@ -159,3 +159,17 @@ func BuildWorkerTokenChannel(size uint) chan struct{} {
 	}
 	return ch
 }
+
+// CatchAndLogPanic recovers when the execution get panicked, and log the panic.
+// generally, this would be used with `defer`, like:
+//
+//	func foo() {
+//	  defer utils.CatchAndLogPanic()
+//	  maybePanic()
+//	}
+func CatchAndLogPanic() {
+	item := recover()
+	if item != nil {
+		log.Warn("CatchAndLogPanic: panicked, but ignored.", zap.StackSkip("stack", 1), zap.Any("panic", item))
+	}
+}
