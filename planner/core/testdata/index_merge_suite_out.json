@@ -4,18 +4,28 @@
     "Cases": [
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t",
-        "Plan": null,
-        "Err": "[planner:1815]Internal : Can't find a proper physical plan for this query"
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Err": ""
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ a from t",
-        "Plan": null,
-        "Err": "[planner:1815]Internal : Can't find a proper physical plan for this query"
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Err": ""
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t where a<10",
-        "Plan": null,
-        "Err": "[planner:1815]Internal : Can't find a proper physical plan for this query"
+        "Plan": [
+          "TableReader 3323.33 root  data:Selection",
+          "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Err": ""
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t where (1 member of (j))",
@@ -40,8 +50,12 @@
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t where (1 member of (j)) or a=10",
-        "Plan": null,
-        "Err": "[planner:1815]Internal : Can't find a proper physical plan for this query"
+        "Plan": [
+          "Selection 8000.00 root  or(json_memberof(cast(1, json BINARY), test.t.j), eq(test.t.a, 10))",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Err": ""
       },
       {
         "SQL": "select /*+ use_index_merge(t, kj) */ * from t",
@@ -452,7 +466,7 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2 and (3 member of (j))",
         "Plan": [
-          "Selection 0.08 root  json_memberof(cast(3, json BINARY), test.t.j)",
+          "Selection 0.00 root  json_memberof(cast(3, json BINARY), test.t.j)",
           "└─IndexMerge 0.00 root  type: union",
           "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2 3,1 2 3], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -461,17 +475,17 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2",
         "Plan": [
-          "IndexMerge 0.10 root  type: union",
-          "├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2,1 2], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 0.10 root  data:Selection",
+          "└─Selection 0.10 cop[tikv]  eq(test.t.a, 1), eq(test.t.b, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, idx) */ * from t where a=1",
         "Plan": [
-          "IndexMerge 10.00 root  type: union",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1,1], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -486,7 +500,7 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str'))",
         "Plan": [
-          "Selection 0.08 root  json_memberof(cast(\"3\", json BINARY), json_extract(test.t.j, \"$.str\"))",
+          "Selection 0.00 root  json_memberof(cast(\"3\", json BINARY), json_extract(test.t.j, \"$.str\"))",
           "└─IndexMerge 0.00 root  type: union",
           "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx2(a, b, cast(json_extract(`j`, _utf8mb4'$.str') as char(10) array), c) range:[1 2 0x33,1 2 0x33], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -495,17 +509,17 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2",
         "Plan": [
-          "IndexMerge 0.10 root  type: union",
-          "├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2,1 2], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 0.10 root  data:Selection",
+          "└─Selection 0.10 cop[tikv]  eq(test.t.a, 1), eq(test.t.b, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, idx2) */ * from t where a=1",
         "Plan": [
-          "IndexMerge 10.00 root  type: union",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1,1], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -529,17 +543,17 @@
       {
         "SQL": "select /*+ use_index(t, idx) */ * from t where a=1 and b=2",
         "Plan": [
-          "IndexMerge 0.10 root  type: union",
-          "├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2,1 2], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 0.10 root  data:Selection",
+          "└─Selection 0.10 cop[tikv]  eq(test.t.a, 1), eq(test.t.b, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from t use index(idx) where a=1",
         "Plan": [
-          "IndexMerge 10.00 root  type: union",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1,1], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -554,9 +568,9 @@
       {
         "SQL": "select * from t force index(idx) where a=1",
         "Plan": [
-          "IndexMerge 10.00 root  type: union",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1,1], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
