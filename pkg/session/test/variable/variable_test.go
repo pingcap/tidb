@@ -363,7 +363,6 @@ func TestIsolationRead(t *testing.T) {
 	require.False(t, hasTiKV)
 }
 
-<<<<<<< HEAD
 func TestIndexMergeRuntimeStats(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -387,7 +386,7 @@ func TestIndexMergeRuntimeStats(t *testing.T) {
 	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
-=======
+}
 func TestLastQueryInfo(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockRUConsumption", `return()`))
 	defer func() {
@@ -407,5 +406,4 @@ func TestLastQueryInfo(t *testing.T) {
 	tk.MustExec("select a from t where a = 1")
 	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"last_ru_consumption":27`), checkMatch)
 	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"last_ru_consumption":30`), checkMatch)
->>>>>>> 33480e8c8d8 (*: add last ru consumption for tidb_last_query_info (#49769))
 }
