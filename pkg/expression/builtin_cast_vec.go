@@ -1692,7 +1692,7 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 		if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && res < 0 {
 			res = 0
 		}
-		res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
+		res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp)
 		if err != nil {
 			return err
 		}

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -142,7 +143,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			)
 		}
 	}()
-	dbs := is.AllSchemaNames()
+
 	parameters := getAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
@@ -158,14 +159,54 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 	}
 
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+	return RandomPickOneTableAndTryAutoAnalyze(
+		sctx,
+		statsHandle,
+		is,
+		autoAnalyzeRatio,
+		pruneMode,
+		start,
+		end,
+	)
+}
+
+// RandomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
+// 1. If the table is not analyzed, analyze it.
+// 2. If the table is analyzed, analyze it when "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
+// 3. If the table is analyzed, analyze its indices when the index is not analyzed.
+// 4. If the table is locked, skip it.
+// Exposed solely for testing.
+func RandomPickOneTableAndTryAutoAnalyze(
+	sctx sessionctx.Context,
+	statsHandle statsutil.StatsHandle,
+	is infoschema.InfoSchema,
+	autoAnalyzeRatio float64,
+	pruneMode variable.PartitionPruneMode,
+	start, end time.Time,
+) bool {
+	dbs := is.AllSchemaNames()
+	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
 	})
+	// Query locked tables once to minimize overhead.
+	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
+	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	if err != nil {
+		statslogutil.StatsLogger().Error(
+			"check table lock failed",
+			zap.Error(err),
+		)
+		return false
+	}
+
 	for _, db := range dbs {
+		// Ignore the memory and system database.
 		if util.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
 		}
+
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
 		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
@@ -176,28 +217,12 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
-		tidsAndPids := make([]int64, 0, len(tbls))
 		for _, tbl := range tbls {
-			tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
-			tblInfo := tbl.Meta()
-			pi := tblInfo.GetPartitionInfo()
-			if pi != nil {
-				for _, def := range pi.Definitions {
-					tidsAndPids = append(tidsAndPids, def.ID)
-				}
+			// Sometimes the tables are too many. Auto-analyze will take too much time on it.
+			// so we need to check the available time.
+			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+				return false
 			}
-		}
-
-		lockedTables, err := statsHandle.GetLockedTables(tidsAndPids...)
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"check table lock failed",
-				zap.Error(err),
-			)
-			continue
-		}
-
-		for _, tbl := range tbls {
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
 			if _, ok := lockedTables[tbl.Meta().ID]; ok {
@@ -207,7 +232,9 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			if tblInfo.IsView() {
 				continue
 			}
+
 			pi := tblInfo.GetPartitionInfo()
+			// No partitions, analyze the whole table.
 			if pi == nil {
 				statsTbl := statsHandle.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
@@ -243,6 +270,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			}
 		}
 	}
+
 	return false
 }
 

@@ -128,6 +128,13 @@ const (
 	Charset                           = "CHARSET"
 	Collation                         = "COLLATION"
 	PlanHint                          = "PLAN_HINT"
+	AvgRequestUnitRead                = "AVG_REQUEST_UNIT_READ"
+	MaxRequestUnitRead                = "MAX_REQUEST_UNIT_READ"
+	AvgRequestUnitWrite               = "AVG_REQUEST_UNIT_WRITE"
+	MaxRequestUnitWrite               = "MAX_REQUEST_UNIT_WRITE"
+	AvgQueuedRcTimeStr                = "AVG_QUEUED_RC_TIME"
+	MaxQueuedRcTimeStr                = "MAX_QUEUED_RC_TIME"
+	ResourceGroupName                 = "RESOURCE_GROUP"
 )
 
 type columnInfo interface {
@@ -454,6 +461,27 @@ var columnFactoryMap = map[string]columnFactory{
 	PlanHint: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.PlanHint
 	},
+	AvgRequestUnitRead: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgSumFloat(record.SumRRU, record.ExecCount)
+	},
+	MaxRequestUnitRead: func(info columnInfo, record *StmtRecord) interface{} {
+		return record.MaxRRU
+	},
+	AvgRequestUnitWrite: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgSumFloat(record.SumWRU, record.ExecCount)
+	},
+	MaxRequestUnitWrite: func(info columnInfo, record *StmtRecord) interface{} {
+		return record.MaxWRU
+	},
+	AvgQueuedRcTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumRUWaitDuration), record.ExecCount)
+	},
+	MaxQueuedRcTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return int64(record.MaxRUWaitDuration)
+	},
+	ResourceGroupName: func(info columnInfo, record *StmtRecord) interface{} {
+		return record.ResourceGroupName
+	},
 }
 
 func makeColumnFactories(columns []*model.ColumnInfo) []columnFactory {
@@ -510,6 +538,13 @@ func avgInt(sum int64, count int64) int64 {
 func avgFloat(sum int64, count int64) float64 {
 	if count > 0 {
 		return float64(sum) / float64(count)
+	}
+	return 0
+}
+
+func avgSumFloat(sum float64, count int64) float64 {
+	if count > 0 {
+		return sum / float64(count)
 	}
 	return 0
 }

@@ -96,7 +96,6 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			originCons := tableCommon.Constraints
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			tableCommon.Constraints = []*table.Constraint{}
 			// insert data
 			tk1.MustExec("insert into t values(1)")
@@ -145,7 +144,6 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			originCons := tableCommon.Constraints
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			tableCommon.Constraints = []*table.Constraint{}
 			// insert data
 			tk1.MustExec("insert into t values(1)")
@@ -189,7 +187,6 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			tableCommon.Constraints[0].State = model.StateWriteOnly
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			// insert data
 			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c2' is violated.")
 			// recover
@@ -232,7 +229,6 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			tableCommon.Constraints[0].State = model.StateWriteReorganization
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			// insert data
 			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c3' is violated.")
 			// recover
@@ -274,7 +270,6 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			tableCommon.Constraints[0].State = model.StateWriteOnly
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			// insert data
 			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c1' is violated.")
 			// recover

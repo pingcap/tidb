@@ -180,6 +180,18 @@ LEFT JOIN tmp3 c3 ON c3.id = '1';
 id	id
 1	1
 1	1
+drop table if exists t;
+create table t(a int, b int);
+set @@tidb_max_chunk_size = 32;
+insert into t values(1, 1);
+insert into t select a+1, a+1 from t;
+insert into t select a+2, a+2 from t;
+insert into t select a+4, a+4 from t;
+insert into t select a+8, a+8 from t;
+insert into t select a+16, a+16 from t;
+insert into t select a+32, a+32 from t;
+select a from (select 100 as a, 100 as b union all select * from t) t where b != 0;
+set @@tidb_max_chunk_size = default;
 drop table if exists t1, t2;
 set autocommit=ON;
 create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
@@ -210,3 +222,22 @@ IndexReader	250.00	root		index:Selection
 select * from t1 use index (ia) where a like 'xxx_';
 a
 xxx 
+drop view if exists v1;
+create view v1(id) as
+with recursive cte(a) as (select 1 union select a+1 from cte where a<3)
+select * from cte;
+create table test2(id int,value int);
+insert into test2 values(1,1),(2,2),(3,3),(4,4),(5,5);
+update test2
+set value=0
+where test2.id in
+(
+select * from v1
+);
+select * from test2;
+id	value
+1	0
+2	0
+3	0
+4	4
+5	5
