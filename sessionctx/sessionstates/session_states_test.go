@@ -215,6 +215,118 @@ func TestSystemVars(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD:sessionctx/sessionstates/session_states_test.go
+=======
+func TestInvisibleVars(t *testing.T) {
+	tests := []struct {
+		hasPriv       bool
+		stmt          string
+		cleanStmt     string
+		varName       string
+		expectedValue string
+		showErr       int
+	}{
+		{
+			// Make sure the session can be migrated in normal cases.
+			hasPriv: false,
+		},
+		{
+			// The value is set but the same with before.
+			hasPriv: false,
+			stmt:    "set tidb_opt_write_row_id=false",
+		},
+		{
+			// The value is changed but the privilege is revoked.
+			hasPriv: false,
+			stmt:    "set tidb_opt_write_row_id=true",
+			showErr: errno.ErrCannotMigrateSession,
+		},
+		{
+			// The value is changed and the user has the privilege.
+			hasPriv:       true,
+			stmt:          "set tidb_opt_write_row_id=true",
+			varName:       variable.TiDBOptWriteRowID,
+			expectedValue: "1",
+		},
+		{
+			// The value has a global scope.
+			hasPriv:       true,
+			stmt:          "set tidb_row_format_version=1",
+			varName:       variable.TiDBRowFormatVersion,
+			expectedValue: "1",
+		},
+		{
+			// The global value is changed, so the session value is still different with global.
+			hasPriv:       true,
+			stmt:          "set global tidb_row_format_version=1",
+			varName:       variable.TiDBRowFormatVersion,
+			cleanStmt:     "set global tidb_row_format_version=2",
+			expectedValue: "2",
+		},
+		{
+			// The global value is changed, so the session value is still different with global.
+			hasPriv:   false,
+			stmt:      "set global tidb_row_format_version=1",
+			showErr:   errno.ErrCannotMigrateSession,
+			cleanStmt: "set global tidb_row_format_version=2",
+		},
+	}
+
+	sessionstates.SetupSigningCertForTest(t)
+	store := testkit.CreateMockStore(t)
+	if !sem.IsEnabled() {
+		sem.Enable()
+		defer sem.Disable()
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER u1, u2")
+	tk.MustExec("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* to u1")
+
+	for _, tt := range tests {
+		tk1 := testkit.NewTestKit(t, store)
+		if len(tt.stmt) > 0 {
+			tk1.MustExec(tt.stmt)
+		}
+
+		username := "u2"
+		if tt.hasPriv {
+			username = "u1"
+		}
+		err := tk1.Session().Auth(&auth.UserIdentity{Username: username, Hostname: "%"}, nil, nil, nil)
+		require.NoError(t, err)
+
+		if tt.showErr == 0 {
+			tk2 := testkit.NewTestKit(t, store)
+			err = tk2.Session().Auth(&auth.UserIdentity{Username: username, Hostname: "%"}, nil, nil, nil)
+			require.NoError(t, err)
+			showSessionStatesAndSet(t, tk1, tk2)
+			if len(tt.expectedValue) > 0 {
+				checkStmt := fmt.Sprintf("select @@%s", tt.varName)
+				tk2.MustQuery(checkStmt).Check(testkit.Rows(tt.expectedValue))
+			}
+		} else {
+			err := tk1.QueryToErr("show session_states")
+			errEqualsCode(t, err, tt.showErr)
+		}
+		if len(tt.cleanStmt) > 0 {
+			tk.MustExec(tt.cleanStmt)
+		}
+	}
+}
+
+func TestIssue47665(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
+	originSEM := config.GetGlobalConfig().Security.EnableSEM
+	config.GetGlobalConfig().Security.EnableSEM = true
+	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
+	config.GetGlobalConfig().Security.EnableSEM = originSEM
+	tk.MustExec("set @@global.require_secure_transport = on")
+	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
+}
+
+>>>>>>> 05450665c39 (session/variable: forbid changing @@global.require_secure_transport to 'on' with SEM enabled (#47677)):pkg/sessionctx/sessionstates/session_states_test.go
 func TestSessionCtx(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -30,7 +30,11 @@ go_test(
     ],
     embed = [":sessionstates"],
     flaky = True,
+<<<<<<< HEAD:sessionctx/sessionstates/BUILD.bazel
     shard_count = 2,
+=======
+    shard_count = 16,
+>>>>>>> 05450665c39 (session/variable: forbid changing @@global.require_secure_transport to 'on' with SEM enabled (#47677)):pkg/sessionctx/sessionstates/BUILD.bazel
     deps = [
         "//config",
         "//errno",
