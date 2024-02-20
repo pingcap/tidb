@@ -7368,35 +7368,51 @@ Literal:
 	}
 |	"UNDERSCORE_CHARSET" hexLit
 	{
-		co, err := charset.GetDefaultCollationLegacy($1)
+		cs := strings.ToLower($1)
+		co, err := charset.GetDefaultCollationLegacy(cs)
 		if err != nil {
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, $1, co)
+		expr := ast.NewValueExpr($2, cs, co)
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
 		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
+		}
+
+		val := expr.GetValue().(ast.BinaryLiteral).ToBytes()
+		encoding := charset.FindEncoding($1)
+		if !encoding.IsValid(val) {
+			yylex.AppendError(charset.ErrInvalidCharacterString.GenWithStackByArgs($1, charset.FormatInvalidChars(val)))
+			return 1
 		}
 		$$ = expr
 	}
 |	"UNDERSCORE_CHARSET" bitLit
 	{
-		co, err := charset.GetDefaultCollationLegacy($1)
+		cs := strings.ToLower($1)
+		co, err := charset.GetDefaultCollationLegacy(cs)
 		if err != nil {
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, $1, co)
+		expr := ast.NewValueExpr($2, cs, co)
 		tp := expr.GetType()
 		tp.SetCharset($1)
 		tp.SetCollate(co)
 		tp.AddFlag(mysql.UnderScoreCharsetFlag)
 		if tp.GetCollate() == charset.CollationBin {
 			tp.AddFlag(mysql.BinaryFlag)
+		}
+
+		val := expr.GetValue().(ast.BinaryLiteral).ToBytes()
+		encoding := charset.FindEncoding($1)
+		if !encoding.IsValid(val) {
+			yylex.AppendError(charset.ErrInvalidCharacterString.GenWithStackByArgs($1, charset.FormatInvalidChars(val)))
+			return 1
 		}
 		$$ = expr
 	}

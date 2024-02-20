@@ -13,7 +13,12 @@
 
 package charset
 
-import "bytes"
+import (
+	"bytes"
+	"fmt"
+	"strings"
+	"unicode"
+)
 
 // Make sure all of them implement Encoding interface.
 var (
@@ -156,4 +161,22 @@ func CountValidBytesDecode(e Encoding, src []byte) int {
 		return ok
 	})
 	return nSrc
+}
+
+// FormatInvalidChars formats the invalid string in an easier to understand format in error/warning message
+func FormatInvalidChars(src []byte) string {
+	var sb strings.Builder
+	const maxBytesToShow = 5
+	for i := 0; i < len(src); i++ {
+		if i > maxBytesToShow {
+			sb.WriteString("...")
+			break
+		}
+		if src[i] > unicode.MaxASCII {
+			sb.WriteString(fmt.Sprintf("\\x%X", src[i]))
+		} else {
+			sb.Write([]byte{src[i]})
+		}
+	}
+	return sb.String()
 }
