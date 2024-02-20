@@ -28,7 +28,7 @@ import (
 // And it also requires the hint `SEMI_JOIN_REWRITE` to be set.
 // For example:
 //
-//	select * from t where exists (select * from s where s.a = t.a);
+//	select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ * from s where s.a = t.a);
 //
 // will be rewriten to:
 //
