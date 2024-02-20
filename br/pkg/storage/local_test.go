@@ -238,7 +238,7 @@ func TestLocalFileReadRange(t *testing.T) {
 	require.Equal(t, "23", string(smallBuf[:n]))
 }
 
-func TestWalkDeadSymLink(t *testing.T) {
+func TestWalkBrokenSymLink(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	err := os.Symlink(filepath.Join(dir, "non-existing-file"), filepath.Join(dir, "file-that-should-be-ignored"))
