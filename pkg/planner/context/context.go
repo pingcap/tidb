@@ -16,7 +16,9 @@ package context
 
 import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
@@ -27,8 +29,11 @@ import (
 type PlanContext interface {
 	exprctx.BuildContext
 	contextutil.ValueStoreContext
+	tablelock.TableLockReadContext
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
+	// GetInfoSchema returns the current infoschema
+	GetInfoSchema() infoschema.InfoSchemaMetaVersion
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 	// GetClient gets a kv.Client.

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
@@ -67,6 +68,7 @@ type Context interface {
 	exprctx.EvalContext
 	exprctx.BuildContext
 	planctx.PlanContext
+	tablelock.TableLockContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// RollbackTxn rolls back the current transaction.
@@ -125,20 +127,6 @@ type Context interface {
 	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
-	// AddTableLock adds table lock to the session lock map.
-	AddTableLock([]model.TableLockTpInfo)
-	// ReleaseTableLocks releases table locks in the session lock map.
-	ReleaseTableLocks(locks []model.TableLockTpInfo)
-	// ReleaseTableLockByTableIDs releases table locks in the session lock map by table IDs.
-	ReleaseTableLockByTableIDs(tableIDs []int64)
-	// CheckTableLocked checks the table lock.
-	CheckTableLocked(tblID int64) (bool, model.TableLockType)
-	// GetAllTableLocks gets all table locks table id and db id hold by the session.
-	GetAllTableLocks() []model.TableLockTpInfo
-	// ReleaseAllTableLocks releases all table locks hold by the session.
-	ReleaseAllTableLocks()
-	// HasLockedTables uses to check whether this session locked any tables.
-	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
 	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.

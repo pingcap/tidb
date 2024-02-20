@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lock"
+	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -281,7 +282,7 @@ func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
 }
 
 // CheckTableLock checks the table lock.
-func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
+func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema, vs []visitInfo) error {
 	if !config.TableLockEnabled() {
 		return nil
 	}

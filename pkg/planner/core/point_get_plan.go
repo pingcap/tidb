@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -555,7 +554,7 @@ type PointPlanVal struct {
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
-func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
+func TryFastPlan(ctx PlanContext, node ast.Node) (p Plan) {
 	if checkStableResultMode(ctx) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		return nil
@@ -1269,7 +1268,7 @@ func newPointGetPlan(ctx PlanContext, dbName string, schema *expression.Schema, 
 	return p
 }
 
-func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
+func checkFastPlanPrivilege(ctx PlanContext, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
 	visitInfos := make([]visitInfo, 0, len(checkTypes))
 	for _, checkType := range checkTypes {
@@ -1662,7 +1661,7 @@ func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
 	return false
 }
 
-func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
+func tryUpdatePointPlan(ctx PlanContext, updateStmt *ast.UpdateStmt) Plan {
 	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
 	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
 		return nil
@@ -1697,7 +1696,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	return nil
 }
 
-func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt) Plan {
+func buildPointUpdatePlan(ctx PlanContext, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt) Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.UpdatePriv) != nil {
 		return nil
 	}
@@ -1721,7 +1720,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(tbl.ID)
 	updatePlan.tblID2Table = map[int64]table.Table{
 		tbl.ID: t,
@@ -1790,7 +1789,7 @@ func buildOrderedList(ctx PlanContext, plan Plan, list []*ast.Assignment,
 	return orderedList, allAssignmentsAreConstant
 }
 
-func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
+func tryDeletePointPlan(ctx PlanContext, delStmt *ast.DeleteStmt) Plan {
 	if delStmt.IsMultiTable {
 		return nil
 	}
@@ -1821,7 +1820,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	return nil
 }
 
-func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo) Plan {
+func buildPointDeletePlan(ctx PlanContext, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo) Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
@@ -1838,7 +1837,7 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		},
 	}.Init(ctx)
 	var err error
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(tbl.ID)
 	if t != nil {
 		tblID2Table := map[int64]table.Table{tbl.ID: t}
@@ -1874,7 +1873,7 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
+func buildHandleCols(ctx PlanContext, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {

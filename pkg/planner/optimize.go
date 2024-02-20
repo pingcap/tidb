@@ -373,7 +373,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 // OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
 // Compare to Optimize, OptimizeForForeignKeyCascade only build plan by StmtNode,
 // doesn't consider plan cache and plan binding, also doesn't do privilege check.
-func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
+func OptimizeForForeignKeyCascade(ctx context.Context, sctx pctx.PlanContext, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
@@ -388,7 +388,7 @@ func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, 
 	return p, nil
 }
 
-func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
+func allowInReadOnlyMode(sctx pctx.PlanContext, node ast.Node) (bool, error) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
 		return true, nil
@@ -437,7 +437,7 @@ var planBuilderPool = sync.Pool{
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
 
-func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, float64, error) {
+func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
 		// only count the optif smization qor SQL withl,pecified text
 		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
@@ -559,7 +559,7 @@ func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node ast.Node,
 	return p, nil
 }
 
-func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, binding bindinfo.Binding) {
+func handleInvalidBinding(ctx context.Context, sctx pctx.PlanContext, level string, binding bindinfo.Binding) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	err := sessionHandle.DropSessionBinding(binding.SQLDigest)
 	if err != nil {
