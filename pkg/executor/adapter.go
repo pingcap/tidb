@@ -535,7 +535,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, digest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
@@ -1572,6 +1572,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+	ruDetails := util.NewRUDetails()
+	if ruDetailsVal := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
+		ruDetails = ruDetailsVal.(*util.RUDetails)
+	}
+
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
@@ -1633,6 +1638,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
+		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
+		RRU:               ruDetails.RRU(),
+		WRU:               ruDetails.WRU(),
+		WaitRUDuration:    ruDetails.RUWaitDuration(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1906,6 +1915,10 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+	var ruDetail *util.RUDetails
+	if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+		ruDetail = ruDetailRaw.(*util.RUDetails)
+	}
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
 		if execDetail.BackoffSleep == nil {
@@ -1961,6 +1974,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		Prepared:            a.isPreparedStmt,
 		KeyspaceName:        keyspaceName,
 		KeyspaceID:          keyspaceID,
+		RUDetail:            ruDetail,
+		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

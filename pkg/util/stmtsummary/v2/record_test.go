@@ -45,6 +45,7 @@ func TestStmtRecord(t *testing.T) {
 	require.Zero(t, record1.ExecCount)
 	require.Zero(t, record1.SumLatency)
 	require.Zero(t, record1.MaxLatency)
+	require.Equal(t, info.ResourceGroupName, record1.ResourceGroupName)
 
 	record1.Add(info)
 	require.Len(t, record1.AuthUsers, 1)
@@ -53,6 +54,12 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalLatency, record1.SumLatency)
 	require.Equal(t, info.TotalLatency, record1.MaxLatency)
 	require.Equal(t, info.TotalLatency, record1.MinLatency)
+	require.Equal(t, info.RUDetail.RRU(), record1.MaxRRU)
+	require.Equal(t, info.RUDetail.RRU(), record1.SumRRU)
+	require.Equal(t, info.RUDetail.WRU(), record1.MaxWRU)
+	require.Equal(t, info.RUDetail.WRU(), record1.SumWRU)
+	require.Equal(t, info.RUDetail.RUWaitDuration(), record1.MaxRUWaitDuration)
+	require.Equal(t, info.RUDetail.RUWaitDuration(), record1.SumRUWaitDuration)
 
 	record2 := NewStmtRecord(info)
 	record2.Add(info)
@@ -63,4 +70,7 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalLatency*2, record2.SumLatency)
 	require.Equal(t, info.TotalLatency, record2.MaxLatency)
 	require.Equal(t, info.TotalLatency, record2.MinLatency)
+	require.Equal(t, info.RUDetail.RRU()*2, record2.SumRRU)
+	require.Equal(t, info.RUDetail.WRU()*2, record2.SumWRU)
+	require.Equal(t, info.RUDetail.RUWaitDuration()*2, record2.SumRUWaitDuration)
 }
