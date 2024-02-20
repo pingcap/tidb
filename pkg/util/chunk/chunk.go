@@ -441,6 +441,32 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 	dst.length++
 }
 
+func getBytesFromPtr(ptr unsafe.Pointer, len int, cap int) []byte {
+	var sl = struct {
+		addr unsafe.Pointer
+		len  int
+		cap  int
+	}{ptr, len, cap}
+	return *(*[]byte)(unsafe.Pointer(&sl))
+}
+
+// AppendCellFromRawData appends the cell from raw data
+func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer) unsafe.Pointer {
+	if dst.isFixed() {
+		elemLen := len(dst.elemBuf)
+		dst.data = append(dst.data, getBytesFromPtr(rowData, elemLen, elemLen)...)
+		rowData = unsafe.Add(rowData, elemLen)
+	} else {
+		elemLen := *(*uint64)(rowData)
+		if elemLen > 0 {
+			dst.data = append(dst.data, getBytesFromPtr(unsafe.Add(rowData, 8), int(elemLen), int(elemLen))...)
+		}
+		dst.offsets = append(dst.offsets, int64(len(dst.data)))
+		rowData = unsafe.Add(rowData, elemLen+8)
+	}
+	return rowData
+}
+
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
