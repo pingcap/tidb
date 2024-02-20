@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/pingcap/errors"
@@ -27,10 +28,12 @@ import (
 const (
 	pollingPendingSnapshotInterval = 30 * time.Second
 	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
+	FsrApiSnapshotsThreshold       = 10
 )
 
 type EC2Session struct {
-	ec2 ec2iface.EC2API
+	ec2              ec2iface.EC2API
+	cloudwatchClient *cloudwatch.CloudWatch
 	// aws operation concurrency
 	concurrency uint
 }
@@ -50,7 +53,8 @@ func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 		return nil, errors.Trace(err)
 	}
 	ec2Session := ec2.New(sess)
-	return &EC2Session{ec2: ec2Session, concurrency: concurrency}, nil
+	cloudwatchClient := cloudwatch.New(sess)
+	return &EC2Session{ec2: ec2Session, cloudwatchClient: cloudwatchClient, concurrency: concurrency}, nil
 }
 
 // CreateSnapshots is the mainly steps to control the data volume snapshots.
@@ -291,8 +295,6 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 	log.Info("delete snapshot end", zap.Int("need-to-del", len(snapIDMap)), zap.Int32("deleted", deletedCnt.Load()))
 }
 
-<<<<<<< HEAD
-=======
 // EnableDataFSR enables FSR for data volume snapshots
 func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) (map[string][]*string, error) {
 	snapshotsIDsMap := fetchTargetSnapshots(meta, targetAZ)
@@ -345,7 +347,6 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		return errors.Errorf("specified snapshot [%s] is not found", *snapShotIDs[0])
 	}
 
-	// Wait that all snapshot has enough fsr credit balance
 	log.Info("Start check and wait all snapshots have enough fsr credit balance")
 
 	startIdx := 0
@@ -531,11 +532,10 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[s
 	return sourceSnapshotIDs
 }
 
->>>>>>> 7ba2330394b (ebs br: new snapshot tagging (#50548))
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string) (map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, encrypted bool, targetAZ string) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
 	}
@@ -545,6 +545,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	if throughput > 0 {
 		template.SetThroughput(throughput)
 	}
+	template.Encrypted = &encrypted
 
 	newVolumeIDMap := make(map[string]string)
 	var mutex sync.Mutex
@@ -616,7 +617,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	return newVolumeIDMap, eg.Wait()
 }
 
-func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress) (int64, error) {
+func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress, fsrEnabledRequired bool) (int64, error) {
 	pendingVolumes := make([]*string, 0, len(volumeIDMap))
 	for oldVolID := range volumeIDMap {
 		newVolumeID := volumeIDMap[oldVolID]
@@ -628,7 +629,7 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 	for len(pendingVolumes) > 0 {
 		// check every 5 seconds
 		time.Sleep(5 * time.Second)
-		log.Info("check pending snapshots", zap.Int("count", len(pendingVolumes)))
+		log.Info("check pending volumes", zap.Int("count", len(pendingVolumes)))
 		resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{
 			VolumeIds: pendingVolumes,
 		})
@@ -636,7 +637,11 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 			return 0, errors.Trace(err)
 		}
 
-		createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(resp)
+		createdVolumeSize, unfinishedVolumes, err := e.HandleDescribeVolumesResponse(resp, fsrEnabledRequired)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
 		progress.IncBy(int64(len(pendingVolumes) - len(unfinishedVolumes)))
 		totalVolumeSize += createdVolumeSize
 		pendingVolumes = unfinishedVolumes
@@ -679,12 +684,16 @@ func ec2Tag(key, val string) *ec2.Tag {
 	return &ec2.Tag{Key: &key, Value: &val}
 }
 
-func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput) (int64, []*string) {
+func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, fsrEnabledRequired bool) (int64, []*string, error) {
 	totalVolumeSize := int64(0)
 
 	var unfinishedVolumes []*string
 	for _, volume := range resp.Volumes {
 		if *volume.State == ec2.VolumeStateAvailable {
+			if fsrEnabledRequired && volume.FastRestored != nil && !*volume.FastRestored {
+				log.Error("snapshot fsr is not enabled for the volume", zap.String("volume", *volume.SnapshotId))
+				return 0, nil, errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", *volume.SnapshotId, *volume.VolumeId)
+			}
 			log.Info("volume is available", zap.String("id", *volume.VolumeId))
 			totalVolumeSize += *volume.Size
 		} else {
@@ -693,5 +702,5 @@ func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutp
 		}
 	}
 
-	return totalVolumeSize, unfinishedVolumes
+	return totalVolumeSize, unfinishedVolumes, nil
 }

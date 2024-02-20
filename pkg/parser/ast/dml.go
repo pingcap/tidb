@@ -1557,6 +1557,8 @@ type SetOprSelectList struct {
 	With             *WithClause
 	AfterSetOperator *SetOprType
 	Selects          []Node
+	Limit            *Limit
+	OrderBy          *OrderByClause
 }
 
 // Restore implements Node interface.
@@ -1567,6 +1569,7 @@ func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
 	}
+
 	for i, stmt := range n.Selects {
 		switch selectStmt := stmt.(type) {
 		case *SelectStmt:
@@ -1586,6 +1589,20 @@ func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 				return err
 			}
 			ctx.WritePlain(")")
+		}
+	}
+
+	if n.OrderBy != nil {
+		ctx.WritePlain(" ")
+		if err := n.OrderBy.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.OrderBy")
+		}
+	}
+
+	if n.Limit != nil {
+		ctx.WritePlain(" ")
+		if err := n.Limit.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.Limit")
 		}
 	}
 	return nil
@@ -1611,6 +1628,20 @@ func (n *SetOprSelectList) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Selects[i] = node
+	}
+	if n.OrderBy != nil {
+		node, ok := n.OrderBy.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OrderBy = node.(*OrderByClause)
+	}
+	if n.Limit != nil {
+		node, ok := n.Limit.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Limit = node.(*Limit)
 	}
 	return v.Leave(n)
 }

@@ -1574,11 +1574,6 @@ func (local *Backend) ImportEngine(
 	return err
 }
 
-// GetRegionSplitSizeKeys gets the region split size and keys from PD.
-func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
-	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
-}
-
 // expose these variables to unit test.
 var (
 	testJobToWorkerCh = make(chan *regionJob)
