@@ -46,9 +46,37 @@ import (
 type Column struct {
 	*model.ColumnInfo
 	// If this column is a generated column, the expression will be stored here.
-	GeneratedExpr ast.ExprNode
+	GeneratedExpr *ClonableExprNode
 	// If this column has default expr value, this expression will be stored here.
 	DefaultExpr ast.ExprNode
+}
+
+// ClonableExprNode is a wrapper for ast.ExprNode.
+type ClonableExprNode struct {
+	ctor     func() ast.ExprNode
+	internal ast.ExprNode
+}
+
+// NewClonableExprNode creates a ClonableExprNode.
+func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *ClonableExprNode {
+	return &ClonableExprNode{
+		ctor:     ctor,
+		internal: internal,
+	}
+}
+
+// Clone makes a "copy" of internal ast.ExprNode by reconstructing it.
+func (n *ClonableExprNode) Clone() ast.ExprNode {
+	if n.ctor == nil {
+		return n.internal
+	}
+	return n.ctor()
+}
+
+// Internal returns the reference of the internal ast.ExprNode.
+// Note: only use this method when you are sure that the internal ast.ExprNode is not modified concurrently.
+func (n *ClonableExprNode) Internal() ast.ExprNode {
+	return n.internal
 }
 
 // String implements fmt.Stringer interface.
