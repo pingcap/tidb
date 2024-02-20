@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -127,9 +128,9 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
+				dsp.d.store.(kv.StorageWithPD),
 				taskHandle,
 				gTask,
-				job.ID,
 				backfillMeta.CloudStorageURI,
 				prevStep,
 				logger)
@@ -334,9 +335,9 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
+	store kv.StorageWithPD,
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
-	jobID int64,
 	cloudStorageURI string,
 	step proto.Step,
 	logger *zap.Logger,
@@ -354,7 +355,7 @@ func generateGlobalSortIngestPlan(
 		return nil, err
 	}
 	splitter, err := getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles, logger)
+		ctx, store, cloudStorageURI, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -462,8 +463,8 @@ func generateMergePlan(
 
 func getRangeSplitter(
 	ctx context.Context,
+	store kv.StorageWithPD,
 	cloudStorageURI string,
-	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
 	dataFiles, statFiles []string,
@@ -480,21 +481,23 @@ func getRangeSplitter(
 
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
-	bcCtx, ok := ingest.LitBackCtxMgr.Load(jobID)
-	if !ok {
-		return nil, errors.Errorf("backend context not found")
+	var maxSizePerRange = int64(config.SplitRegionSize)
+	var maxKeysPerRange = int64(config.SplitRegionKeys)
+	if store != nil {
+		pdCli := store.GetPDClient()
+		tls, err := ingest.NewDDLTLS()
+		if err == nil {
+			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+			if err == nil {
+				maxSizePerRange = max(maxSizePerRange, size)
+				maxKeysPerRange = max(maxKeysPerRange, keys)
+			} else {
+				logger.Warn("fail to get region split keys and size", zap.Error(err))
+			}
+		} else {
+			logger.Warn("fail to get region split keys and size", zap.Error(err))
+		}
 	}
-
-	local := bcCtx.GetLocalBackend()
-	if local == nil {
-		return nil, errors.Errorf("local backend not found")
-	}
-	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
-	if err != nil {
-		logger.Warn("fail to get region split keys and size", zap.Error(err))
-	}
-	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
-	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
 	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)

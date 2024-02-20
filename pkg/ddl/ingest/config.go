@@ -17,11 +17,14 @@ package ingest
 import (
 	"context"
 	"math"
+	"net"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -78,6 +81,19 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool) (
 	}
 
 	return c, err
+}
+
+// NewDDLTLS creates a common.TLS from the tidb config for DDL.
+func NewDDLTLS() (*common.TLS, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	return common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
 }
 
 var (

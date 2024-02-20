@@ -64,23 +64,23 @@ type jobType int
 
 func (t jobType) String() string {
 	switch t {
-	case general:
+	case jobTypeGeneral:
 		return "general"
-	case reorg:
+	case jobTypeReorg:
 		return "reorg"
 	}
 	return "unknown job type: " + strconv.Itoa(int(t))
 }
 
 const (
-	general jobType = iota
-	reorg
+	jobTypeGeneral jobType = iota
+	jobTypeReorg
 )
 
 func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
 	not := "not"
 	label := "get_job_general"
-	if tp == reorg {
+	if tp == jobTypeReorg {
 		not = ""
 		label = "get_job_reorg"
 	}
@@ -200,7 +200,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 }
 
 func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
-	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
+	return d.getJob(sess, jobTypeGeneral, func(job *model.Job) (bool, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
@@ -220,7 +220,7 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 }
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
-	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
+	return d.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
