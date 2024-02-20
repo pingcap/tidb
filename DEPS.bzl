@@ -3810,19 +3810,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_iancoleman_strcase",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/iancoleman/strcase",
-        sha256 = "cb5027fec91d36426f0978a6c42ab52d8735fa3e1711be0127feda70a9a9fd05",
-        strip_prefix = "github.com/iancoleman/strcase@v0.2.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/iancoleman/strcase/com_github_iancoleman_strcase-v0.2.0.zip",
-            "http://ats.apps.svc/gomod/github.com/iancoleman/strcase/com_github_iancoleman_strcase-v0.2.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/iancoleman/strcase/com_github_iancoleman_strcase-v0.2.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/iancoleman/strcase/com_github_iancoleman_strcase-v0.2.0.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_ianlancetaylor_demangle",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ianlancetaylor/demangle",
@@ -4041,19 +4028,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/jedib0t/go-pretty/v6/com_github_jedib0t_go_pretty_v6-v6.2.2.zip",
             "https://cache.hawkingrei.com/gomod/github.com/jedib0t/go-pretty/v6/com_github_jedib0t_go_pretty_v6-v6.2.2.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jedib0t/go-pretty/v6/com_github_jedib0t_go_pretty_v6-v6.2.2.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_jeffail_gabs_v2",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/Jeffail/gabs/v2",
-        sha256 = "3ddec4d5488c8505fa384ae20429c0735eda1ddbd0d15beeb0a5747ebded63c5",
-        strip_prefix = "github.com/Jeffail/gabs/v2@v2.5.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/Jeffail/gabs/v2/com_github_jeffail_gabs_v2-v2.5.1.zip",
-            "http://ats.apps.svc/gomod/github.com/Jeffail/gabs/v2/com_github_jeffail_gabs_v2-v2.5.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/Jeffail/gabs/v2/com_github_jeffail_gabs_v2-v2.5.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/Jeffail/gabs/v2/com_github_jeffail_gabs_v2-v2.5.1.zip",
         ],
     )
     go_repository(

@@ -1476,7 +1476,7 @@ func init() {
 			return nil, errors.New("plan context should be sessionctx.Context to EvalSubqueryFirstRow")
 		}
 
-		e := newExecutorBuilder(sctx, is, nil)
+		e := newExecutorBuilder(sctx, is)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
