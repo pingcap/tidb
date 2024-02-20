@@ -775,11 +775,7 @@ insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),
 insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
 SELECT /*+ stream_agg()*/ count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;
 count(`t`.`c`)
-32
-32
-64
-32
-10
+170
 SELECT  count(`t`.`c`) FROM (`s`) JOIN `t`  GROUP BY `t`.`c`;
 count(`t`.`c`)
 170
