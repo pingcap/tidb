@@ -17,8 +17,6 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"strings"
-	"unicode"
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -177,8 +175,14 @@ func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row
 	valBytes := hack.Slice(val)
 	ret, err := enc.Transform(nil, valBytes, charset.OpDecode)
 	if err != nil {
-		strHex := formatInvalidChars(valBytes)
-		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+		strHex := charset.FormatInvalidChars(valBytes)
+		err := errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+
+		tc := typeCtx(ctx)
+		tc.AppendWarning(err)
+		if sqlMode(ctx).HasStrictMode() {
+			return "", true, nil
+		}
 	}
 	return string(ret), false, err
 }
@@ -200,6 +204,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 	enc := charset.FindEncoding(b.tp.GetCharset())
 	encodedBuf := &bytes.Buffer{}
 	result.ReserveString(n)
+	hasStrictMode := sqlMode(ctx).HasStrictMode()
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -208,8 +213,15 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 		str := buf.GetBytes(i)
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
-			strHex := formatInvalidChars(str)
-			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+			strHex := charset.FormatInvalidChars(str)
+			err := errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+
+			tc := typeCtx(ctx)
+			tc.AppendWarning(err)
+			if hasStrictMode {
+				result.AppendNull()
+				continue
+			}
 		}
 		result.AppendBytes(val)
 	}
@@ -338,21 +350,4 @@ func isLegacyCharset(chs string) bool {
 		return true
 	}
 	return false
-}
-
-func formatInvalidChars(src []byte) string {
-	var sb strings.Builder
-	const maxBytesToShow = 5
-	for i := 0; i < len(src); i++ {
-		if i > maxBytesToShow {
-			sb.WriteString("...")
-			break
-		}
-		if src[i] > unicode.MaxASCII {
-			sb.WriteString(fmt.Sprintf("\\x%X", src[i]))
-		} else {
-			sb.Write([]byte{src[i]})
-		}
-	}
-	return sb.String()
 }

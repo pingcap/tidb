@@ -297,6 +297,11 @@ func (b BinaryLiteral) ToString() string {
 	return string(b)
 }
 
+// ToBytes returns the bytes representation for the literal.
+func (b BinaryLiteral) ToBytes() []byte {
+	return b
+}
+
 // ToBitLiteralString returns the bit literal representation for the literal.
 func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
 	if len(b) == 0 {
@@ -369,6 +374,11 @@ func (b BitLiteral) ToString() string {
 	return BinaryLiteral(b).ToString()
 }
 
+// ToBytes implement ast.BinaryLiteral interface
+func (b BitLiteral) ToBytes() []byte {
+	return BinaryLiteral(b).ToBytes()
+}
+
 // ParseHexStr parses hexadecimal string literal.
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func ParseHexStr(s string) (BinaryLiteral, error) {
@@ -415,6 +425,11 @@ func NewHexLiteral(s string) (HexLiteral, error) {
 // ToString implement ast.BinaryLiteral interface
 func (b HexLiteral) ToString() string {
 	return BinaryLiteral(b).ToString()
+}
+
+// ToBytes implement ast.BinaryLiteral interface
+func (b HexLiteral) ToBytes() []byte {
+	return BinaryLiteral(b).ToBytes()
 }
 
 // SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldType.

@@ -3837,6 +3837,7 @@ type TextString struct {
 
 type BinaryLiteral interface {
 	ToString() string
+	ToBytes() []byte
 }
 
 // NewDecimal creates a types.Decimal value, it's provided by parser driver.
