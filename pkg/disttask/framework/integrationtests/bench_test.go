@@ -38,7 +38,7 @@ import (
 
 var (
 	maxConcurrentTask = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
-	waitDuration      = flag.Duration("task-wait-duration", 5*time.Minute, "task wait duration")
+	waitDuration      = flag.Duration("task-wait-duration", time.Minute, "task wait duration")
 	taskMetaSize      = flag.Int("task-meta-size", 1<<10, "task meta size")
 )
 
@@ -86,7 +86,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	b.Logf("taks wait duration: %s", *waitDuration)
 	b.Logf("task meta size: %d", *taskMetaSize)
 
-	c := testutil.NewTestDXFContext(b, 1, 64)
+	c := testutil.NewTestDXFContext(b, 1, proto.MaxConcurrentTask)
 
 	tk := testkit.NewTestKit(c.T, c.Store)
 	tk.MustExec("delete from mysql.tidb_global_task")
@@ -132,7 +132,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	})
 
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 64; i++ {
+	for i := 0; i < proto.MaxConcurrentTask; i++ {
 		taskKey := fmt.Sprintf("task-%d", i)
 		taskMeta := make([]byte, *taskMetaSize)
 		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
