@@ -39,7 +39,7 @@ func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expect
 }
 
 func TestRoleBasic(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 3)
+	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)

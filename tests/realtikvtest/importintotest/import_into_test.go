@@ -769,7 +769,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	taskManager := storage.NewTaskManager(pool)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	subtasks, err := taskManager.GetAllSubtasksByStepAndState(ctx, storage.TestLastTaskID.Load(), proto.ImportStepImport, proto.SubtaskStateSucceed)
+	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, storage.TestLastTaskID.Load(), proto.ImportStepImport)
 	s.NoError(err)
 	s.Len(subtasks, 1)
 	serverInfo, err := infosync.GetServerInfo()

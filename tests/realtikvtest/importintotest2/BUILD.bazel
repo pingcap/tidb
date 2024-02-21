@@ -13,6 +13,7 @@ go_test(
     deps = [
         "//br/pkg/lightning/common",
         "//pkg/config",
+        "//pkg/disttask/framework/testutil",
         "//pkg/domain",
         "//pkg/executor/importer",
         "//pkg/infoschema",
