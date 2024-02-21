@@ -17,6 +17,7 @@ package sortexec
 import (
 	"container/heap"
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -37,7 +38,7 @@ type SortExec struct {
 	exec.BaseExecutor
 
 	ByItems    []*plannerutil.ByItems
-	fetched    bool
+	fetched    atomic.Bool
 	ExecSchema *expression.Schema
 
 	// keyColumns is the column index of the by items.
@@ -96,10 +97,14 @@ func (e *SortExec) Close() error {
 			partition.close()
 		}
 	} else {
-		for {
-			_, ok := <-e.Parallel.chunkChannel
-			if !ok {
-				break
+		if e.fetched.CompareAndSwap(false, true) {
+			close(e.Parallel.resultChannel)
+		} else {
+			for {
+				_, ok := <-e.Parallel.chunkChannel
+				if !ok {
+					break
+				}
 			}
 		}
 	}
@@ -113,7 +118,7 @@ func (e *SortExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
-	e.fetched = false
+	e.fetched.Store(false)
 	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
 	e.finishCh = make(chan struct{}, 1)
 
@@ -210,14 +215,13 @@ func (e *SortExec) Open(ctx context.Context) error {
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if !e.fetched {
+	if e.fetched.CompareAndSwap(false, true) {
 		e.initCompareFuncs()
 		e.buildKeyColumns()
 		err := e.fetchChunks(ctx)
 		if err != nil {
 			return err
 		}
-		e.fetched = true
 	}
 
 	if e.IsUnparallel {

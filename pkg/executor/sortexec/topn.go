@@ -110,7 +110,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.fetched = false
+	e.fetched.Store(false)
 	e.Unparallel.Idx = 0
 
 	return exec.Open(ctx, e.Children(0))
@@ -119,7 +119,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if !e.fetched {
+	if e.fetched.CompareAndSwap(false, true) {
 		e.totalLimit = e.Limit.Offset + e.Limit.Count
 		e.Unparallel.Idx = int(e.Limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
@@ -130,7 +130,6 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.fetched = true
 	}
 	if e.Unparallel.Idx >= len(e.rowPtrs) {
 		return nil
