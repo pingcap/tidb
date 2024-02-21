@@ -28,13 +28,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
 // It works as a in memory cache and doesn't handle any schema change.
 // InfoSchema is read-only, and the returned value is a copy.
-// TODO: add more methods to retrieve tables and columns.
 type InfoSchema interface {
 	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
 	SchemaExists(schema model.CIStr) bool
@@ -49,10 +49,10 @@ type InfoSchema interface {
 	Misc 
 }
 
+// Misc contains the methods that are not closely related to InfoSchema.
 type Misc interface {
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
-	// Clone() (result []*model.DBInfo)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
 	// AllPlacementBundles is used to get all placement bundles
@@ -66,6 +66,8 @@ type Misc interface {
 	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
 	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
+
+var _ Misc = &infoSchemaMisc{}
 
 type sortedTables []table.Table
 
@@ -85,6 +87,17 @@ type schemaTables struct {
 }
 
 const bucketCount = 512
+
+type infoSchema struct {
+	infoSchemaMisc
+	schemaMap map[string]*schemaTables
+
+	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
+	sortedTablesBuckets []sortedTables
+
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
+	schemaMetaVersion int64
+}
 
 type infoSchemaMisc struct {
 	// ruleBundleMap stores all placement rules
@@ -106,21 +119,6 @@ type infoSchemaMisc struct {
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
 }
 
-type infoSchema struct {
-	infoSchemaMisc
-
-	schemaMap map[string]*schemaTables
-
-	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
-	sortedTablesBuckets []sortedTables
-
-
-	// schemaMetaVersion is the version of schema, and we should check version when change schema.
-	schemaMetaVersion int64
-
-	infoData *InfoSchemaData
-}
-
 // SchemaAndTableName contains the lower-case schema name and table name.
 type SchemaAndTableName struct {
 	schema string
@@ -128,7 +126,7 @@ type SchemaAndTableName struct {
 }
 
 // MockInfoSchema only serves for test.
-func MockInfoSchema(tbList []model.TableInfoEx) InfoSchema {
+func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
 	result.policyMap = make(map[string]*model.PolicyInfo)
@@ -143,7 +141,7 @@ func MockInfoSchema(tbList []model.TableInfoEx) InfoSchema {
 	result.schemaMap["test"] = tableNames
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
-		tbl := table.MockTableFromMeta(tb.TableInfo)
+		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
@@ -157,7 +155,7 @@ func MockInfoSchema(tbList []model.TableInfoEx) InfoSchema {
 }
 
 // MockInfoSchemaWithSchemaVer only serves for test.
-func MockInfoSchemaWithSchemaVer(tbList []model.TableInfoEx, schemaVer int64) InfoSchema {
+func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
 	result.policyMap = make(map[string]*model.PolicyInfo)
@@ -172,7 +170,7 @@ func MockInfoSchemaWithSchemaVer(tbList []model.TableInfoEx, schemaVer int64) In
 	result.schemaMap["test"] = tableNames
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
-		tbl := table.MockTableFromMeta(tb.TableInfo)
+		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
@@ -288,7 +286,8 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-func  AllocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
+// allocByID returns the Allocators of a table.
+func allocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return autoid.Allocators{}, false
@@ -347,13 +346,6 @@ func (is *infoSchemaMisc) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
 }
 
-func (is *infoSchema) Clone() (result []*model.DBInfo) {
-	for _, v := range is.schemaMap {
-		result = append(result, v.dbInfo.Clone())
-	}
-	return
-}
-
 // GetSequenceByName gets the sequence by name.
 func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 	tbl, err := is.TableByName(schema, sequence)
@@ -369,11 +361,11 @@ func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.Sequen
 func init() {
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
-	infoSchemaTables := make([]model.TableInfoEx, 0, len(tableNameToColumns))
+	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
 		tableInfo.DBID = dbID
-		infoSchemaTables = append(infoSchemaTables, model.TableInfoEx{TableInfo:tableInfo})
+		infoSchemaTables = append(infoSchemaTables, tableInfo)
 		var ok bool
 		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
 		if !ok {
@@ -396,7 +388,7 @@ func init() {
 	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
-	mock.MockInfoschema = func(tbList []model.TableInfoEx) sessionctx.InfoschemaMetaVersion {
+	mock.MockInfoschema = func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion {
 		return MockInfoSchema(tbList)
 	}
 }
@@ -462,31 +454,31 @@ func (is *infoSchemaMisc) AllPlacementBundles() []*placement.Bundle {
 	return bundles
 }
 
-func (is *infoSchema) setResourceGroup(resourceGroup *model.ResourceGroupInfo) {
+func (is *infoSchemaMisc) setResourceGroup(resourceGroup *model.ResourceGroupInfo) {
 	is.resourceGroupMutex.Lock()
 	defer is.resourceGroupMutex.Unlock()
 	is.resourceGroupMap[resourceGroup.Name.L] = resourceGroup
 }
 
-func (is *infoSchema) deleteResourceGroup(name string) {
+func (is *infoSchemaMisc) deleteResourceGroup(name string) {
 	is.resourceGroupMutex.Lock()
 	defer is.resourceGroupMutex.Unlock()
 	delete(is.resourceGroupMap, name)
 }
 
-func (is *infoSchema) setPolicy(policy *model.PolicyInfo) {
+func (is *infoSchemaMisc) setPolicy(policy *model.PolicyInfo) {
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
 	is.policyMap[policy.Name.L] = policy
 }
 
-func (is *infoSchema) deletePolicy(name string) {
+func (is *infoSchemaMisc) deletePolicy(name string) {
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
 	delete(is.policyMap, name)
 }
 
-func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchemaMisc) addReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -526,7 +518,7 @@ func (is *infoSchema) addReferredForeignKeys(schema model.CIStr, tbInfo *model.T
 	}
 }
 
-func (is *infoSchema) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
+func (is *infoSchemaMisc) deleteReferredForeignKeys(schema model.CIStr, tbInfo *model.TableInfo) {
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
 			continue
@@ -603,6 +595,7 @@ func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	if _, ok := is.idx2table[tblMeta.ID]; ok {
 		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
 	}
+	intest.Assert(db.ID == tbl.Meta().DBID)
 
 	schemaTables.tables[tblMeta.Name.L] = tbl
 	is.idx2table[tblMeta.ID] = tbl

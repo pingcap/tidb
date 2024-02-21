@@ -118,7 +118,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
-		tblInfo, _, err = t.GetTable(job.SchemaID, job.TableID)
+		tblInfo, err = t.GetTable(job.SchemaID, job.TableID)
 		if err != nil {
 			return ver, err
 		}
@@ -486,7 +486,7 @@ func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
 			ver = sub.SchemaVer
 		}
 	}
-	tblInfo, _, err := t.GetTable(job.SchemaID, job.TableID)
+	tblInfo, err := t.GetTable(job.SchemaID, job.TableID)
 	if err != nil {
 		return 0, err
 	}

@@ -205,7 +205,7 @@ type mdlCheckTableInfo struct {
 	mu         sync.Mutex
 	newestVer  int64
 	jobsVerMap map[int64]int64
-	jobsIdsMap map[int64]string
+	jobsIDsMap map[int64]string
 }
 
 // InfoCache export for test.
@@ -410,18 +410,18 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
 		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
 			for _, tbInfo := range tables {
-				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo.TableInfo)
+				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo)
 			}
 		}
-		di.Tables = make([]model.TableInfoEx, 0, len(tables))
+		di.Tables = make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
 			if tbl.State != model.StatePublic {
 				// schema is not public, can't be used outside.
 				continue
 			}
-			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl.TableInfo)
+			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check whether the table is in repair mode.
-			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl.Raw, tbl.TableInfo) {
+			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
 				continue
 			}
 			di.Tables = append(di.Tables, tbl)
@@ -796,10 +796,10 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 
 	do.mdlCheckTableInfo.newestVer = domainSchemaVer
 	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
-	do.mdlCheckTableInfo.jobsIdsMap = make(map[int64]string, len(rows))
+	do.mdlCheckTableInfo.jobsIDsMap = make(map[int64]string, len(rows))
 	for i := 0; i < len(rows); i++ {
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
-		do.mdlCheckTableInfo.jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
+		do.mdlCheckTableInfo.jobsIDsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
 }
 
@@ -840,12 +840,12 @@ func (do *Domain) mdlCheckLoop() {
 		}
 
 		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
-		jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
+		jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
 		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
 			jobsVerMap[k] = v
 		}
-		for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
-			jobsIdsMap[k] = v
+		for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
+			jobsIDsMap[k] = v
 		}
 		do.mdlCheckTableInfo.mu.Unlock()
 
@@ -855,7 +855,7 @@ func (do *Domain) mdlCheckLoop() {
 		if sm == nil {
 			logutil.BgLogger().Info("session manager is nil")
 		} else {
-			sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
+			sm.CheckOldRunningTxn(jobsVerMap, jobsIDsMap)
 		}
 
 		if len(jobsVerMap) == jobNeedToCheckCnt {
@@ -1079,7 +1079,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
-			jobsIdsMap: make(map[int64]string),
+			jobsIDsMap: make(map[int64]string),
 		},
 		mdlCheckCh: make(chan struct{}),
 	}
@@ -1423,13 +1423,13 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	if err != nil {
 		return err
 	}
-	svrIdsInThisZone := make([]string, 0)
+	svrIDsInThisZone := make([]string, 0)
 	for _, s := range servers {
 		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
 			if _, ok := storeZones[v]; ok {
 				storeZones[v]++
 				if v == zone {
-					svrIdsInThisZone = append(svrIdsInThisZone, s.ID)
+					svrIDsInThisZone = append(svrIDsInThisZone, s.ID)
 				}
 			}
 		}
@@ -1443,13 +1443,13 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	// sort tidb in the same AZ by ID and disable the tidb with bigger ID
 	// because ID is unchangeable, so this is a simple and stable algorithm to select
 	// some instances across all tidb servers.
-	if enabledCount < len(svrIdsInThisZone) {
-		sort.Slice(svrIdsInThisZone, func(i, j int) bool {
-			return strings.Compare(svrIdsInThisZone[i], svrIdsInThisZone[j]) < 0
+	if enabledCount < len(svrIDsInThisZone) {
+		sort.Slice(svrIDsInThisZone, func(i, j int) bool {
+			return strings.Compare(svrIDsInThisZone[i], svrIDsInThisZone[j]) < 0
 		})
 	}
 	enabled := true
-	for _, s := range svrIdsInThisZone[enabledCount:] {
+	for _, s := range svrIDsInThisZone[enabledCount:] {
 		if s == serverInfo.ID {
 			enabled = false
 			break

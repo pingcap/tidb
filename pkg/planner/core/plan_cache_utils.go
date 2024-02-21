@@ -562,7 +562,7 @@ func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool 
 	return true
 }
 
-func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCache(sctx PlanContext, path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
 

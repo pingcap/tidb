@@ -412,7 +412,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 func (*Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
 	for _, db := range allSchemas {
 		for _, tbl := range db.Tables {
-			if f := findRangeInTable(hotRange, db, tbl.TableInfo); f != nil {
+			if f := findRangeInTable(hotRange, db, tbl); f != nil {
 				return f
 			}
 		}
@@ -723,18 +723,18 @@ func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWit
 		for _, table := range db.Tables {
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table.TableInfo, &table.Partition.Definitions[i], nil))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))
 				}
 			} else {
-				tables = append(tables, newTableInfoWithKeyRange(db, table.TableInfo, nil, nil))
+				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil))
 			}
 			for _, index := range table.Indices {
 				if table.Partition == nil || index.Global {
-					tables = append(tables, newTableInfoWithKeyRange(db, table.TableInfo, nil, index))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index))
 					continue
 				}
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table.TableInfo, &table.Partition.Definitions[i], index))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index))
 				}
 			}
 		}

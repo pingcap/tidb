@@ -1257,7 +1257,8 @@ func TestCreateTableWithKeyPartition(t *testing.T) {
 	partition by key(s1) partitions 10;`)
 
 	tk.MustExec(`drop table if exists tm2`)
-	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
+	tk.MustGetErrMsg(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5`,
+		"Table partition metadata not correct, neither partition expression or list of partition columns")
 }
 
 func TestDropPartitionWithGlobalIndex(t *testing.T) {

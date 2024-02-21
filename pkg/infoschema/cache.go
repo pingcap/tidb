@@ -15,15 +15,11 @@
 package infoschema
 
 import (
-	"fmt"
-	"math"
 	"sort"
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -37,7 +33,7 @@ type InfoCache struct {
 	cache []schemaAndTimestamp
 
 	r    autoid.Requirement
-	Data *InfoSchemaData
+	Data *Data
 }
 
 type schemaAndTimestamp struct {
@@ -47,7 +43,7 @@ type schemaAndTimestamp struct {
 
 // NewCache creates a new InfoCache.
 func NewCache(r autoid.Requirement, capacity int) *InfoCache {
-	infoData := NewInfoSchemaData()
+	infoData := NewData()
 	return &InfoCache{
 		cache: make([]schemaAndTimestamp, 0, capacity),
 		r:     r,
@@ -90,47 +86,47 @@ func (h *InfoCache) Reset(capacity int) {
 	h.cache = make([]schemaAndTimestamp, 0, capacity)
 }
 
-type infoschemaProxy struct {
-	v2 infoschemaV2
-	InfoSchema
-}
+// type infoschemaProxy struct {
+// 	v2 infoschemaV2
+// 	InfoSchema
+// }
 
 
-func (proxy *infoschemaProxy) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	tables = proxy.v2.SchemaTables(schema)
-	if len(tables) > 0 {
-		return tables
-	}
-	tables = proxy.InfoSchema.SchemaTables(schema)
-	if len(tables) > 0 {
-		fmt.Println("fuck, inconsistent SchemaTables() ===", schema.L)
-	}
-	return tables
-}
+// func (proxy *infoschemaProxy) SchemaTables(schema model.CIStr) (tables []table.Table) {
+// 	tables = proxy.v2.SchemaTables(schema)
+// 	if len(tables) > 0 {
+// 		return tables
+// 	}
+// 	tables = proxy.InfoSchema.SchemaTables(schema)
+// 	if len(tables) > 0 {
+// 		fmt.Println("fuck, inconsistent SchemaTables() ===", schema.L)
+// 	}
+// 	return tables
+// }
 
-func (proxy *infoschemaProxy) TableByID(id int64) (val table.Table, ok bool) {
-	val, ok = proxy.v2.TableByID(id)
-	if ok {
-		return val, ok
-	}
-	val, ok = proxy.InfoSchema.TableByID(id)
-	if ok {
-		fmt.Println("fuck, inconsistent table by id ===", id)
-	}
-	return val, ok
-}
+// func (proxy *infoschemaProxy) TableByID(id int64) (val table.Table, ok bool) {
+// 	val, ok = proxy.v2.TableByID(id)
+// 	if ok {
+// 		return val, ok
+// 	}
+// 	val, ok = proxy.InfoSchema.TableByID(id)
+// 	if ok {
+// 		fmt.Println("fuck, inconsistent table by id ===", id)
+// 	}
+// 	return val, ok
+// }
 
-func (proxy *infoschemaProxy) TableByName(schema, table model.CIStr) (t table.Table, err error) {
-	t, err = proxy.v2.TableByName(schema, table)
-	if err == nil {
-		return
-	}
-	t, err = proxy.InfoSchema.TableByName(schema, table)
-	if err == nil {
-		fmt.Println("fuck, inconsistent table by name ===", schema, table)
-	}
-	return t, err
-}
+// func (proxy *infoschemaProxy) TableByName(schema, table model.CIStr) (t table.Table, err error) {
+// 	t, err = proxy.v2.TableByName(schema, table)
+// 	if err == nil {
+// 		return
+// 	}
+// 	t, err = proxy.InfoSchema.TableByName(schema, table)
+// 	if err == nil {
+// 		fmt.Println("fuck, inconsistent table by name ===", schema, table)
+// 	}
+// 	return t, err
+// }
 
 // func (proxy *infoschemaProxy) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
 // 	val, ok := proxy.v2.SchemaByTable(tableInfo)
@@ -144,17 +140,17 @@ func (proxy *infoschemaProxy) TableByName(schema, table model.CIStr) (t table.Ta
 // 	return val, ok
 // }
 
-func (proxy *infoschemaProxy) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	val, ok = proxy.v2.SchemaByName(schema)
-	if ok {
-		return val, ok
-	}
-	val, ok = proxy.InfoSchema.SchemaByName(schema)
-	if ok {
-		fmt.Println("fuck, inconsistent schema by name ===", schema)
-	}
-	return val, ok
-}
+// func (proxy *infoschemaProxy) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+// 	val, ok = proxy.v2.SchemaByName(schema)
+// 	if ok {
+// 		return val, ok
+// 	}
+// 	val, ok = proxy.InfoSchema.SchemaByName(schema)
+// 	if ok {
+// 		fmt.Println("fuck, inconsistent schema by name ===", schema)
+// 	}
+// 	return val, ok
+// }
 
 // GetLatest gets the newest information schema.
 func (h *InfoCache) GetLatest() InfoSchema {
@@ -163,16 +159,16 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	infoschema_metrics.GetLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		infoschema_metrics.HitLatestCounter.Inc()
-		// return h.cache[0].infoschema
-		return &infoschemaProxy{
-			v2: infoschemaV2{
-				ts:             math.MaxUint64,
-				r:              h.r,
-				InfoSchemaData: h.Data,
-				schemaVersion: h.cache[0].infoschema.SchemaMetaVersion(),
-			},
-			InfoSchema: h.cache[0].infoschema,
-		}
+		return h.cache[0].infoschema
+		// return &infoschemaProxy{
+		// 	v2: infoschemaV2{
+		// 		ts:             math.MaxUint64,
+		// 		r:              h.r,
+		// 		InfoSchemaData: h.Data,
+		// 		schemaVersion: h.cache[0].infoschema.SchemaMetaVersion(),
+		// 	},
+		// 	InfoSchema: h.cache[0].infoschema,
+		// }
 	}
 	return nil
 }

@@ -222,8 +222,8 @@ func (sch *LitBackfillScheduler) Close() {
 }
 
 func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
-	err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		tblInfo, _,  err = meta.NewMeta(txn).GetTable(job.SchemaID, job.TableID)
+	err = kv.RunInNewTxn(d.ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+		tblInfo, err = meta.NewMeta(txn).GetTable(job.SchemaID, job.TableID)
 		return err
 	})
 	if err != nil {

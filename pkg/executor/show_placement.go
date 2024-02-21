@@ -501,7 +501,7 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosy
 func fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
 	state := infosync.PlacementScheduleStateScheduled
 	for _, table := range db.Tables {
-		schedule, err := fetchTableScheduleState(ctx, scheduleState, table.TableInfo)
+		schedule, err := fetchTableScheduleState(ctx, scheduleState, table)
 		if err != nil {
 			return state, err
 		}

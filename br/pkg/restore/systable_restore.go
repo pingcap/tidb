@@ -135,7 +135,7 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 		TemporaryName:  utils.TemporaryDBName(name),
 	}
 	for _, t := range schema.Tables {
-		db.ExistingTables[t.Name.L] = t.TableInfo
+		db.ExistingTables[t.Name.L] = t
 	}
 	return db, true
 }

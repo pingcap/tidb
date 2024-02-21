@@ -1027,7 +1027,7 @@ func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
 	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
 }
 
-func getRuntimeInfoStr(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
+func getRuntimeInfoStr(ctx PlanContext, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
 	if runtimeStatsColl == nil {
 		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		if runtimeStatsColl == nil {
@@ -1058,7 +1058,7 @@ func getRuntimeInfoStr(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdet
 	return
 }
 
-func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (
+func getRuntimeInfo(ctx PlanContext, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (
 	rootStats *execdetails.RootRuntimeStats,
 	copStats *execdetails.CopRuntimeStats,
 	memTracker *memory.Tracker,
@@ -1180,7 +1180,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (estRows, estCost, costForm
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
-func BinaryPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) string {
+func BinaryPlanStrFromFlatPlan(explainCtx PlanContext, flat *FlatPhysicalPlan) string {
 	binary := binaryDataFromFlatPlan(explainCtx, flat)
 	if binary == nil {
 		return ""
@@ -1193,7 +1193,7 @@ func BinaryPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysical
 	return str
 }
 
-func binaryDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) *tipb.ExplainData {
+func binaryDataFromFlatPlan(explainCtx PlanContext, flat *FlatPhysicalPlan) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
 		return nil
 	}
@@ -1218,7 +1218,7 @@ func binaryDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPla
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *tipb.ExplainOperator {
+func binaryOpTreeFromFlatOps(explainCtx PlanContext, ops FlatPlanTree) *tipb.ExplainOperator {
 	s := make([]tipb.ExplainOperator, len(ops))
 	for i, op := range ops {
 		binaryOpFromFlatOp(explainCtx, op, &s[i])
@@ -1229,7 +1229,7 @@ func binaryOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *t
 	return &s[0]
 }
 
-func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *tipb.ExplainOperator) {
+func binaryOpFromFlatOp(explainCtx PlanContext, op *FlatOperator, out *tipb.ExplainOperator) {
 	out.Name = op.Origin.ExplainID().String()
 	switch op.Label {
 	case BuildSide:

@@ -542,7 +542,7 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
-	DBID int64 `json:"-"` // The ID of the database this table belongs to.
+	DBID int64 `json:"-"`
 }
 
 // TableNameInfo provides meta data describing a table name info.
@@ -1197,6 +1197,10 @@ type PartitionInfo struct {
 	// rather than pid.
 	Enable bool `json:"enable"`
 
+	// IsEmptyColumns is for syntax like `partition by key()`.
+	// When IsEmptyColums is true, it will not display column name in `show create table` stmt.
+	IsEmptyColumns bool `json:"is_empty_columns"`
+
 	Definitions []PartitionDefinition `json:"definitions"`
 	// AddingDefinitions is filled when adding partitions that is in the mid state.
 	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
@@ -1685,27 +1689,13 @@ func (fk *FKInfo) Clone() *FKInfo {
 	return &nfk
 }
 
-type TableInfoEx struct {
-	*TableInfo   
-	Raw []byte
-}
-
-func (ti *TableInfoEx) Clone() TableInfoEx {
-	raw := make([]byte, 0, len(ti.Raw))
-	copy(raw, ti.Raw)
-	return TableInfoEx{
-		TableInfo: ti.TableInfo.Clone(),
-		Raw: raw,
-	}
-}
-
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
 	ID                 int64          `json:"id"`      // Database ID
 	Name               CIStr          `json:"db_name"` // DB name.
 	Charset            string         `json:"charset"`
 	Collate            string         `json:"collate"`
-	Tables             []TableInfoEx  `json:"-"` // Tables in the DB.
+	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
 	State              SchemaState    `json:"state"`
 	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
 }
@@ -1713,7 +1703,7 @@ type DBInfo struct {
 // Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]TableInfoEx, len(db.Tables))
+	newInfo.Tables = make([]*TableInfo, len(db.Tables))
 	for i := range db.Tables {
 		newInfo.Tables[i] = db.Tables[i].Clone()
 	}
@@ -1723,7 +1713,7 @@ func (db *DBInfo) Clone() *DBInfo {
 // Copy shallow copies DBInfo.
 func (db *DBInfo) Copy() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]TableInfoEx, len(db.Tables))
+	newInfo.Tables = make([]*TableInfo, len(db.Tables))
 	copy(newInfo.Tables, db.Tables)
 	return &newInfo
 }

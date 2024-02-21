@@ -380,7 +380,7 @@ func (e *memtableRetriever) setDataForStatistics(ctx sessionctx.Context, schemas
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			e.setDataForStatisticsInTable(schema, table.TableInfo)
+			e.setDataForStatisticsInTable(schema, table)
 		}
 	}
 }
@@ -605,9 +605,9 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 				}
 				var err error
 				var autoIncID any
-				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table.TableInfo)
+				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
-					autoIncID, err = getAutoIncrementID(sctx, schema, table.TableInfo)
+					autoIncID, err = getAutoIncrementID(sctx, schema, table)
 					if err != nil {
 						return err
 					}
@@ -622,7 +622,7 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 				if table.HasClusteredIndex() {
 					pkType = "CLUSTERED"
 				}
-				shardingInfo := infoschema.GetShardingInfo(schema, table.TableInfo)
+				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				var policyName any
 				if table.PlacementPolicyRef != nil {
 					policyName = table.PlacementPolicyRef.Name.O
@@ -630,7 +630,7 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 
 				var rowCount, avgRowLength, dataLength, indexLength uint64
 				if useStatsCache {
-					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table.TableInfo)
+					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table)
 				}
 
 				record := types.MakeDatums(
@@ -782,7 +782,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 				}
 			}
 
-			e.dataForColumnsInTable(ctx, sctx, schema, table.TableInfo, priv, extractor)
+			e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
 			if len(e.rows) >= batch {
 				return nil
 			}
@@ -1020,7 +1020,7 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 			var rowCount, dataLength, indexLength uint64
 			if table.GetPartitionInfo() == nil {
 				rowCount = cache.GetTableRows(table.ID)
-				dataLength, indexLength = cache.GetDataAndIndexLength(table.TableInfo, table.ID, rowCount)
+				dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -1058,7 +1058,7 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 			} else {
 				for i, pi := range table.GetPartitionInfo().Definitions {
 					rowCount = cache.GetTableRows(pi.ID)
-					dataLength, indexLength = cache.GetDataAndIndexLength(table.TableInfo, pi.ID, rowCount)
+					dataLength, indexLength = cache.GetDataAndIndexLength(table, pi.ID, rowCount)
 
 					avgRowLength := uint64(0)
 					if rowCount != 0 {
@@ -1541,7 +1541,7 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, sc
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			rs := keyColumnUsageInTable(schema, table.TableInfo)
+			rs := keyColumnUsageInTable(schema, table)
 			rows = append(rows, rs...)
 		}
 	}
@@ -3096,7 +3096,7 @@ type TiFlashSystemTableRetriever struct {
 	outputCols    []*model.ColumnInfo
 	instanceCount int
 	instanceIdx   int
-	instanceIds   []string
+	instanceIDs   []string
 	rowIdx        int
 	retrieved     bool
 	initialized   bool
@@ -3130,7 +3130,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 }
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
-	storeInfo, err := infoschema.GetStoreServerInfo(sctx)
+	storeInfo, err := infoschema.GetStoreServerInfo(sctx.GetStore())
 	if err != nil {
 		return err
 	}
@@ -3147,7 +3147,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 		if len(hostAndStatusPort) != 2 {
 			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
 		}
-		e.instanceIds = append(e.instanceIds, info.Address)
+		e.instanceIDs = append(e.instanceIDs, info.Address)
 		e.instanceCount++
 	}
 	e.initialized = true
@@ -3193,7 +3193,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
 	}
 	// send request to tiflash, timeout is 1s
-	instanceID := e.instanceIds[e.instanceIdx]
+	instanceID := e.instanceIDs[e.instanceIdx]
 	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, time.Second)
 	if err != nil {
 		return nil, errors.Trace(err)

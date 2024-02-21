@@ -1,22 +1,44 @@
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package infoschema
 
 import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 
-	"github.com/scalalang2/golang-fifo"
-	"github.com/scalalang2/golang-fifo/sieve"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/scalalang2/golang-fifo"
+	"github.com/scalalang2/golang-fifo/sieve"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
 
+var enableV2 atomic.Bool
+
+func init() {
+	enableV2.Store(true)
+}
+
+// Item is the btree item sorted by name or by id.
 type Item struct {
 	dbName        string
 	dbID          int64
@@ -34,12 +56,14 @@ func (si *schemaItem) Name() string {
 	return si.dbInfo.Name.L
 }
 
-type VersionAndTimestamp struct {
+// versionAndTimestamp is the tuple of schema version and timestamp.
+type versionAndTimestamp struct {
 	schemaVersion int64
 	timestamp     uint64
 }
 
-type InfoSchemaData struct {
+// Data is the core data struct of infoschema V2.
+type Data struct {
 	// For the TableByName API, sorted by {dbName, tableName, tableID} => schemaVersion
 	//
 	// If the schema version +1 but a specific table does not change, the old record is
@@ -57,7 +81,7 @@ type InfoSchemaData struct {
 	//
 	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	// But this mapping should be synced with name2id.
-	byID  *btree.BTreeG[Item]
+	byID *btree.BTreeG[Item]
 
 	cache fifo.Cache[cacheKey, table.Table]
 
@@ -67,24 +91,27 @@ type InfoSchemaData struct {
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
 		sync.RWMutex
-		versionTimestamps []VersionAndTimestamp
+		versionTimestamps []versionAndTimestamp
 	}
+
+	// For information_schema/metrics_schema/performance_schema etc
+	specials map[string]*schemaTables
 }
 
-func (isd *InfoSchemaData) getVersionByTS(ts uint64) (int64, bool) {
+func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
 	isd.mu.RLock()
 	defer isd.mu.RUnlock()
 
 	return isd.getVersionByTSNoLock(ts)
 }
 
-func (isd *InfoSchemaData) getVersionByTSNoLock(ts uint64) (int64, bool) {
+func (isd *Data) getVersionByTSNoLock(ts uint64) (int64, bool) {
 	// search one by one instead of binary search, because the timestamp of a schema could be 0
 	// this is ok because the size of h.cache is small (currently set to 16)
 	// moreover, the most likely hit element in the array is the first one in steady mode
 	// thus it may have better performance than binary search
 	for i, vt := range isd.mu.versionTimestamps {
-		if vt.timestamp == 0 || ts < uint64(vt.timestamp) {
+		if vt.timestamp == 0 || ts < vt.timestamp {
 			// is.timestamp == 0 means the schema ts is unknown, so we can't use it, then just skip it.
 			// ts < is.timestamp means the schema is newer than ts, so we can't use it too, just skip it to find the older one.
 			continue
@@ -94,7 +121,7 @@ func (isd *InfoSchemaData) getVersionByTSNoLock(ts uint64) (int64, bool) {
 			// the first element is the latest schema, so we can return it directly.
 			return vt.schemaVersion, true
 		}
-		if isd.mu.versionTimestamps[i-1].schemaVersion == vt.schemaVersion+1 && uint64(isd.mu.versionTimestamps[i-1].timestamp) > ts {
+		if isd.mu.versionTimestamps[i-1].schemaVersion == vt.schemaVersion+1 && isd.mu.versionTimestamps[i-1].timestamp > ts {
 			// This first condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10,
 			// but current(cache[i]) schema-version is not 9, then current schema is not suitable for ts.
 			// The second condition is to make sure the cache[i-1].timestamp > ts >= cache[i].timestamp, then the current schema is suitable for ts.
@@ -112,33 +139,31 @@ type cacheKey struct {
 	schemaVersion int64
 }
 
-func keyToHash(key any) (uint64, uint64) {
-	k := key.(cacheKey)
-	return uint64(k.tableID), uint64(k.schemaVersion)
-}
-
-func NewInfoSchemaData() *InfoSchemaData {
-	ret := &InfoSchemaData{
+// NewData creates an infoschema V2 data struct.
+func NewData() *Data {
+	ret := &Data{
 		byID:      btree.NewBTreeG[Item](compareByID),
 		name2id:   btree.NewBTreeG[Item](compareByName),
 		schemaMap: btree.NewBTreeG[schemaItem](compareBySchema),
-		cache: sieve.New[cacheKey, table.Table](1000),
+		// TODO: limit by size instead of by table count.
+		cache:    sieve.New[cacheKey, table.Table](1000),
+		specials: make(map[string]*schemaTables),
 	}
 	return ret
 }
 
-func (isd *InfoSchemaData) add(item Item, rawData []byte, tbl table.Table) {
+func (isd *Data) add(item Item, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.name2id.Set(item)
 	isd.cache.Set(cacheKey{item.tableID, item.schemaVersion}, tbl)
 }
 
-func (isd *InfoSchemaData) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
-	fmt.Println("=== addDB ===", dbInfo.Name.L, schemaVersion)
-	var dbInfo1 model.DBInfo
-	dbInfo1 = *dbInfo
-	dbInfo1.Tables = nil
-	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: &dbInfo1})
+func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
+	isd.specials[di.Name.L] = tables
+}
+
+func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
+	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
 func compareByID(a, b Item) bool {
@@ -187,7 +212,7 @@ type infoschemaV2 struct {
 	r             autoid.Requirement
 	ts            uint64
 	schemaVersion int64
-	*InfoSchemaData
+	*Data
 }
 
 func search(bt *btree.BTreeG[Item], schemaVersion int64, end Item, eq func(a, b *Item) bool) (Item, bool) {
@@ -226,7 +251,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	key := cacheKey{id, is.schemaVersion}
 	tbl, found := is.cache.Get(key)
 	if found && tbl != nil {
-		return tbl.(table.Table), true
+		return tbl, true
 	}
 
 	eq := func(a, b *Item) bool { return a.tableID == b.tableID }
@@ -236,19 +261,22 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, _, err := loadTableInfo(is.r, is.InfoSchemaData, id, itm.dbID, is.ts)
+	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts)
 	if err == nil {
 		is.cache.Set(key, ret)
 		return ret, true
-	} else {
-		// fmt.Println("load table error ==", id, err)
 	}
 	return nil, false
 }
 
 func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
 	if schema.L == "information_schema" || schema.L == "metrics_schema" || schema.L == "performance_schema" {
-		return nil, errors.New("not support yet")
+		if tbNames, ok := is.specials[schema.L]; ok {
+			if t, ok = tbNames.tables[tbl.L]; ok {
+				return
+			}
+		}
+		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
 	}
 
 	eq := func(a, b *Item) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
@@ -257,16 +285,16 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
 	}
-	// Get from the cache.
 
+	// Get from the cache.
 	key := cacheKey{itm.tableID, is.schemaVersion}
 	res, found := is.cache.Get(key)
 	if found && res != nil {
-		return res.(table.Table), nil
+		return res, nil
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, _, err := loadTableInfo(is.r, is.InfoSchemaData, itm.tableID, itm.dbID, is.ts)
+	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -306,7 +334,16 @@ func (is *infoschemaV2) SchemaMetaVersion() int64 {
 }
 
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
-	panic("TODO")
+	var ok bool
+	// TODO: support different version
+	is.schemaMap.Scan(func(item schemaItem) bool {
+		if item.dbInfo.Name.L == schema.L {
+			ok = true
+			return false
+		}
+		return true
+	})
+	return ok
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
@@ -314,7 +351,8 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
-	panic("TODO")
+	_, err := is.TableByName(schema, table)
+	return err == nil
 }
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
@@ -360,8 +398,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	return
 }
 
-func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID int64, ts uint64) (table.Table, []byte, error) {
-	var rawData []byte
+func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := sf.Do(fmt.Sprintf("%d-%d", dbID, tblID), func() (ret any, err error) {
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
@@ -370,7 +407,7 @@ func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID i
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 		m := meta.NewSnapshotMeta(snapshot)
 
-		ret, rawData, err = m.GetTable(dbID, tblID)
+		ret, err = m.GetTable(dbID, tblID)
 		return
 	})
 
@@ -386,9 +423,9 @@ func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID i
 	b := NewBuilder(r, nil, infoData) // TODO: handle cached table!!!
 	ret, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return ret, rawData, nil
+	return ret, nil
 }
 
 var sf = &singleflight.Group{}

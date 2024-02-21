@@ -435,7 +435,7 @@ func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema
 	}
 	tableInfo.Columns = cols
 	tableInfo.Partition = partition
-	is := infoschema.MockInfoSchema([]model.TableInfoEx{model.TableInfoEx{TableInfo: tableInfo}})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
 	return is
 }
 

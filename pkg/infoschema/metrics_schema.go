@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -41,7 +40,7 @@ func init() {
 	// Initialize the metric schema database and register the driver to `drivers`.
 	dbID := autoid.MetricSchemaDBID
 	tableID := dbID + 1
-	metricTables := make([]model.TableInfoEx, 0, len(MetricTableMap))
+	metricTables := make([]*model.TableInfo, 0, len(MetricTableMap))
 	for name, def := range MetricTableMap {
 		cols := def.genColumnInfos()
 		tableInfo := buildTableMeta(name, cols)
@@ -49,7 +48,7 @@ func init() {
 		tableInfo.Comment = def.Comment
 		tableInfo.DBID = dbID
 		tableID++
-		metricTables = append(metricTables, model.TableInfoEx{TableInfo:tableInfo})
+		metricTables = append(metricTables, tableInfo)
 		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
 		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}
@@ -102,11 +101,11 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 }
 
 // GenPromQL generates the promQL.
-func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels map[string]set.StringSet, quantile float64) string {
+func (def *MetricTableDef) GenPromQL(metricsSchemaRangeDuration int64, labels map[string]set.StringSet, quantile float64) string {
 	promQL := def.PromQL
 	promQL = strings.ReplaceAll(promQL, promQLQuantileKey, strconv.FormatFloat(quantile, 'f', -1, 64))
 	promQL = strings.ReplaceAll(promQL, promQLLabelConditionKey, def.genLabelCondition(labels))
-	promQL = strings.ReplaceAll(promQL, promQRangeDurationKey, strconv.FormatInt(sctx.GetSessionVars().MetricSchemaRangeDuration, 10)+"s")
+	promQL = strings.ReplaceAll(promQL, promQRangeDurationKey, strconv.FormatInt(metricsSchemaRangeDuration, 10)+"s")
 	return promQL
 }
 

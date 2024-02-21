@@ -111,7 +111,7 @@ func TestBasic(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := store.Begin()
@@ -128,8 +128,6 @@ func TestBasic(t *testing.T) {
 	require.True(t, testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test"}))
 
 	schemas := is.AllSchemas()
-	require.Len(t, schemas, 4)
-	schemas = is.Clone()
 	require.Len(t, schemas, 4)
 
 	require.True(t, is.SchemaExists(dbName))
@@ -172,10 +170,6 @@ func TestBasic(t *testing.T) {
 	tb, ok = is.TableByID(dbID)
 	require.False(t, ok)
 	require.Nil(t, tb)
-
-	alloc, ok := is.AllocByID(tbID)
-	require.True(t, ok)
-	require.NotNil(t, alloc)
 
 	tb, err = is.TableByName(dbName, tbName)
 	require.NoError(t, err)
@@ -256,7 +250,7 @@ func TestInfoTables(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos(nil, nil, nil, 0)
+	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build()
 
@@ -333,7 +327,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder := infoschema.NewBuilder(dom, nil).InitWithOldInfoSchema(curIs)
+				builder := infoschema.NewBuilder(dom, nil, nil).InitWithOldInfoSchema(curIs)
 				change(m, builder)
 				curIs = builder.Build()
 			}
@@ -411,7 +405,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	// full load
 	newDB, ok := newIS.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
-	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
+	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
 	require.True(t, builder.Build().HasTemporaryTable())
 
@@ -536,7 +530,7 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is, tbl2.Meta().ID, nil)
 	assertBundle(is, p1.ID, p1Bundle)
 
-	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
+	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build()
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
@@ -583,6 +577,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 			Columns: []*model.ColumnInfo{colInfo},
 			Indices: []*model.IndexInfo{},
 			State:   model.StatePublic,
+			DBID:    schemaID,
 		}
 
 		allocs := autoid.NewAllocatorsFromTblInfo(dom, schemaID, tblInfo)
@@ -705,6 +700,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 	err = sc.AddTable(db1b, tb11)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
+	tb11.Meta().DBID = 0 // SchemaByTable will get incorrect result if not reset here.
 
 	// failed add has no effect
 	assertTableByName(sc, db1.Name.L, tb11.Meta().Name.L, db1, tb11)
@@ -712,6 +708,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	// delete some tables
 	require.True(t, sc.RemoveTable(model.NewCIStr("db1"), model.NewCIStr("tb1")))
 	require.True(t, sc.RemoveTable(model.NewCIStr("Db2"), model.NewCIStr("tB2")))
+	tb22.Meta().DBID = 0 // SchemaByTable will get incorrect result if not reset here.
 	require.False(t, sc.RemoveTable(model.NewCIStr("db1"), model.NewCIStr("tbx")))
 	require.False(t, sc.RemoveTable(model.NewCIStr("dbx"), model.NewCIStr("tbx")))
 
@@ -795,6 +792,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, db1.Name.L, info.Name.L)
 	// SchemaByTable returns nil when the schema is not in the infoSchema and the table is an non-existing normal table.
+	normalTbTestC.Meta().DBID = 0 // normalTbTestC is not added to any db, reset the DBID to avoid misuse
 	info, ok = is.SchemaByID(normalTbTestC.Meta().DBID)
 	require.False(t, ok)
 	require.Nil(t, info)

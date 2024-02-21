@@ -201,14 +201,14 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		var tables []model.TableInfoEx
+		var tables []*model.TableInfo
 		tables, err = t.ListTables(job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		var ruleIDs []string
 		for _, tblInfo := range tables {
-			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo.TableInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
+			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 			ruleIDs = append(ruleIDs, rules...)
 		}
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
@@ -226,7 +226,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		}
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
-		var tables []model.TableInfoEx
+		var tables []*model.TableInfo
 		tables, err = t.ListTables(job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -242,11 +242,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 
 		// Finish this job.
 		if len(tables) > 0 {
-			tmp := make([]*model.TableInfo, 0, len(tables))
-			for _, v := range tables {
-				tmp = append(tmp, v.TableInfo)
-			}
-			job.Args = append(job.Args, getIDs(tmp))
+			job.Args = append(job.Args, getIDs(tables))
 		}
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:

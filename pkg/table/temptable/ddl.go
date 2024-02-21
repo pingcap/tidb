@@ -49,7 +49,7 @@ func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *mo
 	if _, err := ensureSessionData(d.sctx); err != nil {
 		return err
 	}
-	// info.DBID = db.ID
+	info.DBID = db.ID
 	tbl, err := newTemporaryTableFromTableInfo(d.sctx, info)
 	if err != nil {
 		return err
