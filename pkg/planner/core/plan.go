@@ -38,6 +38,15 @@ import (
 // PlanContext is the context for building plan.
 type PlanContext = context.PlanContext
 
+// AsSctx converts PlanContext to sessionctx.Context.
+func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
+	sctx, ok := pctx.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
+	}
+	return sctx, nil
+}
+
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.

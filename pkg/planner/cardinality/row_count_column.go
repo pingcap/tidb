@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -315,7 +314,7 @@ func betweenRowCountOnColumn(sctx context.PlanContext, c *statistics.Column, l, 
 // functions below are mainly for testing.
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
-func ColumnGreaterRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) float64 {
+func ColumnGreaterRowCount(sctx context.PlanContext, t *statistics.Table, value types.Datum, colID int64) float64 {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoLessRate
@@ -324,7 +323,7 @@ func ColumnGreaterRowCount(sctx sessionctx.Context, t *statistics.Table, value t
 }
 
 // columnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
-func columnLessRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) float64 {
+func columnLessRowCount(sctx context.PlanContext, t *statistics.Table, value types.Datum, colID int64) float64 {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoLessRate
@@ -333,7 +332,7 @@ func columnLessRowCount(sctx sessionctx.Context, t *statistics.Table, value type
 }
 
 // columnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func columnBetweenRowCount(sctx sessionctx.Context, t *statistics.Table, a, b types.Datum, colID int64) (float64, error) {
+func columnBetweenRowCount(sctx context.PlanContext, t *statistics.Table, a, b types.Datum, colID int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
@@ -357,7 +356,7 @@ func columnBetweenRowCount(sctx sessionctx.Context, t *statistics.Table, a, b ty
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
-func ColumnEqualRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) (float64, error) {
+func ColumnEqualRowCount(sctx context.PlanContext, t *statistics.Table, value types.Datum, colID int64) (float64, error) {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoEqualRate, nil
