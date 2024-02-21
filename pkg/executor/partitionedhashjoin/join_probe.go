@@ -15,11 +15,13 @@
 package partitionedhashjoin
 
 import (
-	"github.com/pingcap/errors"
+	"bytes"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"hash/fnv"
 	"unsafe"
 )
@@ -35,24 +37,26 @@ type probeProcessInfo struct {
 	init               bool
 }
 
-type probeMode int
+type keyMode int
 
 const (
-	OneInt64 probeMode = iota
-	OneFloat64
-	SerializeKey
+	OneInt64 keyMode = iota
+	FixedSerializedKey
+	VariableSerializedKey
 )
 
 type probeCtx struct {
+	sessCtx            sessionctx.Context
 	keyIndex           []int
 	columnTypes        []*types.FieldType
 	filter             expression.CNFExprs
 	postProbeCondition expression.CNFExprs
+	tmpChk             *chunk.Chunk
 	keyIsNullable      bool
 	joinHashTable      *joinHashTable
 	hashTableMeta      *tableMeta
 	typeCtx            types.Context
-	probeMode          probeMode
+	keyMode            keyMode
 }
 
 func (probeCtx *probeCtx) hasPostProbeCondition() bool {
@@ -84,21 +88,27 @@ func (ppi *probeProcessInfo) initForCurrentChunk(ctx *probeCtx) error {
 		} else {
 			ppi.nullKeyVector = make([]bool, rows)
 		}
+		for i := 0; i < rows; i++ {
+			ppi.nullKeyVector = append(ppi.nullKeyVector, false)
+		}
 	}
 	if cap(ppi.serializedKeys) >= rows {
 		ppi.serializedKeys = ppi.serializedKeys[:rows]
 	} else {
 		ppi.serializedKeys = make([][]byte, rows)
 	}
-	// todo support filter
 	if ctx.filter != nil {
-		return errors.New("Probe side filter is not supported yet")
+		var err error
+		ppi.filterVector, err = expression.VectorizedFilter(ctx.sessCtx, ctx.filter, chunk.NewIterator4Chunk(ppi.chunk), ppi.filterVector)
+		if err != nil {
+			return err
+		}
 	}
 
 	// generate serialized key
-	for _, keyIndex := range ctx.keyIndex {
+	for index, keyIndex := range ctx.keyIndex {
 		// todo set ignoreSign to false for unsigned key join signed key
-		err := codec.SerializeKeys(ctx.typeCtx, ppi.chunk, ctx.columnTypes[keyIndex], keyIndex, ppi.filterVector, ppi.nullKeyVector, true, ppi.serializedKeys)
+		err := codec.SerializeKeys(ctx.typeCtx, ppi.chunk, ctx.columnTypes[keyIndex], keyIndex, ppi.filterVector, ppi.nullKeyVector, ctx.hashTableMeta.ignoreIntegerKeySignFlag[index], ppi.serializedKeys)
 		if err != nil {
 			return err
 		}
@@ -207,26 +217,47 @@ func (baseJoinProbe *baseJoinProbe) appendProbeRowToChunk(chk *chunk.Chunk, prob
 	}
 }
 
-func (innerJoinProbe *innerJoinProbe) doProbeOneInt64(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
-	keyOffset := SizeOfNextPtr + innerJoinProbe.ctx.hashTableMeta.nullMapLength
+func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer, meta *tableMeta) bool {
+	switch keyMode {
+	case OneInt64:
+		return *(*int64)(unsafe.Pointer(&serializedKey[0])) == *(*int64)(unsafe.Add(rowStart, meta.nullMapLength+SizeOfNextPtr))
+	case FixedSerializedKey:
+		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+SizeOfNextPtr), meta.joinKeysLength))
+	case VariableSerializedKey:
+		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+SizeOfNextPtr+SizeOfKeyLengthField), int(meta.getSerializedKeyLength(rowStart))))
+	default:
+		panic("unknown key match type")
+	}
+}
+
+func (innerJoinProbe *innerJoinProbe) doProbe(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
 	if innerJoinProbe.offsetAndLengthArray == nil {
 		innerJoinProbe.offsetAndLengthArray = make([]offsetAndLength, 0, info.chunk.NumRows())
 	} else {
 		innerJoinProbe.offsetAndLengthArray = innerJoinProbe.offsetAndLengthArray[:0]
 	}
 	length := 0
-	totalLength := 0
-	for !chk.IsFull() && info.currentProbeRow < info.chunk.NumRows() {
+	totalAddedRows := 0
+	joinedChk := chk
+	if innerJoinProbe.ctx.postProbeCondition != nil {
+		panic("other condition is not supported")
+		//if innerJoinProbe.ctx.tmpChk == nil {
+		//	innerJoinProbe.ctx.tmpChk = chk.CloneEmpty(innerJoinProbe.maxChunkSize)
+		//}
+		//joinedChk = innerJoinProbe.ctx.tmpChk
+	}
+	maxAddedRows := chk.RequiredRows() - chk.NumRows()
+	for totalAddedRows < maxAddedRows && info.currentProbeRow < info.chunk.NumRows() {
 		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
-			if *(*int64)(unsafe.Pointer(&info.serializedKeys[info.currentProbeRow][0])) == *(*int64)(unsafe.Add(info.matchedRowsHeaders[info.currentProbeRow], keyOffset)) {
+			if isKeyMatched(innerJoinProbe.ctx.keyMode, info.serializedKeys[info.currentProbeRow], info.matchedRowsHeaders[info.currentProbeRow], innerJoinProbe.ctx.hashTableMeta) {
 				// key matched, convert row to column for build side
 				if innerJoinProbe.rightAsBuildSide {
-					innerJoinProbe.appendBuildRowToChunk(chk, innerJoinProbe.rUsed, info.matchedRowsHeaders[info.currentProbeRow], nil, info, len(innerJoinProbe.lUsed))
+					innerJoinProbe.appendBuildRowToChunk(joinedChk, innerJoinProbe.rUsed, info.matchedRowsHeaders[info.currentProbeRow], nil, info, len(innerJoinProbe.lUsed))
 				} else {
-					innerJoinProbe.appendBuildRowToChunk(chk, innerJoinProbe.lUsed, info.matchedRowsHeaders[info.currentProbeRow], nil, info, 0)
+					innerJoinProbe.appendBuildRowToChunk(joinedChk, innerJoinProbe.lUsed, info.matchedRowsHeaders[info.currentProbeRow], nil, info, 0)
 				}
 				length++
-				totalLength++
+				totalAddedRows++
 			}
 			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(info.matchedRowsHeaders[info.currentProbeRow])
 		} else {
@@ -241,27 +272,14 @@ func (innerJoinProbe *innerJoinProbe) doProbeOneInt64(chk *chunk.Chunk, info *pr
 		innerJoinProbe.offsetAndLengthArray = append(innerJoinProbe.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
 	}
 	if innerJoinProbe.rightAsBuildSide {
-		innerJoinProbe.appendProbeRowToChunk(chk, info.chunk, innerJoinProbe.lUsed, 0)
+		innerJoinProbe.appendProbeRowToChunk(joinedChk, info.chunk, innerJoinProbe.lUsed, 0)
 	} else {
-		innerJoinProbe.appendProbeRowToChunk(chk, info.chunk, innerJoinProbe.rUsed, len(innerJoinProbe.lUsed))
+		innerJoinProbe.appendProbeRowToChunk(joinedChk, info.chunk, innerJoinProbe.rUsed, len(innerJoinProbe.lUsed))
 	}
-	if chk.NumCols() == 0 {
-		chk.SetNumVirtualRows(chk.NumRows() + totalLength)
+	if joinedChk.NumCols() == 0 {
+		joinedChk.SetNumVirtualRows(chk.NumRows() + totalAddedRows)
 	} else {
-		chk.SetNumVirtualRows(chk.NumRows())
-	}
-	return
-}
-
-func (innerJoinProbe *innerJoinProbe) doProbe(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
-	if innerJoinProbe.ctx.hasPostProbeCondition() {
-		return errors.New("join with other condition is not supported yet")
-	}
-	switch innerJoinProbe.ctx.probeMode {
-	case OneInt64:
-		err = innerJoinProbe.doProbeOneInt64(chk, info)
-	case OneFloat64, SerializeKey:
-		err = errors.New("unsupported")
+		joinedChk.SetNumVirtualRows(chk.NumRows())
 	}
 	return
 }

@@ -15,6 +15,7 @@
 package chunk
 
 import (
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -441,25 +442,16 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 	dst.length++
 }
 
-func getBytesFromPtr(ptr unsafe.Pointer, len int, cap int) []byte {
-	var sl = struct {
-		addr unsafe.Pointer
-		len  int
-		cap  int
-	}{ptr, len, cap}
-	return *(*[]byte)(unsafe.Pointer(&sl))
-}
-
 // AppendCellFromRawData appends the cell from raw data
 func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer) unsafe.Pointer {
 	if dst.isFixed() {
 		elemLen := len(dst.elemBuf)
-		dst.data = append(dst.data, getBytesFromPtr(rowData, elemLen, elemLen)...)
+		dst.data = append(dst.data, hack.GetBytesFromPtr(rowData, elemLen)...)
 		rowData = unsafe.Add(rowData, elemLen)
 	} else {
 		elemLen := *(*uint64)(rowData)
 		if elemLen > 0 {
-			dst.data = append(dst.data, getBytesFromPtr(unsafe.Add(rowData, 8), int(elemLen), int(elemLen))...)
+			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, 8), int(elemLen))...)
 		}
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
 		rowData = unsafe.Add(rowData, elemLen+8)
@@ -657,6 +649,11 @@ func (c *Chunk) Sel() []int {
 // SetSel sets a Sel for this Chunk.
 func (c *Chunk) SetSel(sel []int) {
 	c.sel = sel
+}
+
+// CloneEmpty returns an empty chunk that has the same schema with current chunk
+func (c *Chunk) CloneEmpty(maxCapacity int) *Chunk {
+	return renewWithCapacity(c, maxCapacity, maxCapacity)
 }
 
 // Reconstruct removes all filtered rows in this Chunk.
