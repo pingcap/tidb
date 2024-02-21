@@ -1141,6 +1141,8 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
 		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
 		{"query watch remove", false, ""},
+		// for issue 34325, "replace into" with hints
+		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = 'ALLOW_INVALID_DATES')*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
 	}
 	RunTest(t, table, false)
 }
@@ -3373,6 +3375,7 @@ func TestDDL(t *testing.T) {
 		{"recover table by job 11", true, "RECOVER TABLE BY JOB 11"},
 		{"recover table by job 11,12,13", false, ""},
 		{"recover table by job", false, ""},
+		{"recover table by job 0", true, "RECOVER TABLE BY JOB 0"},
 		{"recover table t1", true, "RECOVER TABLE `t1`"},
 		{"recover table t1,t2", false, ""},
 		{"recover table ", false, ""},
@@ -3400,6 +3403,17 @@ func TestDDL(t *testing.T) {
 		{"flashback cluster to timestamp DATE_SUB(NOW(), INTERVAL 3 SECOND)", false, ""},
 		{"flashback table to timestamp '2021-05-26 16:45:26'", false, ""},
 		{"flashback database to timestamp '2021-05-26 16:45:26'", false, ""},
+
+		// for flashback to tso
+		{"flashback cluster to tso 445494955052105721", true, "FLASHBACK CLUSTER TO TSO 445494955052105721"},
+		{"flashback table t to tso 445494955052105722", true, "FLASHBACK TABLE `t` TO TSO 445494955052105722"},
+		{"flashback table t,t1 to tso 445494955052105723", true, "FLASHBACK TABLE `t`, `t1` TO TSO 445494955052105723"},
+		{"flashback database test to tso 445494955052105724", true, "FLASHBACK DATABASE `test` TO TSO 445494955052105724"},
+		{"flashback schema test to tso 445494955052105725", true, "FLASHBACK DATABASE `test` TO TSO 445494955052105725"},
+		{"flashback table to tso 445494955052105726", false, ""},
+		{"flashback database to tso 445494955052105727", false, ""},
+		{"flashback schema test to tso 0", false, ""},
+		{"flashback schema test to tso -100", false, ""},
 
 		// for remove partitioning
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
@@ -5133,6 +5147,16 @@ func TestSetOperator(t *testing.T) {
 		{"(select c1 from t1) union all (select c2 from t2 except select c3 from t3) order by c1 limit 1", true, "(SELECT `c1` FROM `t1`) UNION ALL (SELECT `c2` FROM `t2` EXCEPT SELECT `c3` FROM `t3`) ORDER BY `c1` LIMIT 1"},
 		{"((select c1 from t1) except select c2 from t2) intersect all (select c3 from t3) order by c1 limit 1", true, "((SELECT `c1` FROM `t1`) EXCEPT SELECT `c2` FROM `t2`) INTERSECT ALL (SELECT `c3` FROM `t3`) ORDER BY `c1` LIMIT 1"},
 		{"select 1 union distinct (select 1 except all select 1 intersect select 1)", true, "SELECT 1 UNION (SELECT 1 EXCEPT ALL SELECT 1 INTERSECT SELECT 1)"},
+
+		// https://github.com/pingcap/tidb/issues/49874
+		{"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1)", true,
+			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1)"},
+		{"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1) order by pk limit 2", true,
+			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2"},
+		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk limit 2", true,
+			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2"},
+		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk", true,
+			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk`"},
 	}
 	RunTest(t, table, false)
 }

@@ -130,7 +130,11 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 		if !f.Mode().IsRegular() {
 			stat, err := os.Stat(filepath.Join(l.base, path))
 			if err != nil {
-				return errors.Trace(err)
+				// error may happen because of file deleted after walk started, or other errors
+				// like #49423. We just return 0 size and let the caller handle it in later
+				// logic.
+				log.Warn("failed to get file size", zap.String("path", path), zap.Error(err))
+				return fn(path, 0)
 			}
 			size = stat.Size()
 		}
@@ -140,7 +144,7 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 
 // URI returns the base path as an URI with a file:/// prefix.
 func (l *LocalStorage) URI() string {
-	return LocalURIPrefix + "/" + l.base
+	return LocalURIPrefix + l.base
 }
 
 // Open a Reader by file path, path is a relative path to base path.

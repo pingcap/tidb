@@ -2116,7 +2116,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 		job := reorgInfo.Job
 		taskMeta := &BackfillGlobalMeta{
-			Job:             *reorgInfo.Job.Clone(),
+			Job:             *job.Clone(),
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,

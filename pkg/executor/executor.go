@@ -1981,6 +1981,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
+	sc.ResourceGroupName = vars.ResourceGroupName
 	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
 	// in PlanBuilder.buildDataSource
 	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -2103,6 +2104,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		// see https://dev.mysql.com/doc/refman/8.0/en/out-of-range-and-overflow.html
+		sc.OverflowAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr

@@ -170,7 +170,7 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().ResourceGroupName = resGroupName
+	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = resGroupName
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
 	if _, ok := sessCtx.(*mock.Context); ok {
@@ -194,7 +194,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
 	ignoreZeroInDate := sv.StmtCtx.IgnoreZeroInDate
 	noZeroDate := sv.StmtCtx.NoZeroDate
-	resGroupName := sv.ResourceGroupName
+	resGroupName := sv.StmtCtx.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
 		uv := usedSessCtx.GetSessionVars()
 		uv.RowEncoder.Enable = rowEncoder
@@ -205,7 +205,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
 		uv.StmtCtx.IgnoreZeroInDate = ignoreZeroInDate
 		uv.StmtCtx.NoZeroDate = noZeroDate
-		uv.ResourceGroupName = resGroupName
+		uv.StmtCtx.ResourceGroupName = resGroupName
 	}
 }
 

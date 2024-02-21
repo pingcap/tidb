@@ -1529,6 +1529,19 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	if len(available) == 0 {
 		available = append(available, tablePath)
 	}
+
+	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// so that the table paths are still added here to avoid failing to find any physical plan.
+	allMVIIndexPath := true
+	for _, availablePath := range available {
+		if !isMVIndexPath(availablePath) {
+			allMVIIndexPath = false
+		}
+	}
+	if allMVIIndexPath {
+		available = append(available, tablePath)
+	}
+
 	return available, nil
 }
 
@@ -3876,7 +3889,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		originalVal := b.allowBuildCastArray
 		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
+		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
 		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -418,6 +419,45 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	cnt, err = sm.GetSubtaskInStatesCnt(ctx, 1, proto.TaskStateRevertPending)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), cnt)
+}
+
+// InsertSubtask adds a new subtask of any state to subtask table.
+func insertSubtask(t *testing.T, gm *storage.TaskManager, taskID int64, step proto.Step, execID string, meta []byte, state proto.TaskState, tp proto.TaskType) {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "table_test")
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, err := storage.ExecSQL(ctx, se, `
+			insert into mysql.tidb_background_subtask(step, task_key, exec_id, meta, state, type, state_update_time, checkpoint, summary) values`+
+			`(%?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+			step, taskID, execID, meta, state, proto.Type2Int(tp))
+		return err
+	}))
+}
+
+func TestGetSubtaskCntByStates(t *testing.T) {
+	pool := GetResourcePool(t)
+	sm := GetTaskManager(t, pool)
+	defer pool.Close()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "table_test")
+
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStatePending, "test")
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStatePending, "test")
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStateRunning, "test")
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStateSucceed, "test")
+	insertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.TaskStateFailed, "test")
+	insertSubtask(t, sm, 1, proto.StepTwo, "tidb1", nil, proto.TaskStateFailed, "test")
+	cntByStates, err := sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, cntByStates, 4)
+	require.Equal(t, int64(2), cntByStates[proto.TaskStatePending])
+	require.Equal(t, int64(1), cntByStates[proto.TaskStateRunning])
+	require.Equal(t, int64(1), cntByStates[proto.TaskStateSucceed])
+	require.Equal(t, int64(1), cntByStates[proto.TaskStateFailed])
+	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepTwo)
+	require.NoError(t, err)
+	require.Len(t, cntByStates, 1)
+	require.Equal(t, int64(1), cntByStates[proto.TaskStateFailed])
 }
 
 func TestDistFrameworkMeta(t *testing.T) {
