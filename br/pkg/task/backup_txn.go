@@ -125,8 +125,8 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 
 	client := backup.NewBackupClient(ctx, mgr)
 	opts := storage.ExternalStorageOptions{
-		NoCredentials:            cfg.NoCreds,
-		SendCredentials:          cfg.SendCreds,
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
 	}
 	if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
