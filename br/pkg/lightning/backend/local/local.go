@@ -679,8 +679,6 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 	return nil
 }
 
-var errorTiKVTooOld = errors.New("TiKV is too old")
-
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 	if !local.ShouldCheckTiKV {
 		return
@@ -688,15 +686,21 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 	err := tikv.ForTiKVVersions(
 		ctx,
 		local.pdHTTPCli,
-		func(version *semver.Version, _ string) error {
+		func(version *semver.Version, addrMsg string) error {
 			if version.Compare(tikvSideFreeSpaceCheck) < 0 {
-				return errorTiKVTooOld
+				return errors.Errorf(
+					"%s has version %s, it does not support server side free space check",
+					addrMsg, version,
+				)
 			}
 			return nil
 		},
 	)
 	if err == nil {
+		local.logger.Info("TiKV server side free space check is enabled, so lightning will turn it off")
 		local.ShouldCheckTiKV = false
+	} else {
+		local.logger.Info("", zap.Error(err))
 	}
 }
 
