@@ -35,11 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tipb/go-tipb"
->>>>>>> a0e0969e102 (planner: fix ExtractCorrelatedCols method in PhysicalTableScan (#51205))
 	"github.com/stretchr/testify/require"
 )
 
