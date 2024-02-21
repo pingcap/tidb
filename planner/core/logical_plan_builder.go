@@ -7354,6 +7354,10 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 					// Build seed part plan.
 					saveSelect := x.SelectList.Selects
 					x.SelectList.Selects = x.SelectList.Selects[:i]
+					// We're rebuilding the seed part, so we pop the result we built previously.
+					for _i := 0; _i < i; _i++ {
+						b.handleHelper.popMap()
+					}
 					p, err = b.buildSetOpr(ctx, x)
 					if err != nil {
 						return err

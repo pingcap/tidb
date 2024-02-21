@@ -204,3 +204,15 @@ func TestIssue47881(t *testing.T) {
 		LEFT JOIN tmp3 c3 ON c3.id = '1';`)
 	rs.Check(testkit.Rows("1 1", "1 1"))
 }
+
+func TestIssue48969(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop view if exists v1;")
+	tk.MustExec("create view v1(id) as with recursive cte(a) as (select 1 union select a+1 from cte where a<3) select * from cte;")
+	tk.MustExec("create table test2(id int,value int);")
+	tk.MustExec("insert into test2 values(1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk.MustExec("update test2 set value=0 where test2.id in (select * from v1);")
+	tk.MustQuery("select * from test2").Check(testkit.Rows("1 0", "2 0", "3 0", "4 4", "5 5"))
+}
