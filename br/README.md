@@ -30,7 +30,7 @@
 To build binary and run test:
 
 ```bash
-$cd ../tidb
+$ cd ../tidb
 $ make build_br
 $ make test
 ```
