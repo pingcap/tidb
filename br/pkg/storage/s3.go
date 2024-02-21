@@ -421,9 +421,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		svc:     c,
 		options: &qs,
 	}
-	if opts.CheckS3ObjectLockOptions {
-		backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
-	}
+	
+	backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
 	return s3Storage, nil
 }
 
