@@ -96,6 +96,7 @@ type tableMeta struct {
 	// the first n columns in row is used for other condition, if a join has other condition, we only need to extract
 	// first n columns from the RowTable to evaluate other condition
 	columnCountNeededForOtherCondition int
+	totalColumnNumber                  int
 }
 
 func (meta *tableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
@@ -146,6 +147,7 @@ func newTableMeta(buildKeyIndex []int, buildSchema expression.Schema, probeKeyIn
 	meta.isFixedLength = true
 	meta.rowLength = 0
 	savedColumnCount := 0
+	meta.totalColumnNumber = buildSchema.Len()
 	updateMeta := func(col *expression.Column) {
 		length := chunk.GetFixedLen(col.RetType)
 		if length == chunk.VarElemLen {

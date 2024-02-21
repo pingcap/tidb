@@ -284,14 +284,26 @@ func (innerJoinProbe *innerJoinProbe) doProbe(chk *chunk.Chunk, info *probeProce
 		innerJoinProbe.offsetAndLengthArray = append(innerJoinProbe.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
 	}
 	if innerJoinProbe.rightAsBuildSide {
-		innerJoinProbe.appendProbeRowToChunk(joinedChk, info.chunk, innerJoinProbe.lUsed, 0)
+		if innerJoinProbe.ctx.hasPostProbeCondition() {
+			innerJoinProbe.appendProbeRowToChunk(joinedChk, info.chunk, innerJoinProbe.lUsedInOtherCondition, 0)
+		} else {
+			innerJoinProbe.appendProbeRowToChunk(joinedChk, info.chunk, innerJoinProbe.lUsed, 0)
+		}
 	} else {
-		innerJoinProbe.appendProbeRowToChunk(joinedChk, info.chunk, innerJoinProbe.rUsed, len(innerJoinProbe.lUsed))
+		if innerJoinProbe.ctx.hasPostProbeCondition() {
+			// todo set correct col offset
+			innerJoinProbe.appendProbeRowToChunk(joinedChk, info.chunk, innerJoinProbe.rUsedInOtherCondition, meta.totalColumnNumber)
+		} else {
+			innerJoinProbe.appendProbeRowToChunk(joinedChk, info.chunk, innerJoinProbe.rUsed, len(innerJoinProbe.lUsed))
+		}
 	}
 	if joinedChk.NumCols() == 0 {
 		joinedChk.SetNumVirtualRows(chk.NumRows() + totalAddedRows)
 	} else {
 		joinedChk.SetNumVirtualRows(chk.NumRows())
+	}
+	if innerJoinProbe.ctx.hasPostProbeCondition() {
+		// eval other condition, and construct final chunk
 	}
 	return
 }
