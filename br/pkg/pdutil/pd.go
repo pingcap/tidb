@@ -119,8 +119,7 @@ var (
 		"evict-slow-store-scheduler": {},
 	}
 	expectPDCfgGenerators = map[string]pauseConfigGenerator{
-		"max-merge-region-keys": zeroPauseConfig,
-		"max-merge-region-size": zeroPauseConfig,
+		"merge-schedule-limit": zeroPauseConfig,
 		// TODO "leader-schedule-limit" and "region-schedule-limit" don't support ttl for now,
 		// but we still need set these config for compatible with old version.
 		// we need wait for https://github.com/tikv/pd/pull/3131 merged.
@@ -135,8 +134,7 @@ var (
 	// defaultPDCfg find by https://github.com/tikv/pd/blob/master/conf/config.toml.
 	// only use for debug command.
 	defaultPDCfg = map[string]interface{}{
-		"max-merge-region-keys":       200000,
-		"max-merge-region-size":       20,
+		"merge-schedule-limit":        8,
 		"leader-schedule-limit":       4,
 		"region-schedule-limit":       2048,
 		"enable-location-replacement": "true",
