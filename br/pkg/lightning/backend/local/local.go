@@ -583,7 +583,7 @@ func NewBackend(
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
-	local.checkTiKVSideFreeSpace(ctx)
+	local.tikvSideCheckFreeSpace(ctx)
 
 	return local, nil
 }
@@ -681,7 +681,10 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 
 var errorTiKVTooOld = errors.New("TiKV is too old")
 
-func (local *Backend) checkTiKVSideFreeSpace(ctx context.Context) {
+func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
+	if !local.ShouldCheckTiKV {
+		return
+	}
 	err := tikv.ForTiKVVersions(
 		ctx,
 		local.pdHTTPCli,
