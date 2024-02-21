@@ -227,7 +227,7 @@ func (m *Manager) handleTasks() {
 // handleExecutableTasks handles executable tasks.
 func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task.TaskBase)
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(&task.Task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
 			// do not handle the tasks with lower rank if current task is waiting tasks free.
@@ -323,7 +323,7 @@ func (m *Manager) startTaskExecutor(task *proto.Task) {
 		return
 	}
 	m.addTaskExecutor(executor)
-	m.slotManager.alloc(task.TaskBase)
+	m.slotManager.alloc(&task.TaskBase)
 	resource := m.getStepResource(task.Concurrency)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
 		zap.Stringer("type", task.Type), zap.Int("remaining-slots", m.slotManager.availableSlots()))

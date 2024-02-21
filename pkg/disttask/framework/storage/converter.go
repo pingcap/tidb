@@ -69,7 +69,7 @@ func Row2Task(r chunk.Row) *proto.Task {
 }
 
 // row2BasicSubTask converts a row to a subtask with basic info
-func row2BasicSubTask(r chunk.Row) *proto.Subtask {
+func row2BasicSubTask(r chunk.Row) *proto.SubtaskBase {
 	taskIDStr := r.GetString(2)
 	tid, err := strconv.Atoi(taskIDStr)
 	if err != nil {
@@ -89,7 +89,7 @@ func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 		startTime = time.Unix(ts, 0)
 	}
 
-	subtask := &proto.Subtask{
+	subtask := &proto.SubtaskBase{
 		ID:          r.GetInt64(0),
 		Step:        proto.Step(r.GetInt64(1)),
 		TaskID:      int64(tid),
@@ -106,7 +106,9 @@ func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 
 // Row2SubTask converts a row to a subtask.
 func Row2SubTask(r chunk.Row) *proto.Subtask {
-	subtask := row2BasicSubTask(r)
+	subtask := &proto.Subtask{
+		SubtaskBase: *row2BasicSubTask(r),
+	}
 
 	// subtask defines update time as bigint, to ensure backward compatible,
 	// we keep it that way, and we convert it here.

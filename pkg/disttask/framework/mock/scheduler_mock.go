@@ -294,10 +294,10 @@ func (mr *MockTaskManagerMockRecorder) GCSubtasks(arg0 any) *gomock.Call {
 }
 
 // GetActiveSubtasks mocks base method.
-func (m *MockTaskManager) GetActiveSubtasks(arg0 context.Context, arg1 int64) ([]*proto.Subtask, error) {
+func (m *MockTaskManager) GetActiveSubtasks(arg0 context.Context, arg1 int64) ([]*proto.SubtaskBase, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetActiveSubtasks", arg0, arg1)
-	ret0, _ := ret[0].([]*proto.Subtask)
+	ret0, _ := ret[0].([]*proto.SubtaskBase)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -324,10 +324,10 @@ func (mr *MockTaskManagerMockRecorder) GetAllNodes(arg0 any) *gomock.Call {
 }
 
 // GetAllSubtasks mocks base method.
-func (m *MockTaskManager) GetAllSubtasks(arg0 context.Context) ([]*proto.Subtask, error) {
+func (m *MockTaskManager) GetAllSubtasks(arg0 context.Context) ([]*proto.SubtaskBase, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAllSubtasks", arg0)
-	ret0, _ := ret[0].([]*proto.Subtask)
+	ret0, _ := ret[0].([]*proto.SubtaskBase)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -605,7 +605,7 @@ func (mr *MockTaskManagerMockRecorder) TransferTasks2History(arg0, arg1 any) *go
 }
 
 // UpdateSubtasksExecIDs mocks base method.
-func (m *MockTaskManager) UpdateSubtasksExecIDs(arg0 context.Context, arg1 []*proto.Subtask) error {
+func (m *MockTaskManager) UpdateSubtasksExecIDs(arg0 context.Context, arg1 []*proto.SubtaskBase) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateSubtasksExecIDs", arg0, arg1)
 	ret0, _ := ret[0].(error)
