@@ -138,17 +138,9 @@ const (
 	PatAny
 )
 
-// CompilePatternBytes is an adapter for `CompilePatternInner`, `pattern` can only be an ascii string.
-func CompilePatternBytes(pattern string, escape byte) (patChars, patTypes []byte) {
-	patWeights, patTypes := CompilePatternInner(pattern, escape)
-	patChars = []byte(string(patWeights))
-
-	return patChars, patTypes
-}
-
-// CompilePatternPureBytes is used for binary strings.
-func CompilePatternPureBytes(pattern string, escape byte) (patChars, patTypes []byte) {
-	return CompilePatternInnerBytes(pattern, escape)
+// CompilePatternBinary is used for binary strings.
+func CompilePatternBinary(pattern string, escape byte) (patChars, patTypes []byte) {
+	return CompilePatternInnerBinary(pattern, escape)
 }
 
 // CompilePattern is an adapter for `CompilePatternInner`, `pattern` can be any unicode string.
@@ -203,11 +195,11 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 	return
 }
 
-// CompilePatternInnerBytes handles escapes and wild cards convert pattern characters and
+// CompilePatternInnerBinary handles escapes and wild cards convert pattern characters and
 // pattern types in bytes.
 // The main algorithm is the same as CompilePatternInner. However, it's not easy to use interface/lambda to hide the different details here.
 // Note: if anything changes in this method, please double-check CompilePatternInner
-func CompilePatternInnerBytes(pattern string, escape byte) (patWeights, patTypes []byte) {
+func CompilePatternInnerBinary(pattern string, escape byte) (patWeights, patTypes []byte) {
 	bytes := []byte(pattern)
 	lenBytes := len(bytes)
 	patWeights = make([]byte, lenBytes)
@@ -281,12 +273,12 @@ func CompileLike2Regexp(str string) string {
 	return string(result)
 }
 
-// DoMatchBytes is an adapter for `DoMatchInner`, `str` is binary strings or ascii string.
-func DoMatchBytes(str string, patChars, patTypes []byte) bool {
+// DoMatchBinary is an adapter for `DoMatchInner`, `str` is binary strings or ascii string.
+func DoMatchBinary(str string, patChars, patTypes []byte) bool {
 	bytes := []byte(str)
 	lenBytes := len(bytes)
 	lenPatWeights := len(patChars)
-	return DoMatchInner(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patChars[b] })
+	return doMatchInner(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patChars[b] })
 }
 
 // DoMatch is an adapter for `DoMatchCustomized`, `str` can be any unicode string.
@@ -300,13 +292,13 @@ func DoMatchCustomized(str string, patWeights []rune, patTypes []byte, matcher f
 	runes := []rune(str)
 	lenRunes := len(runes)
 	lenPatWeights := len(patWeights)
-	return DoMatchInner(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matcher(runes[a], patWeights[b]) })
+	return doMatchInner(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matcher(runes[a], patWeights[b]) })
 }
 
-// DoMatchInner matches the string with patChars and patTypes.
+// doMatchInner matches the string with patChars and patTypes.
 // The algorithm has linear time complexity.
 // https://research.swtch.com/glob
-func DoMatchInner(lenPatWeights int, lenChars int, patTypes []byte, matcher func(a, b int) bool) bool {
+func doMatchInner(lenPatWeights int, lenChars int, patTypes []byte, matcher func(a, b int) bool) bool {
 	var cIdx, pIdx, nextCIdx, nextPIdx int
 	for pIdx < lenPatWeights || cIdx < lenChars {
 		if pIdx < lenPatWeights {

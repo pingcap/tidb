@@ -35,7 +35,7 @@ var (
 	newCollationEnabled int32
 
 	// binCollatorInstance is a singleton used for all collations when newCollationEnabled is false.
-	binCollatorInstance              = &binCollator{}
+	binCollatorInstance              = &derivedBinCollator{}
 	binCollatorInstanceSliceWithLen1 = []Collator{binCollatorInstance}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
@@ -400,8 +400,8 @@ func init() {
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 
-	newCollatorMap["binary"] = &binPureCollator{}
-	newCollatorIDMap[CollationName2ID("binary")] = &binPureCollator{}
+	newCollatorMap["binary"] = &binCollator{}
+	newCollatorIDMap[CollationName2ID("binary")] = &binCollator{}
 	newCollatorMap["ascii_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("ascii_bin")] = &binPaddingCollator{}
 	newCollatorMap["latin1_bin"] = &binPaddingCollator{}
@@ -410,8 +410,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8mb4_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("utf8_bin")] = &binPaddingCollator{}
-	newCollatorMap["utf8mb4_0900_bin"] = &binCollator{}
-	newCollatorIDMap[CollationName2ID("utf8mb4_0900_bin")] = &binCollator{}
+	newCollatorMap["utf8mb4_0900_bin"] = &derivedBinCollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_0900_bin")] = &derivedBinCollator{}
 	newCollatorMap["utf8mb4_general_ci"] = &generalCICollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_general_ci")] = &generalCICollator{}
 	newCollatorMap["utf8_general_ci"] = &generalCICollator{}
