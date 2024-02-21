@@ -287,6 +287,23 @@ func newSession(options *SessionOptions, logger log.Logger) *session {
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	vars.SQLMode = sqlMode
+<<<<<<< HEAD
+=======
+
+	typeFlags := vars.StmtCtx.TypeFlags().
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
+			!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode())
+	vars.StmtCtx.SetTypeFlags(typeFlags)
+
+	errLevels := vars.StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
+	errLevels[errctx.ErrGroupDividedByZero] =
+		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
+	vars.StmtCtx.SetErrLevels(errLevels)
+
+>>>>>>> 4c76b129a3b (importinto/lightning: fix incorrect datatime value for zero date (#51201))
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
 			// since 6.3(current master) tidb checks whether we can set a system variable
