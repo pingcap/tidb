@@ -130,6 +130,10 @@ func MergeGlobalStatsTopNByConcurrency(
 	return globalTopN, popedTopn, wrapper.AllHg, nil
 }
 
+// The histIter is maintained to remove the topn values from the histogram.
+// It's used under such assumption: the removed topn item is given in order.
+// And we record the totalSubstracted because our bucket count is the cumulative one.
+// We will need to subtract the topn count for [i-th, n] buckets if we remove it from the i-th bucket.
 type histIter struct {
 	hist             *statistics.Histogram
 	totalSubstracted int64
@@ -260,6 +264,14 @@ func (h *topNMeataHeap) Pop() any {
 //     but is not placed to global-level TopN. We should put them back to histogram latter.
 //  3. `[]*Histogram` are the partition-level histograms which
 //     just delete some values when we merge the global-level topN.
+//
+// The function use the merging operation based on the property that the topn items are ordered.
+// And it does a heuristic short-cutting:
+// - for newly seen merged topn item, it's total occurrence is the sum in the topn and the sum in the hist.
+// - its occurrence in each hist is calculated as row_num_hist / ndv_in_hist or 0 or the bucket bound.
+// - so we can calculate its maximum possible added value to max(row_num_hist / ndv_in_hist, bucket bound of each bucket) for each hist + sum_in_topn
+// - we don't need to actually check it histogram by histogram if the maximum possible occurrence is still smaller than smallest maintained topn.
+// This short-cutting will save the CPU time.
 func MergePartTopN2GlobalTopN(
 	loc *time.Location,
 	topNs []*statistics.TopN,
@@ -281,6 +293,9 @@ func MergePartTopN2GlobalTopN(
 			nextPosInTopN: 1,
 		})
 	}
+	if mergingHeap.Len() == 0 {
+		return nil, nil, hists, nil
+	}
 	maxPossibleAdded := make([]int64, len(hists))
 	for i, hist := range hists {
 		curMax := int64(hist.NotNullCount() / float64(hist.NDV))
@@ -288,9 +303,6 @@ func MergePartTopN2GlobalTopN(
 			curMax = max(curMax, bkt.Repeat)
 		}
 		maxPossibleAdded[i] = curMax
-	}
-	if mergingHeap.Len() == 0 {
-		return nil, nil, hists, nil
 	}
 	histIters := make([]histIter, len(hists))
 	for i, hist := range hists {
@@ -303,11 +315,8 @@ func MergePartTopN2GlobalTopN(
 	cur := maintaining{
 		affectedTopNs: bitset.New(uint(len(hists))),
 	}
-	step := int64(0)
-	histRemoveCnt := int64(0)
 	var finalTopNs topNMeataHeap = make([]statistics.TopNMeta, 0, n+1)
 	remainedTopNs := make([]statistics.TopNMeta, 0, n)
-	skipCount := 0
 	affectedHist := make([]int, 0, len(hists))
 	firstTime := true
 	checkTheCurAndMoveForward := func(nextVal *statistics.TopNMeta, position uint) error {
@@ -330,7 +339,6 @@ func MergePartTopN2GlobalTopN(
 			}
 			// The maximum possible added value still cannot make it replace the smallest topn.
 			if maxPossible+int64(cur.item.Count) < int64(finalTopNs[0].Count) {
-				skipCount++
 				remainedTopNs = append(remainedTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
 				// Set the cur maintained to the next value.
 				cur.item.Encoded = nextVal.Encoded
@@ -341,7 +349,6 @@ func MergePartTopN2GlobalTopN(
 			}
 		}
 		for _, histPos := range affectedHist {
-			histRemoveCnt++
 			// Remove the value from the hist and add it into the current maintained value.
 			cur.item.Count += uint64(histIters[histPos].remove(&d))
 		}
@@ -376,7 +383,6 @@ func MergePartTopN2GlobalTopN(
 		if mergingHeap.Len() == 0 {
 			break
 		}
-		step++
 		head := mergingHeap[0]
 		headTopN := head.item
 		if head.nextPosInTopN < topNs[head.idx].Num() {
@@ -408,14 +414,17 @@ func MergePartTopN2GlobalTopN(
 		cur.item.Count += headTopN.Count
 		cur.affectedTopNs.Set(uint(head.idx))
 	}
-	{
-		// Next val and the position is useless
-		err := checkTheCurAndMoveForward(&cur.item, 0)
-		if err != nil {
+
+	// Next val and the position is useless
+	err := checkTheCurAndMoveForward(&cur.item, 0)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	for _, iter := range histIters {
+		if err := killer.HandleSignal(); err != nil {
 			return nil, nil, nil, err
 		}
-	}
-	for _, iter := range histIters {
 		iter.finish()
 	}
 	statistics.SortTopnMeta(finalTopNs)
