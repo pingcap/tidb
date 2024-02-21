@@ -940,9 +940,6 @@ func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedCol
 	for _, expr := range ts.AccessCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
-	for _, expr := range ts.filterCondition {
-		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-	}
 	for _, expr := range ts.LateMaterializationFilterCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -486,7 +487,10 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 
 	pb, err := ts.ToPB(tk.Session(), kv.TiFlash)
 	require.NoError(t, err)
+	// make sure the pushed down filter condition is correct
 	require.Equal(t, 1, len(pb.TblScan.PushedDownFilterConditions))
+	require.Equal(t, tipb.ExprType_ColumnRef, pb.TblScan.PushedDownFilterConditions[0].Children[0].Tp)
+	// make sure the correlated columns are extracted correctly
 	correlated := ts.ExtractCorrelatedCols()
 	require.Equal(t, 1, len(correlated))
 	require.Equal(t, "test.t2.company_no", correlated[0].String())
