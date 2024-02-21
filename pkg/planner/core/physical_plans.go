@@ -918,15 +918,8 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-<<<<<<< HEAD
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.filterCondition)+len(ts.LateMaterializationFilterCondition))
-=======
 	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.LateMaterializationFilterCondition))
->>>>>>> a0e0969e102 (planner: fix ExtractCorrelatedCols method in PhysicalTableScan (#51205))
 	for _, expr := range ts.AccessCondition {
-		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-	}
-	for _, expr := range ts.LateMaterializationFilterCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	for _, expr := range ts.LateMaterializationFilterCondition {
