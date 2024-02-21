@@ -91,7 +91,8 @@ type tableMeta struct {
 	// is [1, 0, 2]
 	rowColumnsOrder []int
 	// the column size of each column, -1 mean variable column
-	columnsSize []int
+	columnsSize              []int
+	ignoreIntegerKeySignFlag []bool
 	// the first n columns in row is used for other condition, if a join has other condition, we only need to extract
 	// first n columns from the RowTable to evaluate other condition
 	columnCountNeededForOtherCondition int
@@ -140,50 +141,56 @@ func canBeInlinedAsJoinKey(tp *types.FieldType) bool {
 // otherConditionColIndex is the column index that will be used in other condition, if no other condition, will be nil
 // columnsNeedConvertToRow is the column index that need to be converted to row, should not be nil
 // needUsedFlag is true for outer/semi join that use outer to build
-func newTableMeta(buildKeyIndex []int, otherConditionColIndex []int, columnsNeedConvertToRow []int, buildSchema expression.Schema, needUsedFlag bool) *tableMeta {
+func newTableMeta(buildKeyIndex []int, buildSchema expression.Schema, probeKeyIndex []int, probeSchema expression.Schema, columnsUsedByPostJoinFilter []int, outputColumns []int, needUsedFlag bool) *tableMeta {
 	meta := &tableMeta{}
 	meta.isFixedLength = true
 	meta.rowLength = 0
-	nullableColumnCount := 0
-	if needUsedFlag {
-		nullableColumnCount = 1
+	savedColumnCount := 0
+	updateMeta := func(col *expression.Column) {
+		length := chunk.GetFixedLen(col.RetType)
+		if length == chunk.VarElemLen {
+			meta.isFixedLength = false
+		} else {
+			meta.rowLength += length
+		}
+		savedColumnCount++
 	}
-	if columnsNeedConvertToRow == nil {
+	if outputColumns == nil {
+		// outputColumns = nil means all the column is needed
 		for _, col := range buildSchema.Columns {
-			length := chunk.GetFixedLen(col.RetType)
-			if length == chunk.VarElemLen {
-				meta.isFixedLength = false
-			} else {
-				meta.rowLength += length
-			}
-			if !mysql.HasNotNullFlag(col.RetType.GetFlag()) {
-				nullableColumnCount++
-			}
+			updateMeta(col)
 		}
 	} else {
-		for _, index := range columnsNeedConvertToRow {
-			length := chunk.GetFixedLen(buildSchema.Columns[index].RetType)
-			if length == chunk.VarElemLen {
-				meta.isFixedLength = false
-			} else {
-				meta.rowLength += length
-			}
-			if !mysql.HasNotNullFlag(buildSchema.Columns[index].RetType.GetFlag()) {
-				nullableColumnCount++
+		usedColumnMap := make(map[int]struct{}, len(outputColumns))
+		for _, index := range outputColumns {
+			updateMeta(buildSchema.Columns[index])
+			usedColumnMap[index] = struct{}{}
+		}
+		if columnsUsedByPostJoinFilter != nil {
+			for _, index := range columnsUsedByPostJoinFilter {
+				if _, ok := usedColumnMap[index]; !ok {
+					updateMeta(buildSchema.Columns[index])
+					usedColumnMap[index] = struct{}{}
+				}
 			}
 		}
 	}
 	if !meta.isFixedLength {
 		meta.rowLength = 0
 	}
-	meta.nullMapLength = (nullableColumnCount + 7) / 8
+	if needUsedFlag {
+		meta.nullMapLength = (savedColumnCount + 1 + 7) / 8
+	} else {
+		meta.nullMapLength = (savedColumnCount + 7) / 8
+	}
 
 	meta.isJoinKeysFixedLength = true
 	meta.joinKeysLength = 0
 	meta.isJoinKeysInlined = true
 	keyIndexMap := make(map[int]struct{})
-	for _, index := range buildKeyIndex {
-		keyType := buildSchema.Columns[index].RetType
+	meta.ignoreIntegerKeySignFlag = make([]bool, 0, len(buildKeyIndex))
+	for index, keyIndex := range buildKeyIndex {
+		keyType := buildSchema.Columns[keyIndex].RetType
 		keyLength := chunk.GetFixedLen(keyType)
 		if keyLength == chunk.VarElemLen {
 			meta.isJoinKeysFixedLength = false
@@ -193,7 +200,19 @@ func newTableMeta(buildKeyIndex []int, otherConditionColIndex []int, columnsNeed
 		if !canBeInlinedAsJoinKey(keyType) {
 			meta.isJoinKeysInlined = false
 		}
-		keyIndexMap[index] = struct{}{}
+		if mysql.IsIntegerType(keyType.GetType()) {
+			buildUnsigned := mysql.HasUnsignedFlag(keyType.GetFlag())
+			probeUnsigned := mysql.HasUnsignedFlag(probeSchema.Columns[probeKeyIndex[index]].RetType.GetFlag())
+			if (buildUnsigned && !probeUnsigned) || (probeUnsigned && !buildUnsigned) {
+				meta.ignoreIntegerKeySignFlag = append(meta.ignoreIntegerKeySignFlag, false)
+				meta.isJoinKeysInlined = false
+			} else {
+				meta.ignoreIntegerKeySignFlag = append(meta.ignoreIntegerKeySignFlag, true)
+			}
+		} else {
+			meta.ignoreIntegerKeySignFlag = append(meta.ignoreIntegerKeySignFlag, true)
+		}
+		keyIndexMap[keyIndex] = struct{}{}
 	}
 	if !meta.isJoinKeysFixedLength {
 		meta.joinKeysLength = 0
@@ -203,9 +222,9 @@ func newTableMeta(buildKeyIndex []int, otherConditionColIndex []int, columnsNeed
 		meta.isJoinKeysInlined = false
 	}
 	// construct the column order
-	meta.rowColumnsOrder = make([]int, len(columnsNeedConvertToRow))
-	meta.columnsSize = make([]int, len(columnsNeedConvertToRow))
-	usedColumnMap := make(map[int]struct{}, len(columnsNeedConvertToRow))
+	meta.rowColumnsOrder = make([]int, savedColumnCount)
+	meta.columnsSize = make([]int, savedColumnCount)
+	usedColumnMap := make(map[int]struct{}, savedColumnCount)
 
 	updateColumnOrder := func(index int) {
 		if _, ok := usedColumnMap[index]; !ok {
@@ -221,22 +240,22 @@ func newTableMeta(buildKeyIndex []int, otherConditionColIndex []int, columnsNeed
 		}
 	}
 	meta.columnCountNeededForOtherCondition = 0
-	if len(otherConditionColIndex) > 0 {
+	if len(columnsUsedByPostJoinFilter) > 0 {
 		// if join has other condition, the columns used by other condition is appended to row layout after the key
-		for _, index := range otherConditionColIndex {
+		for _, index := range columnsUsedByPostJoinFilter {
 			updateColumnOrder(index)
 		}
 		meta.columnCountNeededForOtherCondition = len(usedColumnMap)
 	}
-	for _, index := range columnsNeedConvertToRow {
+	for _, index := range outputColumns {
 		updateColumnOrder(index)
 	}
 	return meta
 }
 
-func newRowTable(buildKeyIndex []int, otherConditionColIndex []int, columnsNeedConvertToRow []int, buildSchema expression.Schema, needUsedFlag bool) *rowTable {
+func newRowTable(buildKeyIndex []int, buildSchema expression.Schema, probeKeyIndex []int, probeSchema expression.Schema, otherConditionColIndex []int, columnsNeedConvertToRow []int, needUsedFlag bool) *rowTable {
 	return &rowTable{
-		meta:     newTableMeta(buildKeyIndex, otherConditionColIndex, columnsNeedConvertToRow, buildSchema, needUsedFlag),
+		meta:     newTableMeta(buildKeyIndex, buildSchema, probeKeyIndex, probeSchema, otherConditionColIndex, columnsNeedConvertToRow, needUsedFlag),
 		segments: make([]*rowTableSegment, 0),
 	}
 }
