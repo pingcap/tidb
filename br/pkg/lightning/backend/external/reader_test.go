@@ -22,8 +22,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -105,4 +107,53 @@ func TestReadAllOneFile(t *testing.T) {
 	require.NoError(t, err)
 
 	testReadAndCompare(ctx, t, kvs, memStore, datas, stats, kvs[0].Key, memSizeLimit)
+}
+
+func TestReadLargeFile(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	backup := ConcurrentReaderBufferSizePerConc
+	t.Cleanup(func() {
+		ConcurrentReaderBufferSizePerConc = backup
+	})
+	ConcurrentReaderBufferSizePerConc = 512 * 1024
+
+	w := NewWriterBuilder().
+		SetPropSizeDistance(128*1024).
+		SetPropKeysDistance(1000).
+		BuildOneFile(memStore, "/test", "0")
+
+	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
+
+	val := make([]byte, 10000)
+	for i := 0; i < 10000; i++ {
+		key := []byte(fmt.Sprintf("key%06d", i))
+		require.NoError(t, w.WriteRow(ctx, key, val))
+	}
+	require.NoError(t, w.Close(ctx))
+
+	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	require.NoError(t, err)
+	require.Len(t, datas, 1)
+
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/assertReloadAtMostOnce", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/assertReloadAtMostOnce")
+
+	smallBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(smallBlockSize),
+	)
+	largeBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+	)
+	output := &memKVsAndBuffers{}
+	startKey := []byte("key000000")
+	maxKey := []byte("key004998")
+	endKey := []byte("key004999")
+	err = readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
+	require.NoError(t, err)
+	output.build(ctx)
+	require.Equal(t, startKey, output.keys[0])
+	require.Equal(t, maxKey, output.keys[len(output.keys)-1])
 }

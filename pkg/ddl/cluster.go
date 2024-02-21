@@ -800,7 +800,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	}
 	defer w.sessPool.Put(sess)
 
-	err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(w.ctx, w.store, true, func(context.Context, kv.Transaction) error {
 		if err = recoverPDSchedule(pdScheduleValue); err != nil {
 			return err
 		}

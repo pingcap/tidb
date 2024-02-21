@@ -175,6 +175,15 @@ func TestTLSVersion(t *testing.T) {
 			require.Error(t, err)
 		}
 	}
+
+	// test with min tls version
+	clientTLS2, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(clientCert, clientKey),
+		util.WithMinTLSVersion(tls.VersionTLS13),
+	)
+	require.NoError(t, err)
+	require.Equal(t, uint16(tls.VersionTLS13), clientTLS2.MinVersion)
 }
 
 func TestCA(t *testing.T) {

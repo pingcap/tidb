@@ -24,6 +24,7 @@ go_library(
         "//br/pkg/utils",
         "//pkg/errctx",
         "//pkg/expression",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/parser/model",
@@ -56,7 +57,7 @@ go_test(
     embed = [":kv"],
     flaky = True,
     race = "on",
-    shard_count = 19,
+    shard_count = 18,
     deps = [
         "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/common",
