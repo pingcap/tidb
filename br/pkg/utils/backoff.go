@@ -111,28 +111,34 @@ type importerBackoffer struct {
 	attempt      int
 	delayTime    time.Duration
 	maxDelayTime time.Duration
+	errContext   *ErrorContext
 }
 
 // NewBackoffer creates a new controller regulating a truncated exponential backoff.
-func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration) Backoffer {
+func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration, errContext *ErrorContext) Backoffer {
 	return &importerBackoffer{
 		attempt:      attempt,
 		delayTime:    delayTime,
 		maxDelayTime: maxDelayTime,
+		errContext:   errContext,
 	}
 }
 
 func NewImportSSTBackoffer() Backoffer {
-	return NewBackoffer(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval)
+	errContext := NewErrorContext("import sst", 3)
+	return NewBackoffer(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval, errContext)
 }
 
 func NewDownloadSSTBackoffer() Backoffer {
-	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval)
+	errContext := NewErrorContext("download sst", 3)
+	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval, errContext)
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
-	if MessageIsRetryableStorageError(err.Error()) {
+	// we don't care storeID here.
+	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
+	if res.Strategy == RetryStrategy {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
@@ -142,7 +148,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
 		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:
-			// Excepted error, finish the operation
+			// Expected error, finish the operation
 			bo.delayTime = 0
 			bo.attempt = 0
 		default:
@@ -151,10 +157,10 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			default:
-				// Unexcepted error
+				// Unexpected error
 				bo.delayTime = 0
 				bo.attempt = 0
-				log.Warn("unexcepted error, stop to retry", zap.Error(err))
+				log.Warn("unexpected error, stop retrying", zap.Error(err))
 			}
 		}
 	}
