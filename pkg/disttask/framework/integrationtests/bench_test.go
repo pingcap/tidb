@@ -55,7 +55,7 @@ var (
 // bench.test -test.v -run ^$ -test.bench=BenchmarkSchedulerOverhead --with-tikv "upstream-pd:2379?disableGC=true"
 func BenchmarkSchedulerOverhead(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
-	statusWG := mockTiDBStatusPort(b, ctx)
+	statusWG := mockTiDBStatusPort(ctx, b)
 	defer func() {
 		cancel()
 		statusWG.Wait()
@@ -98,7 +98,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 
 // we run this test on a k8s environment, so we need to mock the TiDB server status port
 // to have metrics.
-func mockTiDBStatusPort(b *testing.B, ctx context.Context) *util.WaitGroupWrapper {
+func mockTiDBStatusPort(ctx context.Context, b *testing.B) *util.WaitGroupWrapper {
 	var wg util.WaitGroupWrapper
 	err := metricsutil.RegisterMetrics()
 	terror.MustNil(err)
