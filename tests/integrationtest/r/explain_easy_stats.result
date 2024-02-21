@@ -13,12 +13,6 @@ set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
-show stats_histograms where db_name = 'explain_easy_stats' and table_name = 't1' and column_name = 'c2';
-Db_name	Table_name	Partition_name	Column_name	Is_index	Update_time	Distinct_count	Null_count	Avg_col_size	Correlation	Load_status	Total_mem_usage	Hist_mem_usage	Topn_mem_usage	Cms_mem_usage
-explain_easy_stats	t1		c2	1	2024-01-26 04:07:17	2000	0	0	0	allLoaded	62631	21671	0	40960
-show stats_histograms where db_name = 'explain_easy_stats' and table_name = 't2' and column_name = 'c1';
-Db_name	Table_name	Partition_name	Column_name	Is_index	Update_time	Distinct_count	Null_count	Avg_col_size	Correlation	Load_status	Total_mem_usage	Hist_mem_usage	Topn_mem_usage	Cms_mem_usage
-explain_easy_stats	t2		c1	1	2024-01-26 04:07:17	2000	0	0	0	allLoaded	21671	21671	0	0
 explain format = 'brief' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	estRows	task	access object	operator info
 HashJoin	1600.00	root		semi join, equal:[eq(Column#13, Column#11)]

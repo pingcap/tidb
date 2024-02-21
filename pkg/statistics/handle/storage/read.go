@@ -275,7 +275,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			!loadAll &&
 			config.GetGlobalConfig().Performance.LiteInitStats
 		if notNeedLoad {
-			delete(table.Indices, histID)
+			// TODO: Here we have a chance to delete it from the table.
 			return nil
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
@@ -363,7 +363,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
 		if notNeedLoad {
-			delete(table.Columns, histID)
+			// TODO: Here we have a chance to delete it from the table.
 			return nil
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {

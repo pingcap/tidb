@@ -77,10 +77,10 @@ type Table struct {
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
 type ColAndIdxExistenceMap struct {
-	colInfoMap    map[int64]*model.ColumnInfo
-	colAnalyzed   map[int64]bool
-	idxInfoMap    map[int64]*model.IndexInfo
-	indexAnalyzed map[int64]bool
+	colInfoMap  map[int64]*model.ColumnInfo
+	colAnalyzed map[int64]bool
+	idxInfoMap  map[int64]*model.IndexInfo
+	idxAnalyzed map[int64]bool
 }
 
 // SomeAnalyzed checks whether some part of the table is analyzed.
@@ -94,7 +94,7 @@ func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
 			return true
 		}
 	}
-	for _, v := range m.indexAnalyzed {
+	for _, v := range m.idxAnalyzed {
 		if v {
 			return true
 		}
@@ -103,6 +103,8 @@ func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
 }
 
 // Has checks whether a column/index stats exists.
+// This method only checks whether the given item exists or not.
+// Don't check whether it has statistics or not.
 func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
 	if isIndex {
 		_, ok := m.idxInfoMap[id]
@@ -122,7 +124,7 @@ func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
 // To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	if isIndex {
-		analyzed, ok := m.indexAnalyzed[id]
+		analyzed, ok := m.idxAnalyzed[id]
 		return ok && analyzed
 	}
 	analyzed, ok := m.colAnalyzed[id]
@@ -143,7 +145,7 @@ func (m *ColAndIdxExistenceMap) GetCol(id int64) *model.ColumnInfo {
 // InsertIndex inserts an index with its meta into the map.
 func (m *ColAndIdxExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
 	m.idxInfoMap[id] = info
-	m.indexAnalyzed[id] = analyzed
+	m.idxAnalyzed[id] = analyzed
 }
 
 // GetIndex gets the meta data of the given index.
@@ -159,49 +161,26 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-	for k, v := range m.colInfoMap {
-		mm.colInfoMap[k] = v
-	}
-	for k, v := range m.colAnalyzed {
-		mm.colAnalyzed[k] = v
-	}
-	for k, v := range m.idxInfoMap {
-		mm.idxInfoMap[k] = v
-	}
-	for k, v := range m.indexAnalyzed {
-		mm.indexAnalyzed[k] = v
-	}
+	mm.colInfoMap = maps.Clone(m.colInfoMap)
+	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
+	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
+	mm.idxInfoMap = maps.Clone(m.idxInfoMap)
 	return mm
 }
 
 // NewColAndIndexExistenceMap return a new object with the given capcity.
 func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
 	return &ColAndIdxExistenceMap{
-		colInfoMap:    make(map[int64]*model.ColumnInfo, colCap),
-		colAnalyzed:   make(map[int64]bool, colCap),
-		idxInfoMap:    make(map[int64]*model.IndexInfo, idxCap),
-		indexAnalyzed: make(map[int64]bool, idxCap),
+		colInfoMap:  make(map[int64]*model.ColumnInfo, colCap),
+		colAnalyzed: make(map[int64]bool, colCap),
+		idxInfoMap:  make(map[int64]*model.IndexInfo, idxCap),
+		idxAnalyzed: make(map[int64]bool, idxCap),
 	}
 }
 
 // ColAndIdxExistenceMapIsEqual is used in testing, checking whether the two are equal.
 func ColAndIdxExistenceMapIsEqual(m1, m2 *ColAndIdxExistenceMap) bool {
-	if len(m1.colAnalyzed) != len(m2.colAnalyzed) || len(m1.indexAnalyzed) != len(m2.indexAnalyzed) {
-		return false
-	}
-	for k, v := range m1.colAnalyzed {
-		v2, ok := m2.colAnalyzed[k]
-		if !ok || v != v2 {
-			return false
-		}
-	}
-	for k, v := range m1.indexAnalyzed {
-		v2, ok := m2.indexAnalyzed[k]
-		if !ok || v != v2 {
-			return false
-		}
-	}
-	return true
+	return maps.Equal(m1.colAnalyzed, m2.colAnalyzed) && maps.Equal(m1.idxAnalyzed, m2.idxAnalyzed)
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
