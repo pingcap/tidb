@@ -6741,8 +6741,8 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isSystemTable(schema, table string) bool {
-	if schema != "mysql" {
+func isUndroppableTable(schema, table string) bool {
+	if schema != mysql.SystemDB {
 		return false
 	}
 	if _, ok := systemTables[table]; ok {
@@ -6818,7 +6818,7 @@ func (d *ddl) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isSystemTable(tn.Schema.L, tn.Name.L) {
+		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
 			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
 		}
 		switch tableObjectType {
