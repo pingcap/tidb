@@ -458,8 +458,8 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	p, ok := info.Plan.(core.Plan)
 	require.True(t, ok)
 
-	var find_table_scan func(p core.Plan) *core.PhysicalTableScan
-	find_table_scan = func(p core.Plan) *core.PhysicalTableScan {
+	var findTableScan func(p core.Plan) *core.PhysicalTableScan
+	findTableScan = func(p core.Plan) *core.PhysicalTableScan {
 		if p == nil {
 			return nil
 		}
@@ -470,18 +470,18 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 			}
 			return nil
 		case *core.PhysicalTableReader:
-			return find_table_scan(v.TablePlans[0])
+			return findTableScan(v.TablePlans[0])
 		default:
 			physicayPlan := p.(core.PhysicalPlan)
 			for _, child := range physicayPlan.Children() {
-				if ts := find_table_scan(child); ts != nil {
+				if ts := findTableScan(child); ts != nil {
 					return ts
 				}
 			}
 			return nil
 		}
 	}
-	ts := find_table_scan(p)
+	ts := findTableScan(p)
 	require.NotNil(t, ts)
 
 	pb, err := ts.ToPB(tk.Session(), kv.TiFlash)
