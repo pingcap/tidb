@@ -46,6 +46,56 @@ var (
 	noTask            = flag.Bool("no-task", false, "no task")
 )
 
+// test overhead when starting multiple schedulers
+//
+// make failpoint-enable
+// GOOS=linux GOARCH=amd64 go test -tags intest -c -o bench.test ./pkg/disttask/framework/integrationtests
+// make failpoint-disable
+//
+// bench.test -test.v -run ^$ -test.bench=BenchmarkSchedulerOverhead --with-tikv "upstream-pd:2379?disableGC=true"
+func BenchmarkSchedulerOverhead(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	statusWG := mockTiDBStatusPort(b, ctx)
+	defer func() {
+		cancel()
+		statusWG.Wait()
+	}()
+	bak := proto.MaxConcurrentTask
+	b.Cleanup(func() {
+		proto.MaxConcurrentTask = bak
+	})
+	proto.MaxConcurrentTask = *maxConcurrentTask
+	b.Logf("max concurrent task: %d", proto.MaxConcurrentTask)
+	b.Logf("taks wait duration: %s", *waitDuration)
+	b.Logf("task meta size: %d", *taskMetaSize)
+
+	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask, false)
+
+	tk := testkit.NewTestKit(c.T, c.Store)
+	tk.MustExec("delete from mysql.tidb_global_task")
+	tk.MustExec("delete from mysql.tidb_global_task_history")
+	tk.MustExec("delete from mysql.tidb_background_subtask")
+	tk.MustExec("delete from mysql.tidb_background_subtask_history")
+
+	registerTaskTypeForBench(c)
+
+	if *noTask {
+		time.Sleep(*waitDuration)
+	} else {
+		var wg util.WaitGroupWrapper
+		for i := 0; i < proto.MaxConcurrentTask; i++ {
+			taskKey := fmt.Sprintf("task-%d", i)
+			taskMeta := make([]byte, *taskMetaSize)
+			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
+			require.NoError(c.T, err)
+			wg.RunWithLog(func() {
+				testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
+			})
+		}
+		wg.Wait()
+	}
+}
+
 // we run this test on a k8s environment, so we need to mock the TiDB server status port
 // to have metrics.
 func mockTiDBStatusPort(b *testing.B, ctx context.Context) *util.WaitGroupWrapper {
@@ -78,37 +128,7 @@ func mockTiDBStatusPort(b *testing.B, ctx context.Context) *util.WaitGroupWrappe
 	return &wg
 }
 
-// test overhead when starting multiple schedulers
-//
-// make failpoint-enable
-// GOOS=linux GOARCH=amd64 go test -tags intest -c -o bench.test ./pkg/disttask/framework/integrationtests
-// make failpoint-disable
-//
-// bench.test -test.v -run ^$ -test.bench=BenchmarkSchedulerOverhead -test.benchmem --with-tikv "upstream-pd:2379?disableGC=true"
-func BenchmarkSchedulerOverhead(b *testing.B) {
-	ctx, cancel := context.WithCancel(context.Background())
-	statusWG := mockTiDBStatusPort(b, ctx)
-	defer func() {
-		cancel()
-		statusWG.Wait()
-	}()
-	bak := proto.MaxConcurrentTask
-	b.Cleanup(func() {
-		proto.MaxConcurrentTask = bak
-	})
-	proto.MaxConcurrentTask = *maxConcurrentTask
-	b.Logf("max concurrent task: %d", proto.MaxConcurrentTask)
-	b.Logf("taks wait duration: %s", *waitDuration)
-	b.Logf("task meta size: %d", *taskMetaSize)
-
-	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask, false)
-
-	tk := testkit.NewTestKit(c.T, c.Store)
-	tk.MustExec("delete from mysql.tidb_global_task")
-	tk.MustExec("delete from mysql.tidb_global_task_history")
-	tk.MustExec("delete from mysql.tidb_background_subtask")
-	tk.MustExec("delete from mysql.tidb_background_subtask_history")
-
+func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 	stepTransition := map[proto.Step]proto.Step{
 		proto.StepInit: proto.StepOne,
 		proto.StepOne:  proto.StepTwo,
@@ -147,20 +167,4 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		}
 		return nil
 	})
-
-	if *noTask {
-		time.Sleep(*waitDuration)
-	} else {
-		var wg util.WaitGroupWrapper
-		for i := 0; i < proto.MaxConcurrentTask; i++ {
-			taskKey := fmt.Sprintf("task-%d", i)
-			taskMeta := make([]byte, *taskMetaSize)
-			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
-			require.NoError(c.T, err)
-			wg.RunWithLog(func() {
-				testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
-			})
-		}
-		wg.Wait()
-	}
 }
