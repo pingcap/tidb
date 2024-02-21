@@ -4652,7 +4652,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 			}
 			continue
 		}
-		nextColRanges, err := cwc.BuildRangesByRow(ctx, content.row)
+		nextColRanges, err := cwc.BuildRangesByRow(ctx.GetPlanCtx(), content.row)
 		if err != nil {
 			return nil, err
 		}
@@ -4672,7 +4672,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 		return retRanges, nil
 	}
 
-	return ranger.UnionRanges(ctx, tmpDatumRanges, true)
+	return ranger.UnionRanges(ctx.GetPlanCtx(), tmpDatumRanges, true)
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
@@ -4707,7 +4707,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 			kvRanges = tmpKvRanges.AppendSelfTo(kvRanges)
 			continue
 		}
-		nextColRanges, err := cwc.BuildRangesByRow(ctx, content.row)
+		nextColRanges, err := cwc.BuildRangesByRow(ctx.GetPlanCtx(), content.row)
 		if err != nil {
 			return nil, err
 		}
@@ -4738,7 +4738,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		return kvRanges, nil
 	}
 
-	tmpDatumRanges, err = ranger.UnionRanges(ctx, tmpDatumRanges, true)
+	tmpDatumRanges, err = ranger.UnionRanges(ctx.GetPlanCtx(), tmpDatumRanges, true)
 	if err != nil {
 		return nil, err
 	}
@@ -4908,7 +4908,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	for _, dataSource := range v.DataSources {
 		stub := plannercore.PhysicalShuffleReceiverStub{
 			DataSource: dataSource,
-		}.Init(b.ctx, dataSource.StatsInfo(), dataSource.QueryBlockOffset(), nil)
+		}.Init(b.ctx.GetPlanCtx(), dataSource.StatsInfo(), dataSource.QueryBlockOffset(), nil)
 		stub.SetSchema(dataSource.Schema())
 		stubs = append(stubs, stub)
 	}
@@ -5210,7 +5210,7 @@ func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, p
 }
 
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
-	idxArr, err := plannercore.PartitionPruning(ctx, tbl, planPartInfo.PruningConds, planPartInfo.PartitionNames, planPartInfo.Columns, planPartInfo.ColumnNames)
+	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, planPartInfo.PruningConds, planPartInfo.PartitionNames, planPartInfo.Columns, planPartInfo.ColumnNames)
 	if err != nil {
 		return nil, err
 	}
@@ -5238,7 +5238,7 @@ func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTa
 	if physPlanPartInfo == nil {
 		return nil, errors.New("physPlanPartInfo in getPartitionIDsAfterPruning must not be nil")
 	}
-	idxArr, err := plannercore.PartitionPruning(ctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
+	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
 	if err != nil {
 		return nil, err
 	}

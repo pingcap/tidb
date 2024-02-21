@@ -171,7 +171,7 @@ func TestPartitionPruningForEQ(t *testing.T) {
 	require.NoError(t, err)
 	// Even the partition is not monotonous, EQ condition should be prune!
 	// select * from t where a = '2020-01-01 00:00:00'
-	res, err := core.PartitionPruning(tk.Session(), pt, []expression.Expression{query}, nil, columns, names)
+	res, err := core.PartitionPruning(tk.Session().GetPlanCtx(), pt, []expression.Expression{query}, nil, columns, names)
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	require.Equal(t, 0, res[0])

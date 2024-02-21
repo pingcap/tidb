@@ -193,7 +193,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 	h.dagReq = dagReq
 	is := h.sctx.GetInfoSchema().(infoschema.InfoSchema)
 	// Build physical plan.
-	bp := core.NewPBPlanBuilder(h.sctx, is, req.Ranges)
+	bp := core.NewPBPlanBuilder(h.sctx.GetPlanCtx(), is, req.Ranges)
 	plan, err := bp.Build(dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)

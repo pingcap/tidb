@@ -67,7 +67,6 @@ type Context interface {
 	contextutil.ValueStoreContext
 	exprctx.EvalContext
 	exprctx.BuildContext
-	planctx.PlanContext
 	tablelock.TableLockContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
@@ -100,6 +99,9 @@ type Context interface {
 	GetSessionVars() *variable.SessionVars
 
 	GetSessionManager() util.SessionManager
+
+	// GetPlanCtx gets the plan context of the current session.
+	GetPlanCtx() planctx.PlanContext
 
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.

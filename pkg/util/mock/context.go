@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -45,11 +46,13 @@ import (
 
 var (
 	_ sessionctx.Context  = (*Context)(nil)
+	_ planctx.PlanContext = (*Context)(nil)
 	_ sqlexec.SQLExecutor = (*Context)(nil)
 )
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
+	planctx.EmptyPlanContextExtended
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -189,6 +192,11 @@ func (*Context) HasDirtyContent(_ int64) bool {
 // GetSessionVars implements the sessionctx.Context GetSessionVars interface.
 func (c *Context) GetSessionVars() *variable.SessionVars {
 	return c.sessionVars
+}
+
+// GetPlanCtx returns the PlanContext.
+func (c *Context) GetPlanCtx() planctx.PlanContext {
+	return c
 }
 
 // Txn implements sessionctx.Context Txn interface.
