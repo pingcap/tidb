@@ -32,9 +32,9 @@ type parallelSortWorker struct {
 
 	lessRowFunc func(chunk.Row, chunk.Row) int
 
-	chunkChannel  chan *chunk.Chunk
-	errOutputChan chan rowWithError
-	finishCh      chan struct{}
+	chunkChannel  <-chan *chunk.Chunk
+	errOutputChan chan<- rowWithError
+	finishCh      <-chan struct{}
 
 	timesOfRowCompare uint
 
@@ -138,7 +138,7 @@ func (p *parallelSortWorker) fetchChunksAndSort() {
 				return
 			}
 		}
-
+ 
 		chkIter := chunk.NewIterator4Chunk(chk)
 		row := chkIter.Begin()
 		for !row.IsEmpty() {

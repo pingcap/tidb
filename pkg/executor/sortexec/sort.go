@@ -17,7 +17,6 @@ package sortexec
 import (
 	"container/heap"
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -78,8 +77,6 @@ type SortExec struct {
 
 		// Each worker will put their results into the given iter
 		sortedRowsIters []*chunk.Iterator4Slice
-		merger          *multiWayMerger
-		mergerLock      *sync.Mutex
 
 		resultChannel chan rowWithError
 	}
@@ -105,9 +102,6 @@ func (e *SortExec) Close() error {
 				break
 			}
 		}
-		e.Parallel.mergerLock.Lock()
-		e.Parallel.merger = nil
-		e.Parallel.mergerLock.Unlock()
 	}
 
 	if e.memTracker != nil {
@@ -140,8 +134,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.chunkChannel = make(chan *chunk.Chunk, len(e.Parallel.workers))
 		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
 		e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
-		e.Parallel.merger = newMultiWayMerger(e.Parallel.sortedRowsIters, e.lessRow)
-		e.Parallel.mergerLock = &sync.Mutex{}
 		for i := range e.Parallel.sortedRowsIters {
 			e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
 		}
@@ -282,20 +274,15 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 		}
 	}()
 
-	e.Parallel.mergerLock.Lock()
-	defer e.Parallel.mergerLock.Unlock()
-	if e.Parallel.merger == nil {
-		// Sort has been closed
-		return
-	}
-	e.Parallel.merger.init()
+	merger := newMultiWayMerger(e.Parallel.sortedRowsIters, e.lessRow)
+	merger.init()
 
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]chunk.Row, 0, maxChunkSize)
 	for {
 		resBuf = resBuf[:0]
 		for i := 0; i < maxChunkSize; i++ {
-			row := e.Parallel.merger.next()
+			row := merger.next()
 			if row.IsEmpty() {
 				break
 			}
