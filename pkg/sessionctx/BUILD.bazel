@@ -6,10 +6,13 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/sessionctx",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/expression/context",
         "//pkg/extension",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/model",
+        "//pkg/planner/context",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/usage/indexusage",

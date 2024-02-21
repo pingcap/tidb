@@ -2125,11 +2125,6 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			return err
 		})
 	} else {
-		elemIDs := make([]int64, 0, len(reorgInfo.elements))
-		for _, elem := range reorgInfo.elements {
-			elemIDs = append(elemIDs, elem.ID)
-		}
-
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
 		cpuCount, err := handle.GetCPUCountOfManagedNode(ctx)
@@ -2142,7 +2137,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			zap.String("task-key", taskKey))
 		taskMeta := &BackfillTaskMeta{
 			Job:             *job.Clone(),
-			EleIDs:          elemIDs,
+			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 		}

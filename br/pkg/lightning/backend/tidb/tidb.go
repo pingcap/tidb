@@ -307,7 +307,7 @@ func NewTiDBBackend(
 			onDuplicate = config.ErrorOnDup
 		}
 	default:
-		log.FromContext(ctx).Warn("unsupported conflict strategy, overwrite with `error`")
+		log.FromContext(ctx).Warn("unsupported conflict strategy for TiDB backend, overwrite with `error`")
 		onDuplicate = config.ErrorOnDup
 	}
 	return &tidbBackend{
