@@ -3413,3 +3413,42 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
+func TestExchangeValidateHandleNullValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128)) PARTITION BY HASH (id) PARTITIONS 3`)
+	tk.MustExec(`CREATE TABLE t2 (id int, c varchar(128))`)
+	tk.MustExec(`insert into t1 values(null, 'a1')`)
+	tk.MustExec(`insert into t2 values(null, 'b2')`)
+	tk.MustQuery(`select id, c from t1 partition(p0)`).Check(testkit.Rows("<nil> a1"))
+	tk.MustContainErrMsg(`alter table t1 EXCHANGE PARTITION p1 WITH TABLE t2`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t1 EXCHANGE PARTITION p0 WITH TABLE t2`)
+
+	tk.MustExec(`CREATE TABLE t3 (id int, c date) PARTITION BY HASH (year(c)) PARTITIONS 12`)
+	tk.MustExec(`CREATE TABLE t4 (id int, c date)`)
+	tk.MustExec(`insert into t3 values(1, null)`)
+	tk.MustExec(`insert into t4 values(2, null)`)
+	tk.MustQuery(`select id, c from t3 partition(p0)`).Check(testkit.Rows("1 <nil>"))
+	tk.MustContainErrMsg(`alter table t3 EXCHANGE PARTITION p1 WITH TABLE t4`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t3 EXCHANGE PARTITION p0 WITH TABLE t4`)
+
+	tk.MustExec(`CREATE TABLE t5 (id int, c varchar(128)) partition by range (id)(
+		partition p0 values less than (10), 
+		partition p1 values less than (20),
+		partition p2 values less than (maxvalue))`)
+	tk.MustExec(`CREATE TABLE t6 (id int, c varchar(128))`)
+	tk.MustExec(`insert into t5 values(null, 'a5')`)
+	tk.MustExec(`insert into t6 values(null, 'b6')`)
+	tk.MustQuery(`select id, c from t5 partition(p0)`).Check(testkit.Rows("<nil> a5"))
+	tk.MustContainErrMsg(`alter table t5 EXCHANGE PARTITION p1 WITH TABLE t6`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table t5 EXCHANGE PARTITION p2 WITH TABLE t6`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t5 EXCHANGE PARTITION p0 WITH TABLE t6`)
+	// TODO: add "partition by range columns(a, b, c)" test cases.
+}
