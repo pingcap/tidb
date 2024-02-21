@@ -292,7 +292,8 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	typeFlags := vars.StmtCtx.TypeFlags().
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
+			!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode())
 	vars.StmtCtx.SetTypeFlags(typeFlags)
 
 	errLevels := vars.StmtCtx.ErrLevels()
