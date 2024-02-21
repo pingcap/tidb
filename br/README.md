@@ -30,7 +30,8 @@
 To build binary and run test:
 
 ```bash
-$ make
+$ cd ../tidb
+$ make build_br
 $ make test
 ```
 
@@ -100,7 +101,7 @@ tiup bench tpcc --warehouses 1 prepare
 mysql --host 127.0.0.1 --port 4000 -E -e "SELECT COUNT(*) FROM test.order_line" -u root -p
 
 # Build br.
-make build
+make build_br
 
 # Backup TPC-C test data.
 bin/br backup table --db test \
