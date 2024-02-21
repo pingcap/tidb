@@ -395,45 +395,6 @@ func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {
 	go mainLoop()
 }
 
-<<<<<<< HEAD
-// WaitApply send wait apply to all tikv ensure all region peer apply log into the last
-func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
-	eg, ectx := errgroup.WithContext(ctx)
-	totalStores := len(recovery.allStores)
-	workers := utils.NewWorkerPool(uint(mathutil.Min(totalStores, common.MaxStoreConcurrency)), "wait apply")
-
-	for _, store := range recovery.allStores {
-		if err := ectx.Err(); err != nil {
-			break
-		}
-		storeAddr := getStoreAddress(recovery.allStores, store.Id)
-		storeId := store.Id
-
-		workers.ApplyOnErrorGroup(eg, func() error {
-			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer conn.Close()
-			log.Info("send wait apply to tikv", zap.String("tikv address", storeAddr), zap.Uint64("store id", storeId))
-			req := &recovpb.WaitApplyRequest{StoreId: storeId}
-			_, err = recoveryClient.WaitApply(ectx, req)
-			if err != nil {
-				log.Error("wait apply failed", zap.Uint64("store id", storeId))
-				return errors.Trace(err)
-			}
-
-			recovery.progress.Inc()
-			log.Info("wait apply execution success", zap.Uint64("store id", storeId))
-			return nil
-		})
-	}
-	// Wait for all TiKV instances force leader and wait apply to last log.
-	return eg.Wait()
-}
-
-=======
->>>>>>> bf8d4740700 (restore_data: remove wait apply phase (#50316))
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolveTS uint64, startTS uint64) (err error) {
 	retryState := utils.InitialRetryState(utils.FlashbackRetryTime, utils.FlashbackWaitInterval, utils.FlashbackMaxWaitInterval)
