@@ -77,7 +77,7 @@ const (
 
 // MaxConcurrentTask is the max concurrency of task.
 // TODO: remove this limit later.
-var MaxConcurrentTask = 20
+var MaxConcurrentTask = 4
 
 // Task represents the task of distributed framework.
 // tasks are run in the order of rank, and the rank is defined by:
