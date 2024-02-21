@@ -97,7 +97,7 @@ func TestToPhysicalPlan(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas1)
 
-	subtaskMeta1.Checksum = Checksum{Size: 1, KVs: 2, Sum: 3}
+	subtaskMeta1.Checksum = map[int64]Checksum{-1: {Size: 1, KVs: 2, Sum: 3}}
 	bs, err = json.Marshal(subtaskMeta1)
 	require.NoError(t, err)
 	planCtx = planner.PlanCtx{
@@ -112,7 +112,7 @@ func TestToPhysicalPlan(t *testing.T) {
 	}, proto.ImportStepPostProcess)
 	require.NoError(t, err)
 	subtaskMeta2 := PostProcessStepMeta{
-		Checksum: Checksum{Size: 1, KVs: 2, Sum: 3},
+		Checksum: map[int64]Checksum{-1: {Size: 1, KVs: 2, Sum: 3}},
 		MaxIDs:   map[autoid.AllocatorType]int64{},
 	}
 	bs, err = json.Marshal(subtaskMeta2)

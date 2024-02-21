@@ -46,10 +46,12 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2), (3, 4)")
 	res := tk.MustQuery("admin checksum table t").Rows()
 	stepMeta := &importinto.PostProcessStepMeta{
-		Checksum: importinto.Checksum{
-			Sum:  uint64(asInt(res[0][2].(string))),
-			KVs:  uint64(asInt(res[0][3].(string))),
-			Size: uint64(asInt(res[0][4].(string))),
+		Checksum: map[int64]importinto.Checksum{
+			-1: {
+				Sum:  uint64(asInt(res[0][2].(string))),
+				KVs:  uint64(asInt(res[0][3].(string))),
+				Size: uint64(asInt(res[0][4].(string))),
+			},
 		},
 	}
 
@@ -72,7 +74,9 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
-	stepMeta.Checksum.Sum += 1
+	tmp := stepMeta.Checksum[-1]
+	tmp.Sum += 1
+	stepMeta.Checksum[-1] = tmp
 	bytes, err = json.Marshal(stepMeta)
 	require.NoError(t, err)
 	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())

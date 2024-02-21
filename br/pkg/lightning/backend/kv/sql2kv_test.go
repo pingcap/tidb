@@ -569,53 +569,6 @@ func TestShardRowId(t *testing.T) {
 	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetSessionVars()).Get(autoid.RowIDAllocType).Base(), int64(32))
 }
 
-func TestSplitIntoChunks(t *testing.T) {
-	pairs := []common.KvPair{
-		{
-			Key: []byte{1, 2, 3},
-			Val: []byte{4, 5, 6},
-		},
-		{
-			Key: []byte{7, 8},
-			Val: []byte{9, 0},
-		},
-		{
-			Key: []byte{1, 2, 3, 4},
-			Val: []byte{5, 6, 7, 8},
-		},
-		{
-			Key: []byte{9, 0},
-			Val: []byte{1, 2},
-		},
-	}
-
-	splitBy10 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(10)
-	require.Equal(t, splitBy10, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:3]),
-		lkv.MakeRowsFromKvPairs(pairs[3:4]),
-	})
-
-	splitBy12 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(12)
-	require.Equal(t, splitBy12, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:4]),
-	})
-
-	splitBy1000 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(1000)
-	require.Equal(t, splitBy1000, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:4]),
-	})
-
-	splitBy1 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(1)
-	require.Equal(t, splitBy1, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:1]),
-		lkv.MakeRowsFromKvPairs(pairs[1:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:3]),
-		lkv.MakeRowsFromKvPairs(pairs[3:4]),
-	})
-}
-
 func TestClassifyAndAppend(t *testing.T) {
 	kvs := lkv.MakeRowFromKvPairs([]common.KvPair{
 		{

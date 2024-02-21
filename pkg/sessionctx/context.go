@@ -16,19 +16,22 @@ package sessionctx
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/extension"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/sli"
@@ -36,14 +39,6 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
-
-// InfoschemaMetaVersion is a workaround. Due to circular dependency,
-// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
-// So we give a convenience for that.
-// FIXME: remove this interface
-type InfoschemaMetaVersion interface {
-	SchemaMetaVersion() int64
-}
 
 // SessionStatesHandler is an interface for encoding and decoding session states.
 type SessionStatesHandler interface {
@@ -67,6 +62,10 @@ type PlanCache interface {
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	SessionStatesHandler
+	contextutil.ValueStoreContext
+	exprctx.EvalContext
+	exprctx.BuildContext
+	planctx.PlanContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// RollbackTxn rolls back the current transaction.
@@ -85,24 +84,15 @@ type Context interface {
 	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
 
-	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value any)
-
-	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) any
-
-	// ClearValue clears the value associated with this context for key.
-	ClearValue(key fmt.Stringer)
-
 	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
 	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	// If you want to get the latest infoschema use `GetDomainInfoSchema`
-	GetInfoSchema() InfoschemaMetaVersion
+	GetInfoSchema() infoschema.InfoSchemaMetaVersion
 
 	// GetDomainInfoSchema returns the latest information schema in domain
 	// Different with `domain.InfoSchema()`, the information schema returned by this method
 	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() InfoschemaMetaVersion
+	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
 

@@ -615,6 +615,37 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	return tc
 }
 
+func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType core.JoinType) *expression.Schema {
+	colsNeedResolving := joinSchema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if joinType == core.LeftOuterSemiJoin || joinType == core.AntiLeftOuterSemiJoin {
+		colsNeedResolving--
+	}
+	mergedSchema := expression.MergeSchema(lSchema, rSchema)
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, joinSchema.Len())
+	copy(shallowColSlice, joinSchema.Columns)
+	joinSchema = expression.NewSchema(shallowColSlice...)
+	foundCnt := 0
+	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
+	// So we can just move forward j if there's no matching is found.
+	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
+	//   e.g. The schema of child_0 is [col0, col0, col1]
+	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
+	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
+		if !joinSchema.Columns[i].EqualColumn(mergedSchema.Columns[j]) {
+			j++
+			continue
+		}
+		joinSchema.Columns[i] = joinSchema.Columns[i].Clone().(*expression.Column)
+		joinSchema.Columns[i].Index = j
+		i++
+		j++
+		foundCnt++
+	}
+	return joinSchema
+}
+
 func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *HashJoinExec {
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
@@ -638,6 +669,10 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 		joinSchema.Append(cols0...)
 		joinSchema.Append(cols1...)
 	}
+	// todo: need systematic way to protect.
+	// physical join should resolveIndices to get right schema column index.
+	// otherwise, markChildrenUsedColsForTest will fail below.
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), core.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
@@ -709,6 +744,7 @@ func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expressio
 			}
 		}
 		childrenUsed = append(childrenUsed, used)
+		prefixLen += childSchema.Len()
 	}
 	for _, child := range childSchemas {
 		used := expression.GetUsedList(ctx, outputSchema.Columns, child)

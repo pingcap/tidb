@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
@@ -45,7 +44,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   sessionctx.Context
+	ctx   BuildContext
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -1264,7 +1263,7 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 	}
 }
 
-func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (expr Expression, fts []*types.FieldType, input *chunk.Chunk, output *chunk.Chunk) {
+func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenchCase) (expr Expression, fts []*types.FieldType, input *chunk.Chunk, output *chunk.Chunk) {
 	fts = make([]*types.FieldType, len(testCase.childrenTypes))
 	for i := range fts {
 		if i < len(testCase.childrenFieldTypes) && testCase.childrenFieldTypes[i] != nil {
@@ -1403,7 +1402,7 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 	}
 }
 
-func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (baseFunc builtinFunc, fts []*types.FieldType, input *chunk.Chunk, result *chunk.Column) {
+func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecExprBenchCase) (baseFunc builtinFunc, fts []*types.FieldType, input *chunk.Chunk, result *chunk.Column) {
 	childrenNumber := len(testCase.childrenTypes)
 	fts = make([]*types.FieldType, childrenNumber)
 	for i := range fts {
