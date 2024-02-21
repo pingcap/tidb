@@ -489,9 +489,10 @@ func tryAutoAnalyzeTable(
 	params ...any,
 ) bool {
 	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
-	if statsTbl == nil || statsTbl.RealtimeCount < AutoAnalyzeMinCnt || statsTbl.Pseudo {
+	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 		return false
 	}
 
@@ -598,15 +599,16 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	needAnalyzePartitionNames := make([]any, 0, len(partitionDefs))
 
 	for _, def := range partitionDefs {
-		partitionStatsTbl := partitionStats[def.ID]
+		partitionStats := partitionStats[def.ID]
 		// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+		//	  Pseudo statistics can be created by the optimizer, so we need to double check it.
 		// 2. If the table is too small, we don't want to waste time to analyze it.
 		//    Leave the opportunity to other bigger tables.
-		if partitionStatsTbl == nil || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
+		if partitionStats == nil || partitionStats.Pseudo || partitionStats.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
 		if needAnalyze, reason := NeedAnalyzeTable(
-			partitionStatsTbl,
+			partitionStats,
 			ratio,
 		); needAnalyze {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
@@ -617,7 +619,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("partition", def.Name.O),
 				zap.String("reason", reason),
 			)
-			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+			statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 		}
 	}
 
@@ -673,10 +675,16 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		}
 		// Collect all the partition names that need to analyze.
 		for _, def := range partitionDefs {
-			partitionStatsTbl := partitionStats[def.ID]
-			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
+			partitionStats := partitionStats[def.ID]
+			// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+			//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+			if partitionStats == nil || partitionStats.Pseudo {
+				continue
+			}
+			// 2. If the index is not analyzed, we need to analyze it.
+			if _, ok := partitionStats.Indices[idx.ID]; !ok {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 			}
 		}
 		if len(needAnalyzePartitionNames) > 0 {
