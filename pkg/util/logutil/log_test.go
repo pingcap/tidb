@@ -57,7 +57,7 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	}
 
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: fmt.Sprintf("zap_log_%s", uuid.NewString()), MaxSize: 4096}}
-	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
 	connID := uint64(123)
@@ -66,7 +66,7 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
 
-	conf = NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	conf = NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 	err = InitLogger(conf)
 	require.NoError(t, err)
 	ctx = WithConnID(context.Background(), connID)
@@ -124,7 +124,7 @@ func TestZapLoggerWithCore(t *testing.T) {
 	}
 
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
-	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 
 	opt := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		return core.With([]zap.Field{zap.String("coreKey", "coreValue")})
@@ -165,7 +165,7 @@ func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) 
 }
 
 func TestSetLevel(t *testing.T) {
-	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	conf := NewLogConfig("info", DefaultLogFormat, "", "", EmptyFileLogConfig, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
 	require.Equal(t, zap.InfoLevel, log.GetLevel())
@@ -183,7 +183,7 @@ func TestSetLevel(t *testing.T) {
 
 func TestSlowQueryLoggerCreation(t *testing.T) {
 	level := "Error"
-	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
+	conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
 	_, prop, err := newSlowQueryLogger(conf)
 	// assert after init slow query logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
@@ -203,7 +203,7 @@ func TestSlowQueryLoggerCreation(t *testing.T) {
 			MaxBackups: 10,
 		},
 	}
-	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
+	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, "", fileConf, false)
 	slowQueryConf := newSlowQueryLogConfig(conf)
 	// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
 	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
@@ -211,7 +211,7 @@ func TestSlowQueryLoggerCreation(t *testing.T) {
 
 func TestGlobalLoggerReplace(t *testing.T) {
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxDays: 0, MaxSize: 4096}}
-	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	conf := NewLogConfig("info", DefaultLogFormat, "", "", fileCfg, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
 
