@@ -177,7 +177,7 @@ type ExternalStorageOptions struct {
 
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.
-	// CheckS3ObjectLockOptions bool
+	CheckS3ObjectLockOptions bool
 }
 
 // Create creates ExternalStorage.
