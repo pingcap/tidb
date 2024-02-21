@@ -122,7 +122,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 
 	// Empty database.
 	// Filter out system tables manually.
-	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*"})
+	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*", "!sys.*"})
 	require.NoError(t, err)
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(
 		m.Storage, noFilter, math.MaxUint64, false, true)

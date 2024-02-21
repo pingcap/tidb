@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -220,10 +221,8 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (
 	}
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-
-	// todo: use a real region size getter
-	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, regionSizeGetter)
+	d := kvStore.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, d)
 	if err != nil {
 		return nil, err
 	}
@@ -313,6 +312,11 @@ func NewTableImporterForTest(param *JobImportParam, e *LoadDataController, id st
 		logger:        e.logger.With(zap.String("import-id", id)),
 		diskQuotaLock: new(syncutil.RWMutex),
 	}, nil
+}
+
+// GetCodec gets the codec of the kv store.
+func (ti *TableImporter) GetCodec() tikv.Codec {
+	return ti.kvStore.GetCodec()
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -690,23 +694,24 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 
 	var (
 		mu         sync.Mutex
-		checksum   verify.KVChecksum
+		checksum   = verify.NewKVGroupChecksumWithKeyspace(ti.GetCodec())
 		colSizeMap = make(map[int64]int64)
 	)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
+			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.GetCodec())
 			progress := NewProgress()
 			defer func() {
 				mu.Lock()
 				defer mu.Unlock()
-				checksum.Add(&chunkCheckpoint.Checksum)
+				checksum.Add(chunkChecksum)
 				for k, v := range progress.GetColSize() {
 					colSizeMap[k] += v
 				}
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, progress, ti.logger)
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, progress, ti.logger, chunkChecksum)
 		})
 	}
 	if err = eg.Wait(); err != nil {
@@ -782,10 +787,10 @@ func PostProcess(
 	se sessionctx.Context,
 	maxIDs map[autoid.AllocatorType]int64,
 	plan *Plan,
-	localChecksum verify.KVChecksum,
+	localChecksum *verify.KVGroupChecksum,
 	logger *zap.Logger,
 ) (err error) {
-	callLog := log.BeginTask(logger.With(zap.Any("checksum", localChecksum)), "post process")
+	callLog := log.BeginTask(logger.With(zap.Object("checksum", localChecksum)), "post process")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
@@ -794,7 +799,7 @@ func PostProcess(
 		return err
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum, se, logger)
+	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), se, logger)
 }
 
 type autoIDRequirement struct {

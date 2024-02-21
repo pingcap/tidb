@@ -45,6 +45,12 @@ select cast(col3 as time(31)) from t where col1 is null;
 select cast(col4 as time(31)) from t where col1 is null;
 -- error 1426
 select cast(col5 as time(31)) from t where col1 is null;
+drop table if exists t;
+create table t(a varchar(50));
+insert into t values ('2020-01-01 12:00:00.123456 +0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456 -0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456');
+select cast(a as datetime(3)) from t;
 
 # TestCastErrMsg
 drop table if exists t1;

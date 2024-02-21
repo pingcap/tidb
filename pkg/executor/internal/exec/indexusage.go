@@ -26,13 +26,13 @@ import (
 type IndexUsageReporter struct {
 	reporter         *indexusage.StmtIndexUsageCollector
 	runtimeStatsColl *execdetails.RuntimeStatsColl
-	statsMap         map[int64]*stmtctx.UsedStatsInfoForTable
+	statsMap         *stmtctx.UsedStatsInfo
 }
 
 // NewIndexUsageReporter creates an index usage reporter util
 func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
-	statsMap map[int64]*stmtctx.UsedStatsInfoForTable) *IndexUsageReporter {
+	statsMap *stmtctx.UsedStatsInfo) *IndexUsageReporter {
 	return &IndexUsageReporter{
 		reporter:         reporter,
 		runtimeStatsColl: runtimeStatsColl,
@@ -95,8 +95,8 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTab
 
 // getTableRowCount returns the `RealtimeCount` of a table
 func (e *IndexUsageReporter) getTableRowCount(tableID int64) (int64, bool) {
-	stats, ok := e.statsMap[tableID]
-	if !ok {
+	stats := e.statsMap.GetUsedInfo(tableID)
+	if stats == nil {
 		return 0, false
 	}
 	if stats.Version == statistics.PseudoVersion {

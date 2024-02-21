@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/felixge/fgprof"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -39,6 +40,7 @@ func openTestingStorage(t *testing.T) storage.ExternalStorage {
 	}
 	s, err := storage.NewFromURL(context.Background(), *testingStorageURI)
 	require.NoError(t, err)
+	t.Cleanup(s.Close)
 	return s
 }
 
@@ -345,6 +347,48 @@ func createAscendingFiles(
 		intest.AssertNoError(err)
 	}
 	return kvCnt, minKey, maxKey
+}
+
+type profiler struct {
+	onAndOffCPUProf bool
+	peakMemProf     bool
+
+	caseIdx int
+
+	onAndOffCPUProfCloser func() error
+	heapProfDoneCh        chan struct{}
+	heapProfWg            *sync.WaitGroup
+}
+
+func newProfiler(onAndOffCPUProf, peakMemProf bool) *profiler {
+	return &profiler{
+		onAndOffCPUProf: onAndOffCPUProf,
+		peakMemProf:     peakMemProf,
+	}
+}
+
+func (p *profiler) beforeTest() {
+	p.caseIdx++
+	if p.onAndOffCPUProf {
+		fileCPU, err := os.Create(fmt.Sprintf("on-and-off-cpu-%d.prof", p.caseIdx))
+		intest.AssertNoError(err)
+		p.onAndOffCPUProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
+	}
+	if p.peakMemProf {
+		fileHeap := fmt.Sprintf("heap-%d.prof", p.caseIdx)
+		p.heapProfDoneCh, p.heapProfWg = recordHeapForMaxInUse(fileHeap)
+	}
+}
+
+func (p *profiler) afterTest() {
+	if p.onAndOffCPUProf {
+		err := p.onAndOffCPUProfCloser()
+		intest.AssertNoError(err)
+	}
+	if p.peakMemProf {
+		close(p.heapProfDoneCh)
+		p.heapProfWg.Wait()
+	}
 }
 
 func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {

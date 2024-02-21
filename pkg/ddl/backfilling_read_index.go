@@ -53,11 +53,8 @@ type readIndexExecutor struct {
 }
 
 type readIndexSummary struct {
-	minKey    []byte
-	maxKey    []byte
-	totalSize uint64
-	stats     []external.MultipleFilesStat
-	mu        sync.Mutex
+	metaGroups []*external.SortedKVMeta
+	mu         sync.Mutex
 }
 
 func newReadIndexExecutor(
@@ -92,14 +89,12 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		zap.String("category", "ddl"),
 		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
 
-	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
+	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
+		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
+	})
 
-	sm := &BackfillSubTaskMeta{}
-	err := json.Unmarshal(subtask.Meta, sm)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {
-		logutil.BgLogger().Error("unmarshal error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
 		return err
 	}
 
@@ -170,27 +165,24 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
-	var subtaskMeta BackfillSubTaskMeta
-	err := json.Unmarshal(subtask.Meta, &subtaskMeta)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {
 		return err
 	}
 	sum, _ := r.subtaskSummary.LoadAndDelete(subtask.ID)
 	s := sum.(*readIndexSummary)
-	subtaskMeta.StartKey = s.minKey
-	subtaskMeta.EndKey = kv.Key(s.maxKey).Next()
-	subtaskMeta.TotalKVSize = s.totalSize
-	subtaskMeta.MultipleFilesStats = s.stats
-	fileCnt := 0
-	for _, stat := range s.stats {
-		fileCnt += len(stat.Filenames)
+	all := external.SortedKVMeta{}
+	for _, g := range s.metaGroups {
+		all.Merge(g)
 	}
+	sm.MetaGroups = s.metaGroups
+
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
-		zap.String("min", hex.EncodeToString(s.minKey)),
-		zap.String("max", hex.EncodeToString(s.maxKey)),
-		zap.Int("fileCount", fileCnt),
-		zap.Uint64("totalSize", s.totalSize))
-	meta, err := json.Marshal(subtaskMeta)
+		zap.String("start", hex.EncodeToString(all.StartKey)),
+		zap.String("end", hex.EncodeToString(all.EndKey)),
+		zap.Int("fileCount", len(all.MultipleFilesStats)),
+		zap.Uint64("totalKVSize", all.TotalKVSize))
+	meta, err := json.Marshal(sm)
 	if err != nil {
 		return err
 	}
@@ -215,7 +207,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 		}
 		tbl = parTbl.GetPartition(pid)
 	} else {
-		start, end = sm.StartKey, sm.EndKey
+		start, end = sm.RowStart, sm.RowEnd
 		tbl = r.ptbl
 	}
 	return start, end, tbl, nil
@@ -258,14 +250,12 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		sum, _ := r.subtaskSummary.Load(subtaskID)
 		s := sum.(*readIndexSummary)
 		s.mu.Lock()
-		if len(s.minKey) == 0 || summary.Min.Cmp(s.minKey) < 0 {
-			s.minKey = summary.Min.Clone()
+		kvMeta := s.metaGroups[summary.GroupOffset]
+		if kvMeta == nil {
+			kvMeta = &external.SortedKVMeta{}
+			s.metaGroups[summary.GroupOffset] = kvMeta
 		}
-		if len(s.maxKey) == 0 || summary.Max.Cmp(s.maxKey) > 0 {
-			s.maxKey = summary.Max.Clone()
-		}
-		s.totalSize += summary.TotalSize
-		s.stats = append(s.stats, summary.MultipleFilesStats...)
+		kvMeta.MergeSummary(summary)
 		s.mu.Unlock()
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(

@@ -21,8 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -42,7 +41,7 @@ func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
-func pseudoSelectivity(sctx sessionctx.Context, coll *statistics.HistColl, exprs []expression.Expression) float64 {
+func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
 	colExists := make(map[string]bool)
 	for _, expr := range exprs {
@@ -167,7 +166,7 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCou
 	return rowCount
 }
 
-func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.Range,
+func getPseudoRowCountByIndexRanges(tc types.Context, indexRanges []*ranger.Range,
 	tableRowCount float64, colsLen int) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
@@ -175,7 +174,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 	var totalCount float64
 	for _, indexRange := range indexRanges {
 		count := tableRowCount
-		i, err := indexRange.PrefixEqualLen(sc)
+		i, err := indexRange.PrefixEqualLen(tc)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -186,7 +185,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
 		}
-		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.Range{indexRange}, i)
+		rowCount, err := getPseudoRowCountByColumnRanges(tc, tableRowCount, []*ranger.Range{indexRange}, i)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -205,7 +204,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 }
 
 // getPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
-func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
+func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
 	var rowCount float64
 	for _, ran := range columnRanges {
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
@@ -221,7 +220,7 @@ func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 		} else if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err := ran.LowVal[colIdx].Compare(sc.TypeCtx(), &ran.HighVal[colIdx], ran.Collators[colIdx])
+			compare, err := ran.LowVal[colIdx].Compare(tc, &ran.HighVal[colIdx], ran.Collators[colIdx])
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

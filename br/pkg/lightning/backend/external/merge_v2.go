@@ -119,6 +119,7 @@ func MergeOverlappingFilesV2(
 			curStart,
 			curEnd,
 			bufPool,
+			bufPool,
 			loaded,
 		)
 		if err1 != nil {
