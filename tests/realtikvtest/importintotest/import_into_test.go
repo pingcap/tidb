@@ -728,7 +728,7 @@ func (s *mockGCSSuite) TestChecksumNotMatch() {
 }
 
 func (s *mockGCSSuite) TestColumnsAndUserVars() {
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 	s.tk.MustExec(`CREATE TABLE load_data.cols_and_vars (a INT, b INT, c int);`)
@@ -828,8 +828,8 @@ func (s *mockGCSSuite) TestImportMode() {
 
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
 	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
 	rows := s.tk.MustQuery(sql).Rows()
 	s.Len(rows, 1)
@@ -843,8 +843,8 @@ func (s *mockGCSSuite) TestImportMode() {
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/clearLastSwitchTime", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/clearLastSwitchTime", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return(true)")
 	s.tk.MustExec("truncate table load_data.import_mode;")
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(sql)
@@ -864,7 +864,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	<-scheduler.WaitCleanUpFinished
 
 	// test with multirocksdb
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)")
 	s.tk.MustExec("truncate table load_data.import_mode;")
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(sql)
@@ -878,9 +878,9 @@ func (s *mockGCSSuite) TestImportMode() {
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
 
 	sql = fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
 	err = s.tk.QueryToErr(sql)
@@ -938,8 +938,8 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
 	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
 	s.tk.MustExec("truncate table load_data.register_task;")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
@@ -947,8 +947,8 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	importinto.NewTaskRegisterWithTTL = backup
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk"))
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeSortChunk", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
