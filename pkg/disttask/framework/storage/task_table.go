@@ -230,7 +230,7 @@ func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx
 }
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
-func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
+func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select `+basicTaskColumns+` from mysql.tidb_global_task t
 		where state in (%?, %?, %?, %?, %?, %?)
@@ -245,13 +245,14 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 		proto.MaxConcurrentTask*2,
 	)
 	if err != nil {
-		return task, err
+		return nil, err
 	}
 
+	tasks := make([]*proto.TaskBase, 0, len(rs))
 	for _, r := range rs {
-		task = append(task, row2TaskBasic(r))
+		tasks = append(tasks, row2TaskBasic(r))
 	}
-	return task, nil
+	return tasks, nil
 }
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.

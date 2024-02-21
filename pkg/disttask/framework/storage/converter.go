@@ -25,8 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func row2TaskBasic(r chunk.Row) *proto.Task {
-	task := &proto.Task{
+func row2TaskBasic(r chunk.Row) *proto.TaskBase {
+	task := &proto.TaskBase{
 		ID:          r.GetInt64(0),
 		Key:         r.GetString(1),
 		Type:        proto.TaskType(r.GetString(2)),
@@ -41,7 +41,8 @@ func row2TaskBasic(r chunk.Row) *proto.Task {
 
 // Row2Task converts a row to a task.
 func Row2Task(r chunk.Row) *proto.Task {
-	task := row2TaskBasic(r)
+	taskBase := row2TaskBasic(r)
+	task := &proto.Task{TaskBase: *taskBase}
 	var startTime, updateTime time.Time
 	if !r.IsNull(8) {
 		startTime, _ = r.GetTime(8).GoTime(time.Local)

@@ -235,7 +235,7 @@ func TestBalanceOneTask(t *testing.T) {
 				mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(nil)
 			}
 			mockScheduler := mock.NewMockScheduler(ctrl)
-			mockScheduler.EXPECT().GetTask().Return(&proto.Task{ID: 1}).Times(2)
+			mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).Times(2)
 			mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 			slotMgr := newSlotManager()
@@ -257,7 +257,7 @@ func TestBalanceOneTask(t *testing.T) {
 	t.Run("scheduler err or no instance", func(t *testing.T) {
 		mockTaskMgr := mock.NewMockTaskManager(ctrl)
 		mockScheduler := mock.NewMockScheduler(ctrl)
-		mockScheduler.EXPECT().GetTask().Return(&proto.Task{ID: 1}).Times(2)
+		mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock error"))
 		slotMgr := newSlotManager()
 		slotMgr.updateCapacity(16)
@@ -269,7 +269,7 @@ func TestBalanceOneTask(t *testing.T) {
 		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}), "mock error")
 		require.True(t, ctrl.Satisfied())
 
-		mockScheduler.EXPECT().GetTask().Return(&proto.Task{ID: 1}).Times(2)
+		mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
 		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, nil), "no eligible nodes to balance subtasks")
 		require.True(t, ctrl.Satisfied())
@@ -279,7 +279,7 @@ func TestBalanceOneTask(t *testing.T) {
 		mockTaskMgr := mock.NewMockTaskManager(ctrl)
 		mockTaskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock error"))
 		mockScheduler := mock.NewMockScheduler(ctrl)
-		mockScheduler.EXPECT().GetTask().Return(&proto.Task{ID: 1}).Times(2)
+		mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{"tidb1"}, nil)
 
 		slotMgr := newSlotManager()
@@ -299,7 +299,7 @@ func TestBalanceOneTask(t *testing.T) {
 				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 			}, nil)
 		mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(errors.New("mock error2"))
-		mockScheduler.EXPECT().GetTask().Return(&proto.Task{ID: 1}).Times(2)
+		mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
 		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1", "tidb2"}), "mock error2")
 		// not updated
@@ -379,7 +379,7 @@ func TestBalanceMultipleTasks(t *testing.T) {
 	for i := range taskCases {
 		taskID := int64(i + 1)
 		sch := mock.NewMockScheduler(ctrl)
-		sch.EXPECT().GetTask().Return(&proto.Task{ID: taskID}).AnyTimes()
+		sch.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: taskID}}).AnyTimes()
 		manager.addScheduler(taskID, sch)
 	}
 	require.Len(t, manager.getSchedulers(), 4)

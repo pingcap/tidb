@@ -434,10 +434,10 @@ func (mr *MockTaskManagerMockRecorder) GetTasksInStates(arg0 any, arg1 ...any) *
 }
 
 // GetTopUnfinishedTasks mocks base method.
-func (m *MockTaskManager) GetTopUnfinishedTasks(arg0 context.Context) ([]*proto.Task, error) {
+func (m *MockTaskManager) GetTopUnfinishedTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTopUnfinishedTasks", arg0)
-	ret0, _ := ret[0].([]*proto.Task)
+	ret0, _ := ret[0].([]*proto.TaskBase)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

@@ -48,7 +48,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
-	task1 := &proto.Task{State: proto.TaskStateRunning, Step: proto.StepOne, Type: tp, ID: 1, Concurrency: concurrency}
+	task1 := &proto.Task{TaskBase: proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne, Type: tp, ID: 1, Concurrency: concurrency}}
 	// mock for checkBalanceSubtask
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id",
 		task1.ID, proto.StepOne, proto.SubtaskStateRunning).Return([]*proto.Subtask{{ID: 1}}, nil).AnyTimes()
@@ -306,7 +306,7 @@ func TestTaskExecutorRollback(t *testing.T) {
 	mockExtension := mock.NewMockExtension(ctrl)
 
 	// 1. no taskExecutor constructor
-	task1 := &proto.Task{Step: proto.StepOne, ID: 1, Type: tp}
+	task1 := &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne, ID: 1, Type: tp}}
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", task1, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
 
@@ -362,7 +362,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id",
 		taskID, proto.StepOne, proto.SubtaskStateRunning).Return([]*proto.Subtask{{ID: 1}}, nil).AnyTimes()
 
-	task := &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}
+	task := &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}}
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", task, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
 
@@ -411,7 +411,7 @@ func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
 	mockStepExecutor := mockexecute.NewMockStepExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
 
-	task := &proto.Task{Step: proto.StepOne, Type: "example", ID: 1, Concurrency: 1}
+	task := &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne, Type: "example", ID: 1, Concurrency: 1}}
 	subtasks := []*proto.Subtask{
 		{ID: 1, Type: "example", Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "tidb1"},
 	}
@@ -445,7 +445,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 	mockExtension := mock.NewMockExtension(ctrl)
 
 	ctx := context.Background()
-	task := &proto.Task{Step: proto.StepOne, Type: "type", ID: 1, Concurrency: 1}
+	task := &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne, Type: "type", ID: 1, Concurrency: 1}}
 	taskExecutor := NewBaseTaskExecutor(ctx, "tidb1", task, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
 
@@ -507,7 +507,7 @@ func TestExecutorErrHandling(t *testing.T) {
 	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
 	mockSubtaskExecutor := mockexecute.NewMockStepExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
-	task := &proto.Task{Step: proto.StepOne, Type: tp, ID: 1, Concurrency: concurrency}
+	task := &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne, Type: tp, ID: 1, Concurrency: concurrency}}
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", task, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
 
