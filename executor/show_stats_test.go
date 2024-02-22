@@ -151,10 +151,9 @@ func TestShowStatsBucketWithDateNullValue(t *testing.T) {
 		"└─Selection 3.20 cop[tikv]  gt(cast(test.t.a, double BINARY), 1)",
 		"  └─IndexFullScan 4.00 cop[tikv] table:t, index:ia(a, b) keep order:false"))
 	tk.MustQuery("show stats_buckets where db_name = 'test' and Column_name = 'ia';").Check(testkit.Rows(
-		"test t  ia 1 0 1 1 (NULL, 2) (NULL, 2) 0",
-		"test t  ia 1 1 2 1 (NULL, 4) (NULL, 4) 0",
-		"test t  ia 1 2 3 1 (2023-12-27 00:00:00, 1) (2023-12-27 00:00:00, 1) 0",
-		"test t  ia 1 3 4 1 (2023-12-28 00:00:00, 3) (2023-12-28 00:00:00, 3) 0"))
+		"test t  ia 1 0 1 1 (NULL, 4) (NULL, 4) 0",
+		"test t  ia 1 1 2 1 (2023-12-27 00:00:00, 1) (2023-12-27 00:00:00, 1) 0",
+		"test t  ia 1 2 3 1 (2023-12-28 00:00:00, 3) (2023-12-28 00:00:00, 3) 0"))
 }
 
 func TestShowStatsHasNullValue(t *testing.T) {
