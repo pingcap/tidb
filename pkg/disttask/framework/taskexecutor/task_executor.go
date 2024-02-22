@@ -140,8 +140,11 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 				continue
 			}
 			if !e.IsIdempotent(st) {
-				e.updateSubtaskStateAndErrorImpl(ctx, st.ExecID, st.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
-				return
+				err = e.updateSubtaskStateAndErrorImpl(ctx, st.ExecID, st.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
+				if err != nil {
+					e.logger.Error("update error to subtask failed", zap.Error(err))
+				}
+				continue
 			}
 			extraRunningSubtasks = append(extraRunningSubtasks, st)
 		}
