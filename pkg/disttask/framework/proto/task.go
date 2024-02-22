@@ -123,6 +123,19 @@ func (t *TaskBase) Compare(other *TaskBase) int {
 }
 
 // Task represents the task of distributed framework.
+// A task is abstracted as multiple steps that runs in sequence, each step contains
+// multiple sub-tasks that runs in parallel, such as:
+//
+//	task
+//	├── step1
+//	│   ├── subtask1
+//	│   ├── subtask2
+//	│   └── subtask3
+//	└── step2
+//	    ├── subtask1
+//	    ├── subtask2
+//	    └── subtask3
+//
 // tasks are run in the order of rank, and the rank is defined by:
 //
 //	priority asc, create_time asc, id asc.
