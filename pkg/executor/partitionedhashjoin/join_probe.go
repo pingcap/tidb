@@ -139,6 +139,7 @@ type offsetAndLength struct {
 
 type partialRowInfo struct {
 	probeRowIndex int
+	buildRowStart unsafe.Pointer
 	buildRowData  unsafe.Pointer
 }
 type baseJoinProbe struct {
@@ -293,7 +294,7 @@ func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err er
 				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
 				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo, info)
 				if j.ctx.hasOtherCondition() {
-					j.partialRowInfos = append(j.partialRowInfos, partialRowInfo{probeRowIndex: info.currentProbeRow, buildRowData: currentRowData})
+					j.partialRowInfos = append(j.partialRowInfos, partialRowInfo{probeRowIndex: info.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
 				}
 				length++
 				totalAddedRows++
@@ -336,7 +337,7 @@ func (j *innerJoinProbe) needScanHT() bool {
 	return false
 }
 
-func (j *innerJoinProbe) scanHT(chk *chunk.Chunk) (err error) {
+func (j *innerJoinProbe) scanHT(*chunk.Chunk) (err error) {
 	panic("not supported")
 }
 
@@ -345,5 +346,46 @@ func (j *innerJoinProbe) buildResultChunkAfterOtherCondition(chk *chunk.Chunk, j
 	// 1. columns already in joinedChk
 	// 2. columns from build side, but not in joinedChk
 	// 3. columns from probe side, but not in joinedChk
+	probeUsedColumns, probeColOffset, probeColOffsetInJoinedChk := j.lUsed, 0, 0
+	if j.rightAsBuildSide {
+		probeUsedColumns, probeColOffset, probeColOffsetInJoinedChk = j.rUsed, len(j.lUsed), j.ctx.hashTableMeta.totalColumnNumber
+	}
+
+	for index, colIndex := range probeUsedColumns {
+		dstCol := chk.Column(index + probeColOffset)
+		if joinedChk.Column(colIndex+probeColOffsetInJoinedChk).Rows() > 0 {
+			// probe column that is already in joinedChk
+			srcCol := joinedChk.Column(colIndex + probeColOffsetInJoinedChk)
+			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
+		} else {
+			// probe column that is not in joinedChk
+			srcCol := info.chunk.Column(colIndex)
+			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, func(i int) int {
+				return j.partialRowInfos[i].probeRowIndex
+			})
+		}
+	}
+	buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk := j.rUsed, len(j.lUsed), info.chunk.NumCols()
+	if j.rightAsBuildSide {
+		buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk = j.lUsed, 0, 0
+	}
+	for index, colIndex := range buildUsedColumns {
+		// build column that is already in joinedChk
+		dstCol := chk.Column(index + buildColOffset)
+		srcCol := joinedChk.Column(colIndex + buildColOffsetInJoinedChk)
+		if srcCol.Rows() > 0 {
+			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
+		}
+	}
+	// build column that is not in joinedChk
+	for index, result := range j.selected {
+		if result {
+			j.appendBuildRowToChunk(chk, &rowInfo{
+				rowStart:           j.partialRowInfos[index].buildRowStart,
+				rowData:            j.partialRowInfos[index].buildRowData,
+				currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
+			}, info)
+		}
+	}
 	return
 }
