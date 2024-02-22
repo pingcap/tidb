@@ -249,13 +249,65 @@ func (extractHelper) mergeWithLowerOrUpper(lhs set.StringSet, datums []types.Dat
 	return tmpNodeTypes
 }
 
+func (helper *extractHelper) extractColWithLowerOrUpper(
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	extractColName string,
+) (
+	remained []expression.Expression,
+	skipRequest bool,
+	result set.StringSet,
+) {
+	remained = make([]expression.Expression, 0, len(predicates))
+	result = set.NewStringSet()
+	extractCols := helper.findColumn(schema, names, extractColName)
+	if len(extractCols) == 0 {
+		return predicates, false, result
+	}
+
+	for _, expr := range predicates {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			remained = append(remained, expr)
+			continue
+		}
+		var colName string
+		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
+		switch helper.getStringFunctionName(fn) {
+		case ast.EQ:
+			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, true, fn)
+		case ast.In:
+			colName, datums = helper.extractColInConsExpr(extractCols, fn)
+		case ast.LogicOr:
+			// disable predicate pushdown for case like `lower(c1) = xx or c1 = yy`
+			colName, datums = "", nil
+		}
+		if colName == extractColName {
+			lowerOrUpper, ok := helper.lowerOrUpper[colName]
+			if ok {
+				result = helper.mergeWithLowerOrUpper(result, datums, !lowerOrUpper)
+			} else {
+				remained = append(remained, expr)
+			}
+		} else {
+			remained = append(remained, expr)
+		}
+		// There are no data if the low-level executor skip request, so the filter can be droped
+		if skipRequest {
+			remained = remained[:0]
+			break
+		}
+	}
+	return
+}
+
 func (helper *extractHelper) extractCol(
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 	extractColName string,
 	valueToLower bool,
-	supportLower bool,
 ) (
 	remained []expression.Expression,
 	skipRequest bool,
@@ -279,24 +331,14 @@ func (helper *extractHelper) extractCol(
 		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
-			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, supportLower, fn)
+			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, false, fn)
 		case ast.In:
 			colName, datums = helper.extractColInConsExpr(extractCols, fn)
 		case ast.LogicOr:
-			// disable predicate pushdown for case like `lower(c1) = xx or c1 = yy`
-			if supportLower {
-				colName, datums = "", nil
-			} else {
-				colName, datums = helper.extractColOrExpr(extractCols, supportLower, fn)
-			}
+			colName, datums = helper.extractColOrExpr(extractCols, false, fn)
 		}
 		if colName == extractColName {
-			lowerOrUpper, ok := helper.lowerOrUpper[colName]
-			if !ok {
-				result = helper.merge(result, datums, valueToLower)
-			} else {
-				result = helper.mergeWithLowerOrUpper(result, datums, !lowerOrUpper)
-			}
+			result = helper.merge(result, datums, valueToLower)
 			skipRequest = len(result) == 0
 		} else {
 			remained = append(remained, expr)
@@ -614,7 +656,7 @@ func (helper extractHelper) extractCols(
 			continue
 		}
 		var values set.StringSet
-		remained, skipRequest, values = helper.extractCol(schema, names, remained, name.ColName.L, valueToLower, false)
+		remained, skipRequest, values = helper.extractCol(schema, names, remained, name.ColName.L, valueToLower)
 		if skipRequest {
 			return nil, true, nil
 		}
@@ -677,8 +719,8 @@ func (e *ClusterTableExtractor) Extract(_ PlanContext,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true, false)
-	remained, addrSkipRequest, instances := e.extractCol(schema, names, remained, "instance", false, false)
+	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true)
+	remained, addrSkipRequest, instances := e.extractCol(schema, names, remained, "instance", false)
 	e.SkipRequest = typeSkipRequest || addrSkipRequest
 	e.NodeTypes = nodeTypes
 	e.Instances = instances
@@ -744,9 +786,9 @@ func (e *ClusterLogTableExtractor) Extract(ctx PlanContext,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `type/instance` columns
-	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true, false)
-	remained, addrSkipRequest, instances := e.extractCol(schema, names, remained, "instance", false, false)
-	remained, levlSkipRequest, logLevels := e.extractCol(schema, names, remained, "level", true, false)
+	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true)
+	remained, addrSkipRequest, instances := e.extractCol(schema, names, remained, "instance", false)
+	remained, levlSkipRequest, logLevels := e.extractCol(schema, names, remained, "level", true)
 	e.SkipRequest = typeSkipRequest || addrSkipRequest || levlSkipRequest
 	e.NodeTypes = nodeTypes
 	e.Instances = instances
@@ -857,9 +899,9 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx PlanContext,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `region_id/store_id/peer_id` columns
-	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false, false)
-	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false, false)
-	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false, false)
+	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
+	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
+	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
 	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs), e.parseUint64(peerIDs)
 	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest
 	if e.SkipRequest {
@@ -867,8 +909,8 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx PlanContext,
 	}
 
 	// Extract the is_learner/is_leader columns
-	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false, false)
-	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false, false)
+	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false)
+	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
 	isLearnersUint64, isLeadersUint64 := e.parseUint64(isLearners), e.parseUint64(isLeaders)
 	e.SkipRequest = isLearnerSkipRequest || isLeaderSkipRequest
 	if e.SkipRequest {
@@ -879,7 +921,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx PlanContext,
 	e.IsLeaders = e.convertToBoolSlice(isLeadersUint64)
 
 	// Extract the `type` column
-	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false, false)
+	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
 	e.HotRegionTypes = types
 	e.SkipRequest = typeSkipRequest
 	if e.SkipRequest {
@@ -975,7 +1017,7 @@ func (e *MetricTableExtractor) Extract(ctx PlanContext,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `quantile` columns
-	remained, skipRequest, quantileSet := e.extractCol(schema, names, predicates, "quantile", true, false)
+	remained, skipRequest, quantileSet := e.extractCol(schema, names, predicates, "quantile", true)
 	e.Quantiles = e.parseQuantiles(quantileSet)
 	e.SkipRequest = skipRequest
 	if e.SkipRequest {
@@ -1075,8 +1117,8 @@ func (e *MetricSummaryTableExtractor) Extract(_ PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	//nolint: ineffassign
-	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false, false)
-	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true, false)
+	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
+	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	e.SkipRequest = quantileSkip || metricsNameSkip
 	e.Quantiles = e.parseQuantiles(quantiles)
 	e.MetricsNames = metricsNames
@@ -1107,8 +1149,8 @@ func (e *InspectionResultTableExtractor) Extract(_ PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `rule/item` columns
-	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true, false)
-	remained, itemSkip, items := e.extractCol(schema, names, remained, "item", true, false)
+	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	remained, itemSkip, items := e.extractCol(schema, names, remained, "item", true)
 	e.SkipInspection = ruleSkip || itemSkip
 	e.Rules = rules
 	e.Items = items
@@ -1144,11 +1186,11 @@ func (e *InspectionSummaryTableExtractor) Extract(_ PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `rule` columns
-	_, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true, false)
+	_, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	// Extract the `metric_name` columns
-	_, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true, false)
+	_, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	// Extract the `quantile` columns
-	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false, false)
+	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
 	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
 	e.Rules = rules
 	e.Quantiles = e.parseQuantiles(quantileSet)
@@ -1202,7 +1244,7 @@ func (e *InspectionRuleTableExtractor) Extract(_ PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `type` columns
-	remained, tpSkip, tps := e.extractCol(schema, names, predicates, "type", true, false)
+	remained, tpSkip, tps := e.extractCol(schema, names, predicates, "type", true)
 	e.SkipRequest = tpSkip
 	e.Types = tps
 	return remained
@@ -1349,9 +1391,9 @@ func (e *TableStorageStatsExtractor) Extract(_ PlanContext,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `table_schema` columns.
-	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true, false)
+	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
 	// Extract the `table_name` columns.
-	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true, false)
+	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true)
 	e.SkipRequest = schemaSkip || tableSkip
 	if e.SkipRequest {
 		return nil
@@ -1419,11 +1461,11 @@ func (e *TiFlashSystemTableExtractor) Extract(_ PlanContext,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `tiflash_instance` columns.
-	remained, instanceSkip, tiflashInstances := e.extractCol(schema, names, predicates, "tiflash_instance", false, false)
+	remained, instanceSkip, tiflashInstances := e.extractCol(schema, names, predicates, "tiflash_instance", false)
 	// Extract the `tidb_database` columns.
-	remained, databaseSkip, tidbDatabases := e.extractCol(schema, names, remained, "tidb_database", true, false)
+	remained, databaseSkip, tidbDatabases := e.extractCol(schema, names, remained, "tidb_database", true)
 	// Extract the `tidb_table` columns.
-	remained, tableSkip, tidbTables := e.extractCol(schema, names, remained, "tidb_table", true, false)
+	remained, tableSkip, tidbTables := e.extractCol(schema, names, remained, "tidb_table", true)
 	e.SkipRequest = instanceSkip || databaseSkip || tableSkip
 	if e.SkipRequest {
 		return nil
@@ -1481,7 +1523,7 @@ func (e *StatementsSummaryExtractor) Extract(sctx PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `digest` column
-	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false, false)
+	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false)
 	if skip {
 		e.SkipRequest = true
 		return nil
@@ -1582,8 +1624,8 @@ func (e *TikvRegionPeersExtractor) Extract(_ PlanContext,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `region_id/store_id` columns.
-	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false, false)
-	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false, false)
+	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
+	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
 	e.RegionIDs, e.StoreIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs)
 
 	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest
@@ -1639,9 +1681,9 @@ func (e *ColumnsTableExtractor) Extract(_ PlanContext,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	remained, tableSchemaSkipRequest, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true, false)
-	remained, tableNameSkipRequest, tableName := e.extractCol(schema, names, remained, "table_name", true, false)
-	remained, columnNameSkipRequest, columnName := e.extractCol(schema, names, remained, "column_name", true, false)
+	remained, tableSchemaSkipRequest, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	remained, tableNameSkipRequest, tableName := e.extractCol(schema, names, remained, "table_name", true)
+	remained, columnNameSkipRequest, columnName := e.extractCol(schema, names, remained, "column_name", true)
 	e.SkipRequest = columnNameSkipRequest || tableSchemaSkipRequest || tableNameSkipRequest
 	if e.SkipRequest {
 		return
@@ -1702,7 +1744,7 @@ func (e *TiKVRegionStatusExtractor) Extract(_ PlanContext,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	remained, _, tableIDSet := e.extractCol(schema, names, predicates, "table_id", true, false)
+	remained, _, tableIDSet := e.extractCol(schema, names, predicates, "table_id", true)
 	if tableIDSet.Count() < 1 {
 		return predicates
 	}
@@ -1761,11 +1803,11 @@ func (e *InfoSchemaTablesExtractor) Extract(_ PlanContext,
 	e.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
 	for _, colName := range e.colNames {
-		remained, e.SkipRequest, resultSet = e.extractCol(schema, names, remained, colName, false, true)
+		remained, e.SkipRequest, resultSet = e.extractColWithLowerOrUpper(schema, names, remained, colName)
 		if e.SkipRequest {
 			break
 		}
-		remained, e.SkipRequest, resultSet1 = e.extractCol(schema, names, remained, colName, true, false)
+		remained, e.SkipRequest, resultSet1 = e.extractCol(schema, names, remained, colName, true)
 		if e.SkipRequest {
 			break
 		}
@@ -1792,16 +1834,7 @@ func (e *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
 	sort.Strings(colNames)
 	for _, colName := range colNames {
 		if len(e.ColPredicates[colName]) > 0 {
-			lower, ok := e.lowerOrUpper[colName]
-			if ok {
-				if lower {
-					fmt.Fprintf(r, "lower(%s):[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
-				} else {
-					fmt.Fprintf(r, "upper(%s):[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
-				}
-			} else {
-				fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
-			}
+			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
 		}
 	}
 

@@ -264,6 +264,7 @@ TIDB_PK_TYPE
 CLUSTERED
 SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES';
 TIDB_PK_TYPE
+NONCLUSTERED
 set tidb_enable_clustered_index=default;
 drop table if exists t;
 CREATE TABLE t ( id int DEFAULT NULL);
