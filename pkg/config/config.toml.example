@@ -177,7 +177,7 @@ max-backups = 0
 
 # Compress function for rotated files.
 # It could be empty which means compression diabled or equals to "gzip".
-compress = "gzip"
+compress = ""
 
 [security]
 # Path of file that contains list of trusted SSL CAs for connection with mysql client.
