@@ -167,19 +167,20 @@ type baseJoinProbe struct {
 	selected      []bool
 }
 
-func (j *baseJoinProbe) prepareForProbe(info *probeProcessInfo) (err error) {
+func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk, info *probeProcessInfo) (joinedChk *chunk.Chunk, remainCap int, err error) {
 	if !info.init {
 		err = info.initForCurrentChunk(j.ctx)
 		if err != nil {
-			return err
+			return nil, 0, err
 		}
 	}
 	j.offsetAndLengthArray = j.offsetAndLengthArray[:0]
 	if j.ctx.otherCondition != nil {
 		j.tmpChk.Reset()
 		j.rowIndexInfos = j.rowIndexInfos[:0]
+		joinedChk = j.tmpChk
 	}
-	return
+	return joinedChk, chk.RequiredRows() - chk.NumRows(), nil
 }
 
 type innerJoinProbe struct {
@@ -284,20 +285,14 @@ func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err er
 	if chk.IsFull() {
 		return nil
 	}
-	err = j.prepareForProbe(info)
-	if err != nil {
-		return err
+	joinedChk, remainCap, err1 := j.prepareForProbe(chk, info)
+	if err1 != nil {
+		return err1
 	}
 	length := 0
-	totalAddedRows := 0
-	joinedChk := chk
 	meta := j.ctx.hashTableMeta
-	if j.ctx.otherCondition != nil {
-		joinedChk = j.tmpChk
-	}
-	maxAddedRows := chk.RequiredRows() - chk.NumRows()
 
-	for totalAddedRows < maxAddedRows && info.currentProbeRow < info.chunk.NumRows() {
+	for remainCap > 0 && info.currentProbeRow < info.chunk.NumRows() {
 		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
 			candidateRow := info.matchedRowsHeaders[info.currentProbeRow]
 			if isKeyMatched(j.ctx.keyMode, info.serializedKeys[info.currentProbeRow], candidateRow, meta) {
@@ -308,7 +303,8 @@ func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err er
 					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: info.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
 				}
 				length++
-				totalAddedRows++
+				remainCap--
+				joinedChk.IncNumVirtualRows()
 			}
 			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
@@ -326,13 +322,7 @@ func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err er
 
 	j.appendProbeRowToChunk(joinedChk, info.chunk)
 
-	if joinedChk.NumCols() == 0 {
-		joinedChk.SetNumVirtualRows(chk.NumRows() + totalAddedRows)
-	} else {
-		joinedChk.SetNumVirtualRows(chk.NumRows())
-	}
-
-	if j.ctx.hasOtherCondition() && totalAddedRows > 0 {
+	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		// eval other condition, and construct final chunk
 		j.selected = j.selected[:0]
 		j.selected, err = expression.VectorizedFilter(j.ctx.sessCtx, j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
@@ -349,7 +339,7 @@ func (j *innerJoinProbe) needScanHT() bool {
 }
 
 func (j *innerJoinProbe) scanHT(*chunk.Chunk) (err error) {
-	panic("not supported")
+	panic("should not reach here")
 }
 
 func (j *innerJoinProbe) buildResultChunkAfterOtherCondition(chk *chunk.Chunk, joinedChk *chunk.Chunk, info *probeProcessInfo) (err error) {
@@ -397,6 +387,56 @@ func (j *innerJoinProbe) buildResultChunkAfterOtherCondition(chk *chunk.Chunk, j
 				currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
 			}, info)
 		}
+	}
+	return
+}
+
+type leftOuterJoinProbe struct {
+	baseJoinProbe
+	notJoinedRowIndex []int
+}
+
+func (j *leftOuterJoinProbe) prepareForProbe(chk *chunk.Chunk, info *probeProcessInfo) (*chunk.Chunk, int, error) {
+	joinedChk, remainCap, err := j.baseJoinProbe.prepareForProbe(chk, info)
+	if err != nil {
+		return nil, 0, err
+	}
+	j.notJoinedRowIndex = j.notJoinedRowIndex[:0]
+	return joinedChk, remainCap, nil
+}
+
+func (j *leftOuterJoinProbe) needScanHT() bool {
+	return !j.rightAsBuildSide
+}
+
+func (j *leftOuterJoinProbe) scanHT(chunk2 *chunk.Chunk) (err error) {
+	panic("not supported yet")
+}
+
+func (j *leftOuterJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
+	if chk.IsFull() {
+		return nil
+	}
+	joinedChk, remainCap, err1 := j.prepareForProbe(chk, info)
+	if err1 != nil {
+		return err1
+	}
+	length := 0
+
+	for remainCap > 0 && info.currentProbeRow < info.chunk.NumRows() {
+		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
+			// has match
+		} else {
+			if length > 0 {
+				// length > 0 mean current row has at least one matched build rows
+				j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
+				length = 0
+			} else {
+				j.notJoinedRowIndex = append(j.notJoinedRowIndex, info.currentProbeRow)
+			}
+			info.currentProbeRow++
+		}
+		remainCap--
 	}
 	return
 }
