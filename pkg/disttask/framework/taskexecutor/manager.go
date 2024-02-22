@@ -359,13 +359,13 @@ func (m *Manager) getStepResource(concurrency int) *proto.StepResource {
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mu.taskExecutors[executor.GetTask().ID] = executor
+	m.mu.taskExecutors[executor.GetTaskBase().ID] = executor
 }
 
 func (m *Manager) delTaskExecutor(executor TaskExecutor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.mu.taskExecutors, executor.GetTask().ID)
+	delete(m.mu.taskExecutors, executor.GetTaskBase().ID)
 }
 
 func (m *Manager) isExecutorStarted(taskID int64) bool {
