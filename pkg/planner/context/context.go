@@ -49,4 +49,14 @@ type PlanContext interface {
 	Txn(active bool) (kv.Transaction, error)
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool
+	// AdviseTxnWarmup advises the txn to warm up.
+	AdviseTxnWarmup() error
 }
+
+// EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
+// It is used by some mock contexts that are only required to implement PlanContext
+// but do not care about the actual implementation.
+type EmptyPlanContextExtended struct{}
+
+// AdviseTxnWarmup advises the txn to warm up.
+func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }

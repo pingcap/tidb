@@ -18,6 +18,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/terror",
+        "//pkg/planner/context",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/variable",
