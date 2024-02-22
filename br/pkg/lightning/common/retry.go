@@ -141,6 +141,10 @@ func isSingleRetryableError(err error) bool {
 			codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
 		case codes.Unknown:
+			errMsg := rpcStatus.Message()
+			if strings.Contains(errMsg, "DiskSpaceNotEnough") {
+				return false
+			}
 			// cases we have met during import:
 			// 1. in scatter region: rpc error: code = Unknown desc = region 31946583 is not fully replicated
 			// 2. in write TiKV: rpc error: code = Unknown desc = EngineTraits(Engine(Status { code: IoError, sub_code:

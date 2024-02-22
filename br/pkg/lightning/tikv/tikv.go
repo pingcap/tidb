@@ -236,8 +236,31 @@ func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string,
 }
 
 // CheckTiKVVersion checks the version of TiKV.
+<<<<<<< HEAD
 func CheckTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string,
 	requiredMinVersion, requiredMaxVersion semver.Version) error {
+=======
+func CheckTiKVVersion(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	requiredMinVersion, requiredMaxVersion semver.Version,
+) error {
+	return ForTiKVVersions(
+		ctx,
+		pdHTTPCli,
+		func(ver *semver.Version, addrMsg string) error {
+			return version.CheckVersion(addrMsg, *ver, requiredMinVersion, requiredMaxVersion)
+		},
+	)
+}
+
+// ForTiKVVersions runs the given action for all versions of TiKV nodes.
+func ForTiKVVersions(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	action func(ver *semver.Version, addrMsg string) error,
+) error {
+>>>>>>> f4013a354b0 (lightning: don't check TiKV free space after v8.0.0 (#51193))
 	return ForAllStores(
 		ctx,
 		tls.WithHost(pdAddr),
@@ -248,7 +271,7 @@ func CheckTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string,
 			if err != nil {
 				return errors.Annotate(err, component)
 			}
-			return version.CheckVersion(component, *ver, requiredMinVersion, requiredMaxVersion)
+			return action(ver, component)
 		},
 	)
 }

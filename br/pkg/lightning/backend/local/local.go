@@ -101,13 +101,14 @@ const (
 
 var (
 	// Local backend is compatible with TiDB [4.0.0, NextMajorVersion).
-	localMinTiDBVersion = *semver.New("4.0.0")
-	localMinTiKVVersion = *semver.New("4.0.0")
-	localMinPDVersion   = *semver.New("4.0.0")
-	localMaxTiDBVersion = version.NextMajorVersion()
-	localMaxTiKVVersion = version.NextMajorVersion()
-	localMaxPDVersion   = version.NextMajorVersion()
-	tiFlashMinVersion   = *semver.New("4.0.5")
+	localMinTiDBVersion    = *semver.New("4.0.0")
+	localMinTiKVVersion    = *semver.New("4.0.0")
+	localMinPDVersion      = *semver.New("4.0.0")
+	localMaxTiDBVersion    = version.NextMajorVersion()
+	localMaxTiKVVersion    = version.NextMajorVersion()
+	localMaxPDVersion      = version.NextMajorVersion()
+	tiFlashMinVersion      = *semver.New("4.0.5")
+	tikvSideFreeSpaceCheck = *semver.New("8.0.0")
 
 	errorEngineClosed     = errors.New("engine is closed")
 	maxRetryBackoffSecond = 30
@@ -598,6 +599,7 @@ func NewBackend(
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
+	local.tikvSideCheckFreeSpace(ctx)
 
 	return local, nil
 }
@@ -680,6 +682,7 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // rlock read locks a local file and returns the Engine instance if it exists.
 func (local *Backend) rLockEngine(engineID uuid.UUID) *Engine {
 	if e, ok := local.engines.Load(engineID); ok {
@@ -730,6 +733,31 @@ func (local *Backend) lockAllEnginesUnless(newState, ignoreStateMask importMutex
 		return true
 	})
 	return allEngines
+=======
+func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
+	if !local.ShouldCheckTiKV {
+		return
+	}
+	err := tikv.ForTiKVVersions(
+		ctx,
+		local.pdHTTPCli,
+		func(version *semver.Version, addrMsg string) error {
+			if version.Compare(tikvSideFreeSpaceCheck) < 0 {
+				return errors.Errorf(
+					"%s has version %s, it does not support server side free space check",
+					addrMsg, version,
+				)
+			}
+			return nil
+		},
+	)
+	if err == nil {
+		local.logger.Info("TiKV server side free space check is enabled, so lightning will turn it off")
+		local.ShouldCheckTiKV = false
+	} else {
+		local.logger.Info("", zap.Error(err))
+	}
+>>>>>>> f4013a354b0 (lightning: don't check TiKV free space after v8.0.0 (#51193))
 }
 
 // Close the local backend.
