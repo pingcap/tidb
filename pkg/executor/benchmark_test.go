@@ -1631,7 +1631,6 @@ func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS
 		if err := executor.Close(); err != nil {
 			b.Fatal(err)
 		}
-		fmt.Println("current round: ", i, "/", b.N)
 		b.StopTimer()
 	}
 }
