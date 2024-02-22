@@ -1459,12 +1459,6 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
-	case ast.AdminShowTelemetry:
-		p := &AdminShowTelemetry{}
-		p.setSchemaAndNames(buildShowTelemetrySchema())
-		ret = p
-	case ast.AdminResetTelemetryID:
-		return &AdminResetTelemetryID{}, nil
 	case ast.AdminReloadStatistics:
 		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
@@ -3064,14 +3058,6 @@ func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
 	cols.Append(buildColumnWithName("", "WATCH_ID", mysql.TypeLonglong, longlongSize))
 
 	return cols.col2Schema(), cols.names
-}
-
-func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
-	schema := newColumnsWithNames(1)
-	schema.Append(buildColumnWithName("", "TRACKING_ID", mysql.TypeVarchar, 64))
-	schema.Append(buildColumnWithName("", "LAST_STATUS", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumnWithName("", "DATA_PREVIEW", mysql.TypeString, mysql.MaxBlobWidth))
-	return schema.col2Schema(), schema.names
 }
 
 func buildColumnWithName(tableName, name string, tp byte, size int) (*expression.Column, *types.FieldName) {
