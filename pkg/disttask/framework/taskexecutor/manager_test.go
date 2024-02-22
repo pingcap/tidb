@@ -95,6 +95,14 @@ func TestManageTaskExecutor(t *testing.T) {
 	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, "test", int64(1)).Return(errors.New("pause failed"))
 	require.ErrorContains(t, m.handlePausingTask(1), "pause failed")
 	require.True(t, ctrl.Satisfied())
+
+	// handle reverting
+	executor1.EXPECT().GetTask().Return(&proto.Task{ID: 1})
+	executor1.EXPECT().CancelRunningSubtask()
+	m.addTaskExecutor(executor1)
+	mockTaskTable.EXPECT().CancelSubtask(m.ctx, "test", int64(1)).Return(nil)
+	require.NoError(t, m.handleRevertingTask(1))
+	require.True(t, ctrl.Satisfied())
 }
 
 func TestHandleExecutableTasks(t *testing.T) {
@@ -191,10 +199,7 @@ func TestManager(t *testing.T) {
 	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any())
 	mockInternalExecutors[task1.ID].EXPECT().Close()
 	// task2
-	mockInternalExecutors[task2.ID].EXPECT().GetTask().Return(task2).Times(2)
-	mockInternalExecutors[task2.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task2.ID].EXPECT().Run(gomock.Any())
-	mockInternalExecutors[task2.ID].EXPECT().Close()
+	mockTaskTable.EXPECT().CancelSubtask(m.ctx, m.id, task2.ID)
 	// task3
 	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, id, task3.ID).Return(nil).AnyTimes()
 
@@ -265,6 +270,7 @@ func TestManagerHandleTasks(t *testing.T) {
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
 		Return([]*storage.TaskExecInfo{{Task: task1}}, nil)
 	mockInternalExecutor.EXPECT().CancelRunningSubtask()
+	mockTaskTable.EXPECT().CancelSubtask(m.ctx, m.id, task1.ID)
 	m.handleTasks()
 	require.True(t, ctrl.Satisfied())
 	require.True(t, m.isExecutorStarted(task1.ID))
