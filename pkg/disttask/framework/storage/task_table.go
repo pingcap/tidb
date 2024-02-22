@@ -340,6 +340,20 @@ func (mgr *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 	return Row2Task(rs[0]), nil
 }
 
+// GetTaskBaseByIDWithHistory gets the task by the task ID from both tidb_global_task and tidb_global_task_history.
+func (mgr *TaskManager) GetTaskBaseByIDWithHistory(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %? "+
+		"union select "+basicTaskColumns+" from mysql.tidb_global_task_history t where id = %?", taskID, taskID)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, ErrTaskNotFound
+	}
+
+	return row2TaskBasic(rs[0]), nil
+}
+
 // GetTaskByKey gets the task by the task key.
 func (mgr *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *proto.Task, err error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where task_key = %?", key)

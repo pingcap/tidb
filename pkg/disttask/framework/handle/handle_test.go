@@ -50,11 +50,13 @@ func TestHandle(t *testing.T) {
 	// no scheduler registered
 	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, proto.EmptyMeta)
 	require.NoError(t, err)
-	waitedTask, err := handle.WaitTask(ctx, task.ID, func(task *proto.Task) bool {
+	waitedTaskBase, err := handle.WaitTask(ctx, task.ID, func(task *proto.TaskBase) bool {
 		return task.IsDone()
 	})
 	require.NoError(t, err)
-	require.Equal(t, proto.TaskStateFailed, waitedTask.State)
+	require.Equal(t, proto.TaskStateFailed, waitedTaskBase.State)
+	waitedTask, err := mgr.GetTaskByIDWithHistory(ctx, task.ID)
+	require.NoError(t, err)
 	require.ErrorContains(t, waitedTask.Error, "unknown task type")
 
 	task, err = mgr.GetTaskByID(ctx, 1)
