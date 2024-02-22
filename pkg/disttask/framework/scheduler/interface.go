@@ -26,7 +26,7 @@ import (
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
 	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
-	// to make sure lower priority tasks can be scheduled if resource is enough.
+	// to make sure lower rank tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task, and only contains
 	// some fields, see row2TaskBasic.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
@@ -100,7 +100,7 @@ type TaskManager interface {
 type Extension interface {
 	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
-	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
+	// the event is generated every CheckTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
 	OnTick(ctx context.Context, task *proto.Task)
 
 	// OnNextSubtasksBatch is used to generate batch of subtasks for next stage

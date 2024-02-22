@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -32,7 +32,7 @@ import (
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is CNF form.
-func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
+func detachColumnCNFConditions(sctx expression.BuildContext, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
 	var accessConditions, filterConditions []expression.Expression //nolint: prealloc
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
@@ -65,7 +65,7 @@ func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.
 
 // detachColumnDNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is DNF form.
-func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
+func detachColumnDNFConditions(sctx expression.BuildContext, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
 	var (
 		hasResidualConditions bool
 		accessConditions      []expression.Expression
@@ -101,7 +101,7 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
 // Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
-func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expression, cols []*expression.Column) int {
+func getPotentialEqOrInColOffset(sctx planctx.PlanContext, expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return -1
@@ -195,7 +195,7 @@ type cnfItemRangeResult struct {
 	minColNum          int
 }
 
-func getCNFItemRangeResult(sctx sessionctx.Context, rangeResult *DetachRangeResult, offset int) *cnfItemRangeResult {
+func getCNFItemRangeResult(sctx planctx.PlanContext, rangeResult *DetachRangeResult, offset int) *cnfItemRangeResult {
 	sameLenPointRanges := true
 	var maxColNum, minColNum int
 	for i, ran := range rangeResult.Ranges {
@@ -240,7 +240,7 @@ func compareCNFItemRangeResult(curResult, bestResult *cnfItemRangeResult) (curIs
 // item ranges.
 // e.g, for input CNF expressions ((a,b) in ((1,1),(2,2))) and a > 1 and ((a,b,c) in (1,1,1),(2,2,2))
 // ((a,b,c) in (1,1,1),(2,2,2)) would be extracted.
-func extractBestCNFItemRanges(sctx sessionctx.Context, conds []expression.Expression, cols []*expression.Column,
+func extractBestCNFItemRanges(sctx planctx.PlanContext, conds []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64, convertToSortKey bool) (*cnfItemRangeResult, []*valueInfo, error) {
 	if len(conds) < 2 {
 		return nil, nil, nil
@@ -605,7 +605,7 @@ func extractValueInfo(expr expression.Expression) *valueInfo {
 //
 // columnValues: the constant column values for all index columns. columnValues[i] is nil if cols[i] is not constant.
 // bool: indicate whether there's nil range when merging eq and in conditions.
-func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+func ExtractEqAndInCondition(sctx planctx.PlanContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*valueInfo, bool) {
 	var filters []expression.Expression
 	rb := builder{sctx: sctx}
@@ -864,7 +864,7 @@ type DetachRangeResult struct {
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
 // for building ranges, set rangeMemQuota to 0 to avoid range fallback.
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
-func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+func DetachCondAndBuildRangeForIndex(sctx planctx.PlanContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64) (*DetachRangeResult, error) {
 	d := &rangeDetacher{
 		sctx:             sctx,
@@ -880,7 +880,7 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 
 // detachCondAndBuildRangeWithoutMerging detaches the index filters from table filters and uses them to build ranges.
 // When building ranges, it doesn't merge consecutive ranges.
-func detachCondAndBuildRangeWithoutMerging(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+func detachCondAndBuildRangeWithoutMerging(sctx planctx.PlanContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64, convertToSortKey bool) (*DetachRangeResult, error) {
 	d := &rangeDetacher{
 		sctx:             sctx,
@@ -898,13 +898,13 @@ func detachCondAndBuildRangeWithoutMerging(sctx sessionctx.Context, conditions [
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
 // for building ranges, set rangeMemQuota to 0 to avoid range fallback.
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
-func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+func DetachCondAndBuildRangeForPartition(sctx planctx.PlanContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64) (*DetachRangeResult, error) {
 	return detachCondAndBuildRangeWithoutMerging(sctx, conditions, cols, lengths, rangeMaxSize, false)
 }
 
 type rangeDetacher struct {
-	sctx             sessionctx.Context
+	sctx             planctx.PlanContext
 	allConds         []expression.Expression
 	cols             []*expression.Column
 	lengths          []int
@@ -944,7 +944,7 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 // It will find the point query column firstly and then extract the range query column.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
 // for building ranges, set rangeMemQuota to 0 to avoid range fallback.
-func DetachSimpleCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression,
+func DetachSimpleCondAndBuildRangeForIndex(sctx planctx.PlanContext, conditions []expression.Expression,
 	cols []*expression.Column, lengths []int, rangeMaxSize int64) (Ranges, []expression.Expression, error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
@@ -986,7 +986,7 @@ func AppendConditionsIfNotExist(conditions, condsToAppend []expression.Expressio
 
 // ExtractAccessConditionsForColumn extracts the access conditions used for range calculation. Since
 // we don't need to return the remained filter conditions, it is much simpler than DetachCondsForColumn.
-func ExtractAccessConditionsForColumn(ctx sessionctx.Context, conds []expression.Expression, col *expression.Column) []expression.Expression {
+func ExtractAccessConditionsForColumn(ctx planctx.PlanContext, conds []expression.Expression, col *expression.Column) []expression.Expression {
 	checker := conditionChecker{
 		checkerCol:               col,
 		length:                   types.UnspecifiedLength,
@@ -1002,7 +1002,7 @@ func ExtractAccessConditionsForColumn(ctx sessionctx.Context, conds []expression
 }
 
 // DetachCondsForColumn detaches access conditions for specified column from other filter conditions.
-func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessConditions, otherConditions []expression.Expression) {
+func DetachCondsForColumn(sctx planctx.PlanContext, conds []expression.Expression, col *expression.Column) (accessConditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
 		checkerCol:               col,
 		length:                   types.UnspecifiedLength,
@@ -1014,7 +1014,7 @@ func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression
 
 // MergeDNFItems4Col receives a slice of DNF conditions, merges some of them which can be built into ranges on a single column, then returns.
 // For example, [a > 5, b > 6, c > 7, a = 1, b > 3] will become [a > 5 or a = 1, b > 6 or b > 3, c > 7].
-func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression) []expression.Expression {
+func MergeDNFItems4Col(ctx planctx.PlanContext, dnfItems []expression.Expression) []expression.Expression {
 	mergedDNFItems := make([]expression.Expression, 0, len(dnfItems))
 	col2DNFItems := make(map[int64][]expression.Expression)
 	for _, dnfItem := range dnfItems {
@@ -1067,7 +1067,7 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 // @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
 //
 //	error                     if error gernerated, return error
-func AddGcColumnCond(sctx sessionctx.Context,
+func AddGcColumnCond(sctx planctx.PlanContext,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
@@ -1090,7 +1090,7 @@ func AddGcColumnCond(sctx sessionctx.Context,
 // @retval -  []expression.Expression   the new conditions after adding `tidb_shard() = xxx` prefix
 //
 //	error                     if error gernerated, return error
-func AddGcColumn4InCond(sctx sessionctx.Context,
+func AddGcColumn4InCond(sctx planctx.PlanContext,
 	cols []*expression.Column,
 	accessesCond []expression.Expression) ([]expression.Expression, error) {
 	var errRes error
@@ -1158,7 +1158,7 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 //
 //	[]*valueInfo              the values of every columns in the returned new conditions
 //	error                     if error gernerated, return error
-func AddGcColumn4EqCond(sctx sessionctx.Context,
+func AddGcColumn4EqCond(sctx planctx.PlanContext,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
@@ -1200,7 +1200,7 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 // @param[in] cols        the columns of shard index, such as [tidb_shard(a), a, ...]
 // @param[in] lengths     the length for every column of shard index
 // @retval - the new condition after adding tidb_shard() prefix
-func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
+func AddExpr4EqAndInCondition(sctx planctx.PlanContext, conditions []expression.Expression,
 	cols []*expression.Column) ([]expression.Expression, error) {
 	accesses := make([]expression.Expression, len(cols))
 	columnValues := make([]*valueInfo, len(cols))

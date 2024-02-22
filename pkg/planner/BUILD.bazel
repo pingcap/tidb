@@ -13,6 +13,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/planner/cascades",
+        "//pkg/planner/context",
         "//pkg/planner/core",
         "//pkg/planner/util/debugtrace",
         "//pkg/privilege",

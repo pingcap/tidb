@@ -32,8 +32,9 @@ import (
 )
 
 var (
-	// checkTaskRunningInterval is the interval for loading tasks.
-	checkTaskRunningInterval = 3 * time.Second
+	// CheckTaskRunningInterval is the interval for loading tasks.
+	// It is exported for testing.
+	CheckTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of cleanup routine.
@@ -154,9 +155,6 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
 func (sm *Manager) Start() {
-	failpoint.Inject("disableSchedulerManager", func() {
-		failpoint.Return()
-	})
 	// init cached managed nodes
 	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
 
@@ -174,6 +172,12 @@ func (sm *Manager) Start() {
 		sm.balancer.balanceLoop(sm.ctx, sm)
 	})
 	sm.initialized = true
+}
+
+// Cancel cancels the scheduler manager.
+// used in test to simulate tidb node shutdown.
+func (sm *Manager) Cancel() {
+	sm.cancel()
 }
 
 // Stop the schedulerManager.
@@ -194,7 +198,7 @@ func (sm *Manager) Initialized() bool {
 // scheduleTaskLoop schedules the tasks.
 func (sm *Manager) scheduleTaskLoop() {
 	sm.logger.Info("schedule task loop start")
-	ticker := time.NewTicker(checkTaskRunningInterval)
+	ticker := time.NewTicker(CheckTaskRunningInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -250,7 +254,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			}
 			reservedExecID, ok := sm.slotMgr.canReserve(task)
 			if !ok {
-				// task of lower priority might be able to be scheduled.
+				// task of lower rank might be able to be scheduled.
 				continue
 			}
 			metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.SchedulingStatus).Inc()

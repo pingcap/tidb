@@ -24,6 +24,7 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -188,7 +189,7 @@ type MutateContext interface {
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion
+	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.

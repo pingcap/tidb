@@ -528,11 +528,12 @@ func NewWriteExternalStoreOperator(
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
-			for _, index := range indexes {
+			for i, index := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(index.Meta().Unique).
-					SetMemorySizeLimit(memoryQuota)
+					SetMemorySizeLimit(memoryQuota).
+					SetGroupOffset(i)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)

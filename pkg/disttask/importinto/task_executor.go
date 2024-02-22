@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -147,7 +148,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		DataEngine:       dataEngine,
 		IndexEngine:      indexEngine,
 		Progress:         importer.NewProgress(),
-		Checksum:         &verification.KVChecksum{},
+		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetCodec()),
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
@@ -200,7 +201,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	var dataKVCount int64
+	var dataKVCount uint64
 	if s.tableImporter.IsLocalSort() {
 		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
 		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
@@ -208,10 +209,11 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		if err != nil {
 			return err
 		}
-		dataKVCount, err = s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+		dataKVCount2, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
 		if err != nil {
 			return err
 		}
+		dataKVCount = uint64(dataKVCount2)
 
 		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
@@ -224,11 +226,16 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
-	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
-	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
-	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
+	subtaskMeta.Checksum = map[int64]Checksum{}
+	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
+		subtaskMeta.Checksum[id] = Checksum{
+			Sum:  c.Sum(),
+			KVs:  c.SumKVS(),
+			Size: c.SumSize(),
+		}
+	}
 	subtaskMeta.Result = Result{
-		LoadedRowCnt: uint64(dataKVCount),
+		LoadedRowCnt: dataKVCount,
 		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}
 	allocators := sharedVars.TableImporter.Allocators()
@@ -308,8 +315,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
 
-	return external.MergeOverlappingFiles(
-		ctx,
+	err = external.MergeOverlappingFiles(
+		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
 		m.controller.GlobalSortStore,
 		m.partSize,
@@ -323,6 +330,15 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		onClose,
 		m.taskMeta.Plan.ThreadCnt,
 		false)
+	logger.Info(
+		"merge sort finished",
+		zap.String("kv-group", sm.KVGroup),
+		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
+		zap.Uint64("total-kv-count", m.subtaskSortedKVMeta.TotalKVCnt),
+		brlogutil.Key("start-key", m.subtaskSortedKVMeta.StartKey),
+		brlogutil.Key("end-key", m.subtaskSortedKVMeta.EndKey),
+	)
+	return err
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {

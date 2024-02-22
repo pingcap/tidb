@@ -821,4 +821,22 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t;
+create table t(a int, check((test.t.a > 1)));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK (((`a` > 1)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add constraint chk check((test.t.a < 100));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK (((`a` > 1))),
+CONSTRAINT `chk` CHECK (((`a` < 100)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
 set @@global.tidb_enable_check_constraint = 0;

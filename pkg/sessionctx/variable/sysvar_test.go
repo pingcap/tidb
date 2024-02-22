@@ -1416,7 +1416,7 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 
 	// Set to s3, should fail
 	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "s3://blackhole")
-	require.ErrorContains(t, err, "bucket blackhole")
+	require.Error(t, err, "unreachable storage URI")
 
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)

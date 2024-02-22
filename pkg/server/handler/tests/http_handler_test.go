@@ -469,7 +469,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
 	go func() {
-		err := server.Run()
+		err := server.Run(ts.domain)
 		require.NoError(t, err)
 	}()
 	ts.WaitUntilServerOnline()
@@ -849,7 +849,7 @@ func TestGetSchema(t *testing.T) {
 	err = decoder.Decode(&dbs)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "sys", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L

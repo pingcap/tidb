@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/extension"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -53,7 +54,7 @@ type Context struct {
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
-	is            sessionctx.InfoschemaMetaVersion
+	is            infoschema.InfoSchemaMetaVersion
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
 	cancel        context.CancelFunc
@@ -110,6 +111,23 @@ func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
 		return nil
 	}
 	return txn.Transaction.GetTableInfo(id)
+}
+
+// SetDiskFullOpt implements the interface.
+func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
+
+// SetOption implements the interface.
+func (*wrapTxn) SetOption(_ int, _ any) {}
+
+// StartTS implements the interface.
+func (*wrapTxn) StartTS() uint64 { return uint64(time.Now().UnixNano()) }
+
+// Get implements the interface.
+func (txn *wrapTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	if txn.Transaction == nil {
+		return nil, nil
+	}
+	return txn.Transaction.Get(ctx, k)
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
@@ -195,13 +213,13 @@ func (c *Context) GetMPPClient() kv.MPPClient {
 }
 
 // GetInfoSchema implements sessionctx.Context GetInfoSchema interface.
-func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (c *Context) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
 	vars := c.GetSessionVars()
-	if snap, ok := vars.SnapshotInfoschema.(sessionctx.InfoschemaMetaVersion); ok {
+	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchemaMetaVersion); ok {
 		return snap
 	}
 	if vars.TxnCtx != nil && vars.InTxn() {
-		if is, ok := vars.TxnCtx.InfoSchema.(sessionctx.InfoschemaMetaVersion); ok {
+		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchemaMetaVersion); ok {
 			return is
 		}
 	}
@@ -212,10 +230,10 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 }
 
 // MockInfoschema only serves for test.
-var MockInfoschema func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion
+var MockInfoschema func(tbList []*model.TableInfo) infoschema.InfoSchemaMetaVersion
 
 // GetDomainInfoSchema returns the latest information schema in domain
-func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (c *Context) GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion {
 	if c.is == nil {
 		c.is = MockInfoschema(nil)
 	}
@@ -452,8 +470,14 @@ func (c *Context) InSandBoxMode() bool {
 }
 
 // SetInfoSchema is to set info shema for the test.
-func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
+func (c *Context) SetInfoSchema(is infoschema.InfoSchemaMetaVersion) {
 	c.is = is
+}
+
+// ResetSessionAndStmtTimeZone resets the timezone for session and statement.
+func (c *Context) ResetSessionAndStmtTimeZone(tz *time.Location) {
+	c.GetSessionVars().TimeZone = tz
+	c.GetSessionVars().StmtCtx.SetTimeZone(tz)
 }
 
 // ReportUsageStats implements the sessionctx.Context interface.
@@ -479,6 +503,7 @@ func NewContext() *Context {
 	sctx.sessionVars = vars
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
+	vars.TimeZone = time.UTC
 	vars.StmtCtx.SetTimeZone(time.UTC)
 	vars.MemTracker.SetBytesLimit(-1)
 	vars.DiskTracker.SetBytesLimit(-1)

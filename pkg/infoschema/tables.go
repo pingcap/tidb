@@ -213,6 +213,8 @@ const (
 	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
 	// TableKeywords is the list of keywords.
 	TableKeywords = "KEYWORDS"
+	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
+	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
 )
 
 const (
@@ -324,6 +326,8 @@ var tableIDMap = map[string]int64{
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
+	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
+	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1670,6 +1674,23 @@ var tableKeywords = []columnInfo{
 	{name: "RESERVED", tp: mysql.TypeLong, size: 11},
 }
 
+var tableTiDBIndexUsage = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY_TOTAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "KV_REQ_TOTAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "ROWS_ACCESS_TOTAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_0", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_0_1", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_1_10", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_10_20", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_20_50", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_50_100", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_100", tp: mysql.TypeLonglong, size: 21},
+	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1785,7 +1806,9 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
 	//nolint: prealloc
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo, GetTiProxyServerInfo} {
+	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, func(ctx sessionctx.Context) ([]ServerInfo, error) {
+		return GetStoreServerInfo(ctx.GetStore())
+	}, GetTiProxyServerInfo} {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -1947,7 +1970,7 @@ func isTiFlashWriteNode(store *metapb.Store) bool {
 }
 
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
-func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+func GetStoreServerInfo(store kv.Storage) ([]ServerInfo, error) {
 	failpoint.Inject("mockStoreServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
 			var servers []ServerInfo
@@ -1966,7 +1989,6 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 	})
 
-	store := ctx.GetStore()
 	// Get TiKV servers info.
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
@@ -2030,7 +2052,7 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		}
 	})
 
-	stores, err := GetStoreServerInfo(ctx)
+	stores, err := GetStoreServerInfo(ctx.GetStore())
 	if err != nil {
 		return cnt, err
 	}
@@ -2210,6 +2232,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableCheckConstraints:                   tableCheckConstraintsCols,
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
+	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2404,11 +2427,11 @@ func (vt *VirtualTable) Type() table.Type {
 }
 
 // GetTiFlashServerInfo returns all TiFlash server infos
-func GetTiFlashServerInfo(sctx sessionctx.Context) ([]ServerInfo, error) {
+func GetTiFlashServerInfo(store kv.Storage) ([]ServerInfo, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		return nil, table.ErrUnsupportedOp
 	}
-	serversInfo, err := GetStoreServerInfo(sctx)
+	serversInfo, err := GetStoreServerInfo(store)
 	if err != nil {
 		return nil, err
 	}
@@ -2417,7 +2440,7 @@ func GetTiFlashServerInfo(sctx sessionctx.Context) ([]ServerInfo, error) {
 }
 
 // FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
-func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessionctx.Context, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -2454,7 +2477,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessi
 	for result := range ch {
 		if result.err != nil {
 			if recordWarningInStmtCtx {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+				vars.StmtCtx.AppendWarning(result.err)
 			} else {
 				log.Warn(result.err.Error())
 			}

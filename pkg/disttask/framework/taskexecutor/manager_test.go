@@ -111,7 +111,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 
 	m, err := NewManager(ctx, id, mockTaskTable)
 	require.NoError(t, err)
-	m.slotManager.available = 16
+	m.slotManager.available.Store(16)
 
 	// no task
 	m.handleExecutableTasks(nil)
@@ -149,13 +149,13 @@ func TestHandleExecutableTasks(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return ctrl.Satisfied()
 	}, 5*time.Second, 100*time.Millisecond)
-	require.Equal(t, 10, m.slotManager.available)
+	require.Equal(t, 10, m.slotManager.availableSlots())
 	require.True(t, m.isExecutorStarted(taskID))
 	close(ch)
 	mockInternalExecutor.EXPECT().Close()
 	m.executorWG.Wait()
 	require.True(t, ctrl.Satisfied())
-	require.Equal(t, 16, m.slotManager.available)
+	require.Equal(t, 16, m.slotManager.availableSlots())
 	require.False(t, m.isExecutorStarted(taskID))
 }
 
@@ -219,7 +219,7 @@ func TestManagerHandleTasks(t *testing.T) {
 
 	m, err := NewManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
-	m.slotManager.available = 16
+	m.slotManager.available.Store(16)
 
 	// failed to get tasks
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
@@ -298,7 +298,7 @@ func TestSlotManagerInManager(t *testing.T) {
 
 	m, err := NewManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
-	m.slotManager.available = 10
+	m.slotManager.available.Store(10)
 
 	var (
 		task1 = &proto.Task{
@@ -349,13 +349,13 @@ func TestSlotManagerInManager(t *testing.T) {
 		return ctrl.Satisfied()
 	}, 2*time.Second, 300*time.Millisecond)
 	require.True(t, m.isExecutorStarted(task1.ID))
-	require.Equal(t, 0, m.slotManager.available)
+	require.Equal(t, 0, m.slotManager.availableSlots())
 	require.Len(t, m.slotManager.executorTasks, 1)
 	// task1 succeed
 	ch <- nil
 	mockInternalExecutors[task1.ID].EXPECT().Close()
 	m.executorWG.Wait()
-	require.Equal(t, 10, m.slotManager.available)
+	require.Equal(t, 10, m.slotManager.availableSlots())
 	require.False(t, m.isExecutorStarted(task1.ID))
 	require.Len(t, m.slotManager.executorTasks, 0)
 	require.True(t, ctrl.Satisfied())
@@ -373,7 +373,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		return ctrl.Satisfied()
 	}, 2*time.Second, 300*time.Millisecond)
 	require.True(t, m.isExecutorStarted(task1.ID))
-	require.Equal(t, 0, m.slotManager.available)
+	require.Equal(t, 0, m.slotManager.availableSlots())
 	require.Len(t, m.slotManager.executorTasks, 1)
 
 	// 2. task1 is preempted by task3, task1 start to pausing
@@ -382,7 +382,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutors[task1.ID].EXPECT().Cancel()
 	m.handleExecutableTasks([]*storage.TaskExecInfo{{Task: task3}, {Task: task2}})
 	require.True(t, ctrl.Satisfied())
-	require.Equal(t, 0, m.slotManager.available)
+	require.Equal(t, 0, m.slotManager.availableSlots())
 	require.Len(t, m.slotManager.executorTasks, 1)
 	require.True(t, m.isExecutorStarted(task1.ID))
 
@@ -390,7 +390,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutors[task1.ID].EXPECT().Close()
 	ch <- context.Canceled
 	m.executorWG.Wait()
-	require.Equal(t, 10, m.slotManager.available)
+	require.Equal(t, 10, m.slotManager.availableSlots())
 	require.Len(t, m.slotManager.executorTasks, 0)
 	require.False(t, m.isExecutorStarted(task1.ID))
 	require.True(t, ctrl.Satisfied())
@@ -409,7 +409,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return ctrl.Satisfied()
 	}, 2*time.Second, 300*time.Millisecond)
-	require.Equal(t, 8, m.slotManager.available)
+	require.Equal(t, 8, m.slotManager.availableSlots())
 	require.Len(t, m.slotManager.executorTasks, 2)
 	require.True(t, m.isExecutorStarted(task2.ID))
 	require.True(t, m.isExecutorStarted(task3.ID))
@@ -420,7 +420,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	ch <- nil
 	ch <- nil
 	m.executorWG.Wait()
-	require.Equal(t, 10, m.slotManager.available)
+	require.Equal(t, 10, m.slotManager.availableSlots())
 	require.Equal(t, 0, len(m.slotManager.executorTasks))
 	require.True(t, ctrl.Satisfied())
 }

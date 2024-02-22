@@ -17,11 +17,19 @@ Developing BR requires:
 * [Go 1.16+](http://golang.org/doc/code.html)
 * An internet connection to download the dependencies
 
-Simply run `make` to build the program.
+1. Navigate to the tidb directory
 
 ```sh
-make
+cd ../tidb
 ```
+
+2. run `make build_br` to build the program.
+
+```sh
+make build_br
+```
+
+After all these, you will find `br` in `tidb/bin` directory
 
 ### Running tests
 

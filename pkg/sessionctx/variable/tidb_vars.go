@@ -940,6 +940,9 @@ const (
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
 
+	// TiDBEnableParallelHashaggSpill is the name of the `tidb_enable_parallel_hashagg_spill` system variable
+	TiDBEnableParallelHashaggSpill = "tidb_enable_parallel_hashagg_spill"
+
 	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
 	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
 )
@@ -1325,6 +1328,7 @@ const (
 	DefTiDBStatsLoadSyncWait                       = 100
 	DefTiDBStatsLoadPseudoTimeout                  = true
 	DefSysdateIsNow                                = false
+	DefTiDBEnableParallelHashaggSpill              = true
 	DefTiDBEnableMutationChecker                   = false
 	DefTiDBTxnAssertionLevel                       = AssertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt            = false
@@ -1575,7 +1579,7 @@ var (
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Pointer[func(int64)]
 	// SetPDClientDynamicOption is the func registered by domain
-	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
+	SetPDClientDynamicOption atomic.Pointer[func(string, string) error]
 	// SwitchMDL is the func registered by DDL to switch MDL.
 	SwitchMDL func(bool2 bool) error = nil
 	// EnableDDL is the func registered by ddl to enable running ddl in this instance.
