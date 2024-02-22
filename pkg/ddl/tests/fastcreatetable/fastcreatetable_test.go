@@ -60,7 +60,7 @@ func TestDDL(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
 
-	tk.MustExec("set global tidb_ddl_version=2")
+	tk.MustExec("set global tidb_enable_fast_create_table=ON")
 
 	tk.MustExec("create database db")
 	// Create Table
