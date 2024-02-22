@@ -17,8 +17,8 @@ package statistics
 import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -142,7 +142,7 @@ var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{
 // If this column has histogram but not loaded yet,
 // then we mark it as need histogram.
 func (c *Column) IsInvalid(
-	sctx sessionctx.Context,
+	sctx context.PlanContext,
 	collPseudo bool,
 ) (res bool) {
 	var totalCount float64

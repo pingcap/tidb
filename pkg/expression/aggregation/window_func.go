@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -31,7 +30,7 @@ type WindowFuncDesc struct {
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
-func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
+func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
 	// if we are in the prepare statement, skip the params check since it's not been initialized.
 	if !skipCheckArgs {
 		switch strings.ToLower(name) {
@@ -124,7 +123,7 @@ func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
 }
 
 // WindowFuncToPBExpr converts aggregate function to pb.
-func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
+func WindowFuncToPBExpr(sctx expression.EvalContext, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
 	pc := expression.NewPBConverter(client, sctx)
 	tp := desc.GetTiPBExpr(true)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
@@ -143,9 +142,9 @@ func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowF
 }
 
 // CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
-func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx sessionctx.Context) bool {
+func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.EvalContext, client kv.Client) bool {
 	// args
-	if !expression.CanExprsPushDown(ctx, s.Args, ctx.GetClient(), kv.TiFlash) {
+	if !expression.CanExprsPushDown(ctx, s.Args, client, kv.TiFlash) {
 		return false
 	}
 	// window functions

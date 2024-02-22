@@ -35,13 +35,15 @@ import (
 )
 
 var (
-	// DefaultCheckInterval is the default interval to check whether there are tasks
-	// or subtasks to run.
+	// TaskCheckInterval is the interval to check whether there are tasks to run.
+	// TODO maybe change this interval larger for performance.
+	TaskCheckInterval = 300 * time.Millisecond
+	// SubtaskCheckInterval is the interval to check whether there are subtasks to run.
 	// exported for testing.
-	DefaultCheckInterval = 300 * time.Millisecond
-	// MaxCheckInterval is the max interval to check whether there are subtasks to run.
+	SubtaskCheckInterval = 300 * time.Millisecond
+	// MaxSubtaskCheckInterval is the max interval to check whether there are subtasks to run.
 	// exported for testing.
-	MaxCheckInterval        = 2 * time.Second
+	MaxSubtaskCheckInterval = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
@@ -179,7 +181,7 @@ func (m *Manager) Stop() {
 // NOT running by executor before mark the task as paused.
 func (m *Manager) handleTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "handleTasksLoop", m.handleTasksLoop, false)
-	ticker := time.NewTicker(DefaultCheckInterval)
+	ticker := time.NewTicker(TaskCheckInterval)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -228,7 +230,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
-			// do not handle the tasks with lower priority if current task is waiting tasks free.
+			// do not handle the tasks with lower rank if current task is waiting tasks free.
 			break
 		}
 

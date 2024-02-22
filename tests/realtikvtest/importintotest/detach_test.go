@@ -20,6 +20,7 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +45,7 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 		executor.TestDetachedTaskFinished.Store(false)
 	})
 
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/testDetachedTaskFinished", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/executor/testDetachedTaskFinished", "return(true)")
 	s.tk.MustExec("SET SESSION TIME_ZONE = '+08:00';")
 	for _, ca := range detachedCases {
 		s.tk.MustExec("DROP DATABASE IF EXISTS test_detached;")

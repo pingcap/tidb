@@ -67,6 +67,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/disttask",
         "//pkg/util/domainutil",

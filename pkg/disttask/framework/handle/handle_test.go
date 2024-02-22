@@ -23,7 +23,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -35,10 +34,7 @@ import (
 )
 
 func TestHandle(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 
 	ctx := util.WithInternalSourceType(context.Background(), "handle_test")
 

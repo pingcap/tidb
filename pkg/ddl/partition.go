@@ -539,6 +539,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		if s.Tp == model.PartitionTypeHash || len(s.ColumnNames) != 0 {
 			enable = true
 		}
+		if s.Tp == model.PartitionTypeKey && len(s.ColumnNames) == 0 {
+			enable = true
+		}
 	}
 
 	if !enable {
@@ -571,6 +574,17 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		pi.Columns = make([]model.CIStr, 0, len(s.ColumnNames))
 		for _, cn := range s.ColumnNames {
 			pi.Columns = append(pi.Columns, cn.Name)
+		}
+		if pi.Type == model.PartitionTypeKey && len(s.ColumnNames) == 0 {
+			if tbInfo.PKIsHandle {
+				pi.Columns = append(pi.Columns, tbInfo.GetPkName())
+				pi.IsEmptyColumns = true
+			} else if key := tbInfo.GetPrimaryKey(); key != nil {
+				for _, col := range key.Columns {
+					pi.Columns = append(pi.Columns, col.Name)
+				}
+				pi.IsEmptyColumns = true
+			}
 		}
 		if err := checkColumnsPartitionType(tbInfo); err != nil {
 			return err
@@ -626,13 +640,21 @@ func getPartitionColSlices(sctx sessionctx.Context, tblInfo *model.TableInfo, s 
 		if err != nil {
 			return nil, err
 		}
-		partCols = columnInfoSlice(partColumns)
+		return columnInfoSlice(partColumns), nil
 	} else if len(s.ColumnNames) > 0 {
-		partCols = columnNameSlice(s.ColumnNames)
-	} else {
-		return nil, errors.Errorf("Table partition metadata not correct, neither partition expression or list of partition columns")
+		return columnNameSlice(s.ColumnNames), nil
+	} else if len(s.ColumnNames) == 0 {
+		if tblInfo.PKIsHandle {
+			return columnInfoSlice([]*model.ColumnInfo{tblInfo.GetPkColInfo()}), nil
+		} else if key := tblInfo.GetPrimaryKey(); key != nil {
+			colInfos := make([]*model.ColumnInfo, 0, len(key.Columns))
+			for _, col := range key.Columns {
+				colInfos = append(colInfos, model.FindColumnInfo(tblInfo.Cols(), col.Name.L))
+			}
+			return columnInfoSlice(colInfos), nil
+		}
 	}
-	return partCols, nil
+	return nil, errors.Errorf("Table partition metadata not correct, neither partition expression or list of partition columns")
 }
 
 // getPartitionIntervalFromTable checks if a partitioned table matches a generated INTERVAL partitioned scheme
@@ -3217,7 +3239,7 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)
@@ -4229,6 +4251,9 @@ func hexIfNonPrint(s string) string {
 }
 
 func writeColumnListToBuffer(partitionInfo *model.PartitionInfo, sqlMode mysql.SQLMode, buf *bytes.Buffer) {
+	if partitionInfo.IsEmptyColumns {
+		return
+	}
 	for i, col := range partitionInfo.Columns {
 		buf.WriteString(stringutil.Escape(col.O, sqlMode))
 		if i < len(partitionInfo.Columns)-1 {

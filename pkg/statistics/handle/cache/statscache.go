@@ -16,10 +16,12 @@ package cache
 
 import (
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
@@ -61,6 +63,7 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (
 		rows []chunk.Row
@@ -129,7 +132,8 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 	}
 
 	s.UpdateStatsCache(tables, deletedTableIDs)
-
+	dur := time.Since(start)
+	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil
 }
 
