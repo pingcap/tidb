@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -256,6 +258,11 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 	return subTaskMetas, nil
 }
 
+const (
+	scanRegionBackoffBase = 200 * time.Millisecond
+	scanRegionBackoffMax  = 2 * time.Second
+)
+
 func generateNonPartitionPlan(
 	d *ddl,
 	tblInfo *model.TableInfo,
@@ -279,40 +286,62 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	regionCache := d.store.(helper.Storage).GetRegionCache()
-	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-	if err != nil {
-		return nil, err
-	}
-	regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
-	subTaskMetas := make([][]byte, 0, 4)
-	sort.Slice(recordRegionMetas, func(i, j int) bool {
-		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
-	})
-	for i := 0; i < len(recordRegionMetas); i += regionBatch {
-		end := i + regionBatch
-		if end > len(recordRegionMetas) {
-			end = len(recordRegionMetas)
-		}
-		batch := recordRegionMetas[i:end]
-		subTaskMeta := &BackfillSubTaskMeta{
-			RowStart: batch[0].StartKey(),
-			RowEnd:   batch[len(batch)-1].EndKey(),
-		}
-		if i == 0 {
-			subTaskMeta.RowStart = startKey
-		}
-		if end == len(recordRegionMetas) {
-			subTaskMeta.RowEnd = endKey
-		}
-		metaBytes, err := json.Marshal(subTaskMeta)
+	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+	for i := 0; i < 8; i++ {
+		regionCache := d.store.(helper.Storage).GetRegionCache()
+		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
 			return nil, err
 		}
-		subTaskMetas = append(subTaskMetas, metaBytes)
+		sort.Slice(recordRegionMetas, func(i, j int) bool {
+			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
+		})
+
+		// Check if regions are continuous.
+		shouldRetry := false
+		cur := recordRegionMetas[0]
+		for _, m := range recordRegionMetas[1:] {
+			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
+				shouldRetry = true
+				break
+			}
+			cur = m
+		}
+
+		if shouldRetry {
+			<-time.After(backoffer.Backoff(i))
+			continue
+		}
+
+		regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+
+		subTaskMetas := make([][]byte, 0, 4)
+		for i := 0; i < len(recordRegionMetas); i += regionBatch {
+			end := i + regionBatch
+			if end > len(recordRegionMetas) {
+				end = len(recordRegionMetas)
+			}
+			batch := recordRegionMetas[i:end]
+			subTaskMeta := &BackfillSubTaskMeta{
+				RowStart: batch[0].StartKey(),
+				RowEnd:   batch[len(batch)-1].EndKey(),
+			}
+			if i == 0 {
+				subTaskMeta.RowStart = startKey
+			}
+			if end == len(recordRegionMetas) {
+				subTaskMeta.RowEnd = endKey
+			}
+			metaBytes, err := json.Marshal(subTaskMeta)
+			if err != nil {
+				return nil, err
+			}
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
+		return subTaskMetas, nil
 	}
-	return subTaskMetas, nil
+	return nil, errors.Errorf("region is not continous")
 }
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
