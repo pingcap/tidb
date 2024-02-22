@@ -606,7 +606,7 @@ func handleBRIEError(err error, terror *terror.Error) error {
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
-	globalBRIEQueue.tasks.Range(func(key, value any) bool {
+	globalBRIEQueue.tasks.Range(func(_, value any) bool {
 		item := value.(*brieQueueItem)
 		if item.info.kind == kind {
 			item.progress.lock.Lock()

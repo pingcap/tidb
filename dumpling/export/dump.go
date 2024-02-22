@@ -225,7 +225,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
 
 	rebuildMetaConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
-		_ = conn.Raw(func(dc any) error {
+		_ = conn.Raw(func(any) error {
 			// return an `ErrBadConn` to ensure close the connection, but do not put it back to the pool.
 			// if we choose to use `Close`, it will always put the connection back to the pool.
 			return driver.ErrBadConn
