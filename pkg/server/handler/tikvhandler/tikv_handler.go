@@ -729,7 +729,7 @@ func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
 	uniqueIDMap := make(map[int64]struct{})
-	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
+	handleJobAndTableInfo := func(_ *model.Job, tblInfo *model.TableInfo) (bool, error) {
 		// Avoid duplicate table ID info.
 		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
 			return false, nil
@@ -1823,7 +1823,7 @@ func (h DBTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	tbl, ok := schema.TableByID(int64(physicalID))
 	if ok {
 		dbTblInfo.TableInfo = tbl.Meta()
-		dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
+		dbInfo, ok := infoschema.SchemaByTable(schema, dbTblInfo.TableInfo)
 		if !ok {
 			logutil.BgLogger().Error("can not find the database of the table", zap.Int64("table id", dbTblInfo.TableInfo.ID), zap.String("table name", dbTblInfo.TableInfo.Name.L))
 			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"go.uber.org/zap"
 )
 
 type mergeSortExecutor struct {
@@ -69,12 +68,8 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
-	sm := &BackfillSubTaskMeta{}
-	err := json.Unmarshal(subtask.Meta, sm)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {
-		logutil.BgLogger().Error("unmarshal error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
 		return err
 	}
 
@@ -124,13 +119,13 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 
 func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
-	var subtaskMeta BackfillSubTaskMeta
-	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
-		return errors.Trace(err)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	if err != nil {
+		return err
 	}
-	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := json.Marshal(sm)
 	if err != nil {
 		return errors.Trace(err)
 	}

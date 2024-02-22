@@ -746,3 +746,19 @@ func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, e
 	}
 	return subtasks, nil
 }
+
+// AdjustTaskOverflowConcurrency change the task concurrency to a max value supported by current cluster.
+// This is a workaround for an upgrade bug: in v7.5.x, the task concurrency is hard-coded to 16, resulting in
+// a stuck issue if the new version TiDB has less than 16 CPU count.
+// We don't adjust the concurrency in subtask table because this field does not exist in v7.5.0.
+// For details, see https://github.com/pingcap/tidb/issues/50894.
+// For the following versions, there is a check when submiting a new task. This function should be a no-op.
+func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se sessionctx.Context) error {
+	cpuCount, err := mgr.getCPUCountOfManagedNode(ctx, se)
+	if err != nil {
+		return err
+	}
+	sql := "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;"
+	_, err = sqlexec.ExecSQL(ctx, se, sql, cpuCount, cpuCount)
+	return err
+}

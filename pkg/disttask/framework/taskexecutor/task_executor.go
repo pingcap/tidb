@@ -197,8 +197,8 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.
 	// 300ms + 600ms + 1.2s + 2s * 4 = 10.1s
-	backoffer := backoff.NewExponential(DefaultCheckInterval, 2, MaxCheckInterval)
-	checkInterval, noSubtaskCheckCnt := DefaultCheckInterval, 0
+	backoffer := backoff.NewExponential(SubtaskCheckInterval, 2, MaxSubtaskCheckInterval)
+	checkInterval, noSubtaskCheckCnt := SubtaskCheckInterval, 0
 	for {
 		select {
 		case <-e.ctx.Done():
@@ -230,7 +230,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			continue
 		}
 		// reset it when we get a subtask
-		checkInterval, noSubtaskCheckCnt = DefaultCheckInterval, 0
+		checkInterval, noSubtaskCheckCnt = SubtaskCheckInterval, 0
 
 		switch task.State {
 		case proto.TaskStateRunning:

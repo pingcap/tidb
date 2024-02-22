@@ -18,12 +18,13 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -95,7 +96,7 @@ func (ran *Range) Clone() *Range {
 }
 
 // IsPoint returns if the range is a point.
-func (ran *Range) IsPoint(sctx sessionctx.Context) bool {
+func (ran *Range) IsPoint(sctx planctx.PlanContext) bool {
 	return ran.isPoint(sctx.GetSessionVars().StmtCtx.TypeCtx(), sctx.GetSessionVars().RegardNULLAsPoint)
 }
 
@@ -193,18 +194,18 @@ func (ran *Range) String() string {
 }
 
 // Encode encodes the range to its encoded value.
-func (ran *Range) Encode(sc *stmtctx.StatementContext, lowBuffer, highBuffer []byte) ([]byte, []byte, error) {
+func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highBuffer []byte) ([]byte, []byte, error) {
 	var err error
-	lowBuffer, err = codec.EncodeKey(sc.TimeZone(), lowBuffer[:0], ran.LowVal...)
-	err = sc.HandleError(err)
+	lowBuffer, err = codec.EncodeKey(loc, lowBuffer[:0], ran.LowVal...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return nil, nil, err
 	}
 	if ran.LowExclude {
 		lowBuffer = kv.Key(lowBuffer).PrefixNext()
 	}
-	highBuffer, err = codec.EncodeKey(sc.TimeZone(), highBuffer[:0], ran.HighVal...)
-	err = sc.HandleError(err)
+	highBuffer, err = codec.EncodeKey(loc, highBuffer[:0], ran.HighVal...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -216,10 +217,10 @@ func (ran *Range) Encode(sc *stmtctx.StatementContext, lowBuffer, highBuffer []b
 
 // PrefixEqualLen tells you how long the prefix of the range is a point.
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
-func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
+func (ran *Range) PrefixEqualLen(tc types.Context) (int, error) {
 	// Here, len(ran.LowVal) always equal to len(ran.HighVal)
 	for i := 0; i < len(ran.LowVal); i++ {
-		cmp, err := ran.LowVal[i].Compare(sc.TypeCtx(), &ran.HighVal[i], ran.Collators[i])
+		cmp, err := ran.LowVal[i].Compare(tc, &ran.HighVal[i], ran.Collators[i])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

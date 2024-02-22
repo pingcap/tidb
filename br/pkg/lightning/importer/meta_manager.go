@@ -1039,7 +1039,7 @@ func (noopTaskMetaMgr) CheckTasksExclusively(_ context.Context, _ func(tasks []t
 }
 
 func (noopTaskMetaMgr) CheckAndPausePdSchedulers(_ context.Context) (pdutil.UndoFunc, error) {
-	return func(ctx context.Context) error {
+	return func(context.Context) error {
 		return nil
 	}, nil
 }
@@ -1048,7 +1048,7 @@ func (noopTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
 	return false
 }
 
-func (noopTaskMetaMgr) CheckTaskExist(_ context.Context) (bool, error) {
+func (noopTaskMetaMgr) CheckTaskExist(context.Context) (bool, error) {
 	return true, nil
 }
 
