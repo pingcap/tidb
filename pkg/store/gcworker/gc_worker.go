@@ -354,15 +354,15 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 		return errors.Trace(err)
 	}
 
-	// Do redoDeleteRanges.
-	err = w.redoDeleteRanges(ctx, safePoint, concurrency)
-	if err != nil {
-		logutil.Logger(ctx).Error("redo-delete range returns an error", zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
-		return errors.Trace(err)
-	}
+	// // Do redoDeleteRanges.
+	// err = w.redoDeleteRanges(ctx, safePoint, concurrency)
+	// if err != nil {
+	// 	logutil.Logger(ctx).Error("redo-delete range returns an error", zap.String("category", "gc worker"),
+	// 		zap.String("uuid", w.uuid),
+	// 		zap.Error(err))
+	// 	metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
+	// 	return errors.Trace(err)
+	// }
 
 	return nil
 }
@@ -768,14 +768,14 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		metrics.GCJobFailureCounter.WithLabelValues("delete_range").Inc()
 		return errors.Trace(err)
 	}
-	err = w.redoDeleteRanges(ctx, safePoint, concurrency)
-	if err != nil {
-		logutil.Logger(ctx).Error("redo-delete range returns an error", zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
-		return errors.Trace(err)
-	}
+	// err = w.redoDeleteRanges(ctx, safePoint, concurrency)
+	// if err != nil {
+	// 	logutil.Logger(ctx).Error("redo-delete range returns an error", zap.String("category", "gc worker"),
+	// 		zap.String("uuid", w.uuid),
+	// 		zap.Error(err))
+	// 	metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
+	// 	return errors.Trace(err)
+	// }
 
 	if w.checkUseDistributedGC() {
 		err = w.uploadSafePointToPD(ctx, safePoint)
@@ -817,7 +817,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
-	gcPlacementRuleCache := make(map[int64]any, len(ranges))
+	// gcPlacementRuleCache := make(map[int64]any, len(ranges))
 
 	logutil.Logger(ctx).Info("start delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
@@ -855,22 +855,22 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
-		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
-			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
-				zap.Int64("jobID", r.JobID),
-				zap.Int64("elementID", r.ElementID),
-				zap.Error(err))
-			continue
-		}
-		if err := w.doGCLabelRules(r); err != nil {
-			logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
-				zap.Int64("jobID", r.JobID),
-				zap.Int64("elementID", r.ElementID),
-				zap.Error(err))
-			continue
-		}
+		// if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
+		// 	logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
+		// 		zap.String("uuid", w.uuid),
+		// 		zap.Int64("jobID", r.JobID),
+		// 		zap.Int64("elementID", r.ElementID),
+		// 		zap.Error(err))
+		// 	continue
+		// }
+		// if err := w.doGCLabelRules(r); err != nil {
+		// 	logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
+		// 		zap.String("uuid", w.uuid),
+		// 		zap.Int64("jobID", r.JobID),
+		// 		zap.Int64("elementID", r.ElementID),
+		// 		zap.Error(err))
+		// 	continue
+		// }
 	}
 	logutil.Logger(ctx).Info("finish delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),

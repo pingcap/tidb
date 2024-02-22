@@ -122,9 +122,8 @@ func init() {
 
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
-	do := &Domain{
-		infoCache: infoschema.NewCache(1),
-	}
+	do := &Domain{}
+	do.infoCache = infoschema.NewCache(do, 1)
 	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 0)
 	return do
 }
@@ -249,7 +248,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero
-		do.infoCache.Insert(is, uint64(schemaTs))
+		do.infoCache.Insert(is, schemaTs)
 		return is, true, 0, nil, nil
 	}
 
@@ -267,10 +266,10 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 4. No regenrated schema diff.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
+		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, schemaTs)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
-			do.infoCache.Insert(is, uint64(schemaTs))
+			do.infoCache.Insert(is, schemaTs)
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
@@ -300,7 +299,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -311,12 +310,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Duration("start time", time.Since(startTime)))
 
 	is := newISBuilder.Build()
-	do.infoCache.Insert(is, uint64(schemaTs))
+	do.infoCache.Insert(is, schemaTs)
 	return is, false, currentSchemaVersion, nil, nil
 }
 
 // Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
-func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, version int64, startTS uint64) (int64, error) {
+func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, version int64, startTS uint64) (uint64, error) {
 	tikvStore, ok := do.Store().(helper.Storage)
 	if ok {
 		newHelper := helper.NewHelper(tikvStore)
@@ -327,7 +326,7 @@ func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, ver
 		if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
 			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
 		}
-		return int64(mvccResp.Info.Writes[0].CommitTs), nil
+		return mvccResp.Info.Writes[0].CommitTs, nil
 	}
 	return 0, errors.Errorf("cannot get store from domain")
 }
@@ -434,7 +433,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64, schemaTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -449,7 +448,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
@@ -1059,6 +1058,8 @@ func (do *Domain) Close() {
 		handle.Close()
 	}
 
+	do.infoCache.Close()
+
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -1072,7 +1073,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		exit:              make(chan struct{}),
 		sysSessionPool:    newSessionPool(capacity, factory),
 		statsLease:        statsLease,
-		infoCache:         infoschema.NewCache(int(variable.SchemaVersionCacheLimit.Load())),
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 		mdlCheckTableInfo: &mdlCheckTableInfo{
@@ -1082,6 +1082,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		},
 		mdlCheckCh: make(chan struct{}),
 	}
+	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -2278,6 +2279,7 @@ func (do *Domain) loadStatsWorker() {
 	if lease == 0 {
 		lease = 3 * time.Second
 	}
+	lease = 600 * time.Second
 	loadTicker := time.NewTicker(lease)
 	updStatsHealthyTicker := time.NewTicker(20 * lease)
 	defer func() {

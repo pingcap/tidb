@@ -44,9 +44,9 @@ type InfoSchema interface {
 	TableByID(id int64) (table.Table, bool)
 	AllSchemas() []*model.DBInfo
 	SchemaTables(schema model.CIStr) []table.Table
-	SchemaMetaVersion() int64
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
-	Misc
+	SchemaMetaVersion() int64
+	Misc 
 }
 
 // Misc contains the methods that are not closely related to InfoSchema.
@@ -600,6 +600,10 @@ func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	schemaTables.tables[tblMeta.Name.L] = tbl
 	is.idx2table[tblMeta.ID] = tbl
 
+	if tblMeta.DBID == 0 {
+		tblMeta.DBID = db.ID
+	}
+
 	return nil
 }
 
@@ -620,6 +624,7 @@ func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 	if len(tbls.tables) == 0 {
 		delete(is.schemaMap, schema.L)
 	}
+	oldTable.Meta().DBID = 0
 	return true
 }
 

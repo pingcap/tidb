@@ -15,6 +15,7 @@
 package taskexecutor
 
 import (
+	"fmt"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -195,6 +196,7 @@ func (m *Manager) handleTasksLoop() {
 }
 
 func (m *Manager) handleTasks() {
+	fmt.Println("task executor handle tasks ===")
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
 		m.logErr(err)

@@ -734,7 +734,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		limitJobChV2:      make(chan *limitJobTask, batchAddingJobs),
-		enableTiFlashPoll: atomicutil.NewBool(true),
+		enableTiFlashPoll: atomicutil.NewBool(false),
 		ddlJobCh:          make(chan struct{}, 100),
 		localJobCh:        make(chan *limitJobTask, 1),
 	}

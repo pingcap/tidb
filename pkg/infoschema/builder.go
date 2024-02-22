@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -188,6 +189,7 @@ type Builder struct {
 
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
+	infoData *Data
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -557,7 +559,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -682,6 +684,9 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 		)
 	}
 	b.is.schemaMap[di.Name.L] = &schemaTables{dbInfo: di, tables: make(map[string]table.Table)}
+	if enableV2.Load() {
+		b.infoData.addDB(diff.Version, di)
+	}
 	return nil
 }
 
@@ -779,7 +784,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64) ([]int64, error) {
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -865,9 +870,25 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
 	b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], tbl)
+	b.infoData.add(Item{
+		dbName:        dbInfo.Name.L,
+		dbID:          dbInfo.ID,
+		tableName:     tblInfo.Name.L,
+		tableID:       tblInfo.ID,
+		schemaVersion: schemaVersion,
+	}, tbl)
 	slices.SortFunc(b.is.sortedTablesBuckets[bucketIdx], func(i, j table.Table) int {
 		return cmp.Compare(i.Meta().ID, j.Meta().ID)
 	})
+	if enableV2.Load() {
+		b.infoData.add(Item{
+			dbName:        dbInfo.Name.L,
+			dbID:          dbInfo.ID,
+			tableName:     tblInfo.Name.L,
+			tableID:       tblInfo.ID,
+			schemaVersion: schemaVersion,
+		}, tbl)
+	}
 
 	if tblInfo.TempTableType != model.TempTableNone {
 		b.addTemporaryTable(tableID)
@@ -946,14 +967,34 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	return affected
 }
 
+// TODO: get rid of this and use infoschemaV2 directly.
+type infoschemaProxy struct {
+	infoschemaV2
+	v1 InfoSchema
+}
+
 // Build builds and returns the built infoschema.
 func (b *Builder) Build() InfoSchema {
 	b.updateInfoSchemaBundles(b.is)
+	if enableV2.Load() {
+		return &infoschemaProxy{
+			infoschemaV2: infoschemaV2{
+				ts:            math.MaxUint64, // TODO: should be the correct TS
+				r:             b.Requirement,
+				Data:          b.infoData,
+				schemaVersion: b.is.SchemaMetaVersion(),
+			},
+			v1: b.is,
+		}
+	}
 	return b.is
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
+	if proxy, ok := oldSchema.(*infoschemaProxy); ok {
+		oldSchema = proxy.v1
+	}
 	oldIS := oldSchema.(*infoSchema)
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
@@ -1056,18 +1097,39 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, b.tableFromMeta)
+// <<<<<<< HEAD
+// 		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
+// 		if err != nil {
+// 			return nil, errors.Trace(err)
+// 		}
+// 		b.infoData.addDB(schemaVersion, di)
+// =======
+		schTbls, err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		b.is.schemaMap[di.Name.L] = schTbls
+// >>>>>>> infoschema-v2-pr
 	}
 
 	// Initialize virtual tables.
 	for _, driver := range drivers {
-		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta)
+// <<<<<<< HEAD
+// 		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
+// 		if err != nil {
+// 			return nil, errors.Trace(err)
+// 		}
+// 		b.infoData.addDB(schemaVersion, driver.DBInfo)
+// =======
+		schTbls, err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		b.is.schemaMap[driver.DBInfo.Name.L] = schTbls
+		if enableV2.Load() {
+			b.infoData.addSpecialDB(driver.DBInfo, schTbls)
+		}
+// >>>>>>> infoschema-v2-pr
 	}
 
 	// Sort all tables by `ID`
@@ -1101,28 +1163,68 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
 
-func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc) error {
+func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) (*schemaTables, error) {
+	var db1 model.DBInfo
+	db1 = *di
+	db1.Tables = nil
 	schTbls := &schemaTables{
-		dbInfo: di,
+		dbInfo: &db1,
 		tables: make(map[string]table.Table, len(di.Tables)),
 	}
-	b.is.schemaMap[di.Name.L] = schTbls
-
 	for _, t := range di.Tables {
+
+		fmt.Println("===== create table ====", di.Name.L, t.Name.L)
+
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
+			return nil, errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
+// <<<<<<< HEAD
+// 		if di.Name.L == "information_schema" || di.Name.L == "performance_schema" {
+// 			schTbls.tables[t.Name.L] = tbl
+// 			sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
+// 			b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+// 		}
+// 		b.infoData.add(Item{
+// 			dbName:        di.Name.L,
+// 			dbID:          di.ID,
+// 			tableName:     t.Name.L,
+// 			tableID:       t.ID,
+// 			schemaVersion: schemaVersion,
+// 		},  t.Raw, tbl)
+// =======
+
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+
+		if enableV2.Load() {
+			b.infoData.add(Item{
+				dbName:        di.Name.L,
+				dbID:          di.ID,
+				tableName:     t.Name.L,
+				tableID:       t.ID,
+				schemaVersion: schemaVersion,
+			}, tbl)
+		}
+
+// >>>>>>> infoschema-v2-pr
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)
 		}
 	}
-	return nil
+
+// <<<<<<< HEAD
+// 	return nil
+// =======
+	if enableV2.Load() {
+		b.infoData.addDB(schemaVersion, di)
+	}
+
+	return schTbls, nil
+// >>>>>>> infoschema-v2-pr
 }
 
 func (b *Builder) addTemporaryTable(tblID int64) {
@@ -1145,7 +1247,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error)) *Builder {
+func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
 	return &Builder{
 		Requirement: r,
 		is: &infoSchema{
@@ -1158,8 +1260,9 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error)) *B
 			schemaMap:           map[string]*schemaTables{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
-		dirtyDB: make(map[string]bool),
-		factory: factory,
+		dirtyDB:  make(map[string]bool),
+		factory:  factory,
+		infoData: infoData,
 	}
 }
 
