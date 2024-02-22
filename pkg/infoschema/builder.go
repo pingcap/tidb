@@ -874,7 +874,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		return cmp.Compare(i.Meta().ID, j.Meta().ID)
 	})
 	if enableV2.Load() {
-		b.infoData.add(Item{
+		b.infoData.add(tableItem{
 			dbName:        dbInfo.Name.L,
 			dbID:          dbInfo.ID,
 			tableName:     tblInfo.Name.L,
@@ -1158,7 +1158,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
 
 		if enableV2.Load() {
-			b.infoData.add(Item{
+			b.infoData.add(tableItem{
 				dbName:        di.Name.L,
 				dbID:          di.ID,
 				tableName:     t.Name.L,
