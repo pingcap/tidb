@@ -239,7 +239,7 @@ func CheckTiKVVersion(
 		ctx,
 		pdHTTPCli,
 		metapb.StoreState_Offline,
-		func(c context.Context, store *pdhttp.MetaStore) error {
+		func(_ context.Context, store *pdhttp.MetaStore) error {
 			component := fmt.Sprintf("TiKV (at %s)", store.Address)
 			ver, err := semver.NewVersion(strings.TrimPrefix(store.Version, "v"))
 			if err != nil {

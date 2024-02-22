@@ -454,13 +454,16 @@ func KillMySelf() error {
 	return errors.Trace(err)
 }
 
-// KvPair is a pair of key and value.
+// KvPair contains a key-value pair and other fields that can be used to ingest
+// KV pairs into TiKV.
 type KvPair struct {
 	// Key is the key of the KV pair
 	Key []byte
 	// Val is the value of the KV pair
 	Val []byte
-	// RowID is the row id of the KV pair.
+	// RowID identifies a KvPair in case two KvPairs are equal in Key and Val. It's
+	// often set to the file offset of the KvPair in the source file or the record
+	// handle.
 	RowID []byte
 }
 
@@ -480,19 +483,6 @@ func TableHasAutoRowID(info *model.TableInfo) bool {
 // TableHasAutoID return whether table has auto generated id.
 func TableHasAutoID(info *model.TableInfo) bool {
 	return TableHasAutoRowID(info) || info.GetAutoIncrementColInfo() != nil || info.ContainsAutoRandomBits()
-}
-
-// StringSliceEqual checks if two string slices are equal.
-func StringSliceEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // GetAutoRandomColumn return the column with auto_random, return nil if the table doesn't have it.

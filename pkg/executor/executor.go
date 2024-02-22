@@ -1470,10 +1470,10 @@ func init() {
 		r, ctx := tracing.StartRegionEx(ctx, "executor.EvalSubQuery")
 		defer r.End()
 
-		sctx, ok := pctx.(sessionctx.Context)
-		intest.Assert(ok)
-		if !ok {
-			return nil, errors.New("plan context should be sessionctx.Context to EvalSubqueryFirstRow")
+		sctx, err := plannercore.AsSctx(pctx)
+		intest.AssertNoError(err)
+		if err != nil {
+			return nil, err
 		}
 
 		e := newExecutorBuilder(sctx, is, nil)
@@ -1481,7 +1481,7 @@ func init() {
 		if e.err != nil {
 			return nil, e.err
 		}
-		err := exec.Open(ctx, executor)
+		err = exec.Open(ctx, executor)
 		defer func() { terror.Log(exec.Close(executor)) }()
 		if err != nil {
 			return nil, err
@@ -1687,7 +1687,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 		type tableIter interface {
 			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
-		err := (e.t.(tableIter)).IterRecords(ctx, e.Ctx(), columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := (e.t.(tableIter)).IterRecords(ctx, e.Ctx(), columns, func(_ kv.Handle, rec []types.Datum, _ []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -2321,7 +2321,7 @@ func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
-		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
+		plannercore.IsAutoCommitTxn(sessionVars) && plannercore.IsReadOnly(node, sessionVars)
 }
 
 // FastCheckTableExec represents a check table executor.
@@ -2817,7 +2817,7 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		return nil
 	}
 
-	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		role, err := meta.NewMeta(txn).GetBDRRole()
 		if err != nil {
 			return err

@@ -155,9 +155,6 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
 func (sm *Manager) Start() {
-	failpoint.Inject("disableSchedulerManager", func() {
-		failpoint.Return()
-	})
 	// init cached managed nodes
 	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
 
@@ -257,7 +254,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			}
 			reservedExecID, ok := sm.slotMgr.canReserve(task)
 			if !ok {
-				// task of lower priority might be able to be scheduled.
+				// task of lower rank might be able to be scheduled.
 				continue
 			}
 			metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.SchedulingStatus).Inc()
