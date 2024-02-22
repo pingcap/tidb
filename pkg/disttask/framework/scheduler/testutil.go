@@ -34,7 +34,7 @@ func GetTestSchedulerExt(ctrl *gomock.Controller) Extension {
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
 	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(_ *proto.Task) proto.Step {
 			return proto.StepDone
 		},
 	).AnyTimes()
