@@ -546,7 +546,7 @@ func fetchColumnsFromStatsCache(table *model.TableInfo) (rowCount uint64, avgRow
 	return
 }
 
-func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context) bool {
+func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	for _, col := range e.columns {
 		// only the following columns need stats cahce.
 		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
@@ -557,7 +557,7 @@ func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context) bool
 }
 
 func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	useStatsCache := e.updateStatsCacheIfNeed(sctx)
+	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 
 	var rows [][]types.Datum
