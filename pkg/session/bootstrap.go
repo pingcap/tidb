@@ -3008,8 +3008,6 @@ func upgradeToVer185(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, DropMySQLIndexUsageTable)
-	doReentrantDDL(s, CreateSysSchema)
-	doReentrantDDL(s, CreateSchemaUnusedIndexesView)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
