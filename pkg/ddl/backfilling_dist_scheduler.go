@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -287,12 +288,13 @@ func generateNonPartitionPlan(
 		return nil, errors.Trace(err)
 	}
 
+	subTaskMetas := make([][]byte, 0, 4)
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
-	for i := 0; i < 8; i++ {
+	err = handle.RunWithRetry(d.ctx, 8, backoffer, logutil.Logger(d.ctx), func(ctx context.Context) (bool, error) {
 		regionCache := d.store.(helper.Storage).GetRegionCache()
 		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
 		sort.Slice(recordRegionMetas, func(i, j int) bool {
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
@@ -310,13 +312,11 @@ func generateNonPartitionPlan(
 		}
 
 		if shouldRetry {
-			<-time.After(backoffer.Backoff(i))
-			continue
+			return true, nil
 		}
 
 		regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
-		subTaskMetas := make([][]byte, 0, 4)
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			end := i + regionBatch
 			if end > len(recordRegionMetas) {
@@ -335,13 +335,19 @@ func generateNonPartitionPlan(
 			}
 			metaBytes, err := json.Marshal(subTaskMeta)
 			if err != nil {
-				return nil, err
+				return false, err
 			}
 			subTaskMetas = append(subTaskMetas, metaBytes)
 		}
-		return subTaskMetas, nil
+		return false, nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return nil, errors.Errorf("region is not continous")
+	if len(subTaskMetas) == 0 {
+		return nil, errors.Errorf("regions are not continuous")
+	}
+	return subTaskMetas, nil
 }
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
