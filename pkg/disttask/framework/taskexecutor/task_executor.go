@@ -263,11 +263,10 @@ func (e *BaseTaskExecutor) RunStep(resource *proto.StepResource) (err error) {
 		// may have error in
 		// 1. defer function in run(ctx, task)
 		// 2. cancel ctx
-		if e.ctx.Err() != nil {
-			err = e.ctx.Err()
-		} else {
+		if e.ctx.Err() == nil {
 			return nil
 		}
+		err = e.ctx.Err()
 	}
 
 	return e.updateSubtask(err)
@@ -590,17 +589,17 @@ func (e *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Sub
 func (e *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subtask *proto.Subtask, err error) (finished bool, resErr error) {
 	if err != nil {
 		err = errors.Trace(err)
-		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"))
+		e.logger.Error("onError", zap.Int64("subtask-id", subtask.ID), zap.Error(err), zap.Stack("stack"))
 		err := errors.Cause(err)
 		if (ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask) || err == ErrCancelSubtask {
-			e.logger.Warn("subtask canceled", zap.Error(err))
+			e.logger.Warn("subtask canceled", zap.Int64("subtask-id", subtask.ID), zap.Error(err))
 			resErr = e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
 		} else if e.IsRetryableError(err) {
-			e.logger.Warn("meet retryable error", zap.Error(err))
+			e.logger.Warn("meet retryable error", zap.Int64("subtask-id", subtask.ID), zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
-			e.logger.Info("meet context canceled for gracefully shutdown", zap.Error(err))
+			e.logger.Info("meet context canceled for gracefully shutdown", zap.Int64("subtask-id", subtask.ID), zap.Error(err))
 		} else {
-			e.logger.Warn("subtask failed", zap.Error(err))
+			e.logger.Warn("subtask failed", zap.Int64("subtask-id", subtask.ID), zap.Error(err))
 			resErr = e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateFailed, err)
 		}
 		return true, resErr
