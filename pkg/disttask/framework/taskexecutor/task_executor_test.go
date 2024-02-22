@@ -86,7 +86,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 
 	err = taskExecutor.RunStep(nil)
-	require.EqualError(t, err, runSubtaskErr.Error())
+	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
 
 	// 4. run subtask success
@@ -139,10 +139,10 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task1.ID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(theSubtask, nil)
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(false)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", subtaskID, proto.SubtaskStateFailed, gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", subtaskID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask).Return(nil)
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = taskExecutor.RunStep(nil)
-	require.ErrorContains(t, err, "subtask in running state and is not idempotent")
+	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
 
 	// run previous left subtask in running state again, but the subtask idempotent,
@@ -171,25 +171,13 @@ func TestTaskExecutorRun(t *testing.T) {
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}, nil)
 	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), task1.ID, "id").Return(nil)
 	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(ErrCancelSubtask)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", task1.ID, proto.SubtaskStateCanceled, gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", task1.ID, proto.SubtaskStateCanceled, nil).Return(nil)
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = taskExecutor.RunStep(nil)
-	require.EqualError(t, err, ErrCancelSubtask.Error())
+	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
 
-	// 7. RunSubtask return context.Canceled
-	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task1.ID, proto.StepOne,
-		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
-		ID: 1, Type: tp, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}, nil)
-	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), task1.ID, "id").Return(nil)
-	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(context.Canceled)
-	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	err = taskExecutor.RunStep(nil)
-	require.EqualError(t, err, context.Canceled.Error())
-	require.True(t, ctrl.Satisfied())
-
-	// 8. grpc cancel
+	// 7. grpc cancel
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task1.ID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
@@ -199,10 +187,10 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(grpcErr)
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = taskExecutor.RunStep(nil)
-	require.EqualError(t, err, grpcErr.Error())
+	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
 
-	// 9. annotate grpc cancel
+	// 8. annotate grpc cancel
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task1.ID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
@@ -217,10 +205,10 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(annotatedError)
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = taskExecutor.RunStep(nil)
-	require.EqualError(t, err, annotatedError.Error())
+	require.NoError(t, err, annotatedError.Error())
 	require.True(t, ctrl.Satisfied())
 
-	// 10. subtask owned by other executor
+	// 9. subtask owned by other executor
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task1.ID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
@@ -378,7 +366,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(runSubtaskErr)
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err := taskExecutor.runStep(nil)
-	require.EqualError(t, err, runSubtaskErr.Error())
+	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
 
 	// 2. rollback success.
@@ -434,7 +422,7 @@ func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
 		return ctx.Err()
 	})
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	require.ErrorIs(t, taskExecutor.runStep(nil), context.Canceled)
+	require.NoError(t, taskExecutor.RunStep(nil))
 	require.True(t, ctrl.Satisfied())
 }
 
