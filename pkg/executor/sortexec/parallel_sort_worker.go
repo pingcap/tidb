@@ -138,7 +138,7 @@ func (p *parallelSortWorker) fetchChunksAndSort() {
 				return
 			}
 		}
- 
+
 		chkIter := chunk.NewIterator4Chunk(chk)
 		row := chkIter.Begin()
 		for !row.IsEmpty() {
