@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"slices"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -110,6 +111,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
+	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
 	e.Unparallel.Idx = 0
 

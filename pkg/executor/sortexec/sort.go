@@ -87,7 +87,10 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	close(e.finishCh)
+	// TopN not initialize `e.finishCh` but it will call the Close function
+	if e.finishCh != nil {
+		close(e.finishCh)
+	}
 	if e.Unparallel.spillAction != nil {
 		e.Unparallel.spillAction.SetFinished()
 	}
@@ -96,7 +99,8 @@ func (e *SortExec) Close() error {
 		for _, partition := range e.Unparallel.sortPartitions {
 			partition.close()
 		}
-	} else {
+	} else if e.finishCh != nil {
+		// TopN also call this Close function, and should skip this branch
 		if e.fetched.CompareAndSwap(false, true) {
 			close(e.Parallel.resultChannel)
 		} else {
