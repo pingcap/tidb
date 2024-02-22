@@ -97,7 +97,8 @@ func (t *SubtaskBase) IsDone() bool {
 }
 
 // Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by scheduler.
+// subtasks of a task are run in parallel on different nodes, but on each node,
+// at most 1 subtask can be run at the same time, see StepExecutor too.
 type Subtask struct {
 	SubtaskBase
 	// UpdateTime is the time when the subtask is updated.
@@ -106,6 +107,9 @@ type Subtask struct {
 	UpdateTime time.Time
 	// Meta is the metadata of subtask, should not be nil.
 	// meta of different subtasks of same step must be different too.
+	// NOTE: this field can be changed by StepExecutor.OnFinished method, to store
+	// some result, and framework will update the subtask meta in the storage.
+	// On other code path, this field should be read-only.
 	Meta    []byte
 	Summary string
 }

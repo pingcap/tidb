@@ -145,8 +145,12 @@ type Task struct {
 	SchedulerID     string
 	StartTime       time.Time
 	StateUpdateTime time.Time
-	Meta            []byte
-	Error           error
+	// Meta is the metadata of task, it's read-only in most cases, but it can be
+	// changed in below case, and framework will update the task meta in the storage.
+	// 	- task switches to next step in Scheduler.OnNextSubtasksBatch
+	// 	- on task cleanup, we might do some redaction on the meta.
+	Meta  []byte
+	Error error
 }
 
 var (
