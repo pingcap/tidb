@@ -164,6 +164,11 @@ func (c *Column) Reset(eType types.EvalType) {
 	}
 }
 
+// Rows returns the row number in current column
+func (c *Column) Rows() int {
+	return c.length
+}
+
 // reset resets the underlying data of this Column but doesn't modify its data type.
 func (c *Column) reset() {
 	c.length = 0
