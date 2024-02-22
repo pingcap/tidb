@@ -360,8 +360,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	dbs := infoschema.AllSchemaNames(is)
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
-	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
-	rd.Shuffle(len(dbs), func(i, j int) {
+	rand.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
 	})
 	// Query locked tables once to minimize overhead.
@@ -386,7 +385,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
 		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
 		// TODO: Design a priority queue to place the table which needs analyze most in the front.
-		rd.Shuffle(len(tbls), func(i, j int) {
+		rand.Shuffle(len(tbls), func(i, j int) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 

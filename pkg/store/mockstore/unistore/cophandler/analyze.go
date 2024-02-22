@@ -444,7 +444,6 @@ func handleAnalyzeFullSamplingReq(
 		MaxSampleSize:   int(colReq.SampleSize),
 		MaxFMSketchSize: int(colReq.SketchSize),
 		SampleRate:      colReq.GetSampleRate(),
-		Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	collector, err := builder.Collect()
 	if err != nil {

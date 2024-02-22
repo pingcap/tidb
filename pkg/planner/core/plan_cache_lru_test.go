@@ -29,9 +29,8 @@ import (
 )
 
 func randomPlanCacheKey() *planCacheKey {
-	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &planCacheKey{
-		database:      strconv.FormatInt(int64(random.Int()), 10),
+		database:      strconv.FormatInt(int64(rand.Int()), 10),
 		schemaVersion: time.Now().UnixNano(),
 	}
 }
@@ -40,9 +39,8 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 	plans := []Plan{&Insert{}, &Update{}, &Delete{}, &PhysicalTableScan{}, &PhysicalTableDual{}, &PhysicalTableReader{},
 		&PhysicalTableScan{}, &PhysicalIndexJoin{}, &PhysicalIndexHashJoin{}, &PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
 		&PhysicalIndexLookUpReader{}, &PhysicalApply{}, &PhysicalApply{}, &PhysicalLimit{}}
-	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &PlanCacheValue{
-		Plan:      plans[random.Int()%len(plans)],
+		Plan:      plans[rand.Int()%len(plans)],
 		matchOpts: &utilpc.PlanCacheMatchOpts{ParamTypes: types},
 	}
 }

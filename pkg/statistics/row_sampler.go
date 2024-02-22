@@ -35,7 +35,7 @@ import (
 // RowSampleCollector implements the needed interface for a row-based sample collector.
 type RowSampleCollector interface {
 	MergeCollector(collector RowSampleCollector)
-	sampleRow(row []types.Datum, rng *rand.Rand)
+	sampleRow(row []types.Datum)
 	Base() *baseCollector
 	DestroyAndPutToPool()
 }
@@ -122,7 +122,6 @@ func (h *WeightedRowSampleHeap) Pop() any {
 type RowSampleBuilder struct {
 	RecordSet       sqlexec.RecordSet
 	Sc              *stmtctx.StatementContext
-	Rng             *rand.Rand
 	ColsFieldType   []*types.FieldType
 	Collators       []collate.Collator
 	ColGroups       [][]int64
@@ -211,7 +210,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 			if err != nil {
 				return nil, err
 			}
-			collector.sampleRow(newCols, s.Rng)
+			collector.sampleRow(newCols)
 		}
 	}
 	for i, group := range s.ColGroups {
@@ -350,8 +349,8 @@ func (s *ReservoirRowSampleCollector) sampleZippedRow(sample *ReservoirRowSample
 	}
 }
 
-func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
-	weight := rng.Int63()
+func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum) {
+	weight := rand.Int63()
 	if len(s.Samples) < s.MaxSampleSize {
 		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
 			Columns: row,
@@ -455,8 +454,8 @@ func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *Bernoulli
 	}
 }
 
-func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
-	if rng.Float64() > s.SampleRate {
+func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum) {
+	if rand.Float64() > s.SampleRate {
 		return
 	}
 	s.baseCollector.Samples = append(s.baseCollector.Samples, &ReservoirRowSampleItem{
