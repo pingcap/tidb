@@ -81,7 +81,8 @@ type TaskExecutor interface {
 	// as it will NOT be cancelled when the task is finished.
 	// NOTE: do NOT depend on task meta to do initialization, as we plan to pass
 	// task-base to the TaskExecutor in the future, if you need to do some initialization
-	// based on task meta, do it in GetStepExecutor.
+	// based on task meta, do it in GetStepExecutor, as execute.StepExecutor is
+	// where subtasks are actually executed.
 	Init(context.Context) error
 	// Run runs the task with given resource, it will try to run each step one by
 	// one, if it cannot find any subtask to run for a while(10s now), it will exit,
