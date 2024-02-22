@@ -234,6 +234,21 @@ func (extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool
 	return tmpNodeTypes
 }
 
+func (extractHelper) mergeWithLowerOrUpper(lhs set.StringSet, datums []types.Datum, lowerOrUpper bool) set.StringSet {
+	tmpNodeTypes := set.NewStringSet()
+	for _, datum := range datums {
+		s, err := datum.ToString()
+		if err != nil {
+			return nil
+		}
+		tmpNodeTypes.Insert(s)
+	}
+	if len(lhs) > 0 {
+		return lhs.IntersectionWithLowerOrUpper(tmpNodeTypes, lowerOrUpper)
+	}
+	return tmpNodeTypes
+}
+
 func (helper *extractHelper) extractCol(
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -268,10 +283,20 @@ func (helper *extractHelper) extractCol(
 		case ast.In:
 			colName, datums = helper.extractColInConsExpr(extractCols, fn)
 		case ast.LogicOr:
-			colName, datums = helper.extractColOrExpr(extractCols, supportLower, fn)
+			// disable predicate pushdown for case like `lower(c1) = xx or c1 = yy`
+			if supportLower {
+				colName, datums = "", nil
+			} else {
+				colName, datums = helper.extractColOrExpr(extractCols, supportLower, fn)
+			}
 		}
 		if colName == extractColName {
-			result = helper.merge(result, datums, valueToLower)
+			lowerOrUpper, ok := helper.lowerOrUpper[colName]
+			if !ok {
+				result = helper.merge(result, datums, valueToLower)
+			} else {
+				result = helper.mergeWithLowerOrUpper(result, datums, !lowerOrUpper)
+			}
 			skipRequest = len(result) == 0
 		} else {
 			remained = append(remained, expr)
@@ -1731,16 +1756,26 @@ func (e *InfoSchemaTablesExtractor) Extract(_ PlanContext,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	var resultSet set.StringSet
+	var resultSet, resultSet1 set.StringSet
 	e.colNames = []string{"table_schema", "table_name"}
 	e.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
 	for _, colName := range e.colNames {
-		remained, e.SkipRequest, resultSet = e.extractCol(schema, names, remained, colName, true, true)
-		e.ColPredicates[colName] = resultSet
+		remained, e.SkipRequest, resultSet = e.extractCol(schema, names, remained, colName, false, true)
 		if e.SkipRequest {
 			break
 		}
+		remained, e.SkipRequest, resultSet1 = e.extractCol(schema, names, remained, colName, true, false)
+		if e.SkipRequest {
+			break
+		}
+		for elt := range resultSet1 {
+			resultSet.Insert(elt)
+		}
+		if len(resultSet) == 0 {
+			continue
+		}
+		e.ColPredicates[colName] = resultSet
 	}
 	return remained
 }
