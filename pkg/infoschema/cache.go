@@ -200,7 +200,8 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	})
 
 	// cached entry
-	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
+	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version &&
+		IsV2(h.cache[i].infoschema) == IsV2(is) {
 		// update timestamp if it is not 0 and cached one is 0
 		if schemaTS > 0 && h.cache[i].timestamp == 0 {
 			h.cache[i].timestamp = int64(schemaTS)

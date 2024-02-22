@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -31,8 +30,6 @@ import (
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
-
-var enableV2 atomic.Bool
 
 // Item is the btree item sorted by name or by id.
 type Item struct {
@@ -82,7 +79,7 @@ type Data struct {
 	cache fifo.Cache[cacheKey, table.Table]
 
 	// For the SchemaByName API
-	schemaMap *btree.BTreeG[schemaItem]
+	byName *btree.BTreeG[schemaItem]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -138,9 +135,9 @@ type cacheKey struct {
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:      btree.NewBTreeG[Item](compareByID),
-		name2id:   btree.NewBTreeG[Item](compareByName),
-		schemaMap: btree.NewBTreeG[schemaItem](compareBySchema),
+		byID:    btree.NewBTreeG[Item](compareByID),
+		name2id: btree.NewBTreeG[Item](compareByName),
+		byName:  btree.NewBTreeG[schemaItem](compareBySchema),
 		// TODO: limit by size instead of by table count.
 		cache:    sieve.New[cacheKey, table.Table](1000),
 		specials: make(map[string]*schemaTables),
@@ -159,7 +156,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 }
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
-	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+	isd.byName.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
 func compareByID(a, b Item) bool {
@@ -204,7 +201,7 @@ func compareBySchema(a, b schemaItem) bool {
 var _ InfoSchema = &infoschemaV2{}
 
 type infoschemaV2 struct {
-	infoSchemaMisc
+	*infoSchema   // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
 	r             autoid.Requirement
 	ts            uint64
 	schemaVersion int64
@@ -265,8 +262,12 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	return nil, false
 }
 
+func isSpecial(dbName string) bool {
+	return dbName == "information_schema" || dbName == "metrics_schema" || dbName == "performance_schema"
+}
+
 func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
-	if schema.L == "information_schema" || schema.L == "metrics_schema" || schema.L == "performance_schema" {
+	if isSpecial(schema.L) {
 		if tbNames, ok := is.specials[schema.L]; ok {
 			if t, ok = tbNames.tables[tbl.L]; ok {
 				return
@@ -301,7 +302,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
 	var dbInfo model.DBInfo
 	dbInfo.Name = schema
-	is.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
+	is.byName.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
 		if item.Name() != schema.L {
 			ok = false
 			return false
@@ -317,7 +318,7 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 }
 
 func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
-	is.schemaMap.Scan(func(item schemaItem) bool {
+	is.byName.Scan(func(item schemaItem) bool {
 		// TODO: version?
 		schemas = append(schemas, item.dbInfo)
 		return true
@@ -332,7 +333,7 @@ func (is *infoschemaV2) SchemaMetaVersion() int64 {
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 	var ok bool
 	// TODO: support different version
-	is.schemaMap.Scan(func(item schemaItem) bool {
+	is.byName.Scan(func(item schemaItem) bool {
 		if item.dbInfo.Name.L == schema.L {
 			ok = true
 			return false
@@ -354,7 +355,7 @@ func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	var ok bool
 	var dbInfo *model.DBInfo
-	is.schemaMap.Scan(func(item schemaItem) bool {
+	is.byName.Scan(func(item schemaItem) bool {
 		if item.dbInfo.ID == id {
 			ok = true
 			dbInfo = item.dbInfo
@@ -428,4 +429,10 @@ var sf = &singleflight.Group{}
 
 func isTableVirtual(id int64) bool {
 	return (id & (1 << 62)) > 0
+}
+
+// IsV2 tells whether an InfoSchema is v2 or not.
+func IsV2(is InfoSchema) bool {
+	_, ok := is.(*infoschemaV2)
+	return ok
 }

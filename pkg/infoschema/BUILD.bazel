@@ -78,7 +78,7 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",
@@ -88,6 +88,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/session",
+        "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/testkit",

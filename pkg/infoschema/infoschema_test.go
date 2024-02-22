@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -327,7 +328,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder := infoschema.NewBuilder(dom, nil, nil).InitWithOldInfoSchema(curIs)
+				builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithOldInfoSchema(curIs)
+				require.NoError(t, err)
 				change(m, builder)
 				curIs = builder.Build()
 			}
@@ -847,4 +849,40 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
 	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
+}
+
+func TestEnableInfoSchemaV2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Test the @@tidb_enable_infoschema_v2 variable.
+	tk.MustQuery("select @@tidb_enable_infoschema_v2").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_infoschema_v2").Check(testkit.Rows("0"))
+	require.False(t, variable.EnableInfoSchemaV2.Load())
+
+	// Modify it.
+	tk.MustExec("set @@global.tidb_enable_infoschema_v2 = on")
+	tk.MustQuery("select @@global.tidb_enable_infoschema_v2").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@tidb_enable_infoschema_v2").Check(testkit.Rows("1"))
+	require.True(t, variable.EnableInfoSchemaV2.Load())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table v2 (id int)")
+
+	// Check the InfoSchema used is V2.
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	require.True(t, infoschema.IsV2(is))
+
+	// Execute some basic operations under infoschema v2.
+	tk.MustQuery("show tables").Check(testkit.Rows("v2"))
+	tk.MustExec("drop table v2")
+	tk.MustExec("create table v1 (id int)")
+
+	// Change infoschema back to v1 and check again.
+	tk.MustExec("set @@global.tidb_enable_infoschema_v2 = off")
+	tk.MustQuery("select @@global.tidb_enable_infoschema_v2").Check(testkit.Rows("0"))
+	require.False(t, variable.EnableInfoSchemaV2.Load())
+
+	tk.MustExec("drop table v1")
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	require.False(t, infoschema.IsV2(is))
 }

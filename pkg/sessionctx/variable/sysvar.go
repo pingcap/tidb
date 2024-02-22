@@ -2948,6 +2948,13 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableInfoSchemaV2, Value: BoolToOnOff(DefTiDBEnableInfoSchemaV2), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		// It does not take effect immediately, but within a ddl lease, infoschema reload would cause the v2 to be used.
+		EnableInfoSchemaV2.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableInfoSchemaV2.Load()), nil
+	}},
 	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			chars := []rune(normalizedValue)
