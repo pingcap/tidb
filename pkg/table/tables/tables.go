@@ -30,7 +30,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -364,9 +363,10 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 }
 
 // CheckRowConstraint verify row check constraints.
-func (t *TableCommon) CheckRowConstraint(ctx expression.EvalContext, rowToCheck []types.Datum) error {
+func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
+	ectx := ctx.GetExprCtx()
 	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, chunk.MutRowFromDatums(rowToCheck).ToRow())
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ectx, chunk.MutRowFromDatums(rowToCheck).ToRow())
 		if err != nil {
 			return err
 		}
@@ -492,7 +492,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 					}
 					checksumData = t.appendInChangeColForChecksum(sctx, h, checksumData, col.ToInfo(), &newData[col.DependencyColumnOffset], &v)
 				} else {
-					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
+					v, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), col.ToInfo())
 					if err != nil {
 						return err
 					}
@@ -788,7 +788,7 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 }
 
 func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) tableutil.TempTable {
-	tempTable := sctx.GetSessionVars().GetTemporaryTable(tblInfo)
+	tempTable := sctx.TxnRecordTempTable(tblInfo)
 	tempTable.SetModified(true)
 	return tempTable
 }
@@ -889,7 +889,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			// Make the IDs continuous benefit for the performance of TiKV.
 			sessVars := sctx.GetSessionVars()
 			stmtCtx := sessVars.StmtCtx
-			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, sessVars, sctx, t, uint64(opt.ReserveAutoID))
+			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
 				return nil, err
 			}
@@ -931,7 +931,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 					}
 					checksumData = t.appendInChangeColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &r[col.DependencyColumnOffset], &v)
 				} else {
-					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
+					v, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), col.ToInfo())
 					if err != nil {
 						return nil, err
 					}
@@ -972,7 +972,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			} else {
 				// If `AddRecord` is called by an insert and the col is in write only or write reorganization state, we must
 				// add it with its default value.
-				value, err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
+				value, err = table.GetColOriginDefaultValue(sctx.GetExprCtx(), col.ToInfo())
 				if err != nil {
 					return nil, err
 				}
@@ -1686,9 +1686,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 // AllocHandle allocate a new handle.
 // A statement could reserve some ID in the statement context, try those ones first.
 func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (kv.Handle, error) {
-	var actx table.AllocatorContext
 	if mctx != nil {
-		actx = mctx.GetSessionVars()
 		if stmtCtx := mctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 			// First try to alloc if the statement has reserved auto ID.
 			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
@@ -1698,13 +1696,13 @@ func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (
 		}
 	}
 
-	_, rowID, err := allocHandleIDs(ctx, actx, mctx, t, 1)
+	_, rowID, err := allocHandleIDs(ctx, mctx, t, 1)
 	return kv.IntHandle(rowID), err
 }
 
-func allocHandleIDs(ctx context.Context, actx table.AllocatorContext, mctx table.MutateContext, t table.Table, n uint64) (int64, int64, error) {
+func allocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
-	base, maxID, err := t.Allocators(actx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
+	base, maxID, err := t.Allocators(mctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1746,7 +1744,7 @@ func (t *TableCommon) Allocators(ctx table.AllocatorContext) autoid.Allocators {
 
 	// Use an independent allocator for global temporary tables.
 	if t.meta.TempTableType == model.TempTableGlobal {
-		if tbl := ctx.GetTemporaryTable(t.meta); tbl != nil {
+		if tbl := ctx.TxnRecordTempTable(t.meta); tbl != nil {
 			if alloc := tbl.GetAutoIDAllocator(); alloc != nil {
 				return autoid.NewAllocators(false, alloc)
 			}

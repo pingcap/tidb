@@ -105,7 +105,7 @@ func TestBasic(t *testing.T) {
 	require.Greater(t, handle.IntValue(), int64(0))
 
 	ctx := tk.Session()
-	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	rid, err := tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	require.Greater(t, rid.IntValue(), int64(0))
 	row, err := tables.RowWithCols(tb, ctx, rid, tb.Cols())
@@ -113,12 +113,12 @@ func TestBasic(t *testing.T) {
 	require.Equal(t, 2, len(row))
 	require.Equal(t, int64(1), row[0].GetInt64())
 
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
+	_, err = tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(1, "aba"))
 	require.Error(t, err)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
+	_, err = tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(2, "abc"))
 	require.Error(t, err)
 
-	require.Nil(t, tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}))
+	require.Nil(t, tb.UpdateRecord(context.Background(), ctx.GetTableCtx(), rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}))
 
 	err = tables.IterRecords(tb, ctx, tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
@@ -144,10 +144,10 @@ func TestBasic(t *testing.T) {
 
 	// Make sure there is index data in the storage.
 	require.Greater(t, indexCnt(), 0)
-	require.Nil(t, tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")))
+	require.Nil(t, tb.RemoveRecord(ctx.GetTableCtx(), rid, types.MakeDatums(1, "cba")))
 	// Make sure index data is also removed after tb.RemoveRecord().
 	require.Equal(t, 0, indexCnt())
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	_, err = tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	require.Greater(t, indexCnt(), 0)
 	handle, found, err := seek(tb.(table.PhysicalTable), ctx, kv.IntHandle(0))
@@ -259,9 +259,9 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 
 	sctx := tk.Session()
 	require.Nil(t, sessiontxn.NewTxn(ctx, sctx))
-	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
+	_, err = tb.AddRecord(sctx.GetTableCtx(), types.MakeDatums(1, nil))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil))
+	_, err = tb.AddRecord(sctx.GetTableCtx(), types.MakeDatums(2, nil))
 	require.NoError(t, err)
 	txn, err := sctx.Txn(true)
 	require.NoError(t, err)
@@ -321,7 +321,7 @@ func TestUnsignedPK(t *testing.T) {
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1, "abc"))
+	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	pt := tb.(table.PhysicalTable)
 	row, err := tables.RowWithCols(pt, tk.Session(), rid, tb.Cols())
@@ -400,14 +400,14 @@ func TestTableFromMeta(t *testing.T) {
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
 	tb, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	require.NoError(t, err)
-	_, err = tables.AllocHandle(context.Background(), tk.Session(), tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Session().GetTableCtx(), tb)
 	require.NoError(t, err)
 
 	maxID := 1<<(64-15-1) - 1
-	err = tb.Allocators(tk.Session().GetSessionVars()).Get(autoid.RowIDAllocType).Rebase(context.Background(), int64(maxID), false)
+	err = tb.Allocators(tk.Session().GetTableCtx()).Get(autoid.RowIDAllocType).Rebase(context.Background(), int64(maxID), false)
 	require.NoError(t, err)
 
-	_, err = tables.AllocHandle(context.Background(), tk.Session(), tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Session().GetTableCtx(), tb)
 	require.Error(t, err)
 }
 
@@ -594,7 +594,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 
 	records := [][]types.Datum{types.MakeDatums(uint64(1), "abc"), types.MakeDatums(uint64(2), "abcd")}
 	for _, r := range records {
-		rid, err := tb.AddRecord(tk.Session(), r)
+		rid, err := tb.AddRecord(tk.Session().GetTableCtx(), r)
 		require.NoError(t, err)
 		row, err := tables.RowWithCols(tb.(table.PhysicalTable), tk.Session(), rid, tb.Cols())
 		require.NoError(t, err)
