@@ -38,7 +38,7 @@ type SortExec struct {
 	exec.BaseExecutor
 
 	ByItems    []*plannerutil.ByItems
-	fetched    atomic.Bool
+	fetched    *atomic.Bool
 	ExecSchema *expression.Schema
 
 	// keyColumns is the column index of the by items.
@@ -118,6 +118,7 @@ func (e *SortExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
+	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
 	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
 	e.finishCh = make(chan struct{}, 1)
