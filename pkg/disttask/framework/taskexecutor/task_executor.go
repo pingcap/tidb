@@ -144,7 +144,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 				if err != nil {
 					e.logger.Error("update error to subtask failed", zap.Error(err))
 				}
-				continue
+				return
 			}
 			extraRunningSubtasks = append(extraRunningSubtasks, st)
 		}
