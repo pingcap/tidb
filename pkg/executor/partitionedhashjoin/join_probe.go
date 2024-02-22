@@ -137,11 +137,18 @@ type offsetAndLength struct {
 	length int
 }
 
-type partialRowInfo struct {
+type rowInfo struct {
+	rowStart           unsafe.Pointer
+	rowData            unsafe.Pointer
+	currentColumnIndex int
+}
+
+type rowIndexInfo struct {
 	probeRowIndex int
 	buildRowStart unsafe.Pointer
 	buildRowData  unsafe.Pointer
 }
+
 type baseJoinProbe struct {
 	ctx              *probeCtx
 	maxChunkSize     int
@@ -155,19 +162,28 @@ type baseJoinProbe struct {
 	// used when construct column from probe side
 	offsetAndLengthArray []offsetAndLength
 	// these 3 variables are used for join that has other condition, should be inited when the join has other condition
-	tmpChk          *chunk.Chunk
-	partialRowInfos []partialRowInfo
-	selected        []bool
+	tmpChk        *chunk.Chunk
+	rowIndexInfos []rowIndexInfo
+	selected      []bool
+}
+
+func (j *baseJoinProbe) prepareForProbe(info *probeProcessInfo) (err error) {
+	if !info.init {
+		err = info.initForCurrentChunk(j.ctx)
+		if err != nil {
+			return err
+		}
+	}
+	j.offsetAndLengthArray = j.offsetAndLengthArray[:0]
+	if j.ctx.otherCondition != nil {
+		j.tmpChk.Reset()
+		j.rowIndexInfos = j.rowIndexInfos[:0]
+	}
+	return
 }
 
 type innerJoinProbe struct {
 	baseJoinProbe
-}
-
-type rowInfo struct {
-	rowStart           unsafe.Pointer
-	rowData            unsafe.Pointer
-	currentColumnIndex int
 }
 
 func (j *baseJoinProbe) appendBuildRowToChunk(chk *chunk.Chunk, rowInfo *rowInfo, info *probeProcessInfo) (currentRowData unsafe.Pointer) {
@@ -268,20 +284,15 @@ func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err er
 	if chk.IsFull() {
 		return nil
 	}
-	if !info.init {
-		err = info.initForCurrentChunk(j.ctx)
-		if err != nil {
-			return err
-		}
+	err = j.prepareForProbe(info)
+	if err != nil {
+		return err
 	}
-	j.offsetAndLengthArray = j.offsetAndLengthArray[:0]
 	length := 0
 	totalAddedRows := 0
 	joinedChk := chk
 	meta := j.ctx.hashTableMeta
 	if j.ctx.otherCondition != nil {
-		j.tmpChk.Reset()
-		j.partialRowInfos = j.partialRowInfos[:0]
 		joinedChk = j.tmpChk
 	}
 	maxAddedRows := chk.RequiredRows() - chk.NumRows()
@@ -294,7 +305,7 @@ func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err er
 				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
 				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo, info)
 				if j.ctx.hasOtherCondition() {
-					j.partialRowInfos = append(j.partialRowInfos, partialRowInfo{probeRowIndex: info.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
+					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: info.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
 				}
 				length++
 				totalAddedRows++
@@ -361,7 +372,7 @@ func (j *innerJoinProbe) buildResultChunkAfterOtherCondition(chk *chunk.Chunk, j
 			// probe column that is not in joinedChk
 			srcCol := info.chunk.Column(colIndex)
 			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, func(i int) int {
-				return j.partialRowInfos[i].probeRowIndex
+				return j.rowIndexInfos[i].probeRowIndex
 			})
 		}
 	}
@@ -381,8 +392,8 @@ func (j *innerJoinProbe) buildResultChunkAfterOtherCondition(chk *chunk.Chunk, j
 	for index, result := range j.selected {
 		if result {
 			j.appendBuildRowToChunk(chk, &rowInfo{
-				rowStart:           j.partialRowInfos[index].buildRowStart,
-				rowData:            j.partialRowInfos[index].buildRowData,
+				rowStart:           j.rowIndexInfos[index].buildRowStart,
+				rowData:            j.rowIndexInfos[index].buildRowData,
 				currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
 			}, info)
 		}
