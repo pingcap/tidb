@@ -227,7 +227,7 @@ func (m *Manager) handleTasks() {
 // handleExecutableTasks handles executable tasks.
 func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(&task.Task.TaskBase)
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
 			// do not handle the tasks with lower rank if current task is waiting tasks free.
@@ -238,7 +238,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
-		m.startTaskExecutor(task.Task)
+		m.startTaskExecutor(task.TaskBase)
 	}
 }
 
@@ -313,7 +313,12 @@ type TestContext struct {
 }
 
 // startTaskExecutor handles a runnable task.
-func (m *Manager) startTaskExecutor(task *proto.Task) {
+func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
+	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
+	if err != nil {
+		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
+		return
+	}
 	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
@@ -322,7 +327,7 @@ func (m *Manager) startTaskExecutor(task *proto.Task) {
 		return
 	}
 	executor := factory(m.ctx, m.id, task, m.taskTable)
-	err := executor.Init(m.ctx)
+	err = executor.Init(m.ctx)
 	if err != nil {
 		m.logErrAndPersist(err, task.ID, executor)
 		return

@@ -72,7 +72,7 @@ var (
 
 // TaskExecInfo is the execution information of a task, on some exec node.
 type TaskExecInfo struct {
-	*proto.Task
+	*proto.TaskBase
 	// SubtaskConcurrency is the concurrency of subtask in current task step.
 	// TODO: will be used when support subtask have smaller concurrency than task,
 	// TODO: such as post-process of import-into.
@@ -258,7 +258,7 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+TaskColumns+`, max(st.concurrency)
+		`select `+basicTaskColumns+`, max(st.concurrency)
 			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
 				on t.id = st.task_key and t.step = st.step
 			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
@@ -273,7 +273,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	res := make([]*TaskExecInfo, 0, len(rs))
 	for _, r := range rs {
 		res = append(res, &TaskExecInfo{
-			Task:               Row2Task(r),
+			TaskBase:           row2TaskBasic(r),
 			SubtaskConcurrency: int(r.GetInt64(13)),
 		})
 	}
