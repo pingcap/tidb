@@ -300,6 +300,16 @@ func main() {
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
+
+	// Register the callback to propagate the update interval config change
+	// and call it once since global config was initialized earlier without
+	// any callback to call.
+	variable.SetLowResTSOUpdateInterval = func() error {
+		return storage.GetOracle().SetLowResolutionTimestampUpdateInterval(time.Duration(variable.LowResTSOUpdateInterval.Load()) * time.Millisecond)
+	}
+	err = variable.SetLowResTSOUpdateInterval()
+	terror.MustNil(err)
+
 	svr := createServer(storage, dom)
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
@@ -763,6 +773,7 @@ func setGlobalVars() {
 	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
 	variable.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
 	variable.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)
+	variable.LowResTSOUpdateInterval.Store(cfg.Instance.LowResTSOUpdateInterval)
 	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
 	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 	atomic.StoreUint64(&variable.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)

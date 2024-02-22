@@ -468,6 +468,10 @@ func TestInstanceScopedVars(t *testing.T) {
 	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBRCReadCheckTS)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSOUpdateInterval)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(uint64(LowResTSOUpdateInterval.Load()), 10), val)
 }
 
 func TestSecureAuth(t *testing.T) {
@@ -1525,4 +1529,28 @@ func TestTiDBOptTxnAutoRetry(t *testing.T) {
 		warn := vars.StmtCtx.GetWarnings()[0].Err
 		require.Equal(t, "[variable:1287]'OFF' is deprecated and will be removed in a future release. Please use ON instead", warn.Error())
 	}
+}
+
+func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
+	sv := GetSysVar(TiDBLowResolutionTSOUpdateInterval)
+	vars := NewSessionVars(nil)
+
+	// Too low, will get raised to the min value
+	val, err := sv.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(GetSysVar(TiDBLowResolutionTSOUpdateInterval).MinValue, 10), val)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_low_resolution_tso_update_interval value: '0'", warn.Error())
+
+	// Too high, will get lowered to the max value
+	val, err = sv.Validate(vars, "100000", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(GetSysVar(TiDBLowResolutionTSOUpdateInterval).MaxValue, 10), val)
+	warn = vars.StmtCtx.GetWarnings()[1].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_low_resolution_tso_update_interval value: '10000'", warn.Error())
+
+	// valid
+	val, err = sv.Validate(vars, "1000", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1000", val)
 }
