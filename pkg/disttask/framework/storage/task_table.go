@@ -381,6 +381,20 @@ func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	return Row2Task(rs[0]), nil
 }
 
+// GetTaskBaseByKeyWithHistory gets the task base from history table by the task key.
+func (mgr *TaskManager) GetTaskBaseByKeyWithHistory(ctx context.Context, key string) (task *proto.TaskBase, err error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where task_key = %?"+
+		"union select "+basicTaskColumns+" from mysql.tidb_global_task_history t where task_key = %?", key, key)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, ErrTaskNotFound
+	}
+
+	return row2TaskBasic(rs[0]), nil
+}
+
 // GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states on one node.
 func (mgr *TaskManager) GetSubtasksByExecIDAndStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error) {
 	args := []any{execID, taskID, step}
