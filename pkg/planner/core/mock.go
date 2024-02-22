@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
@@ -396,7 +395,7 @@ func MockView() *model.TableInfo {
 }
 
 // MockContext is only used for plan related tests.
-func MockContext() sessionctx.Context {
+func MockContext() *mock.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{},

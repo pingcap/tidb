@@ -59,7 +59,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src exec.Executor, schema *exp
 	plan.AggFuncs = aggFuncs
 	plan.GroupByItems = groupItems
 	plan.SetSchema(schema)
-	plan.Init(ctx, nil, 0)
+	plan.Init(ctx.GetPlanCtx(), nil, 0)
 	plan.SetChildren(nil)
 	b := newExecutorBuilder(ctx, nil)
 	exec := b.build(plan)
@@ -76,7 +76,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 	sg.AggFuncs = aggFuncs
 	sg.GroupByItems = groupItems
 	sg.SetSchema(schema)
-	sg.Init(ctx, nil, 0)
+	sg.Init(ctx.GetPlanCtx(), nil, 0)
 
 	var tail core.PhysicalPlan = sg
 	// if data source is not sorted, we have to attach sort, to make the input of stream-agg sorted
@@ -107,7 +107,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: splitter,
 			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
-		}.Init(ctx, nil, 0)
+		}.Init(ctx.GetPlanCtx(), nil, 0)
 		plan.SetChildren(sg)
 	} else {
 		plan = sg
@@ -311,7 +311,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 	win.OrderBy = nil
 
 	win.SetSchema(winSchema)
-	win.Init(ctx, nil, 0)
+	win.Init(ctx.GetPlanCtx(), nil, 0)
 
 	var tail core.PhysicalPlan = win
 	if !dataSourceSorted {
@@ -340,7 +340,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
-		}.Init(ctx, nil, 0)
+		}.Init(ctx.GetPlanCtx(), nil, 0)
 		plan.SetChildren(win)
 	} else {
 		plan = win

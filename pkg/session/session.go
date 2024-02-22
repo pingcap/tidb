@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -173,6 +174,8 @@ type session struct {
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
+
+	pctx *planContextImpl
 
 	statsCollector *usage.SessionStatsItem
 	// ddlOwnerManager is used in `select tidb_is_ddl_owner()` statement;
@@ -293,7 +296,7 @@ func (s *session) cleanRetryInfo() {
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
-				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
+				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
 					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 				if err != nil {
@@ -2129,7 +2132,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	}
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
+		plannercore.DebugTraceReceivedCommand(s.pctx, cmdByte, stmtNode)
 	}
 
 	if err := s.validateStatementInTxn(stmtNode); err != nil {
@@ -2584,6 +2587,11 @@ func (s *session) Close() {
 // GetSessionVars implements the context.Context interface.
 func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
+}
+
+// GetPlanCtx returns the PlanContext.
+func (s *session) GetPlanCtx() planctx.PlanContext {
+	return s.pctx
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
@@ -3547,6 +3555,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.sessionVars = variable.NewSessionVars(s)
+	s.pctx = newPlanContextImpl(s)
 
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
@@ -3607,6 +3616,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
+	s.pctx = newPlanContextImpl(s)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)

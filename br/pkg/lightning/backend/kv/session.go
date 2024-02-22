@@ -33,6 +33,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -266,6 +267,7 @@ func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
 // optimized for Lightning.
 type Session struct {
 	sessionctx.Context
+	planctx.EmptyPlanContextExtended
 	txn  transaction
 	Vars *variable.SessionVars
 	// currently, we only set `CommonAddRecordCtx`
@@ -353,6 +355,11 @@ func (se *Session) Txn(_ bool) (kv.Transaction, error) {
 // GetSessionVars implements the sessionctx.Context interface
 func (se *Session) GetSessionVars() *variable.SessionVars {
 	return se.Vars
+}
+
+// GetPlanCtx returns the PlanContext.
+func (se *Session) GetPlanCtx() planctx.PlanContext {
+	return se
 }
 
 // SetValue saves a value associated with this context for key.

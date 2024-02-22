@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -534,7 +533,7 @@ func TestCopPaging(t *testing.T) {
 }
 
 func TestBuildFinalModeAggregation(t *testing.T) {
-	aggSchemaBuilder := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
+	aggSchemaBuilder := func(sctx core.PlanContext, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
 		for _, agg := range aggFuncs {
 			newCol := &expression.Column{
@@ -548,7 +547,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	isFinalAggMode := func(mode aggregation.AggFunctionMode) bool {
 		return mode == aggregation.FinalMode || mode == aggregation.CompleteMode
 	}
-	checkResult := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
+	checkResult := func(sctx core.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
 		for partialIsCop := 0; partialIsCop < 2; partialIsCop++ {
 			for isMPPTask := 0; isMPPTask < 2; isMPPTask++ {
 				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{

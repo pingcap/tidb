@@ -1744,7 +1744,7 @@ func getBinaryPlan(sCtx sessionctx.Context) string {
 		return binaryPlan
 	}
 	flat := getFlatPlan(stmtCtx)
-	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx, flat)
+	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx.GetPlanCtx(), flat)
 	stmtCtx.SetBinaryPlan(binaryPlan)
 	return binaryPlan
 }

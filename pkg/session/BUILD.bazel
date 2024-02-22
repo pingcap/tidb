@@ -7,6 +7,7 @@ go_library(
         "bootstrap.go",
         "mock_bootstrap.go",
         "nontransactional.go",
+        "plancontext.go",
         "session.go",
         "sync_upgrade.go",
         "testutil.go",  #keep
@@ -48,6 +49,8 @@ go_library(
         "//pkg/parser/opcode",
         "//pkg/parser/terror",
         "//pkg/planner",
+        "//pkg/planner/context",
+        "//pkg/planner/contextimpl",
         "//pkg/planner/core",
         "//pkg/plugin",
         "//pkg/privilege",
