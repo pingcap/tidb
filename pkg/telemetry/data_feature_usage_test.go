@@ -411,21 +411,6 @@ func TestAutoCapture(t *testing.T) {
 	require.True(t, usage.AutoCapture)
 }
 
-func TestClusterIndexUsageInfo(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(a int key clustered);")
-	tk.MustExec("create table t2(a int);")
-
-	usage, err := telemetry.GetFeatureUsage(tk.Session())
-	require.NoError(t, err)
-	require.NotNil(t, usage.ClusterIndex)
-	require.Equal(t, uint64(1), usage.NewClusterIndex.NumClusteredTables)
-	require.Equal(t, uint64(2), usage.NewClusterIndex.NumTotalTables)
-}
-
 func TestNonTransactionalUsage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

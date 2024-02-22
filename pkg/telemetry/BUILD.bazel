@@ -61,7 +61,7 @@ go_test(
     ],
     embed = [":telemetry"],
     flaky = True,
-    shard_count = 35,
+    shard_count = 34,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",

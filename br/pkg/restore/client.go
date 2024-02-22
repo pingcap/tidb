@@ -279,28 +279,18 @@ func (rc *Client) InitCheckpoint(
 	s storage.ExternalStorage,
 	taskName string,
 	config *pdutil.ClusterConfig,
-	useCheckpoint bool,
+	checkpointFirstRun bool,
 ) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
 	var (
 		// checkpoint sets distinguished by range key
 		checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 		checkpointClusterConfig *pdutil.ClusterConfig
+
+		err error
 	)
 
-	// if not use checkpoint, return empty checkpoint ranges and new gc-safepoint id
-	if !useCheckpoint {
-		return checkpointSetWithTableID, nil, nil
-	}
-
-	// if the checkpoint metadata exists in the external storage, the restore is not
-	// for the first time.
-	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
-	if err != nil {
-		return checkpointSetWithTableID, nil, errors.Trace(err)
-	}
-
-	if exists {
+	if !checkpointFirstRun {
 		// load the checkpoint since this is not the first time to restore
 		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
 		if err != nil {
@@ -794,9 +784,15 @@ func (rc *Client) GetDatabase(name string) *metautil.Database {
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *Client) HasBackedUpSysDB() bool {
-	temporaryDB := utils.TemporaryDBName(mysql.SystemDB)
-	_, backedUp := rc.databases[temporaryDB.O]
-	return backedUp
+	sysDBs := []string{"mysql", "sys"}
+	for _, db := range sysDBs {
+		temporaryDB := utils.TemporaryDBName(db)
+		_, backedUp := rc.databases[temporaryDB.O]
+		if backedUp {
+			return true
+		}
+	}
+	return false
 }
 
 // GetPlacementPolicies returns policies.
@@ -852,13 +848,38 @@ func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DB
 	return info.SchemaByName(dbName)
 }
 
-// CreateDatabase creates a database.
-func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
+// CreateDatabases creates databases. If the client has the db pool, it would create it.
+func (rc *Client) CreateDatabases(ctx context.Context, dbs []*metautil.Database) error {
 	if rc.IsSkipCreateSQL() {
-		log.Info("skip create database", zap.Stringer("name", db.Name))
+		log.Info("skip create database")
 		return nil
 	}
 
+	if len(rc.dbPool) == 0 {
+		log.Info("create databases sequentially")
+		for _, db := range dbs {
+			err := rc.createDatabaseWithDBConn(ctx, db.Info, rc.db)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
+	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)))
+	eg, ectx := errgroup.WithContext(ctx)
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
+	for _, db_ := range dbs {
+		db := db_
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
+			return rc.createDatabaseWithDBConn(ectx, db.Info, conn)
+		})
+	}
+	return eg.Wait()
+}
+
+func (rc *Client) createDatabaseWithDBConn(ctx context.Context, db *model.DBInfo, conn *DB) error {
 	log.Info("create database", zap.Stringer("name", db.Name))
 
 	if !rc.supportPolicy {
@@ -868,12 +889,12 @@ func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 	}
 
 	if db.PlacementPolicyRef != nil {
-		if err := rc.db.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
+		if err := conn.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	return rc.db.CreateDatabase(ctx, db)
+	return conn.CreateDatabase(ctx, db)
 }
 
 // CreateTables creates multiple tables, and returns their rewrite rules.
@@ -1139,6 +1160,11 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	return eg.Wait()
 }
 
+// NeedCheckFreshCluster is every time. except restore from a checkpoint or user has not set filter argument.
+func (rc *Client) NeedCheckFreshCluster(ExplicitFilter bool, firstRun bool) bool {
+	return rc.IsFull() && !ExplicitFilter && firstRun
+}
+
 // CheckTargetClusterFresh check whether the target cluster is fresh or not
 // if there's no user dbs or tables, we take it as a fresh cluster, although
 // user may have created some users or made other changes.
@@ -1179,7 +1205,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
+		if ok && decodedSysDBName.L == mysql.SystemDB && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}

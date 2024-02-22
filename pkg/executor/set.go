@@ -223,7 +223,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
 		if name == variable.TiDBTxnReadTS {
-			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx(), newSnapshotTS)
+			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx().GetSessionVars().StmtCtx, e.Ctx().GetStore(), newSnapshotTS)
 		} else {
 			err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx(), newSnapshotTS)
 			// Also check gc safe point for snapshot read.

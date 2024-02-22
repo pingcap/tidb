@@ -139,7 +139,11 @@ func TestReadLargeFile(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/assertReloadAtMostOnce", "return()")
 	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/assertReloadAtMostOnce")
 
-	bufPool := membuf.NewPool(
+	smallBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(smallBlockSize),
+	)
+	largeBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 	)
@@ -147,7 +151,7 @@ func TestReadLargeFile(t *testing.T) {
 	startKey := []byte("key000000")
 	maxKey := []byte("key004998")
 	endKey := []byte("key004999")
-	err = readAllData(ctx, memStore, datas, stats, startKey, endKey, bufPool, output)
+	err = readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	require.Equal(t, startKey, output.keys[0])

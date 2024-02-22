@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -33,6 +34,18 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+// PlanContext is the context for building plan.
+type PlanContext = context.PlanContext
+
+// AsSctx converts PlanContext to sessionctx.Context.
+func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
+	sctx, ok := pctx.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
+	}
+	return sctx, nil
+}
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
@@ -56,7 +69,7 @@ type Plan interface {
 	// ReplaceExprColumns replace all the column reference in the plan's expression node.
 	ReplaceExprColumns(replace map[string]*expression.Column)
 
-	SCtx() sessionctx.Context
+	SCtx() PlanContext
 
 	// StatsInfo will return the property.StatsInfo for this plan.
 	StatsInfo() *property.StatsInfo
@@ -76,7 +89,7 @@ type Plan interface {
 	BuildPlanTrace() *tracing.PlanTrace
 }
 
-func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
+func enforceProperty(p *property.PhysicalProperty, tsk task, ctx PlanContext) task {
 	if p.TaskTp == property.MppTaskType {
 		mpp, ok := tsk.(*mppTask)
 		if !ok || mpp.invalid() {
@@ -108,7 +121,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
+func optimizeByShuffle(tsk task, ctx PlanContext) task {
 	if tsk.plan() == nil {
 		return tsk
 	}
@@ -130,7 +143,7 @@ func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
 	return tsk
 }
 
-func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
+func optimizeByShuffle4Window(pp *PhysicalWindow, ctx PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().WindowConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -169,7 +182,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	return shuffle
 }
 
-func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) *PhysicalShuffle {
+func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -206,7 +219,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	return shuffle
 }
 
-func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {
+func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().MergeJoinConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -740,7 +753,7 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
+func newBaseLogicalPlan(ctx PlanContext, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:      make(map[string]task),
 		taskMapBak:   make([]string, 0, 10),
@@ -750,7 +763,7 @@ func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, qbO
 	}
 }
 
-func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
+func newBasePhysicalPlan(ctx PlanContext, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
 		Plan: base.NewBasePlan(ctx, tp, offset),
 		self: self,

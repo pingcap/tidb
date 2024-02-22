@@ -18,7 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -150,6 +150,9 @@ type serializer interface {
 	DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64)
 }
 
+// AggFuncUpdateContext is used to update the aggregate result.
+type AggFuncUpdateContext = exprctx.EvalContext
+
 // AggFunc is the interface to evaluate the aggregate functions.
 type AggFunc interface {
 	serializer
@@ -175,21 +178,21 @@ type AggFunc interface {
 	// partial result according to the functionality and the state of the
 	// aggregate function. The returned value is the memDelta used to trace memory
 	// usage.
-	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
+	UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific
 	// data structure which stores the partial results, and then evaluate the
 	// final result using the partial results as input values. The returned value
 	// is the memDelta used to trace memory usage.
-	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error)
+	MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error)
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
 	// input PartialResult to the specific data structure which stores the
 	// partial result and then calculates the final result and append that
 	// final result to the chunk provided.
-	AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error
+	AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error
 }
 
 type baseAggFunc struct {
@@ -205,7 +208,7 @@ type baseAggFunc struct {
 	retTp *types.FieldType
 }
 
-func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
+func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
 	return 0, nil
 }
 
@@ -224,7 +227,7 @@ type SlidingWindowAggFunc interface {
 	// PartialResult stores the intermediate result which will be used in the next
 	// sliding window, ensure call ResetPartialResult after a frame are evaluated
 	// completely.
-	Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+	Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
 
 // MaxMinSlidingWindowAggFunc is the interface to evaluate the max/min agg function using sliding window

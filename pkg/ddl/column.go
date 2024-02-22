@@ -329,9 +329,9 @@ func checkDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo,
 
 	var colName model.CIStr
 	var ifExists bool
-	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
-	var indexIds []int64
-	err = job.DecodeArgs(&colName, &ifExists, &indexIds)
+	// indexIDs is used to make sure we don't truncate args when decoding the rawArgs.
+	var indexIDs []int64
+	err = job.DecodeArgs(&colName, &ifExists, &indexIDs)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
@@ -1458,7 +1458,7 @@ func (w *updateColumnWorker) cleanRowMap() {
 func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)

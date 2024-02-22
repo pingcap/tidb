@@ -39,12 +39,6 @@ import (
 )
 
 const (
-	// DefaultSubtaskConcurrency is the default concurrency for handling subtask.
-	DefaultSubtaskConcurrency = 16
-	// MaxSubtaskConcurrency is the maximum concurrency for handling subtask.
-	MaxSubtaskConcurrency = 256
-	// defaultBalanceSubtaskTicks is the tick interval of fetching all server infos from etcs.
-	defaultBalanceSubtaskTicks = 2
 	// for a cancelled task, it's terminal state is reverted or reverted_failed,
 	// so we use a special error message to indicate that the task is cancelled
 	// by user.
@@ -438,6 +432,8 @@ func (s *BaseScheduler) scheduleSubTask(
 	// the scheduled node of the subtask might not be optimal, as we run all
 	// scheduler in parallel, and update might be called too many times when
 	// multiple tasks are switching to next step.
+	// balancer will assign the subtasks to the right instance according to
+	// the system load of all nodes.
 	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
 		return err
 	}
@@ -446,7 +442,6 @@ func (s *BaseScheduler) scheduleSubTask(
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
-		// TODO: assign the subtask to the instance according to the system load of each nodes
 		pos := i % len(adjustedEligibleNodes)
 		instanceID := adjustedEligibleNodes[pos]
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
@@ -474,7 +469,7 @@ func (s *BaseScheduler) scheduleSubTask(
 
 	backoffer := backoff.NewExponential(RetrySQLInterval, 2, RetrySQLMaxInterval)
 	return handle.RunWithRetry(s.ctx, RetrySQLTimes, backoffer, s.logger,
-		func(ctx context.Context) (bool, error) {
+		func(context.Context) (bool, error) {
 			err := fn(s.ctx, task, proto.TaskStateRunning, subtaskStep, subTasks)
 			if errors.Cause(err) == storage.ErrUnstableSubtasks {
 				return false, err
