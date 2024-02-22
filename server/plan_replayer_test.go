@@ -90,7 +90,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	client.port = getPortFromTCPAddr(server.listener.Addr())
 	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	client.waitUntilServerOnline()

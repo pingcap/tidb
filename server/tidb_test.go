@@ -112,7 +112,7 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 	ts.server.InitGlobalConnID(ts.domain.ServerID)
 	ts.domain.InfoSyncer().SetSessionManager(ts.server)
 	go func() {
-		err := ts.server.Run()
+		err := ts.server.Run(nil)
 		require.NoError(t, err)
 	}()
 	ts.waitUntilServerOnline()
@@ -279,7 +279,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -337,7 +337,7 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
@@ -400,7 +400,7 @@ func TestSocketForwarding(t *testing.T) {
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -431,7 +431,7 @@ func TestSocket(t *testing.T) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -466,7 +466,7 @@ func TestSocketAndIp(t *testing.T) {
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	cli.waitUntilServerCanConnect()
@@ -629,7 +629,7 @@ func TestOnlySocket(t *testing.T) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -1239,7 +1239,7 @@ func TestGracefulShutdown(t *testing.T) {
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -2511,7 +2511,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
@@ -3127,7 +3127,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -3191,7 +3191,7 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 1000)
