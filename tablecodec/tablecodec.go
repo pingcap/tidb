@@ -978,7 +978,7 @@ func decodeIntHandleInIndexValue(data []byte) kv.Handle {
 
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.
 func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
-	key := make([]byte, 0, prefixLen)
+	key := make([]byte, 0, prefixLen+idLen)
 	key = appendTableIndexPrefix(key, tableID)
 	key = codec.EncodeInt(key, idxID)
 	return key
