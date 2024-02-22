@@ -1470,10 +1470,10 @@ func init() {
 		r, ctx := tracing.StartRegionEx(ctx, "executor.EvalSubQuery")
 		defer r.End()
 
-		sctx, ok := pctx.(sessionctx.Context)
-		intest.Assert(ok)
-		if !ok {
-			return nil, errors.New("plan context should be sessionctx.Context to EvalSubqueryFirstRow")
+		sctx, err := plannercore.AsSctx(pctx)
+		intest.AssertNoError(err)
+		if err != nil {
+			return nil, err
 		}
 
 		e := newExecutorBuilder(sctx, is, nil)
@@ -1481,7 +1481,7 @@ func init() {
 		if e.err != nil {
 			return nil, e.err
 		}
-		err := exec.Open(ctx, executor)
+		err = exec.Open(ctx, executor)
 		defer func() { terror.Log(exec.Close(executor)) }()
 		if err != nil {
 			return nil, err
@@ -2321,7 +2321,7 @@ func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
-		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
+		plannercore.IsAutoCommitTxn(sessionVars) && plannercore.IsReadOnly(node, sessionVars)
 }
 
 // FastCheckTableExec represents a check table executor.

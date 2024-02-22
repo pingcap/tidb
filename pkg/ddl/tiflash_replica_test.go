@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -211,11 +212,11 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 }
 
 func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease)
 
 	tk := testkit.NewTestKit(t, store)
 	sysTables := make([]string, 0, 24)
-	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA", "SYS"}
 	for _, db := range memOrSysDB {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
@@ -225,9 +226,11 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		}
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
-			if db == "MySQL" {
-				if one == "tidb_mdl_view" {
-					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_mdl_view' is not BASE TABLE")
+			if db == "MySQL" || db == "SYS" {
+				tbl, err1 := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(one))
+				require.NoError(t, err1)
+				if tbl.Meta().View != nil {
+					require.ErrorIs(t, err, dbterror.ErrWrongObject)
 				} else {
 					require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
 				}

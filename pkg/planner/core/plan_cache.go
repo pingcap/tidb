@@ -54,7 +54,7 @@ type PlanCacheKeyTestIssue46760 struct{}
 type PlanCacheKeyTestIssue47133 struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
-func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+func SetParameterValuesIntoSCtx(sctx PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
@@ -758,7 +758,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
-func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
+func tryCachePointPlan(_ context.Context, sctx PlanContext,
 	stmt *PlanCacheStmt, p Plan, names types.NameSlice) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil
@@ -770,7 +770,7 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 	)
 
 	if plan, _ok := p.(*PointGetPlan); _ok {
-		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
 		if err != nil {
 			return err
 		}
@@ -799,7 +799,7 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		return false, nil
 	}
 	// check auto commit
-	if !IsAutoCommitTxn(sctx) {
+	if !IsAutoCommitTxn(sctx.GetSessionVars()) {
 		return false, nil
 	}
 	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {

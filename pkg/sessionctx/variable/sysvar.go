@@ -699,20 +699,17 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatFloat(MaxTSOBatchWaitInterval.Load(), 'f', -1, 64), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			(*SetPDClientDynamicOption.Load())(TiDBTSOClientBatchMaxWaitTime, val)
-			return nil
+			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientBatchMaxWaitTime, val)
 		}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTSOFollowerProxy, Value: BoolToOnOff(DefTiDBEnableTSOFollowerProxy), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTSOFollowerProxy.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		(*SetPDClientDynamicOption.Load())(TiDBEnableTSOFollowerProxy, val)
-		return nil
+		return (*SetPDClientDynamicOption.Load())(TiDBEnableTSOFollowerProxy, val)
 	}},
 	{Scope: ScopeGlobal, Name: PDEnableFollowerHandleRegion, Value: BoolToOnOff(DefPDEnableFollowerHandleRegion), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnablePDFollowerHandleRegion.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		(*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
-		return nil
+		return (*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLocalTxn.Load()), nil
@@ -1034,6 +1031,8 @@ var defaultSysVars = []*SysVar{
 			}
 			memory.ServerMemoryLimitOriginText.Store(str)
 			memory.ServerMemoryLimit.Store(bt)
+			threshold := float64(bt) * GOGCTunerThreshold.Load()
+			gctuner.Tuning(uint64(threshold))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
 		},

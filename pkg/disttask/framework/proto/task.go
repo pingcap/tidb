@@ -80,7 +80,9 @@ const (
 var MaxConcurrentTask = 4
 
 // Task represents the task of distributed framework.
-// tasks are run in the order of: priority asc, create_time asc, id asc.
+// tasks are run in the order of rank, and the rank is defined by:
+//
+//	priority asc, create_time asc, id asc.
 type Task struct {
 	ID    int64
 	Key   string
@@ -117,7 +119,7 @@ var (
 )
 
 // Compare compares two tasks by task order.
-// returns < 0 represents priority of t is higher than other.
+// returns < 0 represents rank of t is higher than 'other'.
 func (t *Task) Compare(other *Task) int {
 	if t.Priority != other.Priority {
 		return t.Priority - other.Priority

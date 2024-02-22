@@ -1942,7 +1942,7 @@ func TestIsPointGet(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.NoError(t, err)
 		require.Equal(t, result, ret)
 	}
@@ -1983,7 +1983,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.NoError(t, err)
 		require.Equal(t, result, ret)
 	}

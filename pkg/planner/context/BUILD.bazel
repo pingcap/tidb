@@ -7,9 +7,12 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression/context",
+        "//pkg/infoschema/context",
         "//pkg/kv",
+        "//pkg/lock/context",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
+        "//pkg/util",
         "//pkg/util/context",
     ],
 )

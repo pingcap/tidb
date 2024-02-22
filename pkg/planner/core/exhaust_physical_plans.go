@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1471,7 +1470,7 @@ func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 }
 
 // BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
-func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
+func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx PlanContext, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
 	for i, opType := range cwc.OpType {
 		constantArg, err := cwc.opArg[i].Eval(ctx, row)

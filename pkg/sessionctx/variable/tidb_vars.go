@@ -1579,7 +1579,7 @@ var (
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Pointer[func(int64)]
 	// SetPDClientDynamicOption is the func registered by domain
-	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
+	SetPDClientDynamicOption atomic.Pointer[func(string, string) error]
 	// SwitchMDL is the func registered by DDL to switch MDL.
 	SwitchMDL func(bool2 bool) error = nil
 	// EnableDDL is the func registered by ddl to enable running ddl in this instance.
