@@ -275,8 +275,22 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			!loadAll &&
 			config.GetGlobalConfig().Performance.LiteInitStats
 		if notNeedLoad {
-			// TODO: Here we have a chance to delete it from the table.
-			return nil
+			// If we don't have this index in memory, skip it.
+			if idx == nil {
+				return nil
+			}
+			idx = &statistics.Index{
+				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				StatsVer:   statsVer,
+				Info:       idxInfo,
+				Flag:       flag,
+				PhysicalID: table.PhysicalID,
+			}
+			if idx.IsAnalyzed() {
+				idx.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
+			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
+			break
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
 			hg, err := HistogramFromStorage(sctx, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
@@ -363,8 +377,24 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
 		if notNeedLoad {
-			// TODO: Here we have a chance to delete it from the table.
-			return nil
+			// If we don't have the column in memory currently, just skip it.
+			if col == nil {
+				return nil
+			}
+			col = &statistics.Column{
+				PhysicalID: table.PhysicalID,
+				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				Info:       colInfo,
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				Flag:       flag,
+				StatsVer:   statsVer,
+			}
+			if col.StatsAvailable() {
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
+			lastAnalyzePos.Copy(&col.LastAnalyzePos)
+			col.Histogram.Correlation = correlation
+			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
 			hg, err := HistogramFromStorage(sctx, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
