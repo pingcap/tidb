@@ -276,6 +276,11 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 	c.numVirtualRows = numVirtualRows
 }
 
+// IncNumVirtualRows add current numVirtualRows by 1
+func (c *Chunk) IncNumVirtualRows() {
+	c.numVirtualRows++
+}
+
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
