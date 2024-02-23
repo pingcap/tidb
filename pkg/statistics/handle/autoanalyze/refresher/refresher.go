@@ -312,7 +312,6 @@ func findLastAnalyzeTime(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Time {
-	// Big enough to make sure the first version is smaller than this.
 	maxVersion := uint64(0)
 	for _, idx := range tblStats.Indices {
 		if idx.IsAnalyzed() {
