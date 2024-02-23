@@ -156,9 +156,14 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
 		// Since LogicalAggregation doesn’t use the parent LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
-		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt, newAgg); err != nil {
+		var (
+			p   LogicalPlan
+			err error
+		)
+		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
 			return nil, false
 		}
+		newAgg = p.(*LogicalAggregation)
 		aggs = append(aggs, newAgg)
 	}
 	return aggs, true
