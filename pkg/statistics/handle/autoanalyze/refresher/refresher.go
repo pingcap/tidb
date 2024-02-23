@@ -302,14 +302,14 @@ func getTableLastAnalyzeDuration(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Duration {
-	versionTime := findLastAnalyzeVersion(tblStats, currentTs)
+	lastTime := findLastAnalyzeTime(tblStats, currentTs)
 	currentTime := oracle.GetTimeFromTS(currentTs)
 
 	// Calculate the duration since last analyze.
-	return currentTime.Sub(versionTime)
+	return currentTime.Sub(lastTime)
 }
 
-func findLastAnalyzeVersion(
+func findLastAnalyzeTime(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Time {
