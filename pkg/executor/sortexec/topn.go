@@ -112,6 +112,8 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	e.fetched = false
+
+	e.chkHeap = &topNChunkHeap{TopNExec: e}
 	e.chkHeap.Idx = 0
 
 	return exec.Open(ctx, e.Children(0))
@@ -234,7 +236,7 @@ func (e *TopNExec) doCompaction(chkHeap *topNChunkHeap) error {
 	e.memTracker.ReplaceChild(chkHeap.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	chkHeap.rowChunks = newRowChunks
 
-	e.memTracker.Consume(int64(8 * len(newRowPtrs) - 8 * len(chkHeap.rowPtrs)))
+	e.memTracker.Consume(int64(8*len(newRowPtrs) - 8*len(chkHeap.rowPtrs)))
 	chkHeap.rowPtrs = newRowPtrs
 	return nil
 }
