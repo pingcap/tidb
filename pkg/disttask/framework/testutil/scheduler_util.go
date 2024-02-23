@@ -125,6 +125,17 @@ func GetPlanNotRetryableErrSchedulerExt(ctrl *gomock.Controller) scheduler.Exten
 	})
 }
 
+// GetStepTwoPlanNotRetryableErrSchedulerExt returns mock scheduler.Extension which will generate non retryable error when planning for step two.
+func GetStepTwoPlanNotRetryableErrSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
+	return GetMockSchedulerExt(ctrl, SchedulerInfo{
+		AllErrorRetryable: false,
+		StepInfos: []StepInfo{
+			{Step: proto.StepOne, SubtaskCnt: 10},
+			{Step: proto.StepTwo, Err: errors.New("not retryable err"), ErrRepeatCount: math.MaxInt64},
+		},
+	})
+}
+
 // GetPlanErrSchedulerExt returns mock scheduler.Extension which will generate error when planning.
 func GetPlanErrSchedulerExt(ctrl *gomock.Controller, testContext *TestContext) scheduler.Extension {
 	mockScheduler := mockDispatch.NewMockExtension(ctrl)
