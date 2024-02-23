@@ -32,12 +32,16 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/mock/gomock"
 )
 
@@ -82,13 +86,8 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	b.Logf("scheduler interval: %s", scheduler.CheckTaskFinishedInterval)
 	b.Logf("task executor mgr interval: %s", taskexecutor.TaskCheckInterval)
 
+	prepareForBenchTest(b)
 	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask, false)
-
-	tk := testkit.NewTestKit(c.T, c.Store)
-	tk.MustExec("delete from mysql.tidb_global_task")
-	tk.MustExec("delete from mysql.tidb_global_task_history")
-	tk.MustExec("delete from mysql.tidb_background_subtask")
-	tk.MustExec("delete from mysql.tidb_background_subtask_history")
 
 	registerTaskTypeForBench(c)
 
@@ -112,6 +111,31 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 			testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
 		}
 	}
+}
+
+func prepareForBenchTest(b *testing.B) {
+	testkit.EnableFailPoint(b, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	var d driver.TiKVDriver
+	var err error
+	store, err := d.Open("tikv://" + *testkit.WithTiKV)
+	require.NoError(b, err)
+
+	var dom *domain.Domain
+	dom, err = session.BootstrapSession(store)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(b, err)
+		view.Stop()
+	}()
+	require.NoError(b, err)
+
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("delete from mysql.tidb_global_task")
+	tk.MustExec("delete from mysql.tidb_global_task_history")
+	tk.MustExec("delete from mysql.tidb_background_subtask")
+	tk.MustExec("delete from mysql.tidb_background_subtask_history")
 }
 
 // we run this test on a k8s environment, so we need to mock the TiDB server status port
