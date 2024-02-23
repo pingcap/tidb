@@ -15,13 +15,21 @@
 package partitionedhashjoin
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"unsafe"
 )
 
 type leftOuterJoinProbe struct {
 	innerJoinProbe
 	isNotMatchedRows []bool
+	// used in scanHT when use left table as build side
+	hashTableIndexToScan int
+	hashTableScanStart   int
+	hashTableScanEnd     int
+	currentScanHTRow     int
+	currentCheckedRow    unsafe.Pointer
 }
 
 func (j *leftOuterJoinProbe) prepareForProbe(chk *chunk.Chunk, info *probeProcessInfo) (*chunk.Chunk, int, error) {
@@ -42,8 +50,31 @@ func (j *leftOuterJoinProbe) needScanHT() bool {
 	return !j.rightAsBuildSide
 }
 
-func (j *leftOuterJoinProbe) scanHT(chunk2 *chunk.Chunk) (err error) {
-	panic("not supported yet")
+func (j *leftOuterJoinProbe) scanHT(chk *chunk.Chunk) (err error) {
+	if j.rightAsBuildSide {
+		return errors.New("left join with right build side should not call scanHT")
+	}
+	buildRows := j.ctx.joinHashTable.tables[j.hashTableIndexToScan].hashTable
+	if j.currentScanHTRow == -1 {
+		j.currentScanHTRow = j.hashTableScanStart
+		j.currentCheckedRow = buildRows[j.currentScanHTRow]
+	}
+	meta := j.ctx.hashTableMeta
+	remainCap := chk.RequiredRows() - chk.NumRows()
+	for remainCap > 0 && j.currentScanHTRow < j.hashTableScanEnd {
+		if j.currentCheckedRow != nil {
+			if !meta.isCurrentRowUsed(j.currentCheckedRow) {
+				// append this row
+			}
+			j.currentCheckedRow = getNextRowAddress(j.currentCheckedRow)
+		} else {
+			j.currentScanHTRow++
+			if j.currentScanHTRow < j.hashTableScanEnd {
+				j.currentCheckedRow = buildRows[j.currentScanHTRow]
+			}
+		}
+	}
+	return
 }
 
 func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk, info *probeProcessInfo) {
@@ -148,6 +179,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 				length++
 				joinedChk.IncNumVirtualRows()
 			}
+			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
 			j.appendOffsetAndLength(info.currentProbeRow, length)
 			length = 0
@@ -198,6 +230,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 				joinedChk.IncNumVirtualRows()
 				remainCap--
 			}
+			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
 			j.appendOffsetAndLength(info.currentProbeRow, length)
 			length = 0
