@@ -20,7 +20,7 @@ import (
 )
 
 type leftOuterJoinProbe struct {
-	baseJoinProbe
+	innerJoinProbe
 	isNotMatchedRows []bool
 }
 
@@ -149,18 +149,13 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 				joinedChk.IncNumVirtualRows()
 			}
 		} else {
-			if length > 0 {
-				// length > 0 mean current row has at least one key matched build rows
-				j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
-				length = 0
-			}
+			j.appendOffsetAndLength(info.currentProbeRow, length)
+			length = 0
 			info.currentProbeRow++
 		}
 		remainCap--
 	}
-	if length > 0 {
-		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
-	}
+	j.appendOffsetAndLength(info.currentProbeRow, length)
 	j.appendProbeRowToChunk(joinedChk, info.chunk)
 
 	if j.ctx.hasOtherCondition() {
@@ -182,6 +177,44 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 }
 
 func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, remainCap int, info *probeProcessInfo) (err error) {
+	meta := j.ctx.hashTableMeta
+	length := 0
+
+	for remainCap > 0 && info.currentProbeRow < info.chunk.NumRows() {
+		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
+			// hash value match
+			candidateRow := info.matchedRowsHeaders[info.currentProbeRow]
+			if isKeyMatched(j.ctx.keyMode, info.serializedKeys[info.currentProbeRow], candidateRow, meta) {
+				// join key match
+				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
+				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo, info)
+				if j.ctx.hasOtherCondition() {
+					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: info.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
+				} else {
+					// has no other condition, key match means join match
+					meta.setUsedFlag(currentRowData)
+				}
+				length++
+				joinedChk.IncNumVirtualRows()
+				remainCap--
+			}
+		} else {
+			j.appendOffsetAndLength(info.currentProbeRow, length)
+			length = 0
+			info.currentProbeRow++
+		}
+	}
+	j.appendOffsetAndLength(info.currentProbeRow, length)
+	j.appendProbeRowToChunk(joinedChk, info.chunk)
+
+	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
+		j.selected = j.selected[:0]
+		j.selected, err = expression.VectorizedFilter(j.ctx.sessCtx, j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		if err != nil {
+			return err
+		}
+		err = j.buildResultAfterOtherCondition(chk, joinedChk, info)
+	}
 	return
 }
 

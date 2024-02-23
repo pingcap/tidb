@@ -166,6 +166,12 @@ type baseJoinProbe struct {
 	selected      []bool
 }
 
+func (j *baseJoinProbe) appendOffsetAndLength(offset int, length int) {
+	if length > 0 {
+		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: offset, length: length})
+	}
+}
+
 func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk, info *probeProcessInfo) (joinedChk *chunk.Chunk, remainCap int, err error) {
 	if !info.init {
 		err = info.initForCurrentChunk(j.ctx)

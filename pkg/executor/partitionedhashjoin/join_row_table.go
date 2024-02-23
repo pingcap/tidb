@@ -15,6 +15,7 @@
 package partitionedhashjoin
 
 import (
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -97,6 +98,8 @@ type tableMeta struct {
 	// first n columns from the RowTable to evaluate other condition
 	columnCountNeededForOtherCondition int
 	totalColumnNumber                  int
+	setUsedFlagMask                    uint32
+	usedFlagOffset                     int
 }
 
 func (meta *tableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
@@ -118,7 +121,18 @@ func (meta *tableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer 
 func (meta *tableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
 	byteIndex := columnIndex / 8
 	bitIndex := columnIndex % 8
-	return *(*uint8)(unsafe.Add(rowStart, SizeOfNextPtr+byteIndex))&(uint8(1)<<(8-bitIndex)) != uint8(0)
+	return *(*uint8)(unsafe.Add(rowStart, SizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
+}
+
+func (meta *tableMeta) setUsedFlag(rowStart unsafe.Pointer) {
+	addr := (*uint32)(unsafe.Add(rowStart, meta.usedFlagOffset))
+	value := atomic.LoadUint32(addr)
+	value |= meta.setUsedFlagMask
+	atomic.StoreUint32(addr, value)
+}
+
+func (meta *tableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
+	return (*(*uint32)(unsafe.Add(rowStart, meta.usedFlagOffset)) | meta.setUsedFlagMask) == meta.setUsedFlagMask
 }
 
 type rowTable struct {
@@ -182,6 +196,10 @@ func newTableMeta(buildKeyIndex []int, buildSchema expression.Schema, probeKeyIn
 	}
 	if needUsedFlag {
 		meta.nullMapLength = (savedColumnCount + 1 + 7) / 8
+		usedFlagOffset := (savedColumnCount + 1) / 32
+		usedFlagIndex := (savedColumnCount + 1) % 32
+		meta.usedFlagOffset = usedFlagOffset*4 + SizeOfNextPtr
+		meta.setUsedFlagMask = uint32(1) << (31 - usedFlagIndex)
 	} else {
 		meta.nullMapLength = (savedColumnCount + 7) / 8
 	}

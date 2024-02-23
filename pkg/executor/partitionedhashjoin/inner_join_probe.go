@@ -50,18 +50,13 @@ func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err er
 			}
 			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
-			if length > 0 {
-				j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
-				length = 0
-			}
+			j.appendOffsetAndLength(info.currentProbeRow, length)
+			length = 0
 			info.currentProbeRow++
 		}
 	}
 
-	if length > 0 {
-		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
-	}
-
+	j.appendOffsetAndLength(info.currentProbeRow, length)
 	j.appendProbeRowToChunk(joinedChk, info.chunk)
 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
