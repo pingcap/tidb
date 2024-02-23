@@ -95,17 +95,18 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	if *noTask {
 		time.Sleep(*waitDuration)
 	} else {
-		var wg util.WaitGroupWrapper
 		for i := 0; i < proto.MaxConcurrentTask; i++ {
 			taskKey := fmt.Sprintf("task-%d", i)
 			taskMeta := make([]byte, *taskMetaSize)
 			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
 			require.NoError(c.T, err)
-			wg.RunWithLog(func() {
-				testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
-			})
 		}
-		wg.Wait()
+		// task has 2 steps, each step has 1 subtask
+		time.Sleep(2 * *waitDuration)
+		for i := 0; i < proto.MaxConcurrentTask; i++ {
+			taskKey := fmt.Sprintf("task-%d", i)
+			testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
+		}
 	}
 }
 
