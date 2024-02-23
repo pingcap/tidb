@@ -22,7 +22,6 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -98,7 +97,7 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // for each expression in each group under the required physical property. A
 // memo structure is used for a group to reduce the repeated search on the same
 // required physical property.
-func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, cost float64, err error) {
+func (opt *Optimizer) FindBestPlan(sctx plannercore.PlanContext, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, cost float64, err error) {
 	logical, err = opt.onPhasePreprocessing(sctx, logical)
 	if err != nil {
 		return nil, 0, err
@@ -116,15 +115,16 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	return p, cost, err
 }
 
-func (*Optimizer) onPhasePreprocessing(_ sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
-	err := plan.PruneColumns(plan.Schema().Columns, nil, plan)
+func (*Optimizer) onPhasePreprocessing(_ plannercore.PlanContext, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
+	var err error
+	plan, err = plan.PruneColumns(plan.Schema().Columns, nil)
 	if err != nil {
 		return nil, err
 	}
 	return plan, nil
 }
 
-func (opt *Optimizer) onPhaseExploration(_ sessionctx.Context, g *memo.Group) error {
+func (opt *Optimizer) onPhaseExploration(_ plannercore.PlanContext, g *memo.Group) error {
 	for round, ruleBatch := range opt.transformationRuleBatches {
 		for !g.Explored(round) {
 			err := opt.exploreGroup(g, round, ruleBatch)
@@ -241,7 +241,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 }
 
 // onPhaseImplementation starts implementation physical operators from given root Group.
-func (opt *Optimizer) onPhaseImplementation(_ sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, float64, error) {
+func (opt *Optimizer) onPhaseImplementation(_ plannercore.PlanContext, g *memo.Group) (plannercore.PhysicalPlan, float64, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}

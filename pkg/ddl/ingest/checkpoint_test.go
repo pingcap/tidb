@@ -38,7 +38,7 @@ func TestCheckpointManager(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: false}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1})
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -91,7 +91,7 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: true}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1})
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -140,7 +140,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	ctx := context.Background()
 	sessPool := session.NewSessionPool(rs, store)
 	flushCtrl := &dummyFlushCtrl{imported: false}
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, 1)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1})
 	require.NoError(t, err)
 	defer mgr.Close()
 	require.True(t, mgr.IsComplete([]byte{'1', '9'}))

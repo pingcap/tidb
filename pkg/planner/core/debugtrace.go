@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -72,7 +72,7 @@ func (info *binaryParamInfo) MarshalJSON() ([]byte, error) {
 }
 
 // DebugTraceReceivedCommand records the received command from the client to the debug trace.
-func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.StmtNode) {
+func DebugTraceReceivedCommand(s PlanContext, cmd byte, stmtNode ast.StmtNode) {
 	sessionVars := s.GetSessionVars()
 	trace := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := new(receivedCmdInfo)
@@ -135,7 +135,7 @@ func (b *bindingHint) MarshalJSON() ([]byte, error) {
 }
 
 // DebugTraceTryBinding records the hint that might be chosen to the debug trace.
-func DebugTraceTryBinding(s sessionctx.Context, binding *hint.HintsSet) {
+func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
 		Hint:   binding,
@@ -145,7 +145,7 @@ func DebugTraceTryBinding(s sessionctx.Context, binding *hint.HintsSet) {
 }
 
 // DebugTraceBestBinding records the chosen hint to the debug trace.
-func DebugTraceBestBinding(s sessionctx.Context, binding *hint.HintsSet) {
+func DebugTraceBestBinding(s context.PlanContext, binding *hint.HintsSet) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
 		Hint:   binding,

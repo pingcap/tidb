@@ -918,6 +918,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	clonedScan.physicalSchemaProducer = *prod
 	clonedScan.AccessCondition = util.CloneExprs(ts.AccessCondition)
 	clonedScan.filterCondition = util.CloneExprs(ts.filterCondition)
+	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(ts.LateMaterializationFilterCondition)
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
@@ -935,11 +936,11 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.filterCondition))
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.LateMaterializationFilterCondition))
 	for _, expr := range ts.AccessCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
-	for _, expr := range ts.filterCondition {
+	for _, expr := range ts.LateMaterializationFilterCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
@@ -1047,6 +1048,9 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 		sum += cond.MemoryUsage()
 	}
 	for _, cond := range ts.filterCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range ts.LateMaterializationFilterCondition {
 		sum += cond.MemoryUsage()
 	}
 	for _, rang := range ts.Ranges {
@@ -2142,11 +2146,11 @@ func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool {
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPointNonNullable(sctx.GetSessionVars().StmtCtx.TypeCtx())
+		p.Ranges[0].IsPointNonNullable(tc)
 }
 
 // PhysicalSelection represents a filter.
@@ -2484,7 +2488,7 @@ func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
-func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
+func BuildMergeJoinPlan(ctx PlanContext, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
 	baseJoin := basePhysicalJoin{
 		JoinType:      joinType,
 		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},

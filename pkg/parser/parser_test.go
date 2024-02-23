@@ -504,8 +504,6 @@ func TestAdminStmt(t *testing.T) {
 		{"admin capture bindings", true, "ADMIN CAPTURE BINDINGS"},
 		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
 		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
-		{"admin show telemetry", true, "ADMIN SHOW TELEMETRY"},
-		{"admin reset telemetry_id", true, "ADMIN RESET TELEMETRY_ID"},
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
@@ -2953,6 +2951,8 @@ func TestDDL(t *testing.T) {
 		{"create table t (a varchar(32) default replace(upper(uuid()), '-', ''))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT REPLACE(UPPER(UUID()), _UTF8MB4'-', _UTF8MB4''))"},
 		{"create table t (a varchar(32) default (replace(convert(upper(uuid()) using utf8mb4), '-', '')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT REPLACE(CONVERT(UPPER(UUID()) USING 'utf8mb4'), _UTF8MB4'-', _UTF8MB4''))"},
 		{"create table t (a varchar(32) default replace(convert(upper(uuid()) using utf8mb4), '-', ''))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT REPLACE(CONVERT(UPPER(UUID()) USING 'utf8mb4'), _UTF8MB4'-', _UTF8MB4''))"},
+		{"create table t (a int default upper(substring_index(user(),'@',1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT UPPER(SUBSTRING_INDEX(USER(), _UTF8MB4'@', 1)))"},
+		{"create table t (a int default (upper(substring_index(user(),'@',1))))", true, "CREATE TABLE `t` (`a` INT DEFAULT UPPER(SUBSTRING_INDEX(USER(), _UTF8MB4'@', 1)))"},
 		{"create table t (a varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT STR_TO_DATE(_UTF8MB4'1980-01-01', _UTF8MB4'%Y-%m-%d'))"},
 		{"create table t (a varchar(32) default str_to_date('1980-01-01','%Y-%m-%d'))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT STR_TO_DATE(_UTF8MB4'1980-01-01', _UTF8MB4'%Y-%m-%d'))"},
 

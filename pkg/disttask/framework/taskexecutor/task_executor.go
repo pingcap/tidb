@@ -141,7 +141,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			return
 		}
 
-		extraRunningSubtasks := make([]*proto.Subtask, 0, len(subtasks))
+		extraRunningSubtasks := make([]*proto.SubtaskBase, 0, len(subtasks))
 		for _, st := range subtasks {
 			if st.ID == e.currSubtaskID.Load() {
 				continue
@@ -150,7 +150,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 				e.updateSubtaskStateAndErrorImpl(ctx, st.ExecID, st.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
 				return
 			}
-			extraRunningSubtasks = append(extraRunningSubtasks, st)
+			extraRunningSubtasks = append(extraRunningSubtasks, &st.SubtaskBase)
 		}
 		if len(extraRunningSubtasks) > 0 {
 			if err = e.taskTable.RunningSubtasksBack2Pending(ctx, extraRunningSubtasks); err != nil {
@@ -204,8 +204,8 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.
 	// 300ms + 600ms + 1.2s + 2s * 4 = 10.1s
-	backoffer := backoff.NewExponential(DefaultCheckInterval, 2, MaxCheckInterval)
-	checkInterval, noSubtaskCheckCnt := DefaultCheckInterval, 0
+	backoffer := backoff.NewExponential(SubtaskCheckInterval, 2, MaxSubtaskCheckInterval)
+	checkInterval, noSubtaskCheckCnt := SubtaskCheckInterval, 0
 	for {
 		select {
 		case <-e.ctx.Done():
@@ -220,7 +220,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			continue
 		}
 		task := e.task.Load()
-		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
+		if task.State != proto.TaskStateRunning {
 			return
 		}
 		if exist, err := e.taskTable.HasSubtasksInStates(e.ctx, e.id, task.ID, task.Step,
@@ -237,15 +237,8 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			continue
 		}
 		// reset it when we get a subtask
-		checkInterval, noSubtaskCheckCnt = DefaultCheckInterval, 0
-
-		switch task.State {
-		case proto.TaskStateRunning:
-			err = e.RunStep(resource)
-		case proto.TaskStateReverting:
-			// TODO: will remove it later, leave it now.
-			err = e.Rollback()
-		}
+		checkInterval, noSubtaskCheckCnt = SubtaskCheckInterval, 0
+		err = e.RunStep(resource)
 		if err != nil {
 			e.logger.Error("failed to handle task", zap.Error(err))
 		}
@@ -484,36 +477,6 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
 	})
-}
-
-// Rollback rollbacks the subtask.
-// TODO no need to start executor to do it, refactor it later.
-func (e *BaseTaskExecutor) Rollback() error {
-	task := e.task.Load()
-	e.resetError()
-	e.logger.Info("task reverting, cancel unfinished subtasks")
-
-	// We should cancel all subtasks before rolling back
-	for {
-		// TODO we can update them using one sql, but requires change the metric
-		// gathering logic.
-		subtask, err := e.taskTable.GetFirstSubtaskInStates(e.ctx, e.id, task.ID, task.Step,
-			proto.SubtaskStatePending, proto.SubtaskStateRunning)
-		if err != nil {
-			e.onError(err)
-			return e.getError()
-		}
-
-		if subtask == nil {
-			break
-		}
-
-		e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
-		if err = e.getError(); err != nil {
-			return err
-		}
-	}
-	return e.getError()
 }
 
 // GetTask implements TaskExecutor.GetTask.

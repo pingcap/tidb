@@ -26,21 +26,20 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
 type PBPlanBuilder struct {
-	sctx   sessionctx.Context
+	sctx   PlanContext
 	tps    []*types.FieldType
 	is     infoschema.InfoSchema
 	ranges []*coprocessor.KeyRange
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
+func NewPBPlanBuilder(sctx PlanContext, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
 	return &PBPlanBuilder{sctx: sctx, is: is, ranges: ranges}
 }
 
