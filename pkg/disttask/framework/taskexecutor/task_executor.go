@@ -141,7 +141,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			return
 		}
 
-		extraRunningSubtasks := make([]*proto.Subtask, 0, len(subtasks))
+		extraRunningSubtasks := make([]*proto.SubtaskBase, 0, len(subtasks))
 		for _, st := range subtasks {
 			if st.ID == e.currSubtaskID.Load() {
 				continue
@@ -150,7 +150,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 				e.updateSubtaskStateAndErrorImpl(ctx, st.ExecID, st.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
 				return
 			}
-			extraRunningSubtasks = append(extraRunningSubtasks, st)
+			extraRunningSubtasks = append(extraRunningSubtasks, &st.SubtaskBase)
 		}
 		if len(extraRunningSubtasks) > 0 {
 			if err = e.taskTable.RunningSubtasksBack2Pending(ctx, extraRunningSubtasks); err != nil {

@@ -57,7 +57,7 @@ func (sm *Manager) addScheduler(taskID int64, scheduler Scheduler) {
 	sm.mu.schedulerMap[taskID] = scheduler
 	sm.mu.schedulers = append(sm.mu.schedulers, scheduler)
 	slices.SortFunc(sm.mu.schedulers, func(i, j Scheduler) int {
-		return i.GetTask().Compare(j.GetTask())
+		return i.GetTask().CompareTask(j.GetTask())
 	})
 }
 
@@ -222,7 +222,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
-		schedulableTasks := make([]*proto.Task, 0, len(tasks))
+		schedulableTasks := make([]*proto.TaskBase, 0, len(tasks))
 		for _, task := range tasks {
 			if sm.hasScheduler(task.ID) {
 				continue
@@ -300,7 +300,7 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 	}
 }
 
-func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) {
+func (sm *Manager) startScheduler(basicTask *proto.TaskBase, reservedExecID string) {
 	task, err := sm.taskMgr.GetTaskByID(sm.ctx, basicTask.ID)
 	if err != nil {
 		sm.logger.Error("get task failed", zap.Int64("task-id", basicTask.ID), zap.Error(err))

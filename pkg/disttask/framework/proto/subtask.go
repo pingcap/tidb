@@ -51,16 +51,6 @@ const (
 	SubtaskStatePaused   SubtaskState = "paused"
 )
 
-// AllSubtaskStates is all subtask state.
-var AllSubtaskStates = []SubtaskState{
-	SubtaskStatePending,
-	SubtaskStateRunning,
-	SubtaskStateSucceed,
-	SubtaskStateFailed,
-	SubtaskStateCanceled,
-	SubtaskStatePaused,
-}
-
 type (
 	// SubtaskState is the state of subtask.
 	SubtaskState string
@@ -70,9 +60,9 @@ func (s SubtaskState) String() string {
 	return string(s)
 }
 
-// Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by scheduler.
-type Subtask struct {
+// SubtaskBase contains the basic information of a subtask.
+// we define this to avoid load subtask meta which might be very large into memory.
+type SubtaskBase struct {
 	ID   int64
 	Step Step
 	Type TaskType
@@ -90,6 +80,26 @@ type Subtask struct {
 	// StartTime is the time when the subtask is started.
 	// it's 0 if it hasn't started yet.
 	StartTime time.Time
+	// Ordinal is the ordinal of subtask, should be unique for some task and step.
+	// starts from 1.
+	Ordinal int
+}
+
+func (t *SubtaskBase) String() string {
+	return fmt.Sprintf("[ID=%d, Step=%d, Type=%s, TaskID=%d, State=%s, ExecID=%s]",
+		t.ID, t.Step, t.Type, t.TaskID, t.State, t.ExecID)
+}
+
+// IsDone checks if the subtask is done.
+func (t *SubtaskBase) IsDone() bool {
+	return t.State == SubtaskStateSucceed || t.State == SubtaskStateCanceled ||
+		t.State == SubtaskStateFailed
+}
+
+// Subtask represents the subtask of distribute framework.
+// Each task is divided into multiple subtasks by scheduler.
+type Subtask struct {
+	SubtaskBase
 	// UpdateTime is the time when the subtask is updated.
 	// it can be used as subtask end time if the subtask is finished.
 	// it's 0 if it hasn't started yet.
@@ -98,32 +108,20 @@ type Subtask struct {
 	// meta of different subtasks of same step must be different too.
 	Meta    []byte
 	Summary string
-	// Ordinal is the ordinal of subtask, should be unique for some task and step.
-	// starts from 1, for reverting subtask, it's NULL in database.
-	Ordinal int
-}
-
-func (t *Subtask) String() string {
-	return fmt.Sprintf("Subtask[ID=%d, Step=%d, Type=%s, TaskID=%d, State=%s, ExecID=%s]",
-		t.ID, t.Step, t.Type, t.TaskID, t.State, t.ExecID)
-}
-
-// IsDone checks if the subtask is done.
-func (t *Subtask) IsDone() bool {
-	return t.State == SubtaskStateSucceed || t.State == SubtaskStateCanceled ||
-		t.State == SubtaskStateFailed
 }
 
 // NewSubtask create a new subtask.
 func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte, ordinal int) *Subtask {
 	s := &Subtask{
-		Step:        step,
-		Type:        tp,
-		TaskID:      taskID,
-		ExecID:      execID,
-		Concurrency: concurrency,
-		Meta:        meta,
-		Ordinal:     ordinal,
+		SubtaskBase: SubtaskBase{
+			Step:        step,
+			Type:        tp,
+			TaskID:      taskID,
+			ExecID:      execID,
+			Concurrency: concurrency,
+			Ordinal:     ordinal,
+		},
+		Meta: meta,
 	}
 	return s
 }
