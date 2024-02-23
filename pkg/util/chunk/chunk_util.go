@@ -100,15 +100,22 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, innerColL
 
 // CopySelectedRows copies the selected rows in srcCol to dstCol
 func CopySelectedRows(dstCol *Column, srcCol *Column, selected []bool) {
-	CopySelectedRowsWithRowIdFunc(dstCol, srcCol, selected, func(i int) int {
+	CopySelectedRowsWithRowIdFunc(dstCol, srcCol, selected, 0, len(selected), func(i int) int {
+		return i
+	})
+}
+
+// CopyRangeSelectedRows copies the selected rows in srcCol to dstCol
+func CopyRangeSelectedRows(dstCol *Column, srcCol *Column, start int, end int, selected []bool) {
+	CopySelectedRowsWithRowIdFunc(dstCol, srcCol, selected, start, end, func(i int) int {
 		return i
 	})
 }
 
 // CopySelectedRowsWithRowIdFunc copies the selected rows in srcCol to dstCol
-func CopySelectedRowsWithRowIdFunc(dstCol *Column, srcCol *Column, selected []bool, rowIdFunc func(int) int) {
+func CopySelectedRowsWithRowIdFunc(dstCol *Column, srcCol *Column, selected []bool, start int, end int, rowIdFunc func(int) int) {
 	if srcCol.isFixed() {
-		for i := 0; i < len(selected); i++ {
+		for i := start; i < end; i++ {
 			if !selected[i] {
 				continue
 			}
@@ -121,7 +128,7 @@ func CopySelectedRowsWithRowIdFunc(dstCol *Column, srcCol *Column, selected []bo
 			dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
 		}
 	} else {
-		for i := 0; i < len(selected); i++ {
+		for i := start; i < end; i++ {
 			if !selected[i] {
 				continue
 			}
