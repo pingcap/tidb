@@ -48,7 +48,7 @@ const (
 var (
 	// CheckTaskFinishedInterval is the interval for scheduler.
 	// exported for testing.
-	CheckTaskFinishedInterval = 1000 * time.Millisecond
+	CheckTaskFinishedInterval = 500 * time.Millisecond
 	// RetrySQLTimes is the max retry times when executing SQL.
 	RetrySQLTimes = 30
 	// RetrySQLInterval is the initial interval between two SQL retries.

@@ -27,6 +27,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
@@ -42,6 +43,7 @@ import (
 var (
 	maxConcurrentTask = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
 	waitDuration      = flag.Duration("task-wait-duration", time.Minute, "task wait duration")
+	schedulerInterval = flag.Duration("scheduler-interval", scheduler.CheckTaskFinishedInterval, "scheduler interval")
 	taskMetaSize      = flag.Int("task-meta-size", 1<<10, "task meta size")
 	noTask            = flag.Bool("no-task", false, "no task")
 )
@@ -60,14 +62,19 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		cancel()
 		statusWG.Wait()
 	}()
+	schIntervalBak := scheduler.CheckTaskFinishedInterval
 	bak := proto.MaxConcurrentTask
 	b.Cleanup(func() {
 		proto.MaxConcurrentTask = bak
+		scheduler.CheckTaskFinishedInterval = schIntervalBak
 	})
 	proto.MaxConcurrentTask = *maxConcurrentTask
+	scheduler.CheckTaskFinishedInterval = *schedulerInterval
+
 	b.Logf("max concurrent task: %d", proto.MaxConcurrentTask)
 	b.Logf("taks wait duration: %s", *waitDuration)
 	b.Logf("task meta size: %d", *taskMetaSize)
+	b.Logf("scheduler interval: %s", scheduler.CheckTaskFinishedInterval)
 
 	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask, false)
 
