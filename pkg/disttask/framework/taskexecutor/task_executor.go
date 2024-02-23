@@ -89,6 +89,7 @@ type BaseTaskExecutor struct {
 }
 
 // NewBaseTaskExecutor creates a new BaseTaskExecutor.
+// see TaskExecutor.Init for why we want to use task-base to create TaskExecutor.
 // TODO: we can refactor this part to pass task base only, but currently ADD-INDEX
 // depends on it to init, so we keep it for now.
 func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) *BaseTaskExecutor {
