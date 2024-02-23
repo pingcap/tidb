@@ -373,7 +373,7 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 	return false
 }
 
-func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
+func (e *SortExec) compareRow(rowI, rowJ chunk.Row) int {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
