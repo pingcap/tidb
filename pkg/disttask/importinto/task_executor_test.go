@@ -28,7 +28,7 @@ func TestImportTaskExecutor(t *testing.T) {
 		ctx,
 		":4000",
 		&proto.Task{
-			ID: 1,
+			TaskBase: proto.TaskBase{ID: 1},
 		},
 		nil,
 	).(*importExecutor)
@@ -43,12 +43,12 @@ func TestImportTaskExecutor(t *testing.T) {
 		proto.ImportStepWriteAndIngest,
 		proto.ImportStepPostProcess,
 	} {
-		exe, err := executor.GetStepExecutor(&proto.Task{Step: step, Meta: []byte("{}")}, nil)
+		exe, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: step}, Meta: []byte("{}")}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, exe)
 	}
-	_, err := executor.GetStepExecutor(&proto.Task{Step: proto.StepInit, Meta: []byte("{}")}, nil)
+	_, err := executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.StepInit}, Meta: []byte("{}")}, nil)
 	require.Error(t, err)
-	_, err = executor.GetStepExecutor(&proto.Task{Step: proto.ImportStepImport, Meta: []byte("")}, nil)
+	_, err = executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}, Meta: []byte("")}, nil)
 	require.Error(t, err)
 }

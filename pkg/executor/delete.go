@@ -243,7 +243,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
-	err := t.RemoveRecord(ctx, h, data)
+	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
 	if err != nil {
 		return err
 	}

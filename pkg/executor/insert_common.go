@@ -695,7 +695,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	// Handle exchange partition
 	tbl := e.Table.Meta()
 	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(e.Ctx(), row, tbl); err != nil {
+		if err := checkRowForExchangePartition(e.Ctx().GetTableCtx(), row, tbl); err != nil {
 			return nil, err
 		}
 	}
@@ -836,7 +836,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			alloc := e.Table.Allocators(sessVars).Get(autoid.AutoIncrementType)
+			alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoIncrementType)
 			err = alloc.Rebase(ctx, recordID, true)
 			if err != nil {
 				return nil, err
@@ -933,7 +933,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.Allocators(sessVars).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true)
+		err = e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -1051,7 +1051,7 @@ func (e *InsertValues) adjustAutoRandomDatum(
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
 func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
-	alloc := e.Table.Allocators(e.Ctx().GetSessionVars()).Get(autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	increment := e.Ctx().GetSessionVars().AutoIncrementIncrement
 	offset := e.Ctx().GetSessionVars().AutoIncrementOffset
@@ -1075,7 +1075,7 @@ func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, f
 	if recordID < 0 {
 		return nil
 	}
-	alloc := e.Table.Allocators(e.Ctx().GetSessionVars()).Get(autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
 	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
@@ -1114,7 +1114,7 @@ func (e *InsertValues) adjustImplicitRowID(
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		intHandle, err := tables.AllocHandle(ctx, e.Ctx(), e.Table)
+		intHandle, err := tables.AllocHandle(ctx, e.Ctx().GetTableCtx(), e.Table)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -1131,7 +1131,7 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	if recordID < 0 {
 		return nil
 	}
-	alloc := e.Table.Allocators(e.Ctx().GetSessionVars()).Get(autoid.RowIDAllocType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
 	shardFmt := autoid.NewShardIDFormat(
@@ -1350,7 +1350,7 @@ func (e *InsertValues) removeRow(
 		return true, nil
 	}
 
-	err = r.t.RemoveRecord(e.Ctx(), handle, oldRow)
+	err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
 	if err != nil {
 		return false, err
 	}
@@ -1396,9 +1396,9 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		vars.PresumeKeyNotExists = true
 	}
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 	} else {
-		_, err = e.Table.AddRecord(e.Ctx(), row, table.WithCtx(ctx))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx))
 	}
 	vars.PresumeKeyNotExists = false
 	if err != nil {
