@@ -67,6 +67,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -77,7 +78,6 @@ const (
 )
 
 var (
-	telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
 	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
 )
@@ -660,8 +660,6 @@ SwitchIndexState:
 		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
-			// Increase telemetryAddIndexIngestUsage
-			telemetryAddIndexIngestUsage.Inc()
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
@@ -967,12 +965,12 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return true, 0, nil
 	}
 	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
-	var pdLeaderAddr string
+	var discovery pd.ServiceDiscovery
 	if d != nil {
 		//nolint:forcetypeassert
-		pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+		discovery = d.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, allIndexInfos[0].Unique, nil, discovery, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
@@ -1986,8 +1984,8 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				return err
 			}
 			//nolint:forcetypeassert
-			pdLeaderAddr := w.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, pdLeaderAddr)
+			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, discovery)
 		}
 	}
 
@@ -2024,7 +2022,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
-func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, pdAddr string) error {
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, discovery pd.ServiceDiscovery) error {
 	var bc ingest.BackendCtx
 	var err error
 	defer func() {
@@ -2040,7 +2038,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := logutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, pdAddr, reorgInfo.ReorgMeta.ResourceGroupName)
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName)
 				if err != nil {
 					return err
 				}
@@ -2124,11 +2122,6 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			return err
 		})
 	} else {
-		elemIDs := make([]int64, 0, len(reorgInfo.elements))
-		for _, elem := range reorgInfo.elements {
-			elemIDs = append(elemIDs, elem.ID)
-		}
-
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
 		cpuCount, err := handle.GetCPUCountOfManagedNode(ctx)
@@ -2141,7 +2134,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			zap.String("task-key", taskKey))
 		taskMeta := &BackfillTaskMeta{
 			Job:             *job.Clone(),
-			EleIDs:          elemIDs,
+			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 		}

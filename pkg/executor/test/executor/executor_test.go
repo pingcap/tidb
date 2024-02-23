@@ -781,7 +781,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
@@ -871,7 +871,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		e := executorBuilder.Build(p)
 		chk := exec.NewFirstChunk(e)
@@ -1942,7 +1942,7 @@ func TestIsPointGet(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.NoError(t, err)
 		require.Equal(t, result, ret)
 	}
@@ -1983,7 +1983,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.NoError(t, err)
 		require.Equal(t, result, ret)
 	}

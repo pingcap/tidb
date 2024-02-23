@@ -48,7 +48,7 @@ go_test(
     ],
     embed = [":taskexecutor"],
     flaky = True,
-    shard_count = 16,
+    shard_count = 15,
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
@@ -62,7 +62,6 @@ go_test(
         "//pkg/util/memory",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
         "@org_golang_google_grpc//codes",

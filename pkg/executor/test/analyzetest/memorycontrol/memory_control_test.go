@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -143,12 +143,12 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	require.Len(t, rs0.Rows(), 0)
 
 	h := dom.StatsHandle()
-	originalVal4 := autoanalyze.AutoAnalyzeMinCnt
+	originalVal4 := exec.AutoAnalyzeMinCnt
 	originalVal5 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	exec.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originalVal4
+		exec.AutoAnalyzeMinCnt = originalVal4
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal5))
 	}()
 

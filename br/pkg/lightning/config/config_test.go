@@ -737,19 +737,16 @@ func TestDurationMarshalJSON(t *testing.T) {
 
 func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	var dra DuplicateResolutionAlgorithm
-	require.NoError(t, dra.FromStringValue("record"))
-	require.Equal(t, DupeResAlgRecord, dra)
 	require.NoError(t, dra.FromStringValue("none"))
 	require.Equal(t, DupeResAlgNone, dra)
-	require.NoError(t, dra.FromStringValue("remove"))
-	require.Equal(t, DupeResAlgRemove, dra)
 	require.NoError(t, dra.FromStringValue("replace"))
 	require.Equal(t, DupeResAlgReplace, dra)
+	require.NoError(t, dra.FromStringValue("error"))
+	require.Equal(t, DupeResAlgErr, dra)
 
-	require.Equal(t, "record", DupeResAlgRecord.String())
 	require.Equal(t, "none", DupeResAlgNone.String())
-	require.Equal(t, "remove", DupeResAlgRemove.String())
 	require.Equal(t, "replace", DupeResAlgReplace.String())
+	require.Equal(t, "error", DupeResAlgErr.String())
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -995,14 +992,14 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
-	cfg.TikvImporter.DuplicateResolution = DupeResAlgRemove
+	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
 	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.duplicate-resolution")
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ""
 	cfg.TikvImporter.OnDuplicate = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
-	cfg.TikvImporter.DuplicateResolution = DupeResAlgRemove
+	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
 	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
 }
 

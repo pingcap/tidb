@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -54,7 +53,7 @@ func (*jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p.bInMap = 0
 }
 
-func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	if len(p.entries) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -69,7 +68,7 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partial
 	return nil
 }
 
-func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, keyIsNull, err := e.args[0].EvalString(sctx, row)
@@ -211,7 +210,7 @@ func getValMemDelta(val any) (memDelta int64) {
 	return memDelta
 }
 
-func (*jsonObjectAgg) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*jsonObjectAgg) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonObjectAgg)(src), (*partialResult4JsonObjectAgg)(dst)
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object

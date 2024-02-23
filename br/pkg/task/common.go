@@ -632,8 +632,7 @@ func NewMgr(ctx context.Context,
 		tlsConf *tls.Config
 		err     error
 	)
-	pdAddress := strings.Join(pds, ",")
-	if len(pdAddress) == 0 {
+	if len(pds) == 0 {
 		return nil, errors.Annotate(berrors.ErrInvalidArgument, "pd address can not be empty")
 	}
 
@@ -650,7 +649,7 @@ func NewMgr(ctx context.Context,
 
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
-		ctx, g, pdAddress, tlsConf, securityOption, keepalive, util.SkipTiFlash,
+		ctx, g, pds, tlsConf, securityOption, keepalive, util.SkipTiFlash,
 		checkRequirements, needDomain, versionCheckerType,
 	)
 }

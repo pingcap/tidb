@@ -685,7 +685,6 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-
 	b.addDB(diff.Version, di, &schemaTables{dbInfo: di, tables: make(map[string]table.Table)})
 	return nil
 }
@@ -954,6 +953,12 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	return affected
 }
 
+// TODO: get rid of this and use infoschemaV2 directly.
+type infoschemaProxy struct {
+	infoschemaV2
+	v1 InfoSchema
+}
+
 // Build builds and returns the built infoschema.
 func (b *Builder) Build() InfoSchema {
 	b.updateInfoSchemaBundles(b.infoSchema)
@@ -969,18 +974,18 @@ func (b *Builder) Build() InfoSchema {
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) {
-	var oldIS *infoSchema
-	if proxy, ok := oldSchema.(*infoschemaV2); ok {
-		oldIS = proxy.infoSchema
-	} else {
-		oldIS = oldSchema.(*infoSchema)
-	}
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
 	if b.enableV2 != IsV2(oldSchema) {
 		return nil, errors.New("builder's infoschema mismatch, return error to trigger full reload")
 	}
 
+	var oldIS *infoSchema
+	if proxy, ok := oldSchema.(*infoschemaV2); ok {
+		oldIS = proxy.infoSchema
+	} else {
+		oldIS = oldSchema.(*infoSchema)
+	}
 	b.infoSchema.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
@@ -1154,7 +1159,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTables) {
 	if b.enableV2 {
-		if isSpecial(di.Name.L) {
+		if isSpecialDB(di.Name.L) {
 			b.infoData.addSpecialDB(di, schTbls)
 		} else {
 			b.infoData.addDB(schemaVersion, di)
@@ -1166,7 +1171,7 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
-		b.infoData.add(Item{
+		b.infoData.add(tableItem{
 			dbName:        di.Name.L,
 			dbID:          di.ID,
 			tableName:     tblInfo.Name.L,

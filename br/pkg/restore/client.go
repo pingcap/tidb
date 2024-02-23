@@ -784,9 +784,15 @@ func (rc *Client) GetDatabase(name string) *metautil.Database {
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *Client) HasBackedUpSysDB() bool {
-	temporaryDB := utils.TemporaryDBName(mysql.SystemDB)
-	_, backedUp := rc.databases[temporaryDB.O]
-	return backedUp
+	sysDBs := []string{"mysql", "sys"}
+	for _, db := range sysDBs {
+		temporaryDB := utils.TemporaryDBName(db)
+		_, backedUp := rc.databases[temporaryDB.O]
+		if backedUp {
+			return true
+		}
+	}
+	return false
 }
 
 // GetPlacementPolicies returns policies.
@@ -1199,7 +1205,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
+		if ok && decodedSysDBName.L == mysql.SystemDB && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}

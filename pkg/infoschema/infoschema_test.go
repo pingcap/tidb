@@ -328,8 +328,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithOldInfoSchema(curIs)
-				require.NoError(t, err)
+				builder := infoschema.NewBuilder(dom, nil, nil).InitWithOldInfoSchema(curIs)
 				change(m, builder)
 				curIs = builder.Build()
 			}

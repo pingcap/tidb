@@ -21,6 +21,7 @@ go_library(
         "//pkg/ddl/resourcegroup",
         "//pkg/domain/infosync",
         "//pkg/errno",
+        "//pkg/infoschema/context",
         "//pkg/infoschema/metrics",
         "//pkg/kv",
         "//pkg/meta",

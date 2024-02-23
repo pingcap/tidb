@@ -724,7 +724,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	innerCols := innerSrc.Schema().Columns
 	outerCols := outerSrc.Schema().Columns
-	j := plannercore.BuildMergeJoinPlan(ctx, joinType, outerCols, innerCols)
+	j := plannercore.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
 	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
@@ -736,7 +736,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(ctx, nil)
 	return b.build(j)
 }
 
