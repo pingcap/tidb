@@ -836,8 +836,6 @@ admin show ddl jobs;
 -- error 8121
 admin show ddl job queries 10;
 -- error 8121
-admin show telemetry;
--- error 8121
 admin reload expr_pushdown_blacklist;
 -- error 8121
 admin plugins enable p;
