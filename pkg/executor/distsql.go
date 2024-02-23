@@ -152,7 +152,7 @@ func closeAll(objs ...Closeable) error {
 func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
-		newCond, err1 := expression.SubstituteCorCol2Constant(ctx, cond)
+		newCond, err1 := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 		if err1 != nil {
 			return nil, err1
 		}
@@ -341,11 +341,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			args = append(args, expression.NewInt64Const(pid))
 		}
 
-		inCondition, err := expression.NewFunction(e.Ctx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		inCondition, err := expression.NewFunction(e.Ctx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
 		if err != nil {
 			return err
 		}
-		pbConditions, err := expression.ExpressionsToPBList(e.Ctx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
+		pbConditions, err := expression.ExpressionsToPBList(e.Ctx().GetExprCtx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
 		if err != nil {
 			return err
 		}

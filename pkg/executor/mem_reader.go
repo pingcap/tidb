@@ -155,7 +155,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		}
 
 		mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx(), m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
@@ -248,7 +248,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 	}
 
 	defVal := func(i int) ([]byte, error) {
-		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.Ctx(), us.columns[i])
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.Ctx().GetExprCtx(), us.columns[i])
 		if err != nil {
 			return nil, err
 		}
@@ -414,7 +414,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		}
 
 		mutableRow.SetDatums(resultRows...)
-		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx(), m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
@@ -905,7 +905,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 
 			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
 			mutableRow.SetDatums(iter.datumRow...)
-			matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, mutableRow.ToRow())
+			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx(), iter.conditions, mutableRow.ToRow())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -921,7 +921,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		}
 
 		row := iter.chk.GetRow(0)
-		matched, _, err := expression.EvalBool(iter.ctx, iter.conditions, row)
+		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx(), iter.conditions, row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -962,7 +962,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		}
 
 		iter.mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(iter.memIndexReader.ctx, iter.memIndexReader.conditions, iter.mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(iter.memIndexReader.ctx.GetExprCtx(), iter.memIndexReader.conditions, iter.mutableRow.ToRow())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1158,7 +1158,7 @@ func getColIDAndPkColIDs(ctx sessionctx.Context, tbl table.Table, columns []*mod
 		pkColIDs = []int64{-1}
 	}
 	defVal := func(i int) ([]byte, error) {
-		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(ctx, columns[i])
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(ctx.GetExprCtx(), columns[i])
 		if err != nil {
 			return nil, err
 		}

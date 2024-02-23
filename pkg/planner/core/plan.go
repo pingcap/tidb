@@ -371,7 +371,7 @@ type PhysicalPlan interface {
 	attach2Task(...task) task
 
 	// ToPB converts physical plan to tipb executor.
-	ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error)
+	ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error)
 
 	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty

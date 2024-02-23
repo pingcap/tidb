@@ -116,7 +116,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
 			expr, err := expression.BuildSimpleExpr(
-				se,
+				se.GetExprCtx(),
 				col.GeneratedExpr.Internal(),
 				expression.WithInputSchemaAndNames(schema, names, meta),
 				expression.WithAllowCastArray(true),

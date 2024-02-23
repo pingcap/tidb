@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -55,6 +57,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
+	*exprctximpl.ExprCtxExtendedImpl
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -199,6 +202,11 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 
 // GetPlanCtx returns the PlanContext.
 func (c *Context) GetPlanCtx() planctx.PlanContext {
+	return c
+}
+
+// GetExprCtx returns the expression context of the session.
+func (c *Context) GetExprCtx() exprctx.BuildContext {
 	return c
 }
 
@@ -514,7 +522,8 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
-	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx)
+	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
+	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC

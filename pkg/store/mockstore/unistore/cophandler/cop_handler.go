@@ -331,7 +331,7 @@ func getAggInfo(ctx *dagContext, pbAgg *tipb.Aggregation) ([]aggregation.Aggrega
 	var err error
 	for _, expr := range pbAgg.AggFunc {
 		var aggExpr aggregation.Aggregation
-		aggExpr, _, err = aggregation.NewDistAggFunc(expr, ctx.fieldTps, ctx.sctx)
+		aggExpr, _, err = aggregation.NewDistAggFunc(expr, ctx.fieldTps, ctx.sctx.GetExprCtx())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

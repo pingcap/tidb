@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -81,7 +80,7 @@ func ToConstraint(constraintInfo *model.ConstraintInfo, tblInfo *model.TableInfo
 	}, nil
 }
 
-func buildConstraintExpression(ctx sessionctx.Context, exprString string, db string, tblInfo *model.TableInfo) (expression.Expression, error) {
+func buildConstraintExpression(ctx expression.BuildContext, exprString string, db string, tblInfo *model.TableInfo) (expression.Expression, error) {
 	expr, err := expression.ParseSimpleExpr(ctx, exprString, expression.WithTableInfo(db, tblInfo))
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.

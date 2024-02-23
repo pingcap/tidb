@@ -98,7 +98,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
 	if p, ok := t.(table.PartitionedTable); ok {
-		t, err = p.GetPartitionByRow(ctx, row)
+		t, err = p.GetPartitionByRow(ctx.GetExprCtx(), row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
@@ -166,7 +166,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if col.State != model.StatePublic {
 			// only append origin default value for index fetch values
 			if col.Offset >= len(row) {
-				value, err := table.GetColOriginDefaultValue(ctx, col.ToInfo())
+				value, err := table.GetColOriginDefaultValue(ctx.GetExprCtx(), col.ToInfo())
 				if err != nil {
 					return nil, err
 				}
@@ -278,11 +278,12 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	}
 	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
 	gIdx := 0
+	exprCtx := sctx.GetExprCtx()
 	for _, col := range cols {
 		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
 			_, found := oldRowMap[col.ID]
 			if !found {
-				oldRow[col.Offset], err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
+				oldRow[col.Offset], err = table.GetColOriginDefaultValue(exprCtx, col.ToInfo())
 				if err != nil {
 					return nil, err
 				}
@@ -292,7 +293,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 			// only the virtual column needs fill back.
 			// Insert doesn't fill the generated columns at non-public state.
 			if !col.GeneratedStored {
-				val, err := genExprs[gIdx].Eval(sctx, chunk.MutRowFromDatums(oldRow).ToRow())
+				val, err := genExprs[gIdx].Eval(sctx.GetExprCtx(), chunk.MutRowFromDatums(oldRow).ToRow())
 				if err != nil {
 					return nil, err
 				}

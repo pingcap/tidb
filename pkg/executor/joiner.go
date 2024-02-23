@@ -261,7 +261,7 @@ func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row
 // indicates whether the outer row matches any inner rows.
 func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColLen int, lUsed, rUsed []int) (bool, error) {
 	var err error
-	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
+	j.selected, err = expression.VectorizedFilter(j.ctx.GetExprCtx(), j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
 		return false, err
 	}
@@ -301,7 +301,7 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(
 	input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag,
 	lUsed, rUsed []int) ([]outerRowStatusFlag, error) {
 	var err error
-	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
+	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx.GetExprCtx(), j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
 	if err != nil {
 		return nil, err
 	}
@@ -376,12 +376,13 @@ func (j *semiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, ch
 		return true, false, nil
 	}
 
+	exprCtx := j.ctx.GetExprCtx()
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
 
 		// For SemiJoin, we can safely treat null result of join conditions as false,
 		// so we ignore the nullness returned by EvalBool here.
-		matched, _, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
+		matched, _, err = expression.EvalBool(exprCtx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return false, false, err
 		}
@@ -405,11 +406,12 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 		}
 		return outerRowStatus, nil
 	}
+	exprCtx := j.ctx.GetExprCtx()
 	for outer := outers.Current(); outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
 		// For SemiJoin, we can safely treat null result of join conditions as false,
 		// so we ignore the nullness returned by EvalBool here.
-		matched, _, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
+		matched, _, err := expression.EvalBool(exprCtx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return outerRowStatus, err
 		}
@@ -467,9 +469,10 @@ func (naaj *nullAwareAntiSemiJoiner) tryToMatchInners(outer chunk.Row, inners ch
 		inners.ReachEnd()
 		return true, false, nil
 	}
+	exprCtx := naaj.ctx.GetExprCtx()
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		naaj.makeShallowJoinRow(naaj.outerIsRight, inner, outer)
-		valid, _, err := expression.EvalBool(naaj.ctx, naaj.conditions, naaj.shallowRow.ToRow())
+		valid, _, err := expression.EvalBool(exprCtx, naaj.conditions, naaj.shallowRow.ToRow())
 		if err != nil {
 			return false, false, err
 		}
@@ -517,10 +520,11 @@ func (j *antiSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator
 		return true, false, nil
 	}
 
+	exprCtx := j.ctx.GetExprCtx()
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
 
-		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
+		matched, isNull, err := expression.EvalBool(exprCtx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return false, false, err
 		}
@@ -543,9 +547,10 @@ func (j *antiSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row
 		}
 		return outerRowStatus, nil
 	}
+	exprCtx := j.ctx.GetExprCtx()
 	for outer := outers.Current(); outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
-		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
+		matched, isNull, err := expression.EvalBool(exprCtx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return outerRowStatus, err
 		}
@@ -591,10 +596,11 @@ func (j *leftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Ite
 		return true, false, nil
 	}
 
+	exprCtx := j.ctx.GetExprCtx()
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeShallowJoinRow(false, inner, outer)
 
-		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
+		matched, isNull, err := expression.EvalBool(exprCtx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return false, false, err
 		}
@@ -620,9 +626,10 @@ func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chun
 		return outerRowStatus, nil
 	}
 
+	exprCtx := j.ctx.GetExprCtx()
 	for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
 		j.makeShallowJoinRow(false, inner, outer)
-		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
+		matched, isNull, err := expression.EvalBool(exprCtx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -680,10 +687,12 @@ func (naal *nullAwareAntiLeftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, 
 		inners.ReachEnd()
 		return true, false, nil
 	}
+
+	exprCtx := naal.ctx.GetExprCtx()
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		naal.makeShallowJoinRow(false, inner, outer)
 
-		valid, _, err := expression.EvalBool(naal.ctx, naal.conditions, naal.shallowRow.ToRow())
+		valid, _, err := expression.EvalBool(exprCtx, naal.conditions, naal.shallowRow.ToRow())
 		if err != nil {
 			return false, false, err
 		}
@@ -753,10 +762,11 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchInners(outer chunk.Row, inners chunk
 		return true, false, nil
 	}
 
+	exprCtx := j.ctx.GetExprCtx()
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeShallowJoinRow(false, inner, outer)
 
-		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
+		matched, isNull, err := expression.EvalBool(exprCtx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return false, false, err
 		}
@@ -782,9 +792,10 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner 
 		return outerRowStatus, nil
 	}
 
+	exprCtx := j.ctx.GetExprCtx()
 	for i := 0; outer != outers.End() && numToAppend > 0; outer, numToAppend, i = outers.Next(), numToAppend-1, i+1 {
 		j.makeShallowJoinRow(false, inner, outer)
-		matched, isNull, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
+		matched, isNull, err := expression.EvalBool(exprCtx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return nil, err
 		}

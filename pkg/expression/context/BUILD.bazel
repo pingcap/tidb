@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/infoschema/context",
         "//pkg/kv",
+        "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
     ],
 )

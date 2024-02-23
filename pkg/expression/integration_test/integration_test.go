@@ -411,9 +411,9 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
+			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 		}
-		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
+		afterFunc := expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
 			return bytes.Compare(afterFunc[i].HashCode(), afterFunc[j].HashCode()) < 0
 		})

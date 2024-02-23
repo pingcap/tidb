@@ -25,7 +25,7 @@ import (
 
 // ConstructTreeBasedDistExec constructs tree based DAGRequest
 func ConstructTreeBasedDistExec(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
-	execPB, err := p.ToPB(sctx, kv.TiFlash)
+	execPB, err := p.ToPB(sctx.GetPlanCtx(), kv.TiFlash)
 	return []*tipb.Executor{execPB}, err
 }
 
@@ -33,7 +33,7 @@ func ConstructTreeBasedDistExec(sctx sessionctx.Context, p plannercore.PhysicalP
 func ConstructListBasedDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
 	executors := make([]*tipb.Executor, 0, len(plans))
 	for _, p := range plans {
-		execPB, err := p.ToPB(sctx, kv.TiKV)
+		execPB, err := p.ToPB(sctx.GetPlanCtx(), kv.TiKV)
 		if err != nil {
 			return nil, err
 		}

@@ -373,7 +373,7 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 	return pt
 }
 
-func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p multiArgsAggTest) {
+func testMultiArgsMergePartialResult(t *testing.T, ctx expression.BuildContext, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
@@ -666,7 +666,7 @@ func testAggMemFunc(t *testing.T, p aggMemTest) {
 	}
 }
 
-func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTest) {
+func testMultiArgsAggFunc(t *testing.T, ctx expression.BuildContext, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
 
 	args := make([]expression.Expression, len(p.dataTypes))
@@ -790,7 +790,7 @@ func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
 	}
 }
 
-func benchmarkAggFunc(b *testing.B, ctx sessionctx.Context, p aggTest) {
+func benchmarkAggFunc(b *testing.B, ctx expression.BuildContext, p aggTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		dt := p.dataGen(i)
@@ -838,7 +838,7 @@ func benchmarkAggFunc(b *testing.B, ctx sessionctx.Context, p aggTest) {
 	})
 }
 
-func benchmarkMultiArgsAggFunc(b *testing.B, ctx sessionctx.Context, p multiArgsAggTest) {
+func benchmarkMultiArgsAggFunc(b *testing.B, ctx expression.BuildContext, p multiArgsAggTest) {
 	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		for j := 0; j < len(p.dataGens); j++ {
@@ -892,7 +892,7 @@ func benchmarkMultiArgsAggFunc(b *testing.B, ctx sessionctx.Context, p multiArgs
 	})
 }
 
-func baseBenchmarkAggFunc(b *testing.B, ctx sessionctx.Context, finalFunc aggfuncs.AggFunc, input []chunk.Row, output *chunk.Chunk) {
+func baseBenchmarkAggFunc(b *testing.B, ctx expression.BuildContext, finalFunc aggfuncs.AggFunc, input []chunk.Row, output *chunk.Chunk) {
 	finalPr, _ := finalFunc.AllocPartialResult()
 	output.Reset()
 	b.ResetTimer()

@@ -15,6 +15,7 @@
 package contextimpl
 
 import (
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -22,20 +23,21 @@ import (
 
 var _ context.PlanContext = struct {
 	sessionctx.Context
-	SessionContextExtended
+	*PlanCtxExtendedImpl
 }{}
 
-// SessionContextExtended provides extended method for session context to implement `PlanContext`
-type SessionContextExtended struct {
+// PlanCtxExtendedImpl provides extended method for session context to implement `PlanContext`
+type PlanCtxExtendedImpl struct {
 	sctx sessionctx.Context
+	*exprctximpl.ExprCtxExtendedImpl
 }
 
-// NewSessionContextExtended creates a new SessionContextExtended.
-func NewSessionContextExtended(sctx sessionctx.Context) SessionContextExtended {
-	return SessionContextExtended{sctx: sctx}
+// NewPlanCtxExtendedImpl creates a new PlanCtxExtendedImpl.
+func NewPlanCtxExtendedImpl(sctx sessionctx.Context, exprCtx *exprctximpl.ExprCtxExtendedImpl) *PlanCtxExtendedImpl {
+	return &PlanCtxExtendedImpl{sctx: sctx, ExprCtxExtendedImpl: exprCtx}
 }
 
 // AdviseTxnWarmup advises the txn to warm up.
-func (ctx SessionContextExtended) AdviseTxnWarmup() error {
+func (ctx *PlanCtxExtendedImpl) AdviseTxnWarmup() error {
 	return sessiontxn.GetTxnManager(ctx.sctx).AdviseWarmup()
 }

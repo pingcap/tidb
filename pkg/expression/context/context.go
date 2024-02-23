@@ -19,11 +19,14 @@ import (
 
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 // EvalContext is used to evaluate an expression
 type EvalContext interface {
+	// SQLMode returns the sql mode
+	SQLMode() mysql.SQLMode
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Value returns the value associated with this context for key.

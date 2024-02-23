@@ -271,7 +271,7 @@ func TestTableRange(t *testing.T) {
 			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 			col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
@@ -471,7 +471,7 @@ create table t(
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
@@ -833,7 +833,7 @@ func TestColumnRange(t *testing.T) {
 			require.True(t, ok)
 			conds := make([]expression.Expression, len(sel.Conditions))
 			for i, cond := range sel.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 			require.NotNil(t, col)
@@ -991,7 +991,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
@@ -1060,7 +1060,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
@@ -1407,7 +1407,7 @@ create table t(
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
@@ -1646,7 +1646,7 @@ func TestTableShardIndex(t *testing.T) {
 			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			ds, ok := selection.Children()[0].(*plannercore.DataSource)
 			if !ok {
@@ -1709,10 +1709,10 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	col1 := &expression.Column{UniqueID: 1, ID: 1, RetType: longlongType}
 	// col2 is GC column and VirtualExpr = tidb_shard(col0)
 	col2 := &expression.Column{UniqueID: 2, ID: 2, RetType: longlongType}
-	col2.VirtualExpr = expression.NewFunctionInternal(sctx, ast.TiDBShard, col2.RetType, col0)
+	col2.VirtualExpr = expression.NewFunctionInternal(sctx.GetExprCtx(), ast.TiDBShard, col2.RetType, col0)
 	// col3 is GC column and VirtualExpr = abs(col0)
 	col3 := &expression.Column{UniqueID: 3, ID: 3, RetType: longlongType}
-	col3.VirtualExpr = expression.NewFunctionInternal(sctx, ast.Abs, col2.RetType, col0)
+	col3.VirtualExpr = expression.NewFunctionInternal(sctx.GetExprCtx(), ast.Abs, col2.RetType, col0)
 	col4 := &expression.Column{UniqueID: 4, ID: 4, RetType: longlongType}
 
 	cols := []*expression.Column{col0, col1}
@@ -1736,8 +1736,8 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// normal case
 	con1 := &expression.Constant{Value: types.NewDatum(1), RetType: longlongType}
 	con5 := &expression.Constant{Value: types.NewDatum(5), RetType: longlongType}
-	exprEq := expression.NewFunctionInternal(sctx, ast.EQ, col0.RetType, col0, con1)
-	exprIn := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col0, con1, con5)
+	exprEq := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, col0.RetType, col0, con1)
+	exprIn := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col0.RetType, col0, con1, con5)
 	require.NotNil(t, exprEq)
 	require.NotNil(t, exprIn)
 	// input is nil
@@ -1745,13 +1745,13 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// input is column
 	require.Equal(t, len(ranger.ExtractColumnsFromExpr(exprEq.(*expression.ScalarFunction))), 1)
 	// (col0 = 1 and col3 > 1) or (col4 < 5 and 5)
-	exprGt := expression.NewFunctionInternal(sctx, ast.GT, longlongType, col3, con1)
+	exprGt := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.GT, longlongType, col3, con1)
 	require.NotNil(t, exprGt)
-	andExpr1 := expression.NewFunctionInternal(sctx, ast.And, longlongType, exprEq, exprGt)
+	andExpr1 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.And, longlongType, exprEq, exprGt)
 	require.NotNil(t, andExpr1)
-	exprLt := expression.NewFunctionInternal(sctx, ast.LT, longlongType, col4, con5)
-	andExpr2 := expression.NewFunctionInternal(sctx, ast.And, longlongType, exprLt, con5)
-	orExpr2 := expression.NewFunctionInternal(sctx, ast.Or, longlongType, andExpr1, andExpr2)
+	exprLt := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LT, longlongType, col4, con5)
+	andExpr2 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.And, longlongType, exprLt, con5)
+	orExpr2 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.Or, longlongType, andExpr1, andExpr2)
 	require.Equal(t, len(ranger.ExtractColumnsFromExpr(orExpr2.(*expression.ScalarFunction))), 3)
 
 	// -------------------------------------------
@@ -1770,12 +1770,12 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, nil))
 
 	// col1 in (1, 5)
-	exprIn2 := expression.NewFunctionInternal(sctx, ast.In, col1.RetType, col1, con1, con5)
+	exprIn2 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col1.RetType, col1, con1, con5)
 	accessCond[1] = exprIn2
 	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn2.(*expression.ScalarFunction)))
 
 	// col0 in (1, col1)
-	exprIn3 := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col1, con1, col1)
+	exprIn3 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col0.RetType, col1, con1, col1)
 	accessCond[1] = exprIn3
 	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn3.(*expression.ScalarFunction)))
 
@@ -1795,7 +1795,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// -------------------------------------------
 	// test AddExpr4EqAndInCondition function
 	// -------------------------------------------
-	exprIn4 := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col0, con1)
+	exprIn4 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col0.RetType, col0, con1)
 	test := []struct {
 		inputConds  []expression.Expression
 		outputConds string
@@ -2278,7 +2278,7 @@ create table t(
 		require.NotNil(t, selection, fmt.Sprintf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
+			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 		}
 		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		require.NotNil(t, cols)

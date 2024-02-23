@@ -97,7 +97,7 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 }
 
 func checkTTLInfoValid(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) error {
-	if err := checkTTLIntervalExpr(ctx, tblInfo.TTLInfo); err != nil {
+	if err := checkTTLIntervalExpr(ctx.GetExprCtx(), tblInfo.TTLInfo); err != nil {
 		return err
 	}
 
@@ -108,7 +108,7 @@ func checkTTLInfoValid(ctx sessionctx.Context, schema model.CIStr, tblInfo *mode
 	return checkTTLInfoColumnType(tblInfo)
 }
 
-func checkTTLIntervalExpr(ctx sessionctx.Context, ttlInfo *model.TTLInfo) error {
+func checkTTLIntervalExpr(ctx expression.BuildContext, ttlInfo *model.TTLInfo) error {
 	// FIXME: use a better way to validate the interval expression in ttl
 	var nowAddIntervalExpr ast.ExprNode
 

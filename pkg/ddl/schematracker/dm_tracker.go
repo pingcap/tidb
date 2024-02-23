@@ -787,7 +787,7 @@ func (d SchemaTracker) addTablePartitions(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partInfo, err := ddl.BuildAddedPartitionInfo(ctx, tblInfo, spec)
+	partInfo, err := ddl.BuildAddedPartitionInfo(ctx.GetExprCtx(), tblInfo, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}

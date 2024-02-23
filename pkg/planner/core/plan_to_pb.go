@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -28,12 +27,12 @@ import (
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *basePhysicalPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (p *basePhysicalPlan) ToPB(_ PlanContext, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, errors.Errorf("plan %s fails converts to PB", p.Plan.ExplainID())
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalExpand) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalExpand) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	if len(p.LevelExprs) > 0 {
 		return p.toPBV2(ctx, storeType)
 	}
@@ -57,7 +56,7 @@ func (p *PhysicalExpand) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand, Expand: expand, ExecutorId: &executorID}, nil
 }
 
-func (p *PhysicalExpand) toPBV2(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalExpand) toPBV2(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	projExprsPB := make([]*tipb.ExprSlice, 0, len(p.LevelExprs))
 	for _, exprs := range p.LevelExprs {
@@ -84,7 +83,7 @@ func (p *PhysicalExpand) toPBV2(ctx sessionctx.Context, storeType kv.StoreType) 
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalHashAgg) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	groupByExprs, err := expression.ExpressionsToPBList(ctx, p.GroupByItems, client)
 	if err != nil {
@@ -119,7 +118,7 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalStreamAgg) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	groupByExprs, err := expression.ExpressionsToPBList(ctx, p.GroupByItems, client)
 	if err != nil {
@@ -148,7 +147,7 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalSelection) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	conditions, err := expression.ExpressionsToPBList(ctx, p.Conditions, client)
 	if err != nil {
@@ -170,7 +169,7 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalProjection) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	exprs, err := expression.ExpressionsToPBList(ctx, p.Exprs, client)
 	if err != nil {
@@ -192,7 +191,7 @@ func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalTopN) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	topNExec := &tipb.TopN{
 		Limit: p.Count,
@@ -216,7 +215,7 @@ func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*ti
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalLimit) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	limitExec := &tipb.Limit{
 		Limit: p.Count,
@@ -237,7 +236,7 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalTableScan) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return p.partitionTableScanToPBForFlash(ctx)
 	}
@@ -274,7 +273,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
 }
 
-func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Context) (*tipb.Executor, error) {
+func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx PlanContext) (*tipb.Executor, error) {
 	ptsExec := tables.BuildPartitionTableScanFromInfos(p.Table, p.Columns, ctx.GetSessionVars().TiFlashFastScan)
 
 	if len(p.LateMaterializationFilterCondition) > 0 {
@@ -338,7 +337,7 @@ func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 }
 
 // ToPB generates the pb structure.
-func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (e *PhysicalExchangeSender) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -413,7 +412,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 }
 
 // ToPB generates the pb structure.
-func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (e *PhysicalExchangeReceiver) ToPB(ctx PlanContext, _ kv.StoreType) (*tipb.Executor, error) {
 	encodedTask := make([][]byte, 0, len(e.Tasks))
 
 	for _, task := range e.Tasks {
@@ -452,7 +451,7 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, _ kv.StoreType) 
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalIndexScan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalIndexScan) ToPB(_ PlanContext, _ kv.StoreType) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	tableColumns := p.Table.Cols()
 	for _, col := range p.schema.Columns {
@@ -486,7 +485,7 @@ func (p *PhysicalIndexScan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Ex
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalHashJoin) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 
 	if len(p.LeftJoinKeys) > 0 && len(p.LeftNAJoinKeys) > 0 {
@@ -633,7 +632,7 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 }
 
 // ToPB converts FrameBound to tipb structure.
-func (fb *FrameBound) ToPB(ctx sessionctx.Context) (*tipb.WindowFrameBound, error) {
+func (fb *FrameBound) ToPB(ctx PlanContext) (*tipb.WindowFrameBound, error) {
 	pbBound := &tipb.WindowFrameBound{
 		Type:      tipb.WindowBoundType(fb.Type),
 		Unbounded: fb.UnBounded,
@@ -655,7 +654,7 @@ func (fb *FrameBound) ToPB(ctx sessionctx.Context) (*tipb.WindowFrameBound, erro
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalWindow) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 
 	windowExec := &tipb.Window{}
@@ -707,7 +706,7 @@ func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalSort) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalSort) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	if !p.IsPartialSort {
 		return nil, errors.Errorf("sort %s can't convert to pb, because it isn't a partial sort", p.Plan.ExplainID())
 	}

@@ -150,8 +150,9 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
-		se.pctx = newPlanContextImpl(se)
-		se.tblctx = tbctximpl.NewTableContextImpl(se)
+		se.exprctx = newExpressionContextImpl(se)
+		se.pctx = newPlanContextImpl(se, se.exprctx.ExprCtxExtendedImpl)
+		se.tblctx = tbctximpl.NewTableContextImpl(se, se.exprctx)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.txn.init()

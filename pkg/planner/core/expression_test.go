@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -40,7 +39,7 @@ func parseExpr(t *testing.T, expr string) ast.ExprNode {
 	return stmt.Fields.Fields[0].Expr
 }
 
-func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode any, opts ...expression.BuildOption) (expr expression.Expression, err error) {
+func buildExpr(t *testing.T, ctx expression.BuildContext, exprNode any, opts ...expression.BuildOption) (expr expression.Expression, err error) {
 	switch x := exprNode.(type) {
 	case string:
 		node := parseExpr(t, x)
@@ -59,7 +58,7 @@ func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode any, opts ...expre
 	return
 }
 
-func buildExprAndEval(t *testing.T, ctx sessionctx.Context, exprNode any) types.Datum {
+func buildExprAndEval(t *testing.T, ctx expression.BuildContext, exprNode any) types.Datum {
 	expr, err := buildExpr(t, ctx, exprNode)
 	require.NoError(t, err)
 	val, err := expr.Eval(ctx, chunk.Row{})

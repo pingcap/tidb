@@ -459,7 +459,7 @@ func TestSelectionRequiredRows(t *testing.T) {
 		} else {
 			ds = newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
 			f, err := expression.NewFunction(
-				sctx, ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
+				sctx.GetExprCtx(), ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
 					Value:   types.NewDatum(testCase.filtersOfCol1),
 					RetType: types.NewFieldType(mysql.TypeTiny),
 				})
@@ -667,7 +667,7 @@ func TestStreamAggRequiredRows(t *testing.T) {
 		childCols := ds.Schema().Columns
 		schema := expression.NewSchema(childCols...)
 		groupBy := []expression.Expression{childCols[1]}
-		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		aggFunc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), testCase.aggFunc, []expression.Expression{childCols[0]}, true)
 		require.NoError(t, err)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 		executor := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)

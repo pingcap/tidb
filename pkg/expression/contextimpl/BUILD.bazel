@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "contextimpl",
+    srcs = ["expression.go"],
+    importpath = "github.com/pingcap/tidb/pkg/expression/contextimpl",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/context",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+    ],
+)

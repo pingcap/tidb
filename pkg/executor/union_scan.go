@@ -155,7 +155,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx, mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx(), mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -172,7 +172,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.Ctx(), us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
