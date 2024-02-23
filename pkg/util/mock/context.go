@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -60,6 +62,7 @@ type Context struct {
 	is            infoschema.InfoSchemaMetaVersion
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
+	tblctx        *tbctximpl.TableContextImpl
 	cancel        context.CancelFunc
 	pcache        sessionctx.PlanCache
 	level         kvrpcpb.DiskFullOpt
@@ -197,6 +200,11 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 // GetPlanCtx returns the PlanContext.
 func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
+}
+
+// GetTableCtx returns the table.MutateContext
+func (c *Context) GetTableCtx() tbctx.MutateContext {
+	return c.tblctx
 }
 
 // Txn implements sessionctx.Context Txn interface.
@@ -506,6 +514,7 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
+	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC

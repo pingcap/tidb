@@ -112,7 +112,6 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	e.fetched = false
-
 	e.chkHeap = &topNChunkHeap{TopNExec: e}
 	e.chkHeap.Idx = 0
 
@@ -151,7 +150,6 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
-	e.chkHeap = &topNChunkHeap{TopNExec: e}
 	e.chkHeap.rowChunks = chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
 	e.chkHeap.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.chkHeap.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
@@ -236,7 +234,7 @@ func (e *TopNExec) doCompaction(chkHeap *topNChunkHeap) error {
 	e.memTracker.ReplaceChild(chkHeap.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	chkHeap.rowChunks = newRowChunks
 
-	e.memTracker.Consume(int64(8*len(newRowPtrs) - 8*len(chkHeap.rowPtrs)))
+	e.memTracker.Consume(int64(8 * (len(newRowPtrs) - len(chkHeap.rowPtrs))))
 	chkHeap.rowPtrs = newRowPtrs
 	return nil
 }

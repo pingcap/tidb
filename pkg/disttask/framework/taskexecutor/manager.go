@@ -227,7 +227,7 @@ func (m *Manager) handleTasks() {
 // handleExecutableTasks handles executable tasks.
 func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(&task.Task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
 			// do not handle the tasks with lower rank if current task is waiting tasks free.
@@ -295,7 +295,7 @@ func (m *Manager) recoverMetaLoop() {
 
 // cancelTaskExecutors cancels the task executors.
 // unlike cancelRunningSubtaskOf, this function doesn't change subtask state.
-func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
+func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
@@ -328,7 +328,7 @@ func (m *Manager) startTaskExecutor(task *proto.Task) {
 		return
 	}
 	m.addTaskExecutor(executor)
-	m.slotManager.alloc(task)
+	m.slotManager.alloc(&task.TaskBase)
 	resource := m.getStepResource(task.Concurrency)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
 		zap.Stringer("type", task.Type), zap.Int("remaining-slots", m.slotManager.availableSlots()))

@@ -258,7 +258,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), map[autoid.AllocatorType]int64{
 		autoid.RowIDAllocType: 123,
 	}, plan, localChecksum, logger))
-	allocators := table.Allocators(tk.Session().GetSessionVars())
+	allocators := table.Allocators(tk.Session().GetTableCtx())
 	nextGlobalAutoID, err := allocators.Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(124), nextGlobalAutoID)
