@@ -220,7 +220,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			continue
 		}
 		task := e.task.Load()
-		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
+		if task.State != proto.TaskStateRunning {
 			return
 		}
 		if exist, err := e.taskTable.HasSubtasksInStates(e.ctx, e.id, task.ID, task.Step,
@@ -238,14 +238,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 		}
 		// reset it when we get a subtask
 		checkInterval, noSubtaskCheckCnt = SubtaskCheckInterval, 0
-
-		switch task.State {
-		case proto.TaskStateRunning:
-			err = e.RunStep(resource)
-		case proto.TaskStateReverting:
-			// TODO: will remove it later, leave it now.
-			err = e.Rollback()
-		}
+		err = e.RunStep(resource)
 		if err != nil {
 			e.logger.Error("failed to handle task", zap.Error(err))
 		}
@@ -484,36 +477,6 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
 	})
-}
-
-// Rollback rollbacks the subtask.
-// TODO no need to start executor to do it, refactor it later.
-func (e *BaseTaskExecutor) Rollback() error {
-	task := e.task.Load()
-	e.resetError()
-	e.logger.Info("task reverting, cancel unfinished subtasks")
-
-	// We should cancel all subtasks before rolling back
-	for {
-		// TODO we can update them using one sql, but requires change the metric
-		// gathering logic.
-		subtask, err := e.taskTable.GetFirstSubtaskInStates(e.ctx, e.id, task.ID, task.Step,
-			proto.SubtaskStatePending, proto.SubtaskStateRunning)
-		if err != nil {
-			e.onError(err)
-			return e.getError()
-		}
-
-		if subtask == nil {
-			break
-		}
-
-		e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
-		if err = e.getError(); err != nil {
-			return err
-		}
-	}
-	return e.getError()
 }
 
 // GetTask implements TaskExecutor.GetTask.

@@ -177,10 +177,10 @@ type logicalOptRule interface {
 }
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
-func BuildLogicalPlanForTest(ctx context.Context, sctx PlanContext, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
+func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
-	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, utilhint.NewQBHintHandler(nil))
+	builder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), infoSchema, utilhint.NewQBHintHandler(nil))
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err

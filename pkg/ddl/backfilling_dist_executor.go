@@ -87,22 +87,20 @@ func decodeBackfillSubTaskMeta(raw []byte) (*BackfillSubTaskMeta, error) {
 	return &subtask, nil
 }
 
-// NewBackfillSubtaskExecutor creates a new backfill subtask executor.
-func NewBackfillSubtaskExecutor(taskMeta []byte, d *ddl,
-	bc ingest.BackendCtx, stage proto.Step) (execute.StepExecutor, error) {
-	bgm := &BackfillTaskMeta{}
-	err := json.Unmarshal(taskMeta, bgm)
-	if err != nil {
-		return nil, err
-	}
-	jobMeta := &bgm.Job
+func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
+	stage proto.Step,
+) (execute.StepExecutor, error) {
+	jobMeta := &s.taskMeta.Job
+	ddlObj := s.d
 
-	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	_, tblIface, err := ddlObj.getTableByTxn((*asAutoIDRequirement)(ddlObj.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
-	indexInfos := make([]*model.IndexInfo, 0, len(bgm.EleIDs))
-	for _, eid := range bgm.EleIDs {
+	tbl := tblIface.(table.PhysicalTable)
+	eleIDs := s.taskMeta.EleIDs
+	indexInfos := make([]*model.IndexInfo, 0, len(eleIDs))
+	for _, eid := range eleIDs {
 		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
 		if indexInfo == nil {
 			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
@@ -111,33 +109,60 @@ func NewBackfillSubtaskExecutor(taskMeta []byte, d *ddl,
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
+	cloudStorageURI := s.taskMeta.CloudStorageURI
 
 	switch stage {
 	case proto.BackfillStepReadIndex:
-		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
-		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
-		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(
-			d, &bgm.Job, indexInfos, tbl.(table.PhysicalTable), jc, bc, bgm.CloudStorageURI), nil
+		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
+		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
+		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
-		if len(bgm.CloudStorageURI) > 0 {
-			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+		if len(cloudStorageURI) == 0 {
+			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return nil, errors.Errorf("local import does not have write & ingest step")
+		return newCloudImportExecutor(jobMeta, indexInfos[0], tbl, s.getBackendCtx, cloudStorageURI)
 	default:
+		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
 }
 
+func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
+	job := &s.taskMeta.Job
+	unique, err := decodeIndexUniqueness(job)
+	if err != nil {
+		return nil, err
+	}
+	ddlObj := s.d
+	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+
+	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+}
+
+func decodeIndexUniqueness(job *model.Job) (bool, error) {
+	unique := make([]bool, 1)
+	err := job.DecodeArgs(&unique[0])
+	if err != nil {
+		err = job.DecodeArgs(&unique)
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	// We only support adding multiple unique indexes or multiple non-unique indexes,
+	// we use the first index uniqueness here.
+	return unique[0], nil
+}
+
 type backfillDistExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	d          *ddl
-	task       *proto.Task
-	taskTable  taskexecutor.TaskTable
-	backendCtx ingest.BackendCtx
-	jobID      int64
+	d         *ddl
+	task      *proto.Task
+	taskTable taskexecutor.TaskTable
+	taskMeta  *BackfillTaskMeta
+	jobID     int64
 }
 
 func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable, d *ddl) taskexecutor.TaskExecutor {
@@ -156,49 +181,21 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d := s.d
 
 	bgm := &BackfillTaskMeta{}
 	err = json.Unmarshal(s.task.Meta, bgm)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	job := &bgm.Job
 
-	unique, err := decodeIndexUniqueness(job)
-	if err != nil {
-		return err
-	}
-	discovery := d.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	// TODO: local backend should be inited when step executor is created.
-	// TODO here we have to use executor ctx to avoid it keeps running when task is canceled.
-	bc, err := ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), unique, job.ID, d.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.backendCtx = bc
-	s.jobID = job.ID
+	s.taskMeta = bgm
 	return nil
-}
-
-func decodeIndexUniqueness(job *model.Job) (bool, error) {
-	unique := make([]bool, 1)
-	err := job.DecodeArgs(&unique[0])
-	if err != nil {
-		err = job.DecodeArgs(&unique)
-	}
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	// We only support adding multiple unique indexes or multiple non-unique indexes,
-	// we use the first index uniqueness here.
-	return unique[0], nil
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
-		return NewBackfillSubtaskExecutor(task.Meta, s.d, s.backendCtx, task.Step)
+		return s.newBackfillSubtaskExecutor(task.Step)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
@@ -224,8 +221,5 @@ func (*backfillDistExecutor) IsRetryableError(err error) bool {
 }
 
 func (s *backfillDistExecutor) Close() {
-	if s.backendCtx != nil {
-		ingest.LitBackCtxMgr.Unregister(s.jobID)
-	}
 	s.BaseTaskExecutor.Close()
 }

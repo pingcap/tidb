@@ -204,16 +204,16 @@ func (m *Manager) handleTasks() {
 	executableTasks := make([]*storage.TaskExecInfo, 0, len(tasks))
 	for _, task := range tasks {
 		switch task.State {
-		case proto.TaskStateRunning, proto.TaskStateReverting:
-			if task.State == proto.TaskStateReverting {
-				m.cancelRunningSubtaskOf(task.ID)
-			}
-			// TaskStateReverting require executor to run rollback logic.
+		case proto.TaskStateRunning:
 			if !m.isExecutorStarted(task.ID) {
 				executableTasks = append(executableTasks, task)
 			}
 		case proto.TaskStatePausing:
 			if err := m.handlePausingTask(task.ID); err != nil {
+				m.logErr(err)
+			}
+		case proto.TaskStateReverting:
+			if err := m.handleRevertingTask(task.ID); err != nil {
 				m.logErr(err)
 			}
 		}
@@ -264,6 +264,11 @@ func (m *Manager) handlePausingTask(taskID int64) error {
 	// we pause subtasks belongs to this exec node even when there's no executor running.
 	// as balancer might move subtasks to this node when the executor hasn't started.
 	return m.taskTable.PauseSubtasks(m.ctx, m.id, taskID)
+}
+
+func (m *Manager) handleRevertingTask(taskID int64) error {
+	m.cancelRunningSubtaskOf(taskID)
+	return m.taskTable.CancelSubtask(m.ctx, m.id, taskID)
 }
 
 // recoverMetaLoop recovers dist_framework_meta for the tidb node running the taskExecutor manager.

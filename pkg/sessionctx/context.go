@@ -67,7 +67,6 @@ type Context interface {
 	contextutil.ValueStoreContext
 	exprctx.EvalContext
 	exprctx.BuildContext
-	planctx.PlanContext
 	tablelock.TableLockContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
@@ -100,6 +99,9 @@ type Context interface {
 	GetSessionVars() *variable.SessionVars
 
 	GetSessionManager() util.SessionManager
+
+	// GetPlanCtx gets the plan context of the current session.
+	GetPlanCtx() planctx.PlanContext
 
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
@@ -134,12 +136,6 @@ type Context interface {
 	GetPreparedTxnFuture() TxnFuture
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
-	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
-	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-	GetBuiltinFunctionUsage() map[string]uint32
-	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
-	// Notice that this is a thread safe function
-	BuiltinFunctionUsageInc(scalarFuncSigName string)
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
