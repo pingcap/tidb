@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
@@ -1300,9 +1301,47 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
+func deleteLeader(ctx context.Context, cli *clientv3.Client, prefixKey string) error {
+	session, err := concurrency.NewSession(cli)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		_ = session.Close()
+	}()
+	election := concurrency.NewElection(session, prefixKey)
+	resp, err := election.Leader(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = cli.Delete(ctx, string(resp.Kvs[0].Key))
+	return err
+}
+
+func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
+	dom := domain.GetDomain(s)
+	for !dom.DDL().OwnerManager().IsOwner() {
+		ownerId, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
+		if err != nil {
+			return err
+		}
+		err = deleteLeader(ctx, dom.EtcdClient(), ownerId)
+		if err != nil {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
+}
+
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s sessiontypes.Session) {
+	err := forceToLeader(context.Background(), s)
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
+	}
+
 	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
@@ -1311,19 +1350,6 @@ func upgrade(s sessiontypes.Session) {
 	}
 	printClusterState(s, ver)
 
-	// Only upgrade from under version92 and this TiDB is not owner set.
-	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
-	if ver < version92 {
-		useConcurrentDDL, err := checkOwnerVersion(context.Background(), domain.GetDomain(s))
-		if err != nil {
-			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
-		}
-		if !useConcurrentDDL {
-			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
-			// overwrite variable EnableConcurrentDDL.
-			variable.DDLForce2Queue.Store(true)
-		}
-	}
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
