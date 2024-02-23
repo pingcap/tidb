@@ -218,8 +218,6 @@ type Transaction interface {
 	SetMemoryFootprintChangeHook(func(uint64))
 	// Len returns the number of entries in the DB.
 	Len() int
-	// Reset reset the Transaction to initial states.
-	Reset()
 	// Commit commits the transaction operations to KV store.
 	Commit(context.Context) error
 	// Rollback undoes the transaction operations to KV store.
