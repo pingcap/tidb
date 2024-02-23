@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
@@ -1301,23 +1300,6 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func deleteLeader(ctx context.Context, cli *clientv3.Client, prefixKey string) error {
-	session, err := concurrency.NewSession(cli)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		_ = session.Close()
-	}()
-	election := concurrency.NewElection(session, prefixKey)
-	resp, err := election.Leader(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = cli.Delete(ctx, string(resp.Kvs[0].Key))
-	return err
-}
-
 func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
 	dom := domain.GetDomain(s)
 	for !dom.DDL().OwnerManager().IsOwner() {
@@ -1325,7 +1307,7 @@ func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
 		if err != nil {
 			return err
 		}
-		err = deleteLeader(ctx, dom.EtcdClient(), ownerId)
+		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ownerId)
 		if err != nil {
 			return err
 		}
