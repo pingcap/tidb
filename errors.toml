@@ -566,6 +566,11 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundConflictRecords"]
+error = '''
+found conflict records in table %s, key is '%s', row data is '%s'
+'''
+
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
 found duplicate key '%s', value '%s'

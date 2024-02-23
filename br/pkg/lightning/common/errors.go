@@ -102,6 +102,7 @@ var (
 	ErrFoundDuplicateKeys   = errors.Normalize("found duplicate key '%s', value '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundDuplicateKey"))
 	ErrAddIndexFailed       = errors.Normalize("add index on table %s failed", errors.RFCCodeText("Lightning:Restore:ErrAddIndexFailed"))
 	ErrDropIndexFailed      = errors.Normalize("drop index %s on table %s failed", errors.RFCCodeText("Lightning:Restore:ErrDropIndexFailed"))
+	ErrFoundConflictRecords = errors.Normalize("found conflict records in table %s, key is '%s', row data is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundConflictRecords"))
 )
 
 type withStack struct {

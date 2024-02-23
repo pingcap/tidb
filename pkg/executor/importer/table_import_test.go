@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/stretchr/testify/require"
@@ -227,4 +228,12 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	_, _, err = GetRegionSplitSizeKeys(context.Background())
 	require.ErrorContains(t, err, "get region split size and keys failed")
 	// no positive case, more complex to mock it
+}
+
+func TestRetrieveKeyAndValueFromErrFoundDuplicateKeys(t *testing.T) {
+	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs("1", "1.csv")
+	rawKey, rawValue, err := RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
+	require.NoError(t, err)
+	require.Equal(t, []byte("1"), rawKey)
+	require.Equal(t, []byte("1.csv"), rawValue)
 }

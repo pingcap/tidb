@@ -22,6 +22,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,10 +50,12 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -540,10 +543,61 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 	return mgr.OpenEngine(ctx, dataEngineCfg, ti.FullTableName(), engineID)
 }
 
+func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
+	errString := err.Error()
+
+	pattern := `found duplicate key (.+), value (.+)`
+	regex := regexp.MustCompile(pattern)
+	matches := regex.FindStringSubmatch(errString)
+
+	if len(matches) == 3 {
+		key := matches[1]
+		value := matches[2]
+		return []byte(key), []byte(value), nil
+	}
+
+	return nil, nil, err
+}
+
+func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error {
+	rawKey, rawValue, err := RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+	}
+	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.Logger{},
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	handle, err := tablecodec.DecodeRowKey(rawKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+		tbl.Meta(), handle, tbl.Cols(), rawValue)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return common.ErrFoundConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData)
+}
+
 // ImportAndCleanup imports the engine and cleanup the engine data.
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	if common.ErrFoundDuplicateKeys.Equal(importErr) {
+		err := ConvertToErrFoundConflictRecords(importErr, ti.encTable)
+		return 0, err
+	}
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key

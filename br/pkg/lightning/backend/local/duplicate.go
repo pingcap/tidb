@@ -17,11 +17,14 @@ package local
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
@@ -42,10 +45,15 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -459,7 +467,7 @@ func (m *DupeDetector) HasDuplicate() bool {
 }
 
 // RecordDataConflictError records data conflicts to errorMgr. The key received from stream must be a row key.
-func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKVStream) error {
+func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKVStream, algorithm config.DuplicateResolutionAlgorithm) error {
 	//nolint: errcheck
 	defer stream.Close()
 	var dataConflictInfos []errormanager.DataConflictInfo
@@ -468,6 +476,10 @@ func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKV
 		if errors.Cause(err) == io.EOF {
 			break
 		}
+		//if common.ErrFoundDuplicateKeys.Equal(err) {
+		//	err = ConvertToKeyExistsErr(err, indexInfo, m.tbl.Meta())
+		//	return err
+		//}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -481,6 +493,11 @@ func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKV
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		if algorithm == config.DupeResAlgErr {
+			return common.ErrFoundConflictRecords.FastGenByArgs(m.tableName, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val))
+		}
+
 		conflictInfo := errormanager.DataConflictInfo{
 			RawKey:   key,
 			RawValue: val,
@@ -528,7 +545,7 @@ func (m *DupeDetector) saveIndexHandles(ctx context.Context, handles pendingInde
 }
 
 // RecordIndexConflictError records index conflicts to errorMgr. The key received from stream must be an index key.
-func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) error {
+func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo, algorithm config.DuplicateResolutionAlgorithm) error {
 	//nolint: errcheck
 	defer stream.Close()
 	indexHandles := makePendingIndexHandlesWithCapacity(0)
@@ -537,6 +554,10 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 		if errors.Cause(err) == io.EOF {
 			break
 		}
+		//if common.ErrFoundDuplicateKeys.Equal(err) {
+		//	err = ConvertToKeyExistsErr(err, indexInfo, m.tbl.Meta())
+		//	return err
+		//}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -550,6 +571,11 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		if algorithm == config.DupeResAlgErr {
+			return common.ErrFoundConflictRecords.FastGenByArgs(m.tableName, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val))
+		}
+
 		conflictInfo := errormanager.DataConflictInfo{
 			RawKey:   key,
 			RawValue: val,
@@ -702,7 +728,7 @@ func (m *DupeDetector) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter common.Ke
 }
 
 // CollectDuplicateRowsFromDupDB collects duplicates from the duplicate DB and records all duplicate row info into errorMgr.
-func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter common.KeyAdapter) error {
+func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter common.KeyAdapter, algorithm config.DuplicateResolutionAlgorithm) error {
 	tasks, err := m.buildLocalDupTasks(dupDB, keyAdapter)
 	if err != nil {
 		return errors.Trace(err)
@@ -719,12 +745,16 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
 				var err error
 				if task.indexInfo == nil {
-					err = m.RecordDataConflictError(gCtx, stream)
+					err = m.RecordDataConflictError(gCtx, stream, algorithm)
 				} else {
-					err = m.RecordIndexConflictError(gCtx, stream, task.tableID, task.indexInfo)
+					err = m.RecordIndexConflictError(gCtx, stream, task.tableID, task.indexInfo, algorithm)
 				}
 				return errors.Trace(err)
 			}); err != nil {
+				//if common.ErrFoundDuplicateKeys.Equal(err) {
+				//	err = ConvertToKeyExistsErr(err, task.indexInfo, m.tbl.Meta())
+				//	return err
+				//}
 				return errors.Trace(err)
 			}
 
@@ -788,6 +818,7 @@ func (m *DupeDetector) processRemoteDupTaskOnce(
 	importClientFactory ImportClientFactory,
 	regionPool *utils.WorkerPool,
 	remainKeyRanges *pendingKeyRanges,
+	algorithm config.DuplicateResolutionAlgorithm,
 ) (madeProgress bool, err error) {
 	//nolint: prealloc
 	var regions []*split.RegionInfo
@@ -828,11 +859,15 @@ func (m *DupeDetector) processRemoteDupTaskOnce(
 					return errors.Annotatef(err, "failed to create remote duplicate kv stream")
 				}
 				if task.indexInfo == nil {
-					err = m.RecordDataConflictError(ctx, stream)
+					err = m.RecordDataConflictError(ctx, stream, algorithm)
 				} else {
-					err = m.RecordIndexConflictError(ctx, stream, task.tableID, task.indexInfo)
+					err = m.RecordIndexConflictError(ctx, stream, task.tableID, task.indexInfo, algorithm)
 				}
 				if err != nil {
+					//if common.ErrFoundDuplicateKeys.Equal(err) {
+					//	err = ConvertToKeyExistsErr(err, task.indexInfo, m.tbl.Meta())
+					//	return err
+					//}
 					return errors.Annotatef(err, "failed to record conflict errors")
 				}
 				return nil
@@ -864,12 +899,13 @@ func (m *DupeDetector) processRemoteDupTask(
 	logger log.Logger,
 	importClientFactory ImportClientFactory,
 	regionPool *utils.WorkerPool,
+	algorithm config.DuplicateResolutionAlgorithm,
 ) error {
 	regionErrRetryAttempts := split.WaitRegionOnlineAttemptTimes
 	remainAttempts := maxDupCollectAttemptTimes
 	remainKeyRanges := newPendingKeyRanges(task.KeyRange)
 	for {
-		madeProgress, err := m.processRemoteDupTaskOnce(ctx, task, logger, importClientFactory, regionPool, remainKeyRanges)
+		madeProgress, err := m.processRemoteDupTaskOnce(ctx, task, logger, importClientFactory, regionPool, remainKeyRanges, algorithm)
 		if err == nil {
 			if !remainKeyRanges.empty() {
 				remainKeyRanges.list()
@@ -904,7 +940,7 @@ func (m *DupeDetector) processRemoteDupTask(
 }
 
 // CollectDuplicateRowsFromTiKV collects duplicates from the remote TiKV and records all duplicate row info into errorMgr.
-func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importClientFactory ImportClientFactory) error {
+func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importClientFactory ImportClientFactory, algorithm config.DuplicateResolutionAlgorithm) error {
 	tasks, err := m.buildDupTasks()
 	if err != nil {
 		return errors.Trace(err)
@@ -929,7 +965,7 @@ func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importC
 					zap.Int64("indexID", task.indexInfo.ID),
 				)
 			}
-			err := m.processRemoteDupTask(gCtx, task, taskLogger, importClientFactory, regionPool)
+			err := m.processRemoteDupTask(gCtx, task, taskLogger, importClientFactory, regionPool, algorithm)
 			return errors.Trace(err)
 		})
 	}
@@ -954,7 +990,7 @@ type DupeController struct {
 
 // CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 // may be repeated with other keys in local data source.
-func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
+func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -965,7 +1001,7 @@ func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if err := duplicateManager.CollectDuplicateRowsFromDupDB(ctx, local.duplicateDB, local.keyAdapter); err != nil {
+	if err := duplicateManager.CollectDuplicateRowsFromDupDB(ctx, local.duplicateDB, local.keyAdapter, algorithm); err != nil {
 		return false, errors.Trace(err)
 	}
 	return duplicateManager.HasDuplicate(), nil
@@ -973,7 +1009,7 @@ func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl 
 
 // CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 // the data import by other lightning.
-func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions) (hasDupe bool, err error) {
+func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -984,7 +1020,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, local.importClientFactory); err != nil {
+	if err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, local.importClientFactory, algorithm); err != nil {
 		return false, errors.Trace(err)
 	}
 	return duplicateManager.HasDuplicate(), nil
@@ -1002,7 +1038,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 	case config.DupeResAlgNone:
 		logger.Warn("skipping resolution due to selected algorithm. this table will become inconsistent!", zap.String("category", "resolve-dupe"), zap.Stringer("algorithm", algorithm))
 		return nil
-	case config.DupeResAlgReplace, config.DupeResAlgErr:
+	case config.DupeResAlgReplace:
 	default:
 		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}
@@ -1016,31 +1052,24 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 	logger.Debug("got tblInfo from tbl",
 		zap.ByteString("tblInfo", tblInfo))
 
-	switch algorithm {
-	case config.DupeResAlgReplace:
-		err = local.errorMgr.ReplaceConflictKeys(
-			ctx, tbl, tableName, pool,
-			func(ctx context.Context, key []byte) ([]byte, error) {
-				value, err := local.getLatestValue(ctx, logger, key)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				return value, nil
-			},
-			func(ctx context.Context, key []byte) error {
-				err := local.deleteDuplicateRow(ctx, logger, key)
-				if err != nil {
-					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-					return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
-				}
-				return nil
-			},
-		)
-	case config.DupeResAlgErr:
-		err = local.errorMgr.ResolveConflictKeysError(
-			ctx, tableName,
-		)
-	}
+	err = local.errorMgr.ReplaceConflictKeys(
+		ctx, tbl, tableName, pool,
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			value, err := local.getLatestValue(ctx, logger, key)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return value, nil
+		},
+		func(ctx context.Context, key []byte) error {
+			err := local.deleteDuplicateRow(ctx, logger, key)
+			if err != nil {
+				logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+				return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
+			}
+			return nil
+		},
+	)
 
 	return errors.Trace(err)
 }
@@ -1088,4 +1117,50 @@ func (local *DupeController) deleteDuplicateRow(
 	err = txn.Delete(key)
 
 	return errors.Trace(err)
+}
+
+func ConvertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	tErr, ok := errors.Cause(originErr).(*terror.Error)
+	if !ok {
+		return originErr
+	}
+	if len(tErr.Args()) != 2 {
+		return originErr
+	}
+	key, keyIsByte := tErr.Args()[0].([]byte)
+	value, valIsByte := tErr.Args()[1].([]byte)
+	if !keyIsByte || !valIsByte {
+		return originErr
+	}
+	return GenKeyExistsErr(key, value, idxInfo, tblInfo)
+}
+
+func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	idxColLen := len(idxInfo.Columns)
+	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
+	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
+	if err != nil {
+		tidblogutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
+			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+		return tidbkv.ErrKeyExists.FastGenByArgs(key, indexName)
+	}
+	valueStr := make([]string, 0, idxColLen)
+	for i, val := range values[:idxColLen] {
+		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
+		if err != nil {
+			tidblogutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
+				zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+			return tidbkv.ErrKeyExists.FastGenByArgs(key, indexName)
+		}
+		str, err := d.ToString()
+		if err != nil {
+			str = string(val)
+		}
+		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
+		}
+		valueStr = append(valueStr, str)
+	}
+	return tidbkv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }

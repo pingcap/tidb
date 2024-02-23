@@ -100,7 +100,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: bc.sysVars,
 		IndexID: indexID,
-	})
+	}, lightning.DupeResAlgNone)
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
@@ -141,7 +141,7 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
-		})
+		}, lightning.DupeResAlgNone)
 		if err != nil {
 			logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
