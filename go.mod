@@ -317,7 +317,7 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	// remove it after https://github.com/pingcap/kvproto/pull/1224 is merged
-	github.com/pingcap/kvproto v0.0.0-20240109063850-932639606bcf => github.com/pingcap/kvproto v0.0.0-20240223081609-df7de9808067
+	github.com/pingcap/kvproto v0.0.0-20240206021635-05a3758a1d24 => github.com/pingcap/kvproto v0.0.0-20240223081609-df7de9808067
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
