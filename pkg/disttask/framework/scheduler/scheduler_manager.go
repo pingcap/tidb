@@ -228,14 +228,14 @@ func (sm *Manager) scheduleTaskLoop() {
 	}
 }
 
-func (sm *Manager) getSchedulableTasks() ([]*proto.Task, error) {
+func (sm *Manager) getSchedulableTasks() ([]*proto.TaskBase, error) {
 	tasks, err := sm.taskMgr.GetTopUnfinishedTasks(sm.ctx)
 	if err != nil {
 		sm.logger.Warn("get unfinished tasks failed", zap.Error(err))
 		return nil, err
 	}
 
-	schedulableTasks := make([]*proto.Task, 0, len(tasks))
+	schedulableTasks := make([]*proto.TaskBase, 0, len(tasks))
 	for _, task := range tasks {
 		if sm.hasScheduler(task.ID) {
 			continue
@@ -255,7 +255,7 @@ func (sm *Manager) getSchedulableTasks() ([]*proto.Task, error) {
 	return schedulableTasks, nil
 }
 
-func (sm *Manager) startSchedulers(schedulableTasks []*proto.Task) error {
+func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 	if len(schedulableTasks) == 0 {
 		return nil
 	}
@@ -327,7 +327,7 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 	}
 }
 
-func (sm *Manager) startScheduler(basicTask *proto.Task, allocateSlots bool, reservedExecID string) {
+func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool, reservedExecID string) {
 	task, err := sm.taskMgr.GetTaskByID(sm.ctx, basicTask.ID)
 	if err != nil {
 		sm.logger.Error("get task failed", zap.Int64("task-id", basicTask.ID), zap.Error(err))
