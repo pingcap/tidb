@@ -264,7 +264,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts)
+	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.schemaVersion)
 	if err == nil {
 		is.tableCache.Set(key, ret)
 		return ret, true
@@ -303,7 +303,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts)
+	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.schemaVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -408,9 +408,9 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	return
 }
 
-func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64) (table.Table, error) {
+func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
-	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d", dbID, tblID), func() (ret any, err error) {
+	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (ret any, err error) {
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
