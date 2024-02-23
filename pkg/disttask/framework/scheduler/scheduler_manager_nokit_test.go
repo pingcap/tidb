@@ -31,16 +31,16 @@ func TestManagerSchedulersOrdered(t *testing.T) {
 	defer ctrl.Finish()
 	mgr := NewManager(context.Background(), nil, "1")
 	for i := 1; i <= 5; i++ {
-		task := &proto.Task{
+		task := &proto.Task{TaskBase: proto.TaskBase{
 			ID: int64(i * 10),
-		}
+		}}
 		mockScheduler := mock.NewMockScheduler(ctrl)
 		mockScheduler.EXPECT().GetTask().Return(task).AnyTimes()
 		mgr.addScheduler(task.ID, mockScheduler)
 	}
 	ordered := func(schedulers []Scheduler) bool {
 		for i := 1; i < len(schedulers); i++ {
-			if schedulers[i-1].GetTask().Compare(schedulers[i].GetTask()) >= 0 {
+			if schedulers[i-1].GetTask().CompareTask(schedulers[i].GetTask()) >= 0 {
 				return false
 			}
 		}
@@ -49,9 +49,9 @@ func TestManagerSchedulersOrdered(t *testing.T) {
 	require.Len(t, mgr.getSchedulers(), 5)
 	require.True(t, ordered(mgr.getSchedulers()))
 
-	task35 := &proto.Task{
+	task35 := &proto.Task{TaskBase: proto.TaskBase{
 		ID: int64(35),
-	}
+	}}
 	mockScheduler35 := mock.NewMockScheduler(ctrl)
 	mockScheduler35.EXPECT().GetTask().Return(task35).AnyTimes()
 
@@ -62,7 +62,6 @@ func TestManagerSchedulersOrdered(t *testing.T) {
 	require.Len(t, mgr.getSchedulers(), 5)
 	require.True(t, ordered(mgr.getSchedulers()))
 }
-
 func TestSchedulerCleanupTask(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
@@ -76,7 +75,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 
 	// normal
 	tasks := []*proto.Task{
-		{ID: 1},
+		{TaskBase: proto.TaskBase{ID: 1}},
 	}
 	taskMgr.EXPECT().GetTasksInStates(
 		mgr.ctx,
@@ -126,7 +125,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 			return mockScheduler
 		})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil).AnyTimes()
-	tasks := []*proto.Task{
+	tasks := []*proto.TaskBase{
 		{
 			ID:          int64(1),
 			Concurrency: 1,
@@ -147,7 +146,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 		},
 	}
 	for i := 1; i <= 3; i++ {
-		taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(i)).Return(tasks[i-1], nil).Times(2)
+		taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(i)).Return(&proto.Task{TaskBase: *tasks[i-1]}, nil).Times(2)
 	}
 
 	mgr.startSchedulers(tasks)
@@ -160,7 +159,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	mgr.schedulerWG.Wait()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/exitScheduler"))
 
-	tasks = []*proto.Task{
+	tasks = []*proto.TaskBase{
 		{
 			ID:          int64(4),
 			Concurrency: 1,
@@ -168,10 +167,10 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 			State:       proto.TaskStatePaused,
 		},
 	}
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(4)).Return(tasks[0], nil)
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(4)).Return(&proto.Task{TaskBase: *tasks[0]}, nil)
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(4)).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
 		tasks[0].State = proto.TaskStateResuming
-		return tasks[0], nil
+		return &proto.Task{TaskBase: *tasks[0]}, nil
 	})
 
 	mgr.startSchedulers(tasks)
