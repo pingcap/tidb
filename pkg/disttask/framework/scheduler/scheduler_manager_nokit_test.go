@@ -62,6 +62,7 @@ func TestManagerSchedulersOrdered(t *testing.T) {
 	require.Len(t, mgr.getSchedulers(), 5)
 	require.True(t, ordered(mgr.getSchedulers()))
 }
+
 func TestSchedulerCleanupTask(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
@@ -149,13 +150,12 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 		taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(i)).Return(&proto.Task{TaskBase: *tasks[i-1]}, nil).Times(2)
 	}
 
-	mgr.startSchedulers(tasks)
+	require.NoError(t, mgr.startSchedulers(tasks))
 	schs := mgr.getSchedulers()
 	require.Equal(t, 3, len(schs))
 	for _, sch := range schs {
 		require.Equal(t, false, sch.(*BaseScheduler).allocatedSlots)
 	}
-
 	mgr.schedulerWG.Wait()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/exitScheduler"))
 
@@ -173,7 +173,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 		return &proto.Task{TaskBase: *tasks[0]}, nil
 	})
 
-	mgr.startSchedulers(tasks)
+	require.NoError(t, mgr.startSchedulers(tasks))
 	schs = mgr.getSchedulers()
 	require.Equal(t, 1, len(schs))
 	require.Equal(t, false, schs[0].(*BaseScheduler).allocatedSlots)

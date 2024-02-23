@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	mockScheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
+	mockscheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -47,7 +47,7 @@ const (
 )
 
 func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
-	mockScheduler := mockScheduler.NewMockExtension(ctrl)
+	mockScheduler := mockscheduler.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, _ *proto.Task) ([]string, error) {

@@ -281,7 +281,8 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		// reverting/cancelling/pausing
 		default:
 			allocateSlots = false
-			sm.logger.Info("start scheduler without allocating slots")
+			sm.logger.Info("start scheduler without allocating slots",
+				zap.Int64("task-id", task.ID), zap.Stringer("state", task.State))
 		}
 
 		metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.SchedulingStatus).Inc()
