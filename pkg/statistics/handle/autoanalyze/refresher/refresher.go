@@ -15,7 +15,6 @@
 package refresher
 
 import (
-	"math"
 	"strings"
 	"time"
 
@@ -314,24 +313,23 @@ func findLastAnalyzeTime(
 	currentTs uint64,
 ) time.Time {
 	// Big enough to make sure the first version is smaller than this.
-	minVersion := uint64(math.MaxUint64)
+	maxVersion := uint64(0)
 	for _, idx := range tblStats.Indices {
 		if idx.IsAnalyzed() {
-			minVersion = min(minVersion, idx.LastUpdateVersion)
+			maxVersion = max(maxVersion, idx.LastUpdateVersion)
 		}
 	}
 	for _, col := range tblStats.Columns {
 		if col.IsAnalyzed() {
-			minVersion = min(minVersion, col.LastUpdateVersion)
+			maxVersion = max(maxVersion, col.LastUpdateVersion)
 		}
 	}
-
 	// Table is not analyzed, compose a fake version.
-	if minVersion == math.MaxUint64 {
+	if maxVersion == 0 {
 		phy := oracle.GetTimeFromTS(currentTs)
 		return phy.Add(unanalyzedTableDefaultLastUpdateDuration)
 	}
-	return oracle.GetTimeFromTS(minVersion)
+	return oracle.GetTimeFromTS(maxVersion)
 }
 
 func checkIndexesNeedAnalyze(
