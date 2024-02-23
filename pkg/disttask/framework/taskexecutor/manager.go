@@ -314,6 +314,7 @@ type TestContext struct {
 
 // startTaskExecutor handles a runnable task.
 func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
+	// TODO: remove it when we can create task executor with task base.
 	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
 	if err != nil {
 		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))

@@ -349,6 +349,11 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 func TestGetTopUnfinishedTasks(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
+	bak := proto.MaxConcurrentTask
+	t.Cleanup(func() {
+		proto.MaxConcurrentTask = bak
+	})
+	proto.MaxConcurrentTask = 4
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 	taskStates := []proto.TaskState{
 		proto.TaskStateSucceed,
