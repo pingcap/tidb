@@ -54,12 +54,12 @@ func (s StringSet) Intersection(rhs StringSet) StringSet {
 	return newSet
 }
 
-// IntersectionWithLowerOrUpper returns the intersection of two sets with different case of string.
-func (s StringSet) IntersectionWithLowerOrUpper(rhs StringSet, lowerOrUpper bool) StringSet {
+// IntersectionWithLower returns the intersection of two sets with different case of string.
+func (s StringSet) IntersectionWithLower(rhs StringSet, toLower bool) StringSet {
 	newSet := NewStringSet()
 	for origElt := range rhs {
 		var elt string
-		if lowerOrUpper {
+		if toLower {
 			elt = strings.ToLower(origElt)
 		} else {
 			elt = strings.ToUpper(origElt)

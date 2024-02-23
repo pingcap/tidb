@@ -67,7 +67,9 @@ type MemTablePredicateExtractor interface {
 // to avoid polluting the global scope of current package.
 type extractHelper struct {
 	// when supportLower, we store the function for the lower(col) or upper(col)
-	lowerOrUpper map[string]bool
+	// for lower(col), kv = col : true
+	// for upper(col), kv = col : false
+	isLower map[string]bool
 }
 
 func (extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
@@ -154,11 +156,11 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*t
 			return "", nil
 		}
 		if scalar.FuncName.L == "lower" {
-			helper.lowerOrUpper = make(map[string]bool)
-			helper.lowerOrUpper[name.ColName.L] = true
+			helper.isLower = make(map[string]bool)
+			helper.isLower[name.ColName.L] = true
 		} else if scalar.FuncName.L == "upper" {
-			helper.lowerOrUpper = make(map[string]bool)
-			helper.lowerOrUpper[name.ColName.L] = false
+			helper.isLower = make(map[string]bool)
+			helper.isLower[name.ColName.L] = false
 		} else {
 			return "", nil
 		}
@@ -234,7 +236,9 @@ func (extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool
 	return tmpNodeTypes
 }
 
-func (extractHelper) mergeWithLowerOrUpper(lhs set.StringSet, datums []types.Datum, lowerOrUpper bool) set.StringSet {
+// when push down lower/upper function,
+// both of upper case and lower case string can be merged together.
+func (extractHelper) mergeWithLower(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
 	tmpNodeTypes := set.NewStringSet()
 	for _, datum := range datums {
 		s, err := datum.ToString()
@@ -244,12 +248,12 @@ func (extractHelper) mergeWithLowerOrUpper(lhs set.StringSet, datums []types.Dat
 		tmpNodeTypes.Insert(s)
 	}
 	if len(lhs) > 0 {
-		return lhs.IntersectionWithLowerOrUpper(tmpNodeTypes, lowerOrUpper)
+		return lhs.IntersectionWithLower(tmpNodeTypes, toLower)
 	}
 	return tmpNodeTypes
 }
 
-func (helper *extractHelper) extractColWithLowerOrUpper(
+func (helper *extractHelper) extractColWithLower(
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -284,9 +288,9 @@ func (helper *extractHelper) extractColWithLowerOrUpper(
 			colName, datums = "", nil
 		}
 		if colName == extractColName {
-			lowerOrUpper, ok := helper.lowerOrUpper[colName]
+			isLower, ok := helper.isLower[colName]
 			if ok {
-				result = helper.mergeWithLowerOrUpper(result, datums, !lowerOrUpper)
+				result = helper.mergeWithLower(result, datums, !isLower)
 			} else {
 				remained = append(remained, expr)
 			}
@@ -1803,7 +1807,7 @@ func (e *InfoSchemaTablesExtractor) Extract(_ PlanContext,
 	e.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
 	for _, colName := range e.colNames {
-		remained, e.SkipRequest, resultSet = e.extractColWithLowerOrUpper(schema, names, remained, colName)
+		remained, e.SkipRequest, resultSet = e.extractColWithLower(schema, names, remained, colName)
 		if e.SkipRequest {
 			break
 		}
@@ -1853,7 +1857,7 @@ func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
 	}
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
-		lower, ok := e.lowerOrUpper[colName]
+		lower, ok := e.isLower[colName]
 		if ok {
 			var valStr string
 			// only have varchar string type, safe to do that.
