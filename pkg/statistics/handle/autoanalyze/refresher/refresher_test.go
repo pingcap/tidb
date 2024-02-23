@@ -308,11 +308,39 @@ func TestCalculateChangePercentage(t *testing.T) {
 }
 
 func TestGetTableLastAnalyzeDuration(t *testing.T) {
+	// 2023-12-31 10:00:00
+	lastUpdateTime := time.Date(2023, 12, 31, 10, 0, 0, 0, time.UTC)
+	lastUpdateTs := oracle.GoTimeToTS(lastUpdateTime)
 	tblStats := &statistics.Table{
-		Version: oracle.ComposeTS(time.Hour.Nanoseconds()*1000, 0),
+		HistColl: statistics.HistColl{
+			Pseudo: false,
+			Columns: map[int64]*statistics.Column{
+				1: {
+					StatsVer: 2,
+					Histogram: statistics.Histogram{
+						LastUpdateVersion: lastUpdateTs,
+					},
+				},
+			},
+		},
 	}
-	currentTs := oracle.ComposeTS((time.Hour.Nanoseconds()+time.Second.Nanoseconds())*1000, 0)
-	want := time.Second
+	// 2024-01-01 10:00:00
+	currentTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	currentTs := oracle.GoTimeToTS(currentTime)
+	want := 24 * time.Hour
+
+	got := getTableLastAnalyzeDuration(tblStats, currentTs)
+	require.Equal(t, want, got)
+}
+
+func TestGetTableLastAnalyzeDurationForUnanalyzedTable(t *testing.T) {
+	tblStats := &statistics.Table{
+		HistColl: statistics.HistColl{},
+	}
+	// 2024-01-01 10:00:00
+	currentTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	currentTs := oracle.GoTimeToTS(currentTime)
+	want := 1800 * time.Second
 
 	got := getTableLastAnalyzeDuration(tblStats, currentTs)
 	require.Equal(t, want, got)

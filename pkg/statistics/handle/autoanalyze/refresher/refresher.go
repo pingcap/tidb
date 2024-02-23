@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -32,6 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+)
+
+const (
+	unanalyzedTableDefaultChangePercentage   = 1
+	unanalyzedTableDefaultLastUpdateDuration = -30 * time.Minute
 )
 
 // Refresher provides methods to refresh stats info.
@@ -266,7 +272,7 @@ func calculateChangePercentage(
 	}
 
 	if !exec.TableAnalyzed(tblStats) {
-		return 1
+		return unanalyzedTableDefaultChangePercentage
 	}
 
 	tblCnt := float64(tblStats.RealtimeCount)
@@ -296,12 +302,36 @@ func getTableLastAnalyzeDuration(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Duration {
-	// Calculate the duration since last analyze.
-	versionTs := tblStats.Version
+	versionTime := findLastAnalyzeVersion(tblStats, currentTs)
 	currentTime := oracle.GetTimeFromTS(currentTs)
-	versionTime := oracle.GetTimeFromTS(versionTs)
 
-	return time.Duration(currentTime.Sub(versionTime).Seconds())
+	// Calculate the duration since last analyze.
+	return currentTime.Sub(versionTime)
+}
+
+func findLastAnalyzeVersion(
+	tblStats *statistics.Table,
+	currentTs uint64,
+) time.Time {
+	// Big enough to make sure the first version is smaller than this.
+	minVersion := uint64(math.MaxUint64)
+	for _, idx := range tblStats.Indices {
+		if idx.IsAnalyzed() {
+			minVersion = min(minVersion, idx.LastUpdateVersion)
+		}
+	}
+	for _, col := range tblStats.Columns {
+		if col.IsAnalyzed() {
+			minVersion = min(minVersion, col.LastUpdateVersion)
+		}
+	}
+
+	// Table is not analyzed, compose a fake version.
+	if minVersion == math.MaxUint64 {
+		phy := oracle.GetTimeFromTS(currentTs)
+		return phy.Add(unanalyzedTableDefaultLastUpdateDuration)
+	}
+	return oracle.GetTimeFromTS(minVersion)
 }
 
 func checkIndexesNeedAnalyze(
