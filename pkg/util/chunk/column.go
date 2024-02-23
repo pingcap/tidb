@@ -265,6 +265,21 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
 }
 
+func (c *Column) AppendNNulls(n int) {
+	c.appendMultiSameNullBitmap(false, n)
+	if c.isFixed() {
+		for i := 0; i < n; i++ {
+			c.data = append(c.data, c.elemBuf...)
+		}
+	} else {
+		currentLength := c.offsets[c.length]
+		for i := 0; i < n; i++ {
+			c.offsets = append(c.offsets, currentLength)
+		}
+	}
+	c.length += n
+}
+
 // AppendNull appends a null value into this Column.
 func (c *Column) AppendNull() {
 	c.appendNullBitmap(false)

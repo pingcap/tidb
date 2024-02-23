@@ -127,7 +127,6 @@ func (ppi *probeProcessInfo) initForCurrentChunk(ctx *probeCtx) (err error) {
 
 type joinProbe interface {
 	probe(chk *chunk.Chunk, info *probeProcessInfo) (err error)
-	buildResultChunkAfterOtherCondition(chk *chunk.Chunk, joinedChk *chunk.Chunk, info *probeProcessInfo) (err error)
 	scanHT(chk *chunk.Chunk) (err error)
 	needScanHT() bool
 }
@@ -329,8 +328,9 @@ func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err er
 		if err != nil {
 			return err
 		}
-		err = j.buildResultChunkAfterOtherCondition(chk, joinedChk, info)
+		err = j.buildResultAfterOtherCondition(chk, joinedChk, info)
 	}
+	// if there is no other condition, the joinedChk is the final result
 	return err
 }
 
@@ -342,13 +342,13 @@ func (j *innerJoinProbe) scanHT(*chunk.Chunk) (err error) {
 	panic("should not reach here")
 }
 
-func (j *innerJoinProbe) buildResultChunkAfterOtherCondition(chk *chunk.Chunk, joinedChk *chunk.Chunk, info *probeProcessInfo) (err error) {
+func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedChk *chunk.Chunk, info *probeProcessInfo) (err error) {
 	// construct the return chunk based on joinedChk and selected, there are 3 kinds of columns
 	// 1. columns already in joinedChk
 	// 2. columns from build side, but not in joinedChk
 	// 3. columns from probe side, but not in joinedChk
 	probeUsedColumns, probeColOffset, probeColOffsetInJoinedChk := j.lUsed, 0, 0
-	if j.rightAsBuildSide {
+	if !j.rightAsBuildSide {
 		probeUsedColumns, probeColOffset, probeColOffsetInJoinedChk = j.rUsed, len(j.lUsed), j.ctx.hashTableMeta.totalColumnNumber
 	}
 
@@ -361,31 +361,36 @@ func (j *innerJoinProbe) buildResultChunkAfterOtherCondition(chk *chunk.Chunk, j
 		} else {
 			// probe column that is not in joinedChk
 			srcCol := info.chunk.Column(colIndex)
-			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, func(i int) int {
+			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
 				return j.rowIndexInfos[i].probeRowIndex
 			})
 		}
 	}
 	buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk := j.rUsed, len(j.lUsed), info.chunk.NumCols()
-	if j.rightAsBuildSide {
+	if !j.rightAsBuildSide {
 		buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk = j.lUsed, 0, 0
 	}
+	hasRemainCols := false
 	for index, colIndex := range buildUsedColumns {
-		// build column that is already in joinedChk
 		dstCol := chk.Column(index + buildColOffset)
 		srcCol := joinedChk.Column(colIndex + buildColOffsetInJoinedChk)
 		if srcCol.Rows() > 0 {
+			// build column that is already in joinedChk
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
+		} else {
+			hasRemainCols = true
 		}
 	}
-	// build column that is not in joinedChk
-	for index, result := range j.selected {
-		if result {
-			j.appendBuildRowToChunk(chk, &rowInfo{
-				rowStart:           j.rowIndexInfos[index].buildRowStart,
-				rowData:            j.rowIndexInfos[index].buildRowData,
-				currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
-			}, info)
+	if hasRemainCols {
+		// build column that is not in joinedChk
+		for index, result := range j.selected {
+			if result {
+				j.appendBuildRowToChunk(chk, &rowInfo{
+					rowStart:           j.rowIndexInfos[index].buildRowStart,
+					rowData:            j.rowIndexInfos[index].buildRowData,
+					currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
+				}, info)
+			}
 		}
 	}
 	return
@@ -393,15 +398,20 @@ func (j *innerJoinProbe) buildResultChunkAfterOtherCondition(chk *chunk.Chunk, j
 
 type leftOuterJoinProbe struct {
 	baseJoinProbe
-	notJoinedRowIndex []int
+	isNotMatchedRows []bool
 }
 
 func (j *leftOuterJoinProbe) prepareForProbe(chk *chunk.Chunk, info *probeProcessInfo) (*chunk.Chunk, int, error) {
+	if !info.init && j.rightAsBuildSide {
+		j.isNotMatchedRows = j.isNotMatchedRows[:0]
+		for i := 0; i < info.chunk.NumRows(); i++ {
+			j.isNotMatchedRows = append(j.isNotMatchedRows, false)
+		}
+	}
 	joinedChk, remainCap, err := j.baseJoinProbe.prepareForProbe(chk, info)
 	if err != nil {
 		return nil, 0, err
 	}
-	j.notJoinedRowIndex = j.notJoinedRowIndex[:0]
 	return joinedChk, remainCap, nil
 }
 
@@ -413,6 +423,145 @@ func (j *leftOuterJoinProbe) scanHT(chunk2 *chunk.Chunk) (err error) {
 	panic("not supported yet")
 }
 
+func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk, info *probeProcessInfo) {
+	markedJoined := false
+	for index, colIndex := range j.lUsed {
+		dstCol := chk.Column(index)
+		if joinedChk.Column(colIndex).Rows() > 0 {
+			// probe column that is already in joinedChk
+			srcCol := joinedChk.Column(colIndex)
+			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
+		} else {
+			markedJoined = true
+			srcCol := info.chunk.Column(colIndex)
+			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
+				ret := j.rowIndexInfos[i].probeRowIndex
+				j.isNotMatchedRows[ret] = false
+				return ret
+			})
+		}
+	}
+	hasRemainCols := false
+	for index, colIndex := range j.rUsed {
+		dstCol := chk.Column(index + len(j.lUsed))
+		srcCol := joinedChk.Column(colIndex + info.chunk.NumCols())
+		if srcCol.Rows() > 0 {
+			// build column that is already in joinedChk
+			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
+		} else {
+			hasRemainCols = true
+		}
+	}
+	if hasRemainCols {
+		markedJoined = true
+		for index, result := range j.selected {
+			if result {
+				rowIndexInfo := j.rowIndexInfos[index]
+				j.isNotMatchedRows[rowIndexInfo.probeRowIndex] = true
+				j.appendBuildRowToChunk(chk, &rowInfo{
+					rowStart:           rowIndexInfo.buildRowStart,
+					rowData:            rowIndexInfo.buildRowData,
+					currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
+				}, info)
+			}
+		}
+	}
+	if !markedJoined {
+		for index, result := range j.selected {
+			if result {
+				j.isNotMatchedRows[j.rowIndexInfos[index].probeRowIndex] = true
+			}
+		}
+	}
+}
+
+func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startProbeRow int, info *probeProcessInfo) {
+	// append not matched rows
+	// for not matched rows, probe col is appended using original cols, and build column is appended using nulls
+	prevRows, afterRows := 0, 0
+	for index, colIndex := range j.lUsed {
+		dstCol := chk.Column(index)
+		srcCol := info.chunk.Column(colIndex)
+		prevRows = dstCol.Rows()
+		chunk.CopyRangeSelectedRows(dstCol, srcCol, startProbeRow, info.currentProbeRow, j.isNotMatchedRows)
+		afterRows = dstCol.Rows()
+	}
+	nullRows := afterRows - prevRows
+	if len(j.lUsed) == 0 {
+		for i := startProbeRow; i < info.currentProbeRow; i++ {
+			if j.isNotMatchedRows[i] == true {
+				nullRows++
+			}
+		}
+	}
+	if nullRows > 0 {
+		colOffset := len(j.lUsed)
+		for index := range j.rUsed {
+			dstCol := chk.Column(colOffset + index)
+			dstCol.AppendNNulls(nullRows)
+		}
+	}
+}
+
+func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, remainCap int, info *probeProcessInfo) (err error) {
+	meta := j.ctx.hashTableMeta
+	length := 0
+	startProbeRow := info.currentProbeRow
+
+	for remainCap > 0 && info.currentProbeRow < info.chunk.NumRows() {
+		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
+			// hash value match
+			candidateRow := info.matchedRowsHeaders[info.currentProbeRow]
+			if isKeyMatched(j.ctx.keyMode, info.serializedKeys[info.currentProbeRow], candidateRow, meta) {
+				// join key match
+				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
+				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo, info)
+				if j.ctx.hasOtherCondition() {
+					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: info.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
+				} else {
+					// has no other condition, key match mean join match
+					j.isNotMatchedRows[info.currentProbeRow] = false
+				}
+				length++
+				joinedChk.IncNumVirtualRows()
+			}
+		} else {
+			if length > 0 {
+				// length > 0 mean current row has at least one key matched build rows
+				j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
+				length = 0
+			}
+			info.currentProbeRow++
+		}
+		remainCap--
+	}
+	if length > 0 {
+		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
+	}
+	j.appendProbeRowToChunk(joinedChk, info.chunk)
+
+	if j.ctx.hasOtherCondition() {
+		if joinedChk.NumRows() > 0 {
+			j.selected = j.selected[:0]
+			j.selected, err = expression.VectorizedFilter(j.ctx.sessCtx, j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+			if err != nil {
+				return err
+			}
+			j.buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk, info)
+		}
+		// append the not matched rows
+		j.buildResultForNotMatchedRows(chk, startProbeRow, info)
+	} else {
+		// if no the condition, chk == joinedChk, and the matched rows are already in joinedChk
+		j.buildResultForNotMatchedRows(joinedChk, startProbeRow, info)
+	}
+	return
+}
+
+func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, remainCap int, info *probeProcessInfo) (err error) {
+	return
+}
+
 func (j *leftOuterJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
 	if chk.IsFull() {
 		return nil
@@ -421,22 +570,8 @@ func (j *leftOuterJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (er
 	if err1 != nil {
 		return err1
 	}
-	length := 0
-
-	for remainCap > 0 && info.currentProbeRow < info.chunk.NumRows() {
-		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
-			// has match
-		} else {
-			if length > 0 {
-				// length > 0 mean current row has at least one matched build rows
-				j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: info.currentProbeRow, length: length})
-				length = 0
-			} else {
-				j.notJoinedRowIndex = append(j.notJoinedRowIndex, info.currentProbeRow)
-			}
-			info.currentProbeRow++
-		}
-		remainCap--
+	if j.rightAsBuildSide {
+		return j.probeForRightBuild(chk, joinedChk, remainCap, info)
 	}
-	return
+	return j.probeForLeftBuild(chk, joinedChk, remainCap, info)
 }
