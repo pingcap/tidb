@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Plan is the description of an execution flow.
