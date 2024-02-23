@@ -525,7 +525,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.Ctx(), txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
+		_, err = e.index.Create(e.Ctx().GetTableCtx(), txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
 		if err != nil {
 			return result, err
 		}
@@ -637,7 +637,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
 			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
-				if err := e.index.Delete(e.Ctx(), txn, handleIdxVals, handle); err != nil {
+				if err := e.index.Delete(e.Ctx().GetTableCtx(), txn, handleIdxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++
