@@ -155,6 +155,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	require.Equal(t, 3, len(schs))
 	for _, sch := range schs {
 		require.Equal(t, false, sch.(*BaseScheduler).allocatedSlots)
+		<-mgr.finishCh
 	}
 	mgr.schedulerWG.Wait()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/exitScheduler"))
@@ -177,5 +178,27 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 	schs = mgr.getSchedulers()
 	require.Equal(t, 1, len(schs))
 	require.Equal(t, false, schs[0].(*BaseScheduler).allocatedSlots)
+	<-mgr.finishCh
+	mgr.schedulerWG.Wait()
+
+	tasks = []*proto.TaskBase{
+		{
+			ID:          int64(5),
+			Concurrency: 1,
+			Type:        proto.TaskTypeExample,
+			State:       proto.TaskStatePaused,
+		},
+	}
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(5)).Return(&proto.Task{TaskBase: *tasks[0]}, nil)
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(5)).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+		tasks[0].State = proto.TaskStateRunning
+		return &proto.Task{TaskBase: *tasks[0]}, nil
+	})
+
+	require.NoError(t, mgr.startSchedulers(tasks))
+	schs = mgr.getSchedulers()
+	require.Equal(t, 1, len(schs))
+	require.Equal(t, false, schs[0].(*BaseScheduler).allocatedSlots)
+	<-mgr.finishCh
 	mgr.schedulerWG.Wait()
 }

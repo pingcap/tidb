@@ -218,7 +218,7 @@ func (s *BaseScheduler) scheduleTask() {
 				// 4. resume the task.
 				// 5. node2 scheduler call refreshTask and get task with resuming state.
 				if !s.allocatedSlots {
-					s.logger.Info("scheduler exit since not allocated slots")
+					s.logger.Info("scheduler exit since not allocated slots", zap.Stringer("state", task.State))
 					return
 				}
 				err = s.onResuming()
@@ -236,7 +236,7 @@ func (s *BaseScheduler) scheduleTask() {
 				// 5. node1 start another scheduler and transfer the node from resuming to running state.
 				// 6. node2 scheduler call refreshTask and get task with running state.
 				if !s.allocatedSlots {
-					s.logger.Info("scheduler exit since not allocated slots")
+					s.logger.Info("scheduler exit since not allocated slots", zap.Stringer("state", task.State))
 					return
 				}
 				err = s.onRunning()
