@@ -132,7 +132,7 @@ func JoinerType(j joiner) plannercore.JoinType {
 
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
-	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]bool, isNA bool) joiner {
+	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]int, isNA bool) joiner {
 	base := baseJoiner{
 		ctx:          ctx,
 		conditions:   filter,
@@ -141,19 +141,14 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	}
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	base.isNull = make([]bool, 0, chunk.InitialCapacity)
+	// lused and rused should be followed with its original order.
+	// the case is that is join schema rely on the reversed order
+	// of child's schema, here we should keep it original order.
 	if childrenUsed != nil {
 		base.lUsed = make([]int, 0, len(childrenUsed[0])) // make it non-nil
-		for i, used := range childrenUsed[0] {
-			if used {
-				base.lUsed = append(base.lUsed, i)
-			}
-		}
+		base.lUsed = append(base.lUsed, childrenUsed[0]...)
 		base.rUsed = make([]int, 0, len(childrenUsed[1])) // make it non-nil
-		for i, used := range childrenUsed[1] {
-			if used {
-				base.rUsed = append(base.rUsed, i)
-			}
-		}
+		base.rUsed = append(base.rUsed, childrenUsed[1]...)
 		logutil.BgLogger().Debug("InlineProjection",
 			zap.Ints("lUsed", base.lUsed), zap.Ints("rUsed", base.rUsed),
 			zap.Int("lCount", len(lhsColTypes)), zap.Int("rCount", len(rhsColTypes)))
