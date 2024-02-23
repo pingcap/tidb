@@ -366,7 +366,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 			if err != nil {
 				e.logger.Warn("startSubtask meets error", zap.Error(err))
 				// should ignore ErrSubtaskNotFound
-				// since the err only indicate that the subtask not owned by current task executor.
+				// since it only means that the subtask not owned by current task executor.
 				if err == storage.ErrSubtaskNotFound {
 					continue
 				}
