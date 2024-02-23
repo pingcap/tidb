@@ -1729,7 +1729,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	if !requestByTableRange {
-		pdCli, err := tikvHelper.TryGetPDHTTPClient()
+		pdCli, err := tikvHelper.TryGetLongRequestPDHTTPClient()
 		if err != nil {
 			return err
 		}

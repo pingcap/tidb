@@ -82,30 +82,41 @@ type Helper struct {
 	Store       Storage
 	RegionCache *tikv.RegionCache
 	// pdHTTPCli is used to send http request to PD.
-	// This field is lazy initialized in `TryGetPDHTTPClient`,
-	// and should be tagged with the caller ID before using.
 	pdHTTPCli pd.Client
+	// The timeout duration of client-go PD HTTP client is 30s.
+	// So we should hold a longer timeout HTTP client.
+	longRequestPDHTTPCli pd.Client
 }
 
 // NewHelper gets a Helper from Storage
 func NewHelper(store Storage) *Helper {
-	return &Helper{
+	cli := store.GetPDHTTPClient()
+	helper := &Helper{
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
+	if cli != nil {
+		cli := store.GetPDHTTPClient().WithCallerID("tidb-store-helper")
+		helper.pdHTTPCli = cli
+		helper.longRequestPDHTTPCli = cli.WithTimeout(time.Minute * 3)
+	}
+	return helper
 }
 
 // TryGetPDHTTPClient tries to get a PD HTTP client if it's available.
 func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
-	if h.pdHTTPCli != nil {
-		return h.pdHTTPCli, nil
-	}
-	cli := h.Store.GetPDHTTPClient()
-	if cli == nil {
+	if h.pdHTTPCli == nil {
 		return nil, errors.New("pd http client unavailable")
 	}
-	h.pdHTTPCli = cli.WithCallerID("tidb-store-helper")
 	return h.pdHTTPCli, nil
+}
+
+// TryGetLongRequestPDHTTPClient tries to get a PD HTTP client with long timeout config if it's available.
+func (h *Helper) TryGetLongRequestPDHTTPClient() (pd.Client, error) {
+	if h.longRequestPDHTTPCli == nil {
+		return nil, errors.New("pd http client unavailable")
+	}
+	return h.longRequestPDHTTPCli, nil
 }
 
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
@@ -312,7 +323,7 @@ func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, allSchemas []*mod
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(ctx context.Context, rw string) (map[uint64]RegionMetric, error) {
-	pdCli, err := h.TryGetPDHTTPClient()
+	pdCli, err := h.TryGetLongRequestPDHTTPClient()
 	if err != nil {
 		return nil, err
 	}
@@ -798,7 +809,7 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 
 // GetPDRegionStats get the RegionStats by tableID from PD by HTTP API.
 func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexStats bool) (*pd.RegionStats, error) {
-	pdCli, err := h.TryGetPDHTTPClient()
+	pdCli, err := h.TryGetLongRequestPDHTTPClient()
 	if err != nil {
 		return nil, err
 	}

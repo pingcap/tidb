@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -249,7 +250,7 @@ func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdhttp.Stor
 // It implements the TargetInfoGetter interface.
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp.RegionsInfo, error) {
-	return g.pdHTTPCli.GetEmptyRegions(ctx)
+	return g.pdHTTPCli.WithTimeout(5 * time.Minute).GetEmptyRegions(ctx)
 }
 
 // PreImportInfoGetterImpl implements the operations to get information used in importing preparation.

@@ -886,7 +886,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	pdCli, err := tikvHelper.TryGetLongRequestPDHTTPClient()
 	if err != nil {
 		return nil, err
 	}

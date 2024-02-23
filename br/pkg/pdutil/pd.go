@@ -33,6 +33,7 @@ const (
 	pauseTimeout = 5 * time.Minute
 	// pd request retry time when connection fail
 	PDRequestRetryTime = 120
+	pdCustomTimeout    = time.Minute
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
@@ -158,7 +159,7 @@ func NewPdController(
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		pd.WithCustomTimeoutOption(pdCustomTimeout),
 		pd.WithMaxErrorRetry(3),
 	)
 	if err != nil {
@@ -174,7 +175,7 @@ func NewPdController(
 		"br/lightning PD controller",
 		pdClient.GetServiceDiscovery(),
 		pdHTTPCliConfig...,
-	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second))
+	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second)).WithTimeout(pdCustomTimeout)
 	versionStr, err := pdHTTPCli.GetPDVersion(ctx)
 	if err != nil {
 		pdHTTPCli.Close()
