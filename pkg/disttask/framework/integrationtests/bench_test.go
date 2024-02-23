@@ -102,6 +102,7 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 			require.NoError(c.T, err)
 		}
 		// task has 2 steps, each step has 1 subtask
+		// we don't wait them using separate routine to reduce WaitTask check overhead.
 		time.Sleep(2 * *waitDuration)
 		for i := 0; i < proto.MaxConcurrentTask; i++ {
 			taskKey := fmt.Sprintf("task-%d", i)
