@@ -868,8 +868,6 @@ import (
 	statsLocked                "STATS_LOCKED"
 	statsMeta                  "STATS_META"
 	statsTopN                  "STATS_TOPN"
-	telemetry                  "TELEMETRY"
-	telemetryID                "TELEMETRY_ID"
 	tidb                       "TIDB"
 	tiFlash                    "TIFLASH"
 	topn                       "TOPN"
@@ -6943,8 +6941,6 @@ TiDBKeyword:
 |	"STATS_HEALTHY"
 |	"STATS_LOCKED"
 |	"HISTOGRAMS_IN_FLIGHT"
-|	"TELEMETRY"
-|	"TELEMETRY_ID"
 |	"TIDB"
 |	"TIFLASH"
 |	"TOPN"
@@ -11138,18 +11134,6 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminReloadStatistics,
-		}
-	}
-|	"ADMIN" "SHOW" "TELEMETRY"
-	{
-		$$ = &ast.AdminStmt{
-			Tp: ast.AdminShowTelemetry,
-		}
-	}
-|	"ADMIN" "RESET" "TELEMETRY_ID"
-	{
-		$$ = &ast.AdminStmt{
-			Tp: ast.AdminResetTelemetryID,
 		}
 	}
 |	"ADMIN" "FLUSH" StatementScope "PLAN_CACHE"

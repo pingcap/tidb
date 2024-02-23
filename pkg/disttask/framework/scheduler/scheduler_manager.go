@@ -57,7 +57,7 @@ func (sm *Manager) addScheduler(taskID int64, scheduler Scheduler) {
 	sm.mu.schedulerMap[taskID] = scheduler
 	sm.mu.schedulers = append(sm.mu.schedulers, scheduler)
 	slices.SortFunc(sm.mu.schedulers, func(i, j Scheduler) int {
-		return i.GetTask().Compare(j.GetTask())
+		return i.GetTask().CompareTask(j.GetTask())
 	})
 }
 

@@ -58,7 +58,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err)
 	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
-	builder, _ := core.NewPlanBuilder().Init(tk.Session(), is, hint.NewQBHintHandler(nil))
+	builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 	p, err := builder.Build(context.TODO(), stmt)
 	require.NoError(t, err)
 	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(core.LogicalPlan))
@@ -74,7 +74,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	require.NoError(t, err)
 	idxCols, ok := core.PrepareCols4MVIndex(tbl.Meta(), tbl.Meta().FindIndexByName("a_domains_b"), ds.TblCols)
 	require.True(t, ok)
-	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session(), cnfs, idxCols)
+	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
 
 	// assert mv col access filters.
 	require.Equal(t, len(accessFilters), 3)

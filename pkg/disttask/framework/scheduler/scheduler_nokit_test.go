@@ -40,9 +40,11 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler")
 	task := proto.Task{
-		ID:    1,
-		State: proto.TaskStatePending,
-		Step:  proto.StepInit,
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			State: proto.TaskStatePending,
+			Step:  proto.StepInit,
+		},
 	}
 	cloneTask := task
 	nodeMgr := NewNodeManager()
@@ -142,7 +144,7 @@ func TestGetEligibleNodes(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	mockSch := mock.NewMockScheduler(ctrl)
-	mockSch.EXPECT().GetTask().Return(&proto.Task{ID: 1}).AnyTimes()
+	mockSch.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).AnyTimes()
 
 	mockSch.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock err"))
 	_, err := getEligibleNodes(ctx, mockSch, []string{":4000"})

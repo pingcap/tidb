@@ -4058,7 +4058,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	}
 
 	if !force {
-		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx.GetSessionVars(), t, tp, newBase)
+		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx.GetTableCtx(), t, tp, newBase)
 		if err != nil {
 			return err
 		}

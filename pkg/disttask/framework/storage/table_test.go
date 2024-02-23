@@ -406,8 +406,6 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	taskKeys := make([]string, 0, len(tasks))
 	for _, task := range tasks {
 		taskKeys = append(taskKeys, task.Key)
-		// not filled
-		require.Empty(t, task.Meta)
 	}
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, taskKeys)
 }
@@ -451,7 +449,7 @@ func TestGetActiveSubtasks(t *testing.T) {
 	activeSubtasks, err := tm.GetActiveSubtasks(ctx, task.ID)
 	require.NoError(t, err)
 	require.Len(t, activeSubtasks, 2)
-	slices.SortFunc(activeSubtasks, func(i, j *proto.Subtask) int {
+	slices.SortFunc(activeSubtasks, func(i, j *proto.SubtaskBase) int {
 		return int(i.ID - j.ID)
 	})
 	require.Equal(t, int64(2), activeSubtasks[0].ID)
@@ -469,7 +467,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(1), id)
 	err = sm.SwitchTaskStep(
 		ctx,
-		&proto.Task{ID: 1, State: proto.TaskStatePending, Step: proto.StepInit},
+		&proto.Task{TaskBase: proto.TaskBase{ID: 1, State: proto.TaskStatePending, Step: proto.StepInit}},
 		proto.TaskStateRunning,
 		proto.StepOne,
 		[]*proto.Subtask{proto.NewSubtask(proto.StepOne, 1, proto.TaskTypeExample, "tidb1", 11, []byte("test"), 1)},
@@ -571,13 +569,21 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(100), rowCount)
 
+	getSubtaskBaseSlice := func(sts []*proto.Subtask) []*proto.SubtaskBase {
+		res := make([]*proto.SubtaskBase, 0, len(sts))
+		for _, st := range sts {
+			res = append(res, &st.SubtaskBase)
+		}
+		return res
+	}
 	// test UpdateSubtasksExecIDs
 	// 1. update one subtask
 	testutil.CreateSubTask(t, sm, 5, proto.StepOne, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	subtasks[0].ExecID = "tidb2"
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
+	subtaskBases := getSubtaskBaseSlice(subtasks)
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtaskBases))
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb2", subtasks[0].ExecID)
@@ -586,7 +592,8 @@ func TestSubTaskTable(t *testing.T) {
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	subtasks[0].ExecID = "tidb3"
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
+	subtaskBases = getSubtaskBaseSlice(subtasks)
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtaskBases))
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb3", subtasks[0].ExecID)
@@ -598,7 +605,8 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, "tidb3", subtasks[0].ExecID)
 	subtasks[0].ExecID = "tidb2"
 	// update success
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
+	subtaskBases = getSubtaskBaseSlice(subtasks)
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtaskBases))
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb2", subtasks[0].ExecID)
@@ -993,10 +1001,10 @@ func TestSubtaskType(t *testing.T) {
 func TestRunningSubtasksBack2Pending(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	subtasks := []*proto.Subtask{
-		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending},
-		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning},
-		{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending},
-		{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending},
+		{SubtaskBase: proto.SubtaskBase{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending}},
+		{SubtaskBase: proto.SubtaskBase{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning}},
+		{SubtaskBase: proto.SubtaskBase{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending}},
+		{SubtaskBase: proto.SubtaskBase{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending}},
 	}
 	for _, st := range subtasks {
 		testutil.InsertSubtask(t, sm, st.TaskID, proto.StepOne, st.ExecID, []byte(""), st.State, proto.TaskTypeExample, 12)
@@ -1016,9 +1024,11 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 					updateTime = time.Unix(r.GetInt64(3), 0)
 				}
 				res = append(res, &proto.Subtask{
-					TaskID:     r.GetInt64(0),
-					ExecID:     r.GetString(1),
-					State:      proto.SubtaskState(r.GetString(2)),
+					SubtaskBase: proto.SubtaskBase{
+						TaskID: r.GetInt64(0),
+						ExecID: r.GetString(1),
+						State:  proto.SubtaskState(r.GetString(2)),
+					},
 					UpdateTime: updateTime,
 				})
 			}

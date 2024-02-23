@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -73,7 +72,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		(stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache) { // in explain internal
 		return nil, nil, false, nil
 	}
-	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 	if !ok {
 		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason))
@@ -101,7 +100,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 			return nil, nil, false, nil
 		}
 		// GeneratePlanCacheStmtWithAST may evaluate these parameters so set their values into SCtx in advance.
-		if err := core.SetParameterValuesIntoSCtx(sctx, true, nil, paramExprs); err != nil {
+		if err := core.SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), true, nil, paramExprs); err != nil {
 			return nil, nil, false, err
 		}
 		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, false, paramSQL, paramStmt, is)
@@ -128,13 +127,14 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 // Optimize does optimization and creates a Plan.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plan core.Plan, slice types.NameSlice, retErr error) {
 	sessVars := sctx.GetSessionVars()
+	pctx := sctx.GetPlanCtx()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
+		debugtrace.EnterContextCommon(pctx)
+		defer debugtrace.LeaveContextCommon(pctx)
 	}
 
-	if !sctx.GetSessionVars().InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
-		allowed, err := allowInReadOnlyMode(sctx, node)
+	if !sessVars.InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
+		allowed, err := allowInReadOnlyMode(pctx, node)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -143,7 +143,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if sctx.GetSessionVars().SQLMode.HasStrictMode() && !IsReadOnly(node, sessVars) {
+	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {
@@ -163,7 +163,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return p, names, err
 	}
 
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx.GetSessionVars().StmtCtx)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sessVars.StmtCtx)
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker, byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
@@ -196,23 +196,22 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 	}
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("SET_VAR is used in the SQL"))
+		sessVars.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("SET_VAR is used in the SQL"))
 	}
 
-	txnManger := sessiontxn.GetTxnManager(sctx)
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp core.Plan
 		if fpv, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok {
 			// point plan is already tried in a multi-statement query.
 			fp = fpv.Plan
 		} else {
-			fp = core.TryFastPlan(sctx, node)
+			fp = core.TryFastPlan(pctx, node)
 		}
 		if fp != nil {
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	if err := txnManger.AdviseWarmup(); err != nil {
+	if err := pctx.AdviseTxnWarmup(); err != nil {
 		return nil, nil, err
 	}
 
@@ -235,7 +234,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				}
 			}
 		})
-		debugtrace.RecordAnyValuesWithNames(sctx,
+		debugtrace.RecordAnyValuesWithNames(pctx,
 			"Used binding", useBinding,
 			"Enable binding", enableUseBinding,
 			"IsStmtNode", isStmtNode,
@@ -251,7 +250,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// try to get Plan from the NonPrepared Plan Cache
-	if sctx.GetSessionVars().EnableNonPreparedPlanCache &&
+	if sessVars.EnableNonPreparedPlanCache &&
 		isStmtNode &&
 		!useBinding { // TODO: support binding
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
@@ -279,7 +278,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				continue
 			}
 			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-				core.DebugTraceTryBinding(sctx, binding.Hint)
+				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 			hint.BindHint(stmtNode, binding.Hint)
@@ -293,10 +292,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				}
 				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
-			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
+			plan, curNames, cost, err := optimize(ctx, pctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
-				handleInvalidBinding(ctx, sctx, scope, binding)
+				handleInvalidBinding(ctx, pctx, scope, binding)
 				continue
 			}
 			if cost < minCost {
@@ -327,12 +326,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
-		core.DebugTraceBestBinding(sctx, chosenBinding.Hint)
+		core.DebugTraceBestBinding(pctx, chosenBinding.Hint)
 	}
 	// No plan found from the bindings, or the bindings are ignored.
 	if bestPlan == nil {
 		sessVars.StmtCtx.StmtHints = originStmtHints
-		bestPlan, names, _, err = optimize(ctx, sctx, node, is)
+		bestPlan, names, _, err = optimize(ctx, pctx, node, is)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -353,7 +352,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
 		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindings[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
-			defPlan, _, _, err := optimize(ctx, sctx, node, is)
+			defPlan, _, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
 				// Ignore this evolution task.
 				return bestPlan, names, nil
@@ -513,9 +512,10 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (core.Plan, types.NameSlice, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-	builder.Init(sctx, is, nil)
+	pctx := sctx.GetPlanCtx()
+	builder.Init(pctx, is, nil)
 
-	p, err := buildLogicalPlan(ctx, sctx, execAst, builder)
+	p, err := buildLogicalPlan(ctx, pctx, execAst, builder)
 	if err != nil {
 		return nil, nil, err
 	}

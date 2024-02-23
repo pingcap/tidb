@@ -300,7 +300,7 @@ func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	tblMeta := tbl.Meta()
 
-	allocators := tbl.Allocators(e.Ctx().GetSessionVars())
+	allocators := tbl.Allocators(e.Ctx().GetTableCtx())
 	for _, alloc := range allocators.Allocs {
 		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
@@ -1476,7 +1476,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is, nil)
+		e := newExecutorBuilder(sctx, is)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err

@@ -99,7 +99,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 2: set parameter values
-	if err := SetParameterValuesIntoSCtx(sctx, isNonPrepared, stmtAst.Params, params); err != nil {
+	if err := SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), isNonPrepared, stmtAst.Params, params); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -274,7 +274,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		return nil, nil, false, err
 	}
 	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+		if !unionScan && tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
 			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
 			// rebuilding the filters in UnionScan is pretty trivial.
 			sctx.GetSessionPlanCache().Delete(cacheKey)
@@ -316,14 +316,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx, stmt, p, names)
+	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
 			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
 		}
 	}
