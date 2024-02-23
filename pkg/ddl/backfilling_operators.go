@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -81,14 +82,16 @@ type OperatorCtx struct {
 	context.Context
 	cancel context.CancelFunc
 	err    atomic.Pointer[error]
+	logger *zap.Logger
 }
 
 // NewOperatorCtx creates a new OperatorCtx.
-func NewOperatorCtx(ctx context.Context) *OperatorCtx {
+func NewOperatorCtx(ctx context.Context, taskID, subtaskID int64) *OperatorCtx {
 	opCtx, cancel := context.WithCancel(ctx)
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,
+		logger:  log.L().With(zap.Int64("task-id", taskID), zap.Int64("subtask-id", subtaskID)),
 	}
 }
 
@@ -434,7 +437,7 @@ func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecord
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
-			logutil.Logger(w.ctx).Error("tableScanWorker get session from pool failed", zap.Error(err))
+			w.ctx.logger.Error("tableScanWorker get session from pool failed", zap.Error(err))
 			w.ctx.onError(err)
 			return
 		}
@@ -453,7 +456,7 @@ func (w *tableScanWorker) Close() {
 var OperatorCallBackForTest func()
 
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
-	logutil.Logger(w.ctx).Info("start a table scan task",
+	w.ctx.logger.Info("start a table scan task",
 		zap.Int("id", task.ID), zap.String("task", task.String()))
 
 	var idxResult IndexRecordChunk
@@ -592,7 +595,7 @@ func NewIndexIngestOperator(
 				writerID := int(writerIDAlloc.Add(1))
 				writer, err := engines[i].CreateWriter(writerID)
 				if err != nil {
-					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
+					ctx.logger.Error("create index ingest worker failed", zap.Error(err))
 					return nil
 				}
 				writers = append(writers, writer)
@@ -655,7 +658,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 		return
 	}
 	if count == 0 {
-		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", rs.ID))
+		w.ctx.logger.Info("finish a index ingest task", zap.Int("id", rs.ID))
 		send(result)
 		return
 	}
@@ -796,7 +799,7 @@ func (s *indexWriteResultSink) flush() error {
 				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
 				return err
 			}
-			logutil.BgLogger().Error("flush error",
+			s.ctx.logger.Error("flush error",
 				zap.String("category", "ddl"), zap.Error(err))
 			return err
 		}
