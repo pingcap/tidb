@@ -43,7 +43,7 @@ import (
 
 var (
 	maxConcurrentTask       = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
-	waitDuration            = flag.Duration("task-wait-duration", time.Minute, "task wait duration")
+	waitDuration            = flag.Duration("task-wait-duration", 2*time.Minute, "task wait duration")
 	schedulerInterval       = flag.Duration("scheduler-interval", scheduler.CheckTaskFinishedInterval, "scheduler interval")
 	taskExecutorMgrInterval = flag.Duration("task-executor-mgr-interval", taskexecutor.TaskCheckInterval, "task executor mgr interval")
 	taskMetaSize            = flag.Int("task-meta-size", 1<<10, "task meta size")
@@ -96,19 +96,18 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		time.Sleep(*waitDuration)
 	} else {
 		// in this test, we will start 4*proto.MaxConcurrentTask tasks, but only
-		// proto.MaxConcurrentTask will be scheduled at the same time, their subtasks
-		// will wait for waitDuration before exists, for other tasks will be in queue
-		// only to check the performance of querying them.
+		// proto.MaxConcurrentTask will be scheduled at the same time, for other
+		// tasks will be in queue only to check the performance of querying them.
 		for i := 0; i < 4*proto.MaxConcurrentTask; i++ {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			taskMeta := make([]byte, *taskMetaSize)
 			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
 			require.NoError(c.T, err)
 		}
-		// task has 2 steps, each step has 1 subtask
-		// we don't wait them using separate routine to reduce WaitTask check overhead.
+		// task has 2 steps, each step has 1 subtask，wait in serial to reduce WaitTask check overhead.
+		// only wait first proto.MaxConcurrentTask and exit
 		time.Sleep(2 * *waitDuration)
-		for i := 0; i < 4*proto.MaxConcurrentTask; i++ {
+		for i := 0; i < proto.MaxConcurrentTask; i++ {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
 		}
@@ -175,18 +174,14 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	testutil.RegisterTaskMetaWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
-		if string(subtask.Meta) < fmt.Sprintf("task-%03d", proto.MaxConcurrentTask) {
-			// we only wait subtasks for first proto.MaxConcurrentTask tasks
-			// others can return directly to avoid wait too long.
-			select {
-			case <-ctx.Done():
-				taskManager, err := storage.GetTaskManager()
-				if err != nil {
-					return err
-				}
-				return taskManager.CancelTask(ctx, subtask.TaskID)
-			case <-time.After(*waitDuration):
+		select {
+		case <-ctx.Done():
+			taskManager, err := storage.GetTaskManager()
+			if err != nil {
+				return err
 			}
+			return taskManager.CancelTask(ctx, subtask.TaskID)
+		case <-time.After(*waitDuration):
 		}
 		return nil
 	})
