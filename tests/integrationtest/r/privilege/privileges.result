@@ -611,8 +611,6 @@ admin show ddl jobs;
 Error 8121 (HY000): privilege check for 'Super' fail
 admin show ddl job queries 10;
 Error 8121 (HY000): privilege check for 'Super' fail
-admin show telemetry;
-Error 8121 (HY000): privilege check for 'Super' fail
 admin reload expr_pushdown_blacklist;
 Error 8121 (HY000): privilege check for 'Super' fail
 admin plugins enable p;
