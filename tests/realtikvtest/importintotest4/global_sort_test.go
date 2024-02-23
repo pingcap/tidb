@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -117,7 +118,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.Eventually(func() bool {
 		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
 		s.NoError(err2)
-		return task.State == "failed"
+		return task.State == proto.TaskStateReverted
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
 	<-scheduler.WaitCleanUpFinished
