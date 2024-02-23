@@ -1688,13 +1688,19 @@ func TestDefaultColumnWithStrToDate(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0, t1, t2, t3")
+	tk.MustExec("drop table if exists t0, t1, t2, t3, t4, t5")
 
 	// create table
 	tk.MustExec("create table t0 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')), c2 date default (str_to_date('9999-01-01','%Y-%m-%d')))")
 	tk.MustExec("create table t1 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), c2 int default (str_to_date('9999-01-01','%Y-%m-%d')))")
-	tk.MustExec("create table t2 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%m-%d')))")
-	tk.MustExec("create table t3 (c int(10), c1 varchar(32) default (str_to_date('01-01','%Y-%m-%d')))")
+	tk.MustExec("create table t3 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%m-%d')))")
+	tk.MustExec("create table t4 (c int(10), c1 varchar(32) default (str_to_date('01-01','%Y-%m-%d')))")
+	rs := tk.MustQuery(`select @@session.sql_mode`)
+	sqlMode := rs.Rows()[0][0].(string)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("create table t2 (c int(10), c1 blob default (str_to_date('1980-01-01','%Y-%m-%d')), c2 blob default (str_to_date('9999-01-01','%m-%d')))")
+	tk.MustExec("create table t5 (c int(10), c1 json default (str_to_date('9999-01-01','%Y-%m-%d')), c2 timestamp default (str_to_date('1980-01-01','%Y-%m-%d')))")
+	tk.MustExec(fmt.Sprintf(`set session sql_mode="%s"`, sqlMode))
 
 	// TODO: We need to support it.
 	tk.MustGetErrCode("alter table t0 add column c3 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'))", errno.ErrBinlogUnsafeSystemFunction)
@@ -1703,16 +1709,24 @@ func TestDefaultColumnWithStrToDate(t *testing.T) {
 	// insert records
 	tk.MustExec("insert into t0(c) values (1),(2),(3)")
 	tk.MustExec("insert into t1(c) values (1),(2),(3)")
-	tk.MustGetErrCode("insert into t2(c) values (1)", errno.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("insert into t3(c) values (1)", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("insert into t4(c) values (1)", errno.ErrTruncatedWrongValue)
+	// MySQL will return an error. Related issue: https://github.com/pingcap/tidb/issues/51275.
+	tk.MustExec("insert into t5(c) values (1)")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert into t2(c) values (1),(2),(3)")
+	tk.MustExec(fmt.Sprintf(`set session sql_mode="%s"`, sqlMode))
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		rows := tk.MustQuery(fmt.Sprintf("SELECT c1, c2 from t%d", i)).Rows()
 		colVal1 := "1980-01-01"
 		colVal2 := "9999-01-01"
-		if i == 1 {
+		switch i {
+		case 1:
 			colVal1 = "19800101"
 			colVal2 = "99990101"
+		case 2:
+			colVal2 = "NULL"
 		}
 		for _, row := range rows {
 			c1, ok := row[0].(string)
@@ -1739,6 +1753,12 @@ func TestDefaultColumnWithStrToDate(t *testing.T) {
 			"  `c` int(10) DEFAULT NULL,\n" +
 			"  `c1` int(11) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),\n" +
 			"  `c2` int(11) DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t2").Check(testkit.Rows(
+		"t2 CREATE TABLE `t2` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` blob DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),\n" +
+			"  `c2` blob DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%m-%d')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
 	tk.MustQuery("show create table t1").Check(testkit.Rows(

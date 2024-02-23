@@ -5401,8 +5401,8 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		col.DefaultIsExpr = isSeqExpr
 	}
 
-	// When the default value is expression and the type is time, we skip check and convert.
-	if !col.DefaultIsExpr || !types.IsTypeTime(col.GetType()) {
+	// When the default value is expression, we skip check and convert.
+	if !col.DefaultIsExpr {
 		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
