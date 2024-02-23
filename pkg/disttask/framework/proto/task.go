@@ -77,7 +77,7 @@ const (
 
 // MaxConcurrentTask is the max concurrency of task.
 // TODO: remove this limit later.
-var MaxConcurrentTask = 4
+var MaxConcurrentTask = 20
 
 // TaskBase contains the basic information of a task.
 // we define this to avoid load task meta which might be very large into memory.
