@@ -348,6 +348,10 @@ func (em *engineManager) closeEngine(
 	}
 
 	err := engine.flushEngineWithoutLock(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	engine.rUnlock()
 
 	// use mutex to make sure we won't close sstMetasChan while other routines
@@ -360,9 +364,6 @@ func (em *engineManager) closeEngine(
 		return errors.Trace(err)
 	}
 	engine.unlock()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	engine.wg.Wait()
 	return engine.ingestErr.Get()
 }
