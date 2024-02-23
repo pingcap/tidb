@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -41,11 +42,12 @@ import (
 )
 
 var (
-	maxConcurrentTask = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
-	waitDuration      = flag.Duration("task-wait-duration", time.Minute, "task wait duration")
-	schedulerInterval = flag.Duration("scheduler-interval", scheduler.CheckTaskFinishedInterval, "scheduler interval")
-	taskMetaSize      = flag.Int("task-meta-size", 1<<10, "task meta size")
-	noTask            = flag.Bool("no-task", false, "no task")
+	maxConcurrentTask       = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
+	waitDuration            = flag.Duration("task-wait-duration", time.Minute, "task wait duration")
+	schedulerInterval       = flag.Duration("scheduler-interval", scheduler.CheckTaskFinishedInterval, "scheduler interval")
+	taskExecutorMgrInterval = flag.Duration("task-executor-mgr-interval", taskexecutor.TaskCheckInterval, "task executor mgr interval")
+	taskMetaSize            = flag.Int("task-meta-size", 1<<10, "task meta size")
+	noTask                  = flag.Bool("no-task", false, "no task")
 )
 
 // test overhead when starting multiple schedulers
@@ -63,18 +65,22 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		statusWG.Wait()
 	}()
 	schIntervalBak := scheduler.CheckTaskFinishedInterval
+	exeMgrIntervalBak := taskexecutor.TaskCheckInterval
 	bak := proto.MaxConcurrentTask
 	b.Cleanup(func() {
 		proto.MaxConcurrentTask = bak
 		scheduler.CheckTaskFinishedInterval = schIntervalBak
+		taskexecutor.TaskCheckInterval = exeMgrIntervalBak
 	})
 	proto.MaxConcurrentTask = *maxConcurrentTask
 	scheduler.CheckTaskFinishedInterval = *schedulerInterval
+	taskexecutor.TaskCheckInterval = *taskExecutorMgrInterval
 
 	b.Logf("max concurrent task: %d", proto.MaxConcurrentTask)
 	b.Logf("taks wait duration: %s", *waitDuration)
 	b.Logf("task meta size: %d", *taskMetaSize)
 	b.Logf("scheduler interval: %s", scheduler.CheckTaskFinishedInterval)
+	b.Logf("task executor mgr interval: %s", taskexecutor.TaskCheckInterval)
 
 	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask, false)
 
