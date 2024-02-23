@@ -95,8 +95,12 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 	if *noTask {
 		time.Sleep(*waitDuration)
 	} else {
-		for i := 0; i < proto.MaxConcurrentTask; i++ {
-			taskKey := fmt.Sprintf("task-%d", i)
+		// in this test, we will start 4*proto.MaxConcurrentTask tasks, but only
+		// proto.MaxConcurrentTask will be scheduled at the same time, their subtasks
+		// will wait for waitDuration before exists, for other tasks will be in queue
+		// only to check the performance of querying them.
+		for i := 0; i < 4*proto.MaxConcurrentTask; i++ {
+			taskKey := fmt.Sprintf("task-%03d", i)
 			taskMeta := make([]byte, *taskMetaSize)
 			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
 			require.NoError(c.T, err)
@@ -104,8 +108,8 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		// task has 2 steps, each step has 1 subtask
 		// we don't wait them using separate routine to reduce WaitTask check overhead.
 		time.Sleep(2 * *waitDuration)
-		for i := 0; i < proto.MaxConcurrentTask; i++ {
-			taskKey := fmt.Sprintf("task-%d", i)
+		for i := 0; i < 4*proto.MaxConcurrentTask; i++ {
+			taskKey := fmt.Sprintf("task-%03d", i)
 			testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
 		}
 	}
@@ -163,7 +167,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 			cnt := 1
 			res := make([][]byte, cnt)
 			for i := 0; i < cnt; i++ {
-				res[i] = []byte(fmt.Sprintf("subtask-%d", i))
+				res[i] = []byte(task.Key)
 			}
 			return res, nil
 		},
@@ -171,14 +175,18 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	testutil.RegisterTaskMetaWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
-		select {
-		case <-ctx.Done():
-			taskManager, err := storage.GetTaskManager()
-			if err != nil {
-				return err
+		if string(subtask.Meta) < fmt.Sprintf("task-%03d", proto.MaxConcurrentTask) {
+			// we only wait subtasks for first proto.MaxConcurrentTask tasks
+			// others can return directly to avoid wait too long.
+			select {
+			case <-ctx.Done():
+				taskManager, err := storage.GetTaskManager()
+				if err != nil {
+					return err
+				}
+				return taskManager.CancelTask(ctx, subtask.TaskID)
+			case <-time.After(*waitDuration):
 			}
-			return taskManager.CancelTask(ctx, subtask.TaskID)
-		case <-time.After(*waitDuration):
 		}
 		return nil
 	})
