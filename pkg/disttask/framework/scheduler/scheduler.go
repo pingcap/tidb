@@ -210,6 +210,13 @@ func (s *BaseScheduler) scheduleTask() {
 					return
 				}
 			case proto.TaskStateResuming:
+				// Case with 2 nodes.
+				// Here is the timeline
+				// 1. task in pausing state.
+				// 2. node1 and node2 start schedulers with task in pausing state without allocatedSlots.
+				// 3. node1's scheduler transfer the node from pausing to paused state.
+				// 4. resume the task.
+				// 5. node2 scheduler call refreshTask and get task with resuming state.
 				if !s.allocatedSlots {
 					s.logger.Info("scheduler exit since not allocated slots")
 					return
@@ -220,6 +227,18 @@ func (s *BaseScheduler) scheduleTask() {
 			case proto.TaskStatePending:
 				err = s.onPending()
 			case proto.TaskStateRunning:
+				// Case with 2 nodes.
+				// Here is the timeline
+				// 1. task in pausing state.
+				// 2. node1 and node2 start schedulers with task in pausing state without allocatedSlots.
+				// 3. node1's scheduler transfer the node from pausing to paused state.
+				// 4. resume the task.
+				// 5. node1 start another scheduler and transfer the node from resuming to running state.
+				// 6. node2 scheduler call refreshTask and get task with running state.
+				if !s.allocatedSlots {
+					s.logger.Info("scheduler exit since not allocated slots")
+					return
+				}
 				err = s.onRunning()
 			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
 				s.onFinished()
