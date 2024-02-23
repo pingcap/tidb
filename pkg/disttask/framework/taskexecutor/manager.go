@@ -359,9 +359,12 @@ func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor
 func (m *Manager) runWithRetry(fn func() error, msg string) error {
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err1 := handle.RunWithRetry(m.ctx, scheduler.RetrySQLTimes, backoffer, m.logger,
-		func(ctx context.Context) (bool, error) {
+		func(_ context.Context) (bool, error) {
 			return true, fn()
 		},
 	)
+	if err1 != nil {
+		m.logger.Warn(msg, zap.Error(err1))
+	}
 	return err1
 }
