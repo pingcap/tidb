@@ -78,7 +78,7 @@ const (
 // engineMeta contains some field that is necessary to continue the engine restore/import process.
 // These field should be written to disk when we update chunk checkpoint
 type engineMeta struct {
-	TS uint64 `json:"ts"`
+	TSOfClose uint64 `json:"ts"`
 	// Length is the number of KV pairs stored by the engine.
 	Length atomic.Int64 `json:"length"`
 	// TotalSize is the total pre-compressed KV byte size stored by engine.
@@ -1051,8 +1051,8 @@ func (e *Engine) NewIter(
 }
 
 // GetTS implements IngestData interface.
-func (e *Engine) GetTS() uint64 {
-	return e.TS
+func (e *Engine) GetTSOfClose() uint64 {
+	return e.TSOfClose
 }
 
 // IncRef implements IngestData interface.

@@ -192,7 +192,7 @@ func TestMemoryIngestData(t *testing.T) {
 		ts:         123,
 	}
 
-	require.EqualValues(t, 123, data.GetTS())
+	require.EqualValues(t, 123, data.GetTSOfClose())
 	testGetFirstAndLastKey(t, data, nil, nil, []byte("key1"), []byte("key5"))
 	testGetFirstAndLastKey(t, data, []byte("key1"), []byte("key6"), []byte("key1"), []byte("key5"))
 	testGetFirstAndLastKey(t, data, []byte("key2"), []byte("key5"), []byte("key2"), []byte("key4"))
@@ -251,7 +251,7 @@ func TestMemoryIngestData(t *testing.T) {
 	data.keys = encodedKeys
 	data.values = encodedValues
 
-	require.EqualValues(t, 234, data.GetTS())
+	require.EqualValues(t, 234, data.GetTSOfClose())
 	testGetFirstAndLastKey(t, data, nil, nil, []byte("key1"), []byte("key5"))
 	testGetFirstAndLastKey(t, data, []byte("key1"), []byte("key6"), []byte("key1"), []byte("key5"))
 	testGetFirstAndLastKey(t, data, []byte("key2"), []byte("key5"), []byte("key2"), []byte("key4"))

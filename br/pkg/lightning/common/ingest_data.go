@@ -34,8 +34,8 @@ type IngestData interface {
 	// these memories will be allocated from given bufPool and be released when the
 	// iterator is closed or ForwardIter.ReleaseBuf is called.
 	NewIter(ctx context.Context, lowerBound, upperBound []byte, bufPool *membuf.Pool) ForwardIter
-	// GetTS will be used as the start/commit TS of the data.
-	GetTS() uint64
+	// GetTSOfClose return the TS when engine is closed. It can be used as startTS.
+	GetTSOfClose() uint64
 	// IncRef should be called every time when IngestData is referred by regionJob.
 	// Multiple regionJob can share one IngestData. Same amount of DecRef should be
 	// called to release the IngestData.

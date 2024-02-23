@@ -88,6 +88,7 @@ type WriteIngestStepMeta struct {
 	StatFiles             []string `json:"stat-files"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys"`
 	RangeSplitSize        int64    `json:"range-split-size"`
+	TSOfClose             uint64   `json:"ts-of-close"`
 
 	Result Result
 }
