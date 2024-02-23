@@ -426,6 +426,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		return nil, err
 	}
 	ts := oracle.ComposeTS(p, l)
+	failpoint.Inject("mockTSForGlobalSort", func(val failpoint.Value) {
+		i := val.(int)
+		ts = uint64(i)
+	})
 	splitter, err := getRangeSplitter(
 		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
 	if err != nil {

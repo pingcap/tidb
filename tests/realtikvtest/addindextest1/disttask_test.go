@@ -259,7 +259,9 @@ func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	tk.MustExec("admin check table t;")
 }
 
-func TestAddIndexTSErrorWhenResetImportEngine(t *testing.T) {
+func TestIngestUseSameTS(t *testing.T) {
+	// TODO(lance6716): change failpoint location because global sort is not used
+	// TODO(lance6716): add another test for global sort enabled
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
@@ -285,13 +287,13 @@ func TestAddIndexTSErrorWhenResetImportEngine(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	tk.MustExec("set global tidb_enable_dist_task = on;")
 
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockAllocateTSErr", `1*return`)
+	err := failpoint.Enable("github.com/pingcap/tidb/pkd/ddl/mockTSForGlobalSort", `return(123456789)`)
 	require.NoError(t, err)
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
 	dom.DDL().SetHook(cb)
 	tk.MustExec("alter table t add index idx(a);")
-	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockAllocateTSErr")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkd/ddl/mockTSForGlobalSort")
 	require.NoError(t, err)
 
 	dts := []types.Datum{types.NewIntDatum(1)}
@@ -301,10 +303,11 @@ func TestAddIndexTSErrorWhenResetImportEngine(t *testing.T) {
 
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
-	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, 0)
+	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, 123456789)
 	require.NoError(t, err)
 	require.NotNil(t, mvccResp)
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
-	require.Greater(t, mvccResp.Info.Writes[0].CommitTs, uint64(0))
+	// TODO(lance6716): it should be greater than startTS after finishing development of ingesting with PiTR
+	require.Equal(t, uint64(123456789), mvccResp.Info.Writes[0].CommitTs)
 }

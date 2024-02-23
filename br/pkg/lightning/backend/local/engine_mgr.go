@@ -419,9 +419,6 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 				return errors.Trace(err)
 			}
 		}
-		if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
-			return errors.Trace(err)
-		}
 		failpoint.Inject("mockAllocateTSErr", func() {
 			// mock generate timestamp error when reset engine.
 			localEngine.TSOfClose = 0
