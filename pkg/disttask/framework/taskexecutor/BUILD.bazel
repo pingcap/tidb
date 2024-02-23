@@ -53,6 +53,7 @@ go_test(
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/kv",
