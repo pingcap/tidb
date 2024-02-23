@@ -363,8 +363,5 @@ func (m *Manager) runWithRetry(fn func() error, msg string) error {
 			return true, fn()
 		},
 	)
-	if err1 != nil {
-		m.logger.Warn(msg, zap.Error(err1))
-	}
 	return err1
 }
