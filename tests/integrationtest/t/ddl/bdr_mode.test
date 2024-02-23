@@ -427,7 +427,7 @@ alter resource group rg1 ru_per_sec = 200;
 drop user user1;
 drop resource group if exists rg1;
 
-# *******TestLocalOnlyRole*******
+# *******TestNoneRole*******
 admin unset bdr role;
 create database bdr_mode;
 use bdr_mode;
