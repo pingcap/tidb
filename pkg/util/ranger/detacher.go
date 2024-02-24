@@ -779,7 +779,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				hasResidual = true
 			}
 			points := rb.build(item, newTpSlice[0], d.lengths[0], d.convertToSortKey)
-			tmpNewTp := convertStringFTToBinaryCollate(newTpSlice[0])
+			tmpNewTp, _ := ConvertStringFTToBinaryCollate(newTpSlice[0])
 			// TODO: restrict the mem usage of ranges
 			ranges, rangeFallback, err := points2Ranges(d.sctx, points, tmpNewTp, d.rangeMaxSize)
 			if err != nil {

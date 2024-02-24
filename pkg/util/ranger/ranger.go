@@ -429,7 +429,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx planctx.Pla
 		rangeFallback bool
 		err           error
 	)
-	newTp = convertStringFTToBinaryCollate(newTp)
+	newTp, _ = ConvertStringFTToBinaryCollate(newTp)
 	if tableRange {
 		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize)
 	} else {
@@ -490,7 +490,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
-		tmpNewTp := convertStringFTToBinaryCollate(newTp[i])
+		tmpNewTp, _ := ConvertStringFTToBinaryCollate(newTp[i])
 		if i == 0 {
 			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
 		} else {
@@ -519,7 +519,7 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	var tmpNewTp *types.FieldType
 	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
 		if d.convertToSortKey {
-			tmpNewTp = convertStringFTToBinaryCollate(newTp[eqAndInCount])
+			tmpNewTp, _ = ConvertStringFTToBinaryCollate(newTp[eqAndInCount])
 		} else {
 			tmpNewTp = newTp[eqAndInCount]
 		}
@@ -539,16 +539,16 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	return ranges, accessConds, nil, nil
 }
 
-func convertStringFTToBinaryCollate(ft *types.FieldType) *types.FieldType {
+func ConvertStringFTToBinaryCollate(ft *types.FieldType) (*types.FieldType, bool) {
 	if ft.EvalType() != types.ETString ||
 		ft.GetType() == mysql.TypeEnum ||
 		ft.GetType() == mysql.TypeSet {
-		return ft
+		return ft, false
 	}
 	newTp := ft.Clone()
 	newTp.SetCharset(charset.CharsetBin)
 	newTp.SetCollate(charset.CollationBin)
-	return newTp
+	return newTp, true
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
