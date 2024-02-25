@@ -7,15 +7,15 @@ import (
 	"github.com/docker/go-units"
 )
 
-type ConfigSet[T uint | uint64] struct {
-	Value  T
-	HasSet bool
+type ConfigTerm[T uint | uint64] struct {
+	Value    T
+	Modified bool
 }
 
 type KVConfig struct {
-	ImportGoroutines    ConfigSet[uint]
-	MergeRegionSize     ConfigSet[uint64]
-	MergeRegionKeyCount ConfigSet[uint64]
+	ImportGoroutines    ConfigTerm[uint]
+	MergeRegionSize     ConfigTerm[uint64]
+	MergeRegionKeyCount ConfigTerm[uint64]
 }
 
 func ParseImportThreadsFromConfig(resp []byte) (uint, error) {

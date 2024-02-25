@@ -429,9 +429,9 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		mgr := &Mgr{PdController: &pdutil.PdController{}}
 		mgr.PdController.SetPDClient(pdCli)
 		kvConfigs := &kvconfig.KVConfig{
-			ImportGoroutines:    kvconfig.ConfigSet[uint]{Value: DefaultImportNumGoroutines, HasSet: false},
-			MergeRegionSize:     kvconfig.ConfigSet[uint64]{Value: DefaultMergeRegionSizeBytes, HasSet: false},
-			MergeRegionKeyCount: kvconfig.ConfigSet[uint64]{Value: DefaultMergeRegionKeyCount, HasSet: false},
+			ImportGoroutines:    kvconfig.ConfigTerm[uint]{Value: DefaultImportNumGoroutines, Modified: false},
+			MergeRegionSize:     kvconfig.ConfigTerm[uint64]{Value: DefaultMergeRegionSizeBytes, Modified: false},
+			MergeRegionKeyCount: kvconfig.ConfigTerm[uint64]{Value: DefaultMergeRegionKeyCount, Modified: false},
 		}
 		mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
 		require.EqualValues(t, ca.regionSplitSize, kvConfigs.MergeRegionSize.Value)

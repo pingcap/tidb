@@ -80,7 +80,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		MergeRegionKeyCount: cfg.MergeSmallRegionKeyCount,
 	}
 
-	if !kvConfigs.MergeRegionSize.HasSet || !kvConfigs.MergeRegionKeyCount.HasSet {
+	if !kvConfigs.MergeRegionSize.Modified || !kvConfigs.MergeRegionKeyCount.Modified {
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())

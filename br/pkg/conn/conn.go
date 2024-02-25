@@ -301,7 +301,7 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 	mergeRegionKeyCount := cfg.MergeRegionKeyCount
 	importGoroutines := cfg.ImportGoroutines
 
-	if mergeRegionSize.HasSet && mergeRegionKeyCount.HasSet && importGoroutines.HasSet {
+	if mergeRegionSize.Modified && mergeRegionKeyCount.Modified && importGoroutines.Modified {
 		log.Info("no need to retrieve the config from tikv if user has set the config")
 		return
 	}
@@ -311,7 +311,7 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 		if err != nil {
 			return err
 		}
-		if !mergeRegionSize.HasSet || !mergeRegionKeyCount.HasSet {
+		if !mergeRegionSize.Modified || !mergeRegionKeyCount.Modified {
 			size, keys, e := kvconfig.ParseMergeRegionSizeFromConfig(respBytes)
 			if e != nil {
 				log.Warn("Failed to parse region split size and keys from config", logutil.ShortError(e))
@@ -322,7 +322,7 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 				mergeRegionKeyCount.Value = keys
 			}
 		}
-		if !importGoroutines.HasSet {
+		if !importGoroutines.Modified {
 			threads, e := kvconfig.ParseImportThreadsFromConfig(respBytes)
 			if e != nil {
 				log.Warn("Failed to parse import num-threads from config", logutil.ShortError(e))

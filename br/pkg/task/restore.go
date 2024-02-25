@@ -102,15 +102,15 @@ const (
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
-	Online              bool                    `json:"online" toml:"online"`
-	Granularity         string                  `json:"granularity" toml:"granularity"`
-	ConcurrencyPerStore pconfig.ConfigSet[uint] `json:"tikv-max-restore-concurrency" toml:"tikv-max-restore-concurrency"`
+	Online              bool                     `json:"online" toml:"online"`
+	Granularity         string                   `json:"granularity" toml:"granularity"`
+	ConcurrencyPerStore pconfig.ConfigTerm[uint] `json:"tikv-max-restore-concurrency" toml:"tikv-max-restore-concurrency"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
 	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
-	MergeSmallRegionSizeBytes pconfig.ConfigSet[uint64] `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
-	MergeSmallRegionKeyCount  pconfig.ConfigSet[uint64] `json:"merge-region-key-count" toml:"merge-region-key-count"`
+	MergeSmallRegionSizeBytes pconfig.ConfigTerm[uint64] `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
+	MergeSmallRegionKeyCount  pconfig.ConfigTerm[uint64] `json:"merge-region-key-count" toml:"merge-region-key-count"`
 
 	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
@@ -121,16 +121,16 @@ type RestoreCommonConfig struct {
 // adjust adjusts the abnormal config value in the current config.
 // useful when not starting BR from CLI (e.g. from BRIE in SQL).
 func (cfg *RestoreCommonConfig) adjust() {
-	if !cfg.MergeSmallRegionKeyCount.HasSet {
+	if !cfg.MergeSmallRegionKeyCount.Modified {
 		cfg.MergeSmallRegionKeyCount.Value = conn.DefaultMergeRegionKeyCount
 	}
-	if !cfg.MergeSmallRegionSizeBytes.HasSet {
+	if !cfg.MergeSmallRegionSizeBytes.Modified {
 		cfg.MergeSmallRegionSizeBytes.Value = conn.DefaultMergeRegionSizeBytes
 	}
 	if len(cfg.Granularity) == 0 {
 		cfg.Granularity = string(restore.FineGrained)
 	}
-	if cfg.ConcurrencyPerStore.HasSet {
+	if cfg.ConcurrencyPerStore.Modified {
 		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
 	}
 }
@@ -182,19 +182,19 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.ConcurrencyPerStore.HasSet = flags.Changed(flagConcurrencyPerStore)
+	cfg.ConcurrencyPerStore.Modified = flags.Changed(flagConcurrencyPerStore)
 
 	cfg.MergeSmallRegionKeyCount.Value, err = flags.GetUint64(FlagMergeRegionKeyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.MergeSmallRegionKeyCount.HasSet = flags.Changed(FlagMergeRegionKeyCount)
+	cfg.MergeSmallRegionKeyCount.Modified = flags.Changed(FlagMergeRegionKeyCount)
 
 	cfg.MergeSmallRegionSizeBytes.Value, err = flags.GetUint64(FlagMergeRegionSizeBytes)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.MergeSmallRegionSizeBytes.HasSet = flags.Changed(FlagMergeRegionSizeBytes)
+	cfg.MergeSmallRegionSizeBytes.Modified = flags.Changed(FlagMergeRegionSizeBytes)
 
 	if flags.Lookup(flagWithSysTable) != nil {
 		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
