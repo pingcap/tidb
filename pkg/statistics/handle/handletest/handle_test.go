@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1391,7 +1390,15 @@ func TestInitStatsLite(t *testing.T) {
 	require.NoError(t, h.InitStatsLite(is))
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
-	internal.AssertTableEqual(t, statsTbl0, statsTbl1)
+	{
+		// internal.AssertTableEqual(t, statsTbl0, statsTbl1)
+		// statsTbl0 is loaded when the cache has pseudo table.
+		// TODO: We haven't optimize the pseudo table's memory usage yet. So here the two will be different.
+		require.True(t, len(statsTbl0.Columns) > 0)
+		require.True(t, len(statsTbl0.Indices) > 0)
+		require.True(t, len(statsTbl1.Columns) == 0)
+		require.True(t, len(statsTbl1.Indices) == 0)
+	}
 
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")

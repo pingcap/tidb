@@ -291,8 +291,8 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	switch pp := plan.(type) {
 	case *plannercore.PhysicalTableReader:
 		stats := pp.StatsInfo().HistColl
-		require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[0].ID))
-		require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
+		require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[0].ID))
+		require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
 	default:
 		t.Error("unexpected plan:", pp)
 	}

@@ -116,8 +116,15 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
-	require.Nil(t, stat.Columns[tableInfo.Columns[0].ID])
-	require.Nil(t, stat.Columns[tableInfo.Columns[2].ID])
+	// TODO: They may need to be empty. Depending on how we operate newly analyzed tables.
+	// require.Nil(t, stat.Columns[tableInfo.Columns[0].ID])
+	// require.Nil(t, stat.Columns[tableInfo.Columns[2].ID])
+	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
+	topn := stat.Columns[tableInfo.Columns[0].ID].TopN
+	require.Equal(t, 0, hg.Len()+topn.Num())
+	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
+	require.Equal(t, 0, hg.Len()+topn.Num())
 	stmtCtx := stmtctx.NewStmtCtx()
 	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -127,7 +134,9 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Error(t, rs)
 	stat = h.GetTableStats(tableInfo)
-	require.Nil(t, stat.Columns[tableInfo.Columns[2].ID])
+	// require.Nil(t, stat.Columns[tableInfo.Columns[2].ID])
+	require.NotNil(t, stat.Columns[tableInfo.Columns[2].ID])
+	require.Equal(t, 0, hg.Len()+topn.Num())
 }
 
 func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {

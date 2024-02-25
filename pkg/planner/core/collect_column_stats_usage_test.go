@@ -97,7 +97,7 @@ func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, l
 		cols = append(cols, col)
 	}
 	sort.Strings(cols)
-	require.Equal(t, expected, cols, comment)
+	require.Equal(t, expected, cols, comment+", we get %v", cols)
 }
 
 func TestCollectPredicateColumns(t *testing.T) {
@@ -292,9 +292,10 @@ func TestCollectPredicateColumns(t *testing.T) {
 }
 
 func TestCollectHistNeededColumns(t *testing.T) {
-	t.Skip()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/disablePseudoCheck", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/disablePseudoCheck")
 	tests := []struct {
 		pruneMode string
 		sql       string
@@ -302,45 +303,45 @@ func TestCollectHistNeededColumns(t *testing.T) {
 	}{
 		{
 			sql: "select * from t where a > 2",
-			res: []string{"t.a"},
+			res: []string{"t.a full", "t.b meta", "t.c meta", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
 		},
 		{
 			sql: "select * from t where b in (2, 5) or c = 5",
-			res: []string{"t.b", "t.c"},
+			res: []string{"t.a meta", "t.b full", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
 		},
 		{
 			sql: "select * from t where a + b > 1",
-			res: []string{"t.a", "t.b"},
+			res: []string{"t.a full", "t.b full", "t.c meta", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
 		},
 		{
 			sql: "select b, count(a) from t where b > 1 group by b having count(a) > 2",
-			res: []string{"t.b"},
+			res: []string{"t.a meta", "t.b full"},
 		},
 		{
 			sql: "select * from t as x join t2 as y on x.b + y.b > 2 and x.c > 1 and y.a < 1",
-			res: []string{"t.c", "t2.a"},
+			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a full", "t2.b meta", "t2.c meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.a meta", "t2.b meta", "t2.c meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.a meta", "t2.b meta", "t2.c meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.a meta", "t2.b meta", "t2.c meta"},
 		},
 		{
 			pruneMode: "static",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.p1.b", "pt1.p1.ptn", "pt1.p2.b", "pt1.p2.ptn"},
+			res:       []string{"pt1.p1.a meta", "pt1.p1.b full", "pt1.p1.c meta", "pt1.p1.c_str meta", "pt1.p1.d meta", "pt1.p1.d_str meta", "pt1.p1.e meta", "pt1.p1.e_str meta", "pt1.p1.f meta", "pt1.p1.g meta", "pt1.p1.h meta", "pt1.p1.i_date meta", "pt1.p1.ptn full", "pt1.p2.a meta", "pt1.p2.b full", "pt1.p2.c meta", "pt1.p2.c_str meta", "pt1.p2.d meta", "pt1.p2.d_str meta", "pt1.p2.e meta", "pt1.p2.e_str meta", "pt1.p2.f meta", "pt1.p2.g meta", "pt1.p2.h meta", "pt1.p2.i_date meta", "pt1.p2.ptn full"},
 		},
 		{
 			pruneMode: "dynamic",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.b", "pt1.ptn"},
+			res:       []string{"pt1.a meta", "pt1.b full", "pt1.c meta", "pt1.c_str meta", "pt1.d meta", "pt1.d_str meta", "pt1.e meta", "pt1.e_str meta", "pt1.f meta", "pt1.g meta", "pt1.h meta", "pt1.i_date meta", "pt1.ptn full"},
 		},
 	}
 

@@ -18,7 +18,6 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle",
-        "//pkg/statistics/handle/internal",
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

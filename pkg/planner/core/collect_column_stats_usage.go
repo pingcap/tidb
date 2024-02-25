@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -167,8 +168,12 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	}
 	stats := domain.GetDomain(ds.SCtx()).StatsHandle()
 	tblStats := stats.GetPartitionStats(ds.tableInfo, ds.physicalTableID)
+	skipPseudoCheckForTest := false
+	failpoint.Inject("disablePseudoCheck", func() {
+		skipPseudoCheckForTest = true
+	})
 	// Since we can not get the stats tbl, this table is not analyzed. So we don't need to consider load stats.
-	if tblStats.Pseudo {
+	if tblStats.Pseudo && !skipPseudoCheckForTest {
 		return
 	}
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
