@@ -249,6 +249,130 @@ func (h *topNMeataHeap) Pop() any {
 	return x
 }
 
+type topNMerger struct {
+	loc *time.Location
+
+	multiwayMergingHeap topnHeap
+	maxPossibleAdded    []int64
+	histIters           []histIter
+	affectedHist        []int
+	finalTopNs          topNMeataHeap
+	remainedTopNs       []statistics.TopNMeta
+	cur                 struct {
+		affectedTopNs *bitset.BitSet
+		item          statistics.TopNMeta
+	}
+
+	n       int
+	isIndex bool
+	tp      byte
+}
+
+func (merger *topNMerger) checkCurrentAndMoveForward(nextVal *statistics.TopNMeta, position uint) error {
+	// It's perf-sensitive path. Don't use defer.
+	// Initializing the datum.
+	d, err := statistics.TopNMetaValToDatum(merger.cur.item.Encoded, merger.tp, merger.isIndex, merger.loc)
+	if err != nil {
+		return err
+	}
+	merger.affectedHist = merger.affectedHist[:0]
+	// The following codes might access the NextClear loop twice. Record it here for saving CPU.
+	for histPos, found := merger.cur.affectedTopNs.NextClear(0); found; histPos, found = merger.cur.affectedTopNs.NextClear(histPos + 1) {
+		merger.affectedHist = append(merger.affectedHist, int(histPos))
+	}
+	// Hacking skip.
+	if len(merger.finalTopNs) >= merger.n {
+		maxPossible := int64(0)
+		for _, histPos := range merger.affectedHist {
+			maxPossible += merger.maxPossibleAdded[histPos]
+		}
+		// The maximum possible added value still cannot make it replace the smallest topn.
+		if maxPossible+int64(merger.cur.item.Count) < int64(merger.finalTopNs[0].Count) {
+			merger.remainedTopNs = append(merger.remainedTopNs, statistics.TopNMeta{Encoded: merger.cur.item.Encoded, Count: merger.cur.item.Count})
+			// Set the cur maintained to the next value.
+			merger.cur.item.Encoded = nextVal.Encoded
+			merger.cur.item.Count = nextVal.Count
+			merger.cur.affectedTopNs.ClearAll()
+			merger.cur.affectedTopNs.Set(position)
+			return nil
+		}
+	}
+	for _, histPos := range merger.affectedHist {
+		// Remove the value from the hist and add it into the current maintained value.
+		merger.cur.item.Count += uint64(merger.histIters[histPos].remove(&d))
+	}
+	// Size reaches the n, maintaining the heap.
+	if merger.finalTopNs.Len() == merger.n {
+		if merger.finalTopNs[0].Count < merger.cur.item.Count {
+			merger.remainedTopNs = append(merger.remainedTopNs, merger.finalTopNs[0])
+			merger.finalTopNs[0].Encoded = merger.cur.item.Encoded
+			merger.finalTopNs[0].Count = merger.cur.item.Count
+			heap.Fix(&merger.finalTopNs, 0)
+		} else {
+			merger.remainedTopNs = append(merger.remainedTopNs, merger.cur.item)
+		}
+	} else {
+		// Otherwise the heap is not fulfilled.
+		merger.finalTopNs = append(merger.finalTopNs, statistics.TopNMeta{Encoded: merger.cur.item.Encoded, Count: merger.cur.item.Count})
+		if merger.finalTopNs.Len() == merger.n {
+			heap.Init(&merger.finalTopNs)
+		}
+	}
+	// Set the cur maintained to the next value.
+	merger.cur.item.Encoded = nextVal.Encoded
+	merger.cur.item.Count = nextVal.Count
+	merger.cur.affectedTopNs.ClearAll()
+	merger.cur.affectedTopNs.Set(position)
+	return nil
+}
+
+func newMerger(
+	loc *time.Location,
+	topNs []*statistics.TopN,
+	n uint32,
+	hists []*statistics.Histogram,
+	isIndex bool,
+) *topNMerger {
+	merger := &topNMerger{
+		isIndex: isIndex,
+		loc:     loc,
+		n:       int(n),
+	}
+	merger.multiwayMergingHeap = make([]*heapItem, 0, len(topNs))
+	for i, topN := range topNs {
+		if topN.Num() == 0 {
+			continue
+		}
+		heap.Push(&merger.multiwayMergingHeap, &heapItem{
+			item:          &topN.TopN[0],
+			idx:           i,
+			nextPosInTopN: 1,
+		})
+	}
+	if merger.multiwayMergingHeap.Len() == 0 {
+		// If there's no topn to merge, return a nil merger.
+		return nil
+	}
+	merger.tp = hists[0].Tp.GetType()
+	merger.maxPossibleAdded = make([]int64, len(hists))
+	for i, hist := range hists {
+		curMax := int64(hist.NotNullCount() / float64(hist.NDV))
+		for _, bkt := range hist.Buckets {
+			curMax = max(curMax, bkt.Repeat)
+		}
+		merger.maxPossibleAdded[i] = curMax
+	}
+	merger.histIters = make([]histIter, len(hists))
+	for i, hist := range hists {
+		merger.histIters[i].hist = hist
+	}
+	merger.cur.affectedTopNs = bitset.New(uint(len(hists)))
+	merger.finalTopNs = make([]statistics.TopNMeta, 0, n)
+	merger.remainedTopNs = make([]statistics.TopNMeta, 0, n)
+	merger.affectedHist = make([]int, 0, len(hists))
+	return merger
+}
+
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
 // The input parameters:
 //  1. `topNs` are the partition-level topNs to be merged.
@@ -280,130 +404,39 @@ func MergePartTopN2GlobalTopN(
 	isIndex bool,
 	killer *sqlkiller.SQLKiller,
 ) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
-	var mergingHeap topnHeap = make([]*heapItem, 0, len(topNs))
-	sumTopN := 0
-	for i, topN := range topNs {
-		if topN.Num() == 0 {
-			continue
-		}
-		sumTopN += topN.Num()
-		heap.Push(&mergingHeap, &heapItem{
-			item:          &topN.TopN[0],
-			idx:           i,
-			nextPosInTopN: 1,
-		})
-	}
-	if mergingHeap.Len() == 0 {
+	merger := newMerger(loc, topNs, n, hists, isIndex)
+	if merger == nil {
 		return nil, nil, hists, nil
 	}
-	maxPossibleAdded := make([]int64, len(hists))
-	for i, hist := range hists {
-		curMax := int64(hist.NotNullCount() / float64(hist.NDV))
-		for _, bkt := range hist.Buckets {
-			curMax = max(curMax, bkt.Repeat)
-		}
-		maxPossibleAdded[i] = curMax
-	}
-	histIters := make([]histIter, len(hists))
-	for i, hist := range hists {
-		histIters[i].hist = hist
-	}
-	type maintaining struct {
-		affectedTopNs *bitset.BitSet
-		item          statistics.TopNMeta
-	}
-	cur := maintaining{
-		affectedTopNs: bitset.New(uint(len(hists))),
-	}
-	var finalTopNs topNMeataHeap = make([]statistics.TopNMeta, 0, n+1)
-	remainedTopNs := make([]statistics.TopNMeta, 0, n)
-	affectedHist := make([]int, 0, len(hists))
 	firstTime := true
-	checkTheCurAndMoveForward := func(nextVal *statistics.TopNMeta, position uint) error {
-		// It's perf-sensitive path. Don't use defer.
-		// Initializing the datum.
-		d, err := statistics.TopNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
-		if err != nil {
-			return err
-		}
-		affectedHist = affectedHist[:0]
-		// The following codes might access the NextClear loop twice. Record it here for saving CPU.
-		for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
-			affectedHist = append(affectedHist, int(histPos))
-		}
-		// Hacking skip.
-		if uint32(len(finalTopNs)) >= n {
-			maxPossible := int64(0)
-			for _, histPos := range affectedHist {
-				maxPossible += maxPossibleAdded[histPos]
-			}
-			// The maximum possible added value still cannot make it replace the smallest topn.
-			if maxPossible+int64(cur.item.Count) < int64(finalTopNs[0].Count) {
-				remainedTopNs = append(remainedTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
-				// Set the cur maintained to the next value.
-				cur.item.Encoded = nextVal.Encoded
-				cur.item.Count = nextVal.Count
-				cur.affectedTopNs.ClearAll()
-				cur.affectedTopNs.Set(position)
-				return nil
-			}
-		}
-		for _, histPos := range affectedHist {
-			// Remove the value from the hist and add it into the current maintained value.
-			cur.item.Count += uint64(histIters[histPos].remove(&d))
-		}
-		// Size reaches the n, maintaining the heap.
-		if finalTopNs.Len() == int(n) {
-			if finalTopNs[0].Count < cur.item.Count {
-				remainedTopNs = append(remainedTopNs, finalTopNs[0])
-				finalTopNs[0].Encoded = cur.item.Encoded
-				finalTopNs[0].Count = cur.item.Count
-				heap.Fix(&finalTopNs, 0)
-			} else {
-				remainedTopNs = append(remainedTopNs, cur.item)
-			}
-		} else {
-			// Otherwise the heap is not fulfilled.
-			finalTopNs = append(finalTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
-			if finalTopNs.Len() == int(n) {
-				heap.Init(&finalTopNs)
-			}
-		}
-		// Set the cur maintained to the next value.
-		cur.item.Encoded = nextVal.Encoded
-		cur.item.Count = nextVal.Count
-		cur.affectedTopNs.ClearAll()
-		cur.affectedTopNs.Set(position)
-		return nil
-	}
 	for {
 		if err := killer.HandleSignal(); err != nil {
 			return nil, nil, nil, err
 		}
-		if mergingHeap.Len() == 0 {
+		if merger.multiwayMergingHeap.Len() == 0 {
 			break
 		}
-		head := mergingHeap[0]
+		head := merger.multiwayMergingHeap[0]
 		headTopN := head.item
 		if head.nextPosInTopN < topNs[head.idx].Num() {
 			head.item = &topNs[head.idx].TopN[head.nextPosInTopN]
 			head.nextPosInTopN++
-			heap.Fix(&mergingHeap, 0)
+			heap.Fix(&merger.multiwayMergingHeap, 0)
 		} else {
-			heap.Pop(&mergingHeap)
+			heap.Pop(&merger.multiwayMergingHeap)
 		}
 		// Init the cur when we first enter the heap.
 		if firstTime {
-			cur.item.Encoded = headTopN.Encoded
-			cur.item.Count = headTopN.Count
-			cur.affectedTopNs.Set(uint(head.idx))
+			merger.cur.item.Encoded = headTopN.Encoded
+			merger.cur.item.Count = headTopN.Count
+			merger.cur.affectedTopNs.Set(uint(head.idx))
 			firstTime = false
 			continue
 		}
-		cmp := bytes.Compare(cur.item.Encoded, headTopN.Encoded)
+		cmp := bytes.Compare(merger.cur.item.Encoded, headTopN.Encoded)
 		// The heap's head move forward.
 		if cmp < 0 {
-			err := checkTheCurAndMoveForward(headTopN, uint(head.idx))
+			err := merger.checkCurrentAndMoveForward(headTopN, uint(head.idx))
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -411,28 +444,28 @@ func MergePartTopN2GlobalTopN(
 		}
 		// The cmp result cannot be 1 because the value is strictly increasing.
 		// Here is cmp == 0.
-		cur.item.Count += headTopN.Count
-		cur.affectedTopNs.Set(uint(head.idx))
+		merger.cur.item.Count += headTopN.Count
+		merger.cur.affectedTopNs.Set(uint(head.idx))
 	}
 
 	// Next val and the position is useless
-	err := checkTheCurAndMoveForward(&cur.item, 0)
+	err := merger.checkCurrentAndMoveForward(&merger.cur.item, 0)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	for _, iter := range histIters {
+	for _, iter := range merger.histIters {
 		if err := killer.HandleSignal(); err != nil {
 			return nil, nil, nil, err
 		}
 		iter.finish()
 	}
-	statistics.SortTopnMeta(finalTopNs)
-	statistics.SortTopnMeta(remainedTopNs)
+	statistics.SortTopnMeta(merger.finalTopNs)
+	statistics.SortTopnMeta(merger.remainedTopNs)
 	var globalTopN statistics.TopN
-	globalTopN.TopN = finalTopNs
+	globalTopN.TopN = merger.finalTopNs
 	globalTopN.Sort()
-	return &globalTopN, remainedTopNs, hists, nil
+	return &globalTopN, merger.remainedTopNs, hists, nil
 }
 
 // MergePartTopN2GlobalTopNForAnalyzeVer1 is the old implementation for the deprecated analyze_version = 1;
