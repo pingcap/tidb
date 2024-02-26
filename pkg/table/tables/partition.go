@@ -304,15 +304,10 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 		if val.Kind() == types.KindNull {
 			h.Write([]byte{0})
 		} else {
-			var err error
-			if col.RetType.GetCollate() == "utf8mb4_general_ci" && val.Collation() != charset.CollationBin {
-				if bcType, convert := ranger.ConvertStringFTToBinaryCollate(col.RetType); convert {
-					val, err = val.ConvertTo(types.DefaultStmtNoWarningContext, bcType)
-					if err != nil {
-						return 0, err
-					}
-				}
+			if val.Collation() != charset.CollationBin {
+				val.SetCollation(charset.CollationBin)
 			}
+
 			data, err := val.ToHashKey()
 			if err != nil {
 				return 0, err
