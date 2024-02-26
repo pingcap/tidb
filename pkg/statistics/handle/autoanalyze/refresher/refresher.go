@@ -170,6 +170,7 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 							sctx,
 							db,
 							tblInfo,
+							// TODO: use GetPartitionStatsForAutoAnalyze to save memory.
 							r.statsHandle.GetPartitionStats(tblInfo, tblInfo.ID),
 							autoAnalyzeRatio,
 							currentTs,
