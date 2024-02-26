@@ -236,7 +236,7 @@ func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool, forP
 		} else if forBinding {
 			// Apply binding matching specific rules, IN (?) => IN ( ... ) #44298
 			d.reduceInListWithSingleLiteral(&currTok)
-			// In (Row()) => In (...) #51222
+			// In (Row(...)) => In (...) #51222
 			d.reduceInRowListWithSingleLiteral(&currTok)
 		}
 
@@ -348,8 +348,10 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 		currTok.lit = "..."
 		return
 	}
-	last7 := d.tokens.back(7)
-	if d.isGenericRowLists(last7) {
+	// reduce "In (row(...), row(...))" to "In (row(...))"
+	// final, it will be reduced to "In (...)". Issue: #51222
+	last9 := d.tokens.back(9)
+	if d.isGenericRowListsWithIn(last9) {
 		d.tokens.popBack(5)
 		currTok.tok = genericSymbolList
 		currTok.lit = "..."
@@ -388,29 +390,35 @@ func (d *sqlDigester) isGenericLists(last4 []token) bool {
 }
 
 // In (Row(...), Row(...)) => In (Row(...))
-func (d *sqlDigester) isGenericRowLists(last7 []token) bool {
-	if len(last7) < 7 {
+func (d *sqlDigester) isGenericRowListsWithIn(last9 []token) bool {
+	if len(last9) < 7 {
 		return false
 	}
-	if !d.isRowKeyword(last7[0]) {
+	if !d.isInKeyword(last9[0]) {
 		return false
 	}
-	if last7[1].lit != "(" {
+	if last9[1].lit != "(" {
 		return false
 	}
-	if !(last7[2].tok == genericSymbol || last7[2].tok == genericSymbolList) {
+	if !d.isRowKeyword(last9[2]) {
 		return false
 	}
-	if last7[3].lit != ")" {
+	if last9[3].lit != "(" {
 		return false
 	}
-	if !d.isComma(last7[4]) {
+	if !(last9[4].tok == genericSymbol || last9[4].tok == genericSymbolList) {
 		return false
 	}
-	if !d.isRowKeyword(last7[5]) {
+	if last9[5].lit != ")" {
 		return false
 	}
-	if last7[6].lit != "(" {
+	if !d.isComma(last9[6]) {
+		return false
+	}
+	if !d.isRowKeyword(last9[7]) {
+		return false
+	}
+	if last9[8].lit != "(" {
 		return false
 	}
 	return true
