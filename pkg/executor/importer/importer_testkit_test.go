@@ -258,7 +258,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), map[autoid.AllocatorType]int64{
 		autoid.RowIDAllocType: 123,
 	}, plan, localChecksum, logger))
-	allocators := table.Allocators(tk.Session().GetSessionVars())
+	allocators := table.Allocators(tk.Session().GetTableCtx())
 	nextGlobalAutoID, err := allocators.Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(124), nextGlobalAutoID)
@@ -360,7 +360,7 @@ func TestProcessChunkWith(t *testing.T) {
 		require.Len(t, progress.GetColSize(), 3)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(111, 3, 0xde5c27fa54065037), *checksumMap[verify.DataKVGroupID])
+		require.Equal(t, verify.MakeKVChecksum(111, 3, 14231358899564314836), *checksumMap[verify.DataKVGroupID])
 	})
 }
 

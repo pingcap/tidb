@@ -1007,7 +1007,8 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 
 	requiredCnt := uint64(0)
 	if w.indexMerge.pushedLimit != nil {
-		requiredCnt = max(requiredCnt, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
+		// Pre-allocate up to 1024 to avoid oom
+		requiredCnt = min(1024, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
 	}
 	return &handleHeap{
 		requiredCnt: requiredCnt,

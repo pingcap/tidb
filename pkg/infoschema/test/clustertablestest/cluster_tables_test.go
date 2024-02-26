@@ -1658,3 +1658,34 @@ func TestIndexUsageTable(t *testing.T) {
 func TestClusterIndexUsageTable(t *testing.T) {
 	testIndexUsageTable(t, true)
 }
+
+func TestUnusedIndexView(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id1 int unique, id2 int unique)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("analyze table t")
+	tk.RefreshSession()
+	tk.MustExec("use test")
+	// range scan 0-10 through t1 id1
+	tk.MustQuery("select * from t use index(id1) where id1 >= 0 and id1 < 10")
+	tk.MustHavePlan("select * from t use index(id1) where id1 >= 0 and id1 < 10", "IndexLookUp")
+	tk.RefreshSession()
+	// the index `id2` is unused
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select * from sys.schema_unused_indexes where object_name = 't'`)
+		logutil.BgLogger().Info("select schema_unused_indexes", zap.Any("row", result.Rows()))
+		expectedResult := testkit.Rows("test t id2")
+		return result.Equal(expectedResult)
+	}, 5*time.Second, 100*time.Millisecond)
+}

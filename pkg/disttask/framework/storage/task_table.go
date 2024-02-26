@@ -230,7 +230,7 @@ func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx
 }
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
-func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
+func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select `+basicTaskColumns+` from mysql.tidb_global_task t
 		where state in (%?, %?, %?, %?, %?, %?)
@@ -245,13 +245,14 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 		proto.MaxConcurrentTask*2,
 	)
 	if err != nil {
-		return task, err
+		return nil, err
 	}
 
+	tasks := make([]*proto.TaskBase, 0, len(rs))
 	for _, r := range rs {
-		task = append(task, row2TaskBasic(r))
+		tasks = append(tasks, row2TaskBasic(r))
 	}
-	return task, nil
+	return tasks, nil
 }
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
@@ -393,7 +394,7 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 }
 
 // GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
-func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error) {
+func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state in (%?, %?)`,
@@ -401,7 +402,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 	if err != nil {
 		return nil, err
 	}
-	subtasks := make([]*proto.Subtask, 0, len(rs))
+	subtasks := make([]*proto.SubtaskBase, 0, len(rs))
 	for _, r := range rs {
 		subtasks = append(subtasks, row2BasicSubTask(r))
 	}
@@ -518,7 +519,7 @@ func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, 
 }
 
 // UpdateSubtasksExecIDs update subtasks' execID.
-func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error {
+func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil
@@ -732,7 +733,7 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 }
 
 // GetAllSubtasks gets all subtasks with basic columns.
-func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, error) {
+func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicSubtaskColumns+` from mysql.tidb_background_subtask`)
 	if err != nil {
 		return nil, err
@@ -740,7 +741,7 @@ func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, e
 	if len(rs) == 0 {
 		return nil, nil
 	}
-	subtasks := make([]*proto.Subtask, 0, len(rs))
+	subtasks := make([]*proto.SubtaskBase, 0, len(rs))
 	for _, r := range rs {
 		subtasks = append(subtasks, row2BasicSubTask(r))
 	}

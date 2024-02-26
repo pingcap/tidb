@@ -686,6 +686,24 @@ const (
 		PRIMARY KEY (id),
 		KEY (created_by),
 		KEY (status));`
+
+	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
+	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
+
+	// CreateSysSchema creates a new schema called `sys`.
+	CreateSysSchema = `CREATE DATABASE IF NOT EXISTS sys;`
+
+	// CreateSchemaUnusedIndexesView creates a view to use `information_schema.tidb_index_usage` to get the unused indexes.
+	CreateSchemaUnusedIndexesView = `CREATE OR REPLACE VIEW sys.schema_unused_indexes AS
+		SELECT
+			table_schema as object_schema,
+			table_name as object_name,
+			index_name
+		FROM information_schema.cluster_tidb_index_usage
+		WHERE
+			last_access_time is null and
+			table_schema not in ('sys', 'mysql', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA') and
+			index_name != 'PRIMARY';`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1048,11 +1066,17 @@ const (
 	// version 184
 	//   remove `mysql.load_data_jobs` table
 	version184 = 184
+
+	// version 185
+	//   drop `mysql.schema_index_usage` table
+	//   create `sys` schema
+	//   create `sys.schema_unused_indexes` table
+	version185 = 185
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version184
+var currentBootstrapVersion int64 = version185
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1212,6 +1236,7 @@ var (
 		upgradeToVer182,
 		upgradeToVer183,
 		upgradeToVer184,
+		upgradeToVer185,
 	}
 )
 
@@ -2977,6 +3002,14 @@ func upgradeToVer184(s sessiontypes.Session, ver int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.load_data_jobs")
 }
 
+func upgradeToVer185(s sessiontypes.Session, ver int64) {
+	if ver >= version185 {
+		return
+	}
+
+	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
 func writeOOMAction(s sessiontypes.Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -3052,8 +3085,6 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateOptRuleBlacklist)
 	// Create stats_extended table.
 	mustExecute(s, CreateStatsExtended)
-	// Create schema_index_usage.
-	mustExecute(s, CreateSchemaIndexUsageTable)
 	// Create stats_fm_sketch table.
 	mustExecute(s, CreateStatsFMSketchTable)
 	// Create global_grants
@@ -3106,6 +3137,10 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateDistFrameworkMeta)
 	// create request_unit_by_group
 	mustExecute(s, CreateRequestUnitByGroupTable)
+	// create `sys` schema
+	mustExecute(s, CreateSysSchema)
+	// create `sys.schema_unused_indexes` view
+	mustExecute(s, CreateSchemaUnusedIndexesView)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

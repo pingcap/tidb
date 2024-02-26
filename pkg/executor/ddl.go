@@ -549,7 +549,7 @@ func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error
 	}
 
 	// Check `TO TIMESTAMP` clause
-	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.Ctx(), s.FlashbackTS)
+	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.Ctx().GetPlanCtx(), s.FlashbackTS)
 	if err != nil {
 		return err
 	}

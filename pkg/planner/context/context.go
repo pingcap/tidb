@@ -16,9 +16,12 @@ package context
 
 import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
@@ -26,12 +29,34 @@ import (
 type PlanContext interface {
 	exprctx.BuildContext
 	contextutil.ValueStoreContext
+	tablelock.TableLockReadContext
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
+	// GetInfoSchema returns the current infoschema
+	GetInfoSchema() infoschema.InfoSchemaMetaVersion
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
+	// GetSessionManager gets the session manager.
+	GetSessionManager() util.SessionManager
+	// Txn returns the current transaction which is created before executing a statement.
+	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
+	// If the active parameter is true, call this function will wait for the pending txn
+	// to become valid.
+	Txn(active bool) (kv.Transaction, error)
+	// HasDirtyContent checks whether there's dirty update on the given table.
+	HasDirtyContent(tid int64) bool
+	// AdviseTxnWarmup advises the txn to warm up.
+	AdviseTxnWarmup() error
 }
+
+// EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
+// It is used by some mock contexts that are only required to implement PlanContext
+// but do not care about the actual implementation.
+type EmptyPlanContextExtended struct{}
+
+// AdviseTxnWarmup advises the txn to warm up.
+func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }

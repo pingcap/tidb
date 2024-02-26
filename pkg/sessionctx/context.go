@@ -24,12 +24,15 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -65,7 +68,7 @@ type Context interface {
 	contextutil.ValueStoreContext
 	exprctx.EvalContext
 	exprctx.BuildContext
-	planctx.PlanContext
+	tablelock.TableLockContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// RollbackTxn rolls back the current transaction.
@@ -96,7 +99,13 @@ type Context interface {
 
 	GetSessionVars() *variable.SessionVars
 
+	// GetTableCtx returns the table.MutateContext
+	GetTableCtx() tbctx.MutateContext
+
 	GetSessionManager() util.SessionManager
+
+	// GetPlanCtx gets the plan context of the current session.
+	GetPlanCtx() planctx.PlanContext
 
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
@@ -124,20 +133,6 @@ type Context interface {
 	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
-	// AddTableLock adds table lock to the session lock map.
-	AddTableLock([]model.TableLockTpInfo)
-	// ReleaseTableLocks releases table locks in the session lock map.
-	ReleaseTableLocks(locks []model.TableLockTpInfo)
-	// ReleaseTableLockByTableIDs releases table locks in the session lock map by table IDs.
-	ReleaseTableLockByTableIDs(tableIDs []int64)
-	// CheckTableLocked checks the table lock.
-	CheckTableLocked(tblID int64) (bool, model.TableLockType)
-	// GetAllTableLocks gets all table locks table id and db id hold by the session.
-	GetAllTableLocks() []model.TableLockTpInfo
-	// ReleaseAllTableLocks releases all table locks hold by the session.
-	ReleaseAllTableLocks()
-	// HasLockedTables uses to check whether this session locked any tables.
-	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
 	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
@@ -145,12 +140,6 @@ type Context interface {
 	GetPreparedTxnFuture() TxnFuture
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
-	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
-	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-	GetBuiltinFunctionUsage() map[string]uint32
-	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
-	// Notice that this is a thread safe function
-	BuiltinFunctionUsageInc(scalarFuncSigName string)
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
@@ -230,15 +219,15 @@ func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) er
 const allowedTimeFromNow = 100 * time.Millisecond
 
 // ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
-func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	currentTS, err := sctx.GetSessionVars().StmtCtx.GetStaleTSO()
+func ValidateStaleReadTS(ctx context.Context, sc *stmtctx.StatementContext, store kv.Storage, readTS uint64) error {
+	currentTS, err := sc.GetStaleTSO()
 	if currentTS == 0 || err != nil {
-		currentTS, err = sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+		currentTS, err = store.GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
 	}
 	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
 	if err != nil {
 		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+		currentVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
 		if err != nil {
 			return errors.Errorf("fail to validate read timestamp: %v", err)
 		}

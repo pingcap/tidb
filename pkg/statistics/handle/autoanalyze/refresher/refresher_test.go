@@ -16,11 +16,15 @@ package refresher
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
@@ -174,4 +178,201 @@ func insertFailedJobForPartitionWithStartTime(
 		partitionName,
 		startTime,
 	)
+}
+
+func TestRebuildTableAnalysisJobQueue(t *testing.T) {
+	old := exec.AutoAnalyzeMinCnt
+	defer func() {
+		exec.AutoAnalyzeMinCnt = old
+	}()
+	exec.AutoAnalyzeMinCnt = 0
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
+	handle := dom.StatsHandle()
+	require.Nil(t, handle.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t1")
+	require.Nil(t, handle.Update(dom.InfoSchema()))
+
+	sysProcTracker := dom.SysProcTracker()
+	r, err := NewRefresher(handle, sysProcTracker)
+	require.NoError(t, err)
+
+	// Rebuild the job queue.
+	err = r.rebuildTableAnalysisJobQueue()
+	require.NoError(t, err)
+	require.Equal(t, 1, r.jobs.Len())
+	job1 := r.jobs.Pop()
+	require.Equal(t, float64(1), job1.Weight)
+	require.Equal(t, float64(0), job1.ChangePercentage)
+	require.Equal(t, float64(3*2), job1.TableSize)
+	require.GreaterOrEqual(t, job1.LastAnalysisDuration, time.Duration(0))
+	// Insert more data into t1.
+	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6)")
+	require.Nil(t, handle.DumpStatsDeltaToKV(true))
+	require.Nil(t, handle.Update(dom.InfoSchema()))
+	err = r.rebuildTableAnalysisJobQueue()
+	require.NoError(t, err)
+	require.Equal(t, 1, r.jobs.Len())
+	job1 = r.jobs.Pop()
+	require.Equal(t, float64(1), job1.Weight)
+	require.Equal(t, float64(1), job1.ChangePercentage)
+	require.Equal(t, float64(6*2), job1.TableSize)
+	require.GreaterOrEqual(t, job1.LastAnalysisDuration, time.Duration(0))
+}
+
+func TestCalculateChangePercentage(t *testing.T) {
+	unanalyzedColumns := map[int64]*statistics.Column{
+		1: {},
+		2: {},
+	}
+	unanalyzedIndices := map[int64]*statistics.Index{
+		1: {},
+		2: {},
+	}
+	analyzedColumns := map[int64]*statistics.Column{
+		1: {
+			StatsVer: 2,
+		},
+		2: {
+			StatsVer: 2,
+		},
+	}
+	analyzedIndices := map[int64]*statistics.Index{
+		1: {
+			StatsVer: 2,
+		},
+		2: {
+			StatsVer: 2,
+		},
+	}
+	tests := []struct {
+		name             string
+		tblStats         *statistics.Table
+		autoAnalyzeRatio float64
+		want             float64
+	}{
+		{
+			name: "Test Pseudo",
+			tblStats: &statistics.Table{
+				HistColl: statistics.HistColl{
+					Pseudo: true,
+				},
+			},
+			autoAnalyzeRatio: 0.5,
+			want:             0,
+		},
+		{
+			name: "Test RealtimeCount less than AutoAnalyzeMinCnt",
+			tblStats: &statistics.Table{
+				HistColl: statistics.HistColl{
+					RealtimeCount: exec.AutoAnalyzeMinCnt - 1,
+				},
+			},
+			autoAnalyzeRatio: 0.5,
+			want:             0,
+		},
+		{
+			name: "Test Table not analyzed",
+			tblStats: &statistics.Table{
+				HistColl: statistics.HistColl{
+					Pseudo:        false,
+					RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+					Columns:       unanalyzedColumns,
+					Indices:       unanalyzedIndices,
+				},
+			},
+			autoAnalyzeRatio: 0.5,
+			want:             1,
+		},
+		{
+			name: "Based on change percentage",
+			tblStats: &statistics.Table{
+				HistColl: statistics.HistColl{
+					Pseudo:        false,
+					RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+					Columns:       analyzedColumns,
+					Indices:       analyzedIndices,
+					ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
+				},
+			},
+			autoAnalyzeRatio: 0.5,
+			want:             2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := calculateChangePercentage(tt.tblStats, tt.autoAnalyzeRatio)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGetTableLastAnalyzeDuration(t *testing.T) {
+	tblStats := &statistics.Table{
+		Version: oracle.ComposeTS(time.Hour.Nanoseconds()*1000, 0),
+	}
+	currentTs := oracle.ComposeTS((time.Hour.Nanoseconds()+time.Second.Nanoseconds())*1000, 0)
+	want := time.Second
+
+	got := getTableLastAnalyzeDuration(tblStats, currentTs)
+	require.Equal(t, want, got)
+}
+
+func TestCheckIndexesNeedAnalyze(t *testing.T) {
+	tests := []struct {
+		name     string
+		tblInfo  *model.TableInfo
+		tblStats *statistics.Table
+		want     []string
+	}{
+		{
+			name: "Test Table not analyzed",
+			tblInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:    1,
+						Name:  model.NewCIStr("index1"),
+						State: model.StatePublic,
+					},
+				},
+			},
+			tblStats: &statistics.Table{},
+			want:     nil,
+		},
+		{
+			name: "Test Index not analyzed",
+			tblInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:    1,
+						Name:  model.NewCIStr("index1"),
+						State: model.StatePublic,
+					},
+				},
+			},
+			tblStats: &statistics.Table{
+				HistColl: statistics.HistColl{
+					Pseudo:  false,
+					Indices: map[int64]*statistics.Index{},
+					Columns: map[int64]*statistics.Column{
+						1: {
+							StatsVer: 2,
+						},
+					},
+				},
+			},
+			want: []string{"index1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkIndexesNeedAnalyze(tt.tblInfo, tt.tblStats)
+			require.Equal(t, tt.want, got)
+		})
+	}
 }

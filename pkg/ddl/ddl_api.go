@@ -1339,6 +1339,32 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			}
 		}
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+	case ast.Upper:
+		// Support UPPER(SUBSTRING_INDEX(USER(), '@', 1)).
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		if substringIndexFunc, ok := expr.Args[0].(*ast.FuncCallExpr); ok && substringIndexFunc.FnName.L == ast.SubstringIndex {
+			if err := expression.VerifyArgsWrapper(substringIndexFunc.FnName.L, len(substringIndexFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			if userFunc, ok := substringIndexFunc.Args[0].(*ast.FuncCallExpr); ok && userFunc.FnName.L == ast.User {
+				if err := expression.VerifyArgsWrapper(userFunc.FnName.L, len(userFunc.Args)); err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				valExpr, isValue := substringIndexFunc.Args[1].(ast.ValueExpr)
+				if !isValue || valExpr.GetString() != "@" {
+					return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), valExpr)
+				}
+				str, err := restoreFuncCall(expr)
+				if err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				col.DefaultIsExpr = true
+				return str, false, nil
+			}
+		}
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -4032,7 +4058,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	}
 
 	if !force {
-		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx.GetSessionVars(), t, tp, newBase)
+		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx.GetTableCtx(), t, tp, newBase)
 		if err != nil {
 			return err
 		}
@@ -4220,7 +4246,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 						return nil, errors.Trace(err)
 					}
 					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
-				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.Replace:
+				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.Replace, ast.Upper:
 					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 				}
 			}
@@ -6741,8 +6767,8 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isSystemTable(schema, table string) bool {
-	if schema != "mysql" {
+func isUndroppableTable(schema, table string) bool {
+	if schema != mysql.SystemDB {
 		return false
 	}
 	if _, ok := systemTables[table]; ok {
@@ -6818,7 +6844,7 @@ func (d *ddl) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isSystemTable(tn.Schema.L, tn.Name.L) {
+		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
 			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
 		}
 		switch tableObjectType {

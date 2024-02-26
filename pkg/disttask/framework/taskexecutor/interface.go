@@ -56,7 +56,7 @@ type TaskTable interface {
 	// RunningSubtasksBack2Pending update the state of subtask which belongs to this
 	// node from running to pending.
 	// see subtask state machine for more detail.
-	RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.Subtask) error
+	RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.SubtaskBase) error
 }
 
 // Pool defines the interface of a pool.

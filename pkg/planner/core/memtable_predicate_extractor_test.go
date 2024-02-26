@@ -44,7 +44,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	builder, _ := plannercore.NewPlanBuilder().Init(se, dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	builder, _ := plannercore.NewPlanBuilder().Init(se.GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
@@ -647,7 +647,7 @@ func TestMetricTableExtractor(t *testing.T) {
 			require.EqualValues(t, ca.quantiles, metricTableExtractor.Quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
+			promQL := metricTableExtractor.GetMetricTablePromQL(se.GetPlanCtx(), "tidb_query_duration")
 			require.EqualValues(t, promQL, ca.promQL, "SQL: %v", ca.sql)
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			require.GreaterOrEqual(t, end.UnixNano(), start.UnixNano())

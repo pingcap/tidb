@@ -236,7 +236,7 @@ func (mr *MockTaskTableMockRecorder) RecoverMeta(arg0, arg1, arg2 any) *gomock.C
 }
 
 // RunningSubtasksBack2Pending mocks base method.
-func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.Subtask) error {
+func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.SubtaskBase) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RunningSubtasksBack2Pending", arg0, arg1)
 	ret0, _ := ret[0].(error)

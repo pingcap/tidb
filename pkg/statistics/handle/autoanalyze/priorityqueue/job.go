@@ -50,11 +50,13 @@ type TableAnalysisJob struct {
 	// Only set when table's indexes need to be analyzed.
 	Indexes []string
 	// Only set when table's partitions need to be analyzed.
-	Partitions       []string
-	TableID          int64
-	TableStatsVer    int
-	ChangePercentage float64
-	Weight           float64
+	Partitions           []string
+	TableID              int64
+	TableStatsVer        int
+	ChangePercentage     float64
+	TableSize            float64
+	LastAnalysisDuration time.Duration
+	Weight               float64
 }
 
 // IsValidToAnalyze checks whether the table is valid to analyze.

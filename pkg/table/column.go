@@ -546,13 +546,13 @@ func GetColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo) (typ
 }
 
 // EvalColDefaultExpr eval default expr node to explicit default value.
-func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultExpr ast.ExprNode) (types.Datum, error) {
+func EvalColDefaultExpr(ctx expression.BuildContext, col *model.ColumnInfo, defaultExpr ast.ExprNode) (types.Datum, error) {
 	d, err := expression.EvalSimpleAst(ctx, defaultExpr)
 	if err != nil {
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, d, col, false, false)
+	value, err := CastColumnValue(ctx.GetSessionVars(), d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}

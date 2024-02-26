@@ -63,9 +63,13 @@ func newReadIndexExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *JobContext,
-	bc ingest.BackendCtx,
+	bcGetter func() (ingest.BackendCtx, error),
 	cloudStorageURI string,
-) *readIndexExecutor {
+) (*readIndexExecutor, error) {
+	bc, err := bcGetter()
+	if err != nil {
+		return nil, err
+	}
 	return &readIndexExecutor{
 		d:               d,
 		job:             job,
@@ -75,7 +79,7 @@ func newReadIndexExecutor(
 		bc:              bc,
 		cloudStorageURI: cloudStorageURI,
 		curRowCount:     &atomic.Int64{},
-	}
+	}, nil
 }
 
 func (*readIndexExecutor) Init(_ context.Context) error {
@@ -145,9 +149,11 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	}
 }
 
-func (*readIndexExecutor) Cleanup(ctx context.Context) error {
+func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("read index executor cleanup subtask exec env",
 		zap.String("category", "ddl"))
+	// cleanup backend context
+	ingest.LitBackCtxMgr.Unregister(r.job.ID)
 	return nil
 }
 

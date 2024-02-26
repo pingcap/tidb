@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
@@ -301,10 +300,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	checkAfterSwitchStep(t, startTime, task1, subtasks1, proto.StepOne)
 
 	// mock another dispatcher inserted some subtasks
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks", `1*return(true)`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks", `1*return(true)`)
 	task2, subtasks2 := prepare("key2")
 	go func() {
 		storage.TestChannel <- struct{}{}
@@ -410,8 +406,6 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	taskKeys := make([]string, 0, len(tasks))
 	for _, task := range tasks {
 		taskKeys = append(taskKeys, task.Key)
-		// not filled
-		require.Empty(t, task.Meta)
 	}
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, taskKeys)
 }
@@ -455,7 +449,7 @@ func TestGetActiveSubtasks(t *testing.T) {
 	activeSubtasks, err := tm.GetActiveSubtasks(ctx, task.ID)
 	require.NoError(t, err)
 	require.Len(t, activeSubtasks, 2)
-	slices.SortFunc(activeSubtasks, func(i, j *proto.Subtask) int {
+	slices.SortFunc(activeSubtasks, func(i, j *proto.SubtaskBase) int {
 		return int(i.ID - j.ID)
 	})
 	require.Equal(t, int64(2), activeSubtasks[0].ID)
@@ -473,7 +467,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, int64(1), id)
 	err = sm.SwitchTaskStep(
 		ctx,
-		&proto.Task{ID: 1, State: proto.TaskStatePending, Step: proto.StepInit},
+		&proto.Task{TaskBase: proto.TaskBase{ID: 1, State: proto.TaskStatePending, Step: proto.StepInit}},
 		proto.TaskStateRunning,
 		proto.StepOne,
 		[]*proto.Subtask{proto.NewSubtask(proto.StepOne, 1, proto.TaskTypeExample, "tidb1", 11, []byte("test"), 1)},
@@ -575,13 +569,21 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(100), rowCount)
 
+	getSubtaskBaseSlice := func(sts []*proto.Subtask) []*proto.SubtaskBase {
+		res := make([]*proto.SubtaskBase, 0, len(sts))
+		for _, st := range sts {
+			res = append(res, &st.SubtaskBase)
+		}
+		return res
+	}
 	// test UpdateSubtasksExecIDs
 	// 1. update one subtask
 	testutil.CreateSubTask(t, sm, 5, proto.StepOne, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	subtasks[0].ExecID = "tidb2"
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
+	subtaskBases := getSubtaskBaseSlice(subtasks)
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtaskBases))
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb2", subtasks[0].ExecID)
@@ -590,7 +592,8 @@ func TestSubTaskTable(t *testing.T) {
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	subtasks[0].ExecID = "tidb3"
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
+	subtaskBases = getSubtaskBaseSlice(subtasks)
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtaskBases))
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb3", subtasks[0].ExecID)
@@ -602,7 +605,8 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, "tidb3", subtasks[0].ExecID)
 	subtasks[0].ExecID = "tidb2"
 	// update success
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
+	subtaskBases = getSubtaskBaseSlice(subtasks)
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtaskBases))
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 5, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb2", subtasks[0].ExecID)
@@ -687,14 +691,14 @@ func TestDistFrameworkMeta(t *testing.T) {
 	// when no node
 	_, err := sm.GetCPUCountOfManagedNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)"))
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	_, err = sm.GetCPUCountOfManagedNode(ctx)
 	require.ErrorContains(t, err, "no managed node have enough resource")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 	require.NoError(t, sm.InitMeta(ctx, ":4001", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 	nodes, err := sm.GetAllNodes(ctx)
@@ -705,7 +709,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", "background"))
 
@@ -811,10 +815,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Len(t, subTasks, 3)
 
 	// test GC history table.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds"))
-	}()
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	time.Sleep(2 * time.Second)
 
 	testutil.CreateSubTask(t, sm, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, 11)
@@ -1000,10 +1001,10 @@ func TestSubtaskType(t *testing.T) {
 func TestRunningSubtasksBack2Pending(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	subtasks := []*proto.Subtask{
-		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending},
-		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning},
-		{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending},
-		{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending},
+		{SubtaskBase: proto.SubtaskBase{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending}},
+		{SubtaskBase: proto.SubtaskBase{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning}},
+		{SubtaskBase: proto.SubtaskBase{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending}},
+		{SubtaskBase: proto.SubtaskBase{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending}},
 	}
 	for _, st := range subtasks {
 		testutil.InsertSubtask(t, sm, st.TaskID, proto.StepOne, st.ExecID, []byte(""), st.State, proto.TaskTypeExample, 12)
@@ -1023,9 +1024,11 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 					updateTime = time.Unix(r.GetInt64(3), 0)
 				}
 				res = append(res, &proto.Subtask{
-					TaskID:     r.GetInt64(0),
-					ExecID:     r.GetString(1),
-					State:      proto.SubtaskState(r.GetString(2)),
+					SubtaskBase: proto.SubtaskBase{
+						TaskID: r.GetInt64(0),
+						ExecID: r.GetString(1),
+						State:  proto.SubtaskState(r.GetString(2)),
+					},
 					UpdateTime: updateTime,
 				})
 			}

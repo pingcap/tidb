@@ -200,7 +200,7 @@ const (
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
-	ctx          sessionctx.Context
+	ctx          PlanContext
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
@@ -444,7 +444,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 // PlannerSelectBlockAsName should be restored after using this builder.
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
-func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, []ast.HintTable) {
+func (b *PlanBuilder) Init(sctx PlanContext, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
@@ -806,7 +806,7 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
-func fetchRecordFromClusterStmtSummary(sctx sessionctx.Context, planDigest string) ([]chunk.Row, error) {
+func fetchRecordFromClusterStmtSummary(sctx PlanContext, planDigest string) ([]chunk.Row, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec, _ := sctx.(sqlexec.SQLExecutor)
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
@@ -1236,7 +1236,7 @@ func getPossibleAccessPaths(ctx PlanContext, tableHints *hint.PlanHints, indexHi
 
 func filterPathByIsolationRead(ctx PlanContext, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
-	if dbName.L == mysql.SystemDB {
+	if util2.IsSysDB(dbName.L) {
 		return paths, nil
 	}
 	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
@@ -1459,12 +1459,6 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
-	case ast.AdminShowTelemetry:
-		p := &AdminShowTelemetry{}
-		p.setSchemaAndNames(buildShowTelemetrySchema())
-		ret = p
-	case ast.AdminResetTelemetryID:
-		return &AdminResetTelemetryID{}, nil
 	case ast.AdminReloadStatistics:
 		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
@@ -1819,7 +1813,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 }
 
 // BuildHandleColsForAnalyze returns HandleCols for ANALYZE.
-func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) HandleCols {
+func BuildHandleColsForAnalyze(ctx PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) HandleCols {
 	var handleCols HandleCols
 	switch {
 	case tblInfo.PKIsHandle:
@@ -3066,14 +3060,6 @@ func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
 	return cols.col2Schema(), cols.names
 }
 
-func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
-	schema := newColumnsWithNames(1)
-	schema.Append(buildColumnWithName("", "TRACKING_ID", mysql.TypeVarchar, 64))
-	schema.Append(buildColumnWithName("", "LAST_STATUS", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumnWithName("", "DATA_PREVIEW", mysql.TypeString, mysql.MaxBlobWidth))
-	return schema.col2Schema(), schema.names
-}
-
 func buildColumnWithName(tableName, name string, tp byte, size int) (*expression.Column, *types.FieldName) {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
@@ -3400,7 +3386,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx.GetSessionVars().StmtCtx, b.ctx.GetStore(), startTS); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3410,11 +3396,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 		} else if b.ctx.GetSessionVars().EnableExternalTSRead && !b.ctx.GetSessionVars().InRestrictedSQL {
 			// try to get the stale ts from external timestamp
-			startTS, err := staleread.GetExternalTimestamp(ctx, b.ctx)
+			startTS, err := staleread.GetExternalTimestamp(ctx, b.ctx.GetSessionVars().StmtCtx)
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx.GetSessionVars().StmtCtx, b.ctx.GetStore(), startTS); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3423,7 +3409,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	return p, nil
 }
 
-func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
+func collectVisitInfoFromRevokeStmt(sctx PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
 	// To use REVOKE, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -3475,7 +3461,7 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 
 // appendVisitInfoIsRestrictedUser appends additional visitInfo if the user has a
 // special privilege called "RESTRICTED_USER_ADMIN". It only applies when SEM is enabled.
-func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx sessionctx.Context, user *auth.UserIdentity, priv string) []visitInfo {
+func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx PlanContext, user *auth.UserIdentity, priv string) []visitInfo {
 	if !sem.IsEnabled() {
 		return visitInfo
 	}
@@ -3487,7 +3473,7 @@ func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx sessionctx.Cont
 	return visitInfo
 }
 
-func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {
+func collectVisitInfoFromGrantStmt(sctx PlanContext, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {
 	// To use GRANT, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -3546,7 +3532,7 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	return vi, nil
 }
 
-func genAuthErrForGrantStmt(sctx sessionctx.Context, dbName string) error {
+func genAuthErrForGrantStmt(sctx PlanContext, dbName string) error {
 	if !strings.EqualFold(dbName, variable.PerformanceSchema) {
 		return nil
 	}
@@ -5010,7 +4996,13 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(ctx, show)
 	}
-	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, explain.Stmt, b.is)
+
+	sctx, err := AsSctx(b.ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	targetPlan, _, err := OptimizeAstNode(ctx, sctx, explain.Stmt, b.is)
 	if err != nil {
 		return nil, err
 	}
@@ -5024,7 +5016,11 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	}
 	selectIntoInfo := sel.SelectIntoOpt
 	sel.SelectIntoOpt = nil
-	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, sel, b.is)
+	sctx, err := AsSctx(b.ctx)
+	if err != nil {
+		return nil, err
+	}
+	targetPlan, _, err := OptimizeAstNode(ctx, sctx, sel, b.is)
 	if err != nil {
 		return nil, err
 	}
@@ -5328,7 +5324,7 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	return p
 }
 
-func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 {
+func calcTSForPlanReplayer(sctx PlanContext, tsExpr ast.ExprNode) uint64 {
 	tsVal, err := evalAstExprWithPlanCtx(sctx, tsExpr)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
