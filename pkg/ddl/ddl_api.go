@@ -5441,7 +5441,7 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	// When the default value is expression and the type is time, we skip check and convert.
-	if !col.DefaultIsExpr || !types.IsTypeTime(col.GetType()) {
+	if !col.DefaultIsExpr {
 		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
