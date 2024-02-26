@@ -451,7 +451,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			BinlogInfo:     &model.HistoryInfo{},
 			Args:           []any{*tiflashReplica},
 			CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
-			SQLMode:        ctx.GetSessionVars().SQLMode,
+			SQLMode:        sctx.GetSessionVars().SQLMode,
 		}
 		err := d.DoDDLJob(sctx, job)
 		err = d.callHookOnChanged(job, err)
@@ -8269,7 +8269,6 @@ func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 		Type:       model.ActionUnlockTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{arg},
-		SQLMode:    ctx.GetSessionVars().SQLMode,
 	}
 
 	ctx, err := d.sessPool.Get()
