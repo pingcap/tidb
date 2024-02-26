@@ -31,14 +31,23 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager, ctrl *gomock.Controller) *BaseScheduler {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "scheduler")
+	nodeMgr := NewNodeManager()
+	sch := NewBaseScheduler(ctx, task, Param{
+		taskMgr:        taskMgr,
+		nodeMgr:        nodeMgr,
+		slotMgr:        newSlotManager(),
+		allocatedSlots: allocatedSlots,
+	})
+	return sch
+}
+
 func TestSchedulerOnNextStage(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	schExt := mockScheduler.NewMockExtension(ctrl)
-
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "scheduler")
 	task := proto.Task{
 		TaskBase: proto.TaskBase{
 			ID:    1,
@@ -47,12 +56,8 @@ func TestSchedulerOnNextStage(t *testing.T) {
 		},
 	}
 	cloneTask := task
-	nodeMgr := NewNodeManager()
-	sch := NewBaseScheduler(ctx, &cloneTask, Param{
-		taskMgr: taskMgr,
-		nodeMgr: nodeMgr,
-		slotMgr: newSlotManager(),
-	})
+	sch := createScheduler(&cloneTask, true, taskMgr, ctrl)
+	schExt := mockScheduler.NewMockExtension(ctrl)
 	sch.Extension = schExt
 
 	// test next step is done
@@ -179,4 +184,77 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 			state: 1,
 		}))
 	}
+}
+
+func TestSchedulerNotAllocateSlots(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+
+	// scheduler not allocated slots, task from paused to resuming. Should exit the scheduler.
+	task := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:          int64(1),
+			Concurrency: 1,
+			Type:        proto.TaskTypeExample,
+			State:       proto.TaskStatePaused,
+		},
+	}
+	cloneTask := task
+	sch := createScheduler(&cloneTask, false, taskMgr, ctrl)
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+		cloneTask.State = proto.TaskStateResuming
+		return &cloneTask, nil
+	})
+	sch.scheduleTask()
+
+	// scheduler not allocated slots, task from paused to running. Should exit the scheduler.
+	task.State = proto.TaskStatePaused
+	cloneTask = task
+	sch = createScheduler(&cloneTask, false, taskMgr, ctrl)
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+		cloneTask.State = proto.TaskStateRunning
+		return &cloneTask, nil
+	})
+	sch.scheduleTask()
+
+	// scheduler not allocated slots, but won't exit the scheduler.
+	task.State = proto.TaskStateReverting
+	cloneTask = task
+
+	sch = createScheduler(&cloneTask, false, taskMgr, ctrl)
+	schExt := mockScheduler.NewMockExtension(ctrl)
+	sch.Extension = schExt
+	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+		return &cloneTask, nil
+	})
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, cloneTask.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePending: 0,
+		proto.SubtaskStateRunning: 0}, nil)
+	taskMgr.EXPECT().RevertedTask(gomock.Any(), cloneTask.ID).Return(nil)
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+		cloneTask.State = proto.TaskStateReverted
+		return &cloneTask, nil
+	})
+	sch.scheduleTask()
+
+	task.State = proto.TaskStatePausing
+	cloneTask = task
+	sch = createScheduler(&cloneTask, false, taskMgr, ctrl)
+	schExt = mockScheduler.NewMockExtension(ctrl)
+	sch.Extension = schExt
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+		return &cloneTask, nil
+	})
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, cloneTask.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePending: 0,
+		proto.SubtaskStateRunning: 0}, nil)
+	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+		cloneTask.State = proto.TaskStatePaused
+		return &cloneTask, nil
+	})
+	taskMgr.EXPECT().PausedTask(gomock.Any(), cloneTask.ID).Return(nil)
+	sch.scheduleTask()
 }
