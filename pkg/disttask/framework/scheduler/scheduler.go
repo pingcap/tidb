@@ -163,7 +163,7 @@ func (s *BaseScheduler) scheduleTask() {
 				continue
 			}
 			task := *s.GetTask()
-
+			// TODO: refine failpoints below.
 			failpoint.Inject("exitScheduler", func() {
 				failpoint.Return()
 			})
