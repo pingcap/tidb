@@ -171,6 +171,10 @@ func (t trivialFlushStream) RecvMsg(m interface{}) error {
 	return nil
 }
 
+func (f *fakeStore) GetID() uint64 {
+	return f.id
+}
+
 func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.SubscribeFlushEventRequest, opts ...grpc.CallOption) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
 	f.clientMu.Lock()
 	defer f.clientMu.Unlock()
@@ -313,6 +317,17 @@ func (f *fakeCluster) GetLogBackupClient(ctx context.Context, storeID uint64) (l
 		f.testCtx.Fatalf("the store %d doesn't exist", storeID)
 	}
 	return cli, nil
+}
+
+func (f *fakeCluster) ClearCache(ctx context.Context, storeID uint64) error {
+	if f.onGetClient != nil {
+		err := f.onGetClient(storeID)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
 }
 
 // Stores returns the store metadata from the cluster.
