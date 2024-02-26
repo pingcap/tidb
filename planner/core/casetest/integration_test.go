@@ -1822,6 +1822,11 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 	}
+	tk.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10)  */ SLEEP(5)").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt)  */ SLEEP(5)").Check(testkit.Rows("0"))
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
+	tk.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt) unknow(t1,t2) */ SLEEP(5)").Check(testkit.Rows("0"))
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
 }
 
 func TestIndexJoinOnClusteredIndex(t *testing.T) {
