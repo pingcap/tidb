@@ -35,7 +35,9 @@ import (
 )
 
 const (
-	unanalyzedTableDefaultChangePercentage   = 1
+	// unanalyzedTableDefaultChangePercentage is the default change percentage of unanalyzed table.
+	unanalyzedTableDefaultChangePercentage = 1
+	// unanalyzedTableDefaultLastUpdateDuration is the default last update duration of unanalyzed table.
 	unanalyzedTableDefaultLastUpdateDuration = -30 * time.Minute
 )
 
@@ -308,6 +310,10 @@ func getTableLastAnalyzeDuration(
 	return currentTime.Sub(lastTime)
 }
 
+// findLastAnalyzeTime finds the last analyze time of the table.
+// It uses `LastUpdateVersion` to find the last analyze time.
+// The `LastUpdateVersion` is the version of the transaction that updates the statistics.
+// It always not null(default 0), so we can use it to find the last analyze time.
 func findLastAnalyzeTime(
 	tblStats *statistics.Table,
 	currentTs uint64,
