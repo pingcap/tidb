@@ -707,8 +707,8 @@ func (m *MemoryIngestData) NewIter(
 	}
 }
 
-// GetTSOfClose implements IngestData.GetTSOfClose.
-func (m *MemoryIngestData) GetTSOfClose() uint64 {
+// GetTSOfClose implements IngestData.GetStartTS.
+func (m *MemoryIngestData) GetStartTS() uint64 {
 	return m.ts
 }
 

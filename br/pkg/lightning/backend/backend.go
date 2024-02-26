@@ -351,7 +351,6 @@ type ClosedEngine struct {
 
 // NewClosedEngine creates a new ClosedEngine.
 func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int32) *ClosedEngine {
-	// TODO(lance6716): allocTSIfNotExist
 	return &ClosedEngine{
 		engine: engine{
 			backend: backend,

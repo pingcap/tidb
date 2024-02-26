@@ -25,7 +25,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -38,7 +37,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/status"
 )
 
 var (
@@ -262,6 +260,9 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
 	}
+	if err = em.allocateTSIfNotExists(ctx, engine); err != nil {
+		return errors.Trace(err)
+	}
 	engine.wg.Add(1)
 	go engine.ingestSSTLoop()
 	return nil
@@ -333,9 +334,6 @@ func (em *engineManager) closeEngine(
 		if err = engine.loadEngineMeta(); err != nil {
 			return errors.Trace(err)
 		}
-		if err = em.allocateTSIfNotExists(ctx, engine); err != nil {
-			return errors.Trace(err)
-		}
 		em.engines.Store(engineUUID, engine)
 		return nil
 	}
@@ -348,10 +346,6 @@ func (em *engineManager) closeEngine(
 	}
 
 	err := engine.flushEngineWithoutLock(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	engine.rUnlock()
 
 	// use mutex to make sure we won't close sstMetasChan while other routines
@@ -359,11 +353,10 @@ func (em *engineManager) closeEngine(
 	engine.lock(importMutexStateClose)
 	engine.closed.Store(true)
 	close(engine.sstMetasChan)
-	if err = em.allocateTSIfNotExists(ctx, engine); err != nil {
-		engine.unlock()
+	engine.unlock()
+	if err != nil {
 		return errors.Trace(err)
 	}
-	engine.unlock()
 	engine.wg.Wait()
 	return engine.ingestErr.Get()
 }
@@ -419,12 +412,6 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 				return errors.Trace(err)
 			}
 		}
-		failpoint.Inject("mockAllocateTSErr", func() {
-			// mock generate timestamp error when reset engine.
-			localEngine.TSOfClose = 0
-			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
-			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
-		})
 	}
 	localEngine.pendingFileSize.Store(0)
 
@@ -432,7 +419,7 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 }
 
 func (em *engineManager) allocateTSIfNotExists(ctx context.Context, engine *Engine) error {
-	if engine.TSOfClose > 0 {
+	if engine.StartTS > 0 {
 		return nil
 	}
 	physical, logical, err := em.GetTS(ctx)
@@ -440,7 +427,7 @@ func (em *engineManager) allocateTSIfNotExists(ctx context.Context, engine *Engi
 		return err
 	}
 	ts := oracle.ComposeTS(physical, logical)
-	engine.TSOfClose = ts
+	engine.StartTS = ts
 	return engine.saveEngineMeta()
 }
 

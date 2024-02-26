@@ -74,6 +74,7 @@ func TestEngineManager(t *testing.T) {
 	backendConfig := getBackendConfig(t)
 	em, err := newEngineManager(backendConfig, storeHelper, log.L())
 	require.NoError(t, err)
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	engine1ID := uuid.New()
 	require.NoError(t, em.openEngine(ctx, &backend.EngineConfig{}, engine1ID))
 	require.Equal(t, 1, syncMapLen(&em.engines))
@@ -82,15 +83,14 @@ func TestEngineManager(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 	require.Len(t, em.engineFileSizes(), 1)
 
-	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	require.NoError(t, em.closeEngine(ctx, &backend.EngineConfig{}, engine1ID))
 	require.Equal(t, 0, int(em.getImportedKVCount(engine1ID)))
-	require.True(t, ctrl.Satisfied())
 	// close non-existent engine
 	require.ErrorContains(t, em.closeEngine(ctx, &backend.EngineConfig{}, uuid.New()), "no such file or directory")
 
 	// reset non-existent engine should work
 	require.NoError(t, em.resetEngine(ctx, uuid.New()))
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	require.NoError(t, em.resetEngine(ctx, engine1ID))
 	require.Equal(t, 1, syncMapLen(&em.engines))
 	_, ok = em.engines.Load(engine1ID)
