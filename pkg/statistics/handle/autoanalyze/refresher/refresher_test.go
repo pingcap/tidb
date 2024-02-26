@@ -201,15 +201,10 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	r, err := NewRefresher(handle, sysProcTracker)
 	require.NoError(t, err)
 
-	// Rebuild the job queue.
+	// Rebuild the job queue. No jobs are added.
 	err = r.rebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
-	require.Equal(t, 1, r.jobs.Len())
-	job1 := r.jobs.Pop()
-	require.Equal(t, float64(1), job1.Weight)
-	require.Equal(t, float64(0), job1.ChangePercentage)
-	require.Equal(t, float64(3*2), job1.TableSize)
-	require.GreaterOrEqual(t, job1.LastAnalysisDuration, time.Duration(0))
+	require.Equal(t, 0, r.jobs.Len())
 	// Insert more data into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6)")
 	require.Nil(t, handle.DumpStatsDeltaToKV(true))
@@ -217,7 +212,7 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	err = r.rebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
 	require.Equal(t, 1, r.jobs.Len())
-	job1 = r.jobs.Pop()
+	job1 := r.jobs.Pop()
 	require.Equal(t, float64(1), job1.Weight)
 	require.Equal(t, float64(1), job1.ChangePercentage)
 	require.Equal(t, float64(6*2), job1.TableSize)
