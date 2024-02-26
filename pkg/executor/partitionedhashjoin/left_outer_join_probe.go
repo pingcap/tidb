@@ -15,21 +15,22 @@
 package partitionedhashjoin
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"unsafe"
 )
 
 type leftOuterJoinProbe struct {
 	innerJoinProbe
 	isNotMatchedRows []bool
 	// used in scanHT when use left table as build side
-	hashTableIndexToScan int
-	hashTableScanStart   int
-	hashTableScanEnd     int
-	currentScanHTRow     int
-	currentCheckedRow    unsafe.Pointer
+	hashTableToScan       int
+	scanStartIndex        int
+	scanEndIndex          int
+	currentScanIndex      int
+	currentRowTobeChecked unsafe.Pointer
 }
 
 func (j *leftOuterJoinProbe) prepareForProbe(chk *chunk.Chunk, info *probeProcessInfo) (*chunk.Chunk, int, error) {
@@ -54,25 +55,34 @@ func (j *leftOuterJoinProbe) scanHT(chk *chunk.Chunk) (err error) {
 	if j.rightAsBuildSide {
 		return errors.New("left join with right build side should not call scanHT")
 	}
-	buildRows := j.ctx.joinHashTable.tables[j.hashTableIndexToScan].hashTable
-	if j.currentScanHTRow == -1 {
-		j.currentScanHTRow = j.hashTableScanStart
-		j.currentCheckedRow = buildRows[j.currentScanHTRow]
+	buildRows := j.ctx.joinHashTable.tables[j.hashTableToScan].hashTable
+	if j.currentScanIndex == -1 {
+		j.currentScanIndex = j.scanStartIndex
+		j.currentRowTobeChecked = buildRows[j.currentScanIndex]
 	}
 	meta := j.ctx.hashTableMeta
+	insertedRows := 0
 	remainCap := chk.RequiredRows() - chk.NumRows()
-	for remainCap > 0 && j.currentScanHTRow < j.hashTableScanEnd {
-		if j.currentCheckedRow != nil {
-			if !meta.isCurrentRowUsed(j.currentCheckedRow) {
-				// append this row
+	for insertedRows < remainCap && j.currentScanIndex < j.scanEndIndex {
+		if j.currentRowTobeChecked != nil {
+			if !meta.isCurrentRowUsed(j.currentRowTobeChecked) {
+				// append build side of this row
+				j.appendBuildRowToChunkInternal(chk, j.lUsed, &rowInfo{rowStart: j.currentRowTobeChecked, rowData: nil, currentColumnIndex: 0}, -1, 0)
+				chk.IncNumVirtualRows()
+				insertedRows++
 			}
-			j.currentCheckedRow = getNextRowAddress(j.currentCheckedRow)
+			j.currentRowTobeChecked = getNextRowAddress(j.currentRowTobeChecked)
 		} else {
-			j.currentScanHTRow++
-			if j.currentScanHTRow < j.hashTableScanEnd {
-				j.currentCheckedRow = buildRows[j.currentScanHTRow]
+			j.currentScanIndex++
+			if j.currentScanIndex < j.scanEndIndex {
+				j.currentRowTobeChecked = buildRows[j.currentScanIndex]
 			}
 		}
+	}
+	// append probe side in batch
+	colOffset := len(j.lUsed)
+	for index := range j.rUsed {
+		chk.Column(index + colOffset).AppendNNulls(insertedRows)
 	}
 	return
 }
