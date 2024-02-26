@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -200,15 +201,10 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	r, err := NewRefresher(handle, sysProcTracker)
 	require.NoError(t, err)
 
-	// Rebuild the job queue.
+	// Rebuild the job queue. No jobs are added.
 	err = r.rebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
-	require.Equal(t, 1, r.jobs.Len())
-	job1 := r.jobs.Pop()
-	require.Equal(t, float64(1), job1.Weight)
-	require.Equal(t, float64(0), job1.ChangePercentage)
-	require.Equal(t, float64(3*2), job1.TableSize)
-	require.GreaterOrEqual(t, job1.LastAnalysisDuration, time.Duration(0))
+	require.Equal(t, 0, r.jobs.Len())
 	// Insert more data into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6)")
 	require.Nil(t, handle.DumpStatsDeltaToKV(true))
@@ -216,7 +212,7 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	err = r.rebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
 	require.Equal(t, 1, r.jobs.Len())
-	job1 = r.jobs.Pop()
+	job1 := r.jobs.Pop()
 	require.Equal(t, float64(1), job1.Weight)
 	require.Equal(t, float64(1), job1.ChangePercentage)
 	require.Equal(t, float64(6*2), job1.TableSize)
@@ -374,5 +370,306 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 			got := checkIndexesNeedAnalyze(tt.tblInfo, tt.tblStats)
 			require.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func TestCalculateIndicatorsForPartitions(t *testing.T) {
+	currentTs := oracle.ComposeTS((time.Hour.Nanoseconds()+time.Second.Nanoseconds())*1000, 0)
+
+	tests := []struct {
+		name                       string
+		tblInfo                    *model.TableInfo
+		partitionStats             map[int64]*statistics.Table
+		defs                       []model.PartitionDefinition
+		autoAnalyzeRatio           float64
+		currentTs                  uint64
+		wantAvgChangePercentage    float64
+		wantAvgSize                float64
+		wantAvgLastAnalyzeDuration time.Duration
+		wantPartitions             []string
+	}{
+		{
+			name: "Test Table not analyzed",
+			tblInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:    1,
+						Name:  model.NewCIStr("index1"),
+						State: model.StatePublic,
+					},
+				},
+				Columns: []*model.ColumnInfo{
+					{
+						ID: 1,
+					},
+					{
+						ID: 2,
+					},
+				},
+			},
+			partitionStats: map[int64]*statistics.Table{
+				1: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+					},
+					Version: currentTs,
+				},
+				2: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+					},
+					Version: currentTs,
+				},
+			},
+			defs: []model.PartitionDefinition{
+				{
+					ID:   1,
+					Name: model.NewCIStr("p0"),
+				},
+				{
+					ID:   2,
+					Name: model.NewCIStr("p1"),
+				},
+			},
+			autoAnalyzeRatio:           0.5,
+			currentTs:                  currentTs,
+			wantAvgChangePercentage:    1,
+			wantAvgSize:                2002,
+			wantAvgLastAnalyzeDuration: 0,
+			wantPartitions:             []string{"p0", "p1"},
+		},
+		{
+			name: "Test Table analyzed and only one partition meets the threshold",
+			tblInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:    1,
+						Name:  model.NewCIStr("index1"),
+						State: model.StatePublic,
+					},
+				},
+				Columns: []*model.ColumnInfo{
+					{
+						ID: 1,
+					},
+					{
+						ID: 2,
+					},
+				},
+			},
+			partitionStats: map[int64]*statistics.Table{
+				1: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
+						Columns: map[int64]*statistics.Column{
+							1: {
+								StatsVer: 2,
+							},
+							2: {
+								StatsVer: 2,
+							},
+						},
+					},
+					Version: currentTs,
+				},
+				2: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						ModifyCount:   0,
+						Columns: map[int64]*statistics.Column{
+							1: {
+								StatsVer: 2,
+							},
+							2: {
+								StatsVer: 2,
+							},
+						},
+					},
+					Version: currentTs,
+				},
+			},
+			defs: []model.PartitionDefinition{
+				{
+					ID:   1,
+					Name: model.NewCIStr("p0"),
+				},
+				{
+					ID:   2,
+					Name: model.NewCIStr("p1"),
+				},
+			},
+			autoAnalyzeRatio:           0.5,
+			currentTs:                  currentTs,
+			wantAvgChangePercentage:    2,
+			wantAvgSize:                2002,
+			wantAvgLastAnalyzeDuration: 0,
+			wantPartitions:             []string{"p0"},
+		},
+		{
+			name: "No partition meets the threshold",
+			tblInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:    1,
+						Name:  model.NewCIStr("index1"),
+						State: model.StatePublic,
+					},
+				},
+				Columns: []*model.ColumnInfo{
+					{
+						ID: 1,
+					},
+					{
+						ID: 2,
+					},
+				},
+			},
+			partitionStats: map[int64]*statistics.Table{
+				1: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						ModifyCount:   0,
+						Columns: map[int64]*statistics.Column{
+							1: {
+								StatsVer: 2,
+							},
+							2: {
+								StatsVer: 2,
+							},
+						},
+					},
+					Version: currentTs,
+				},
+				2: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						ModifyCount:   0,
+						Columns: map[int64]*statistics.Column{
+							1: {
+								StatsVer: 2,
+							},
+							2: {
+								StatsVer: 2,
+							},
+						},
+					},
+					Version: currentTs,
+				},
+			},
+			defs: []model.PartitionDefinition{
+				{
+					ID:   1,
+					Name: model.NewCIStr("p0"),
+				},
+				{
+					ID:   2,
+					Name: model.NewCIStr("p1"),
+				},
+			},
+			autoAnalyzeRatio:           0.5,
+			currentTs:                  currentTs,
+			wantAvgChangePercentage:    0,
+			wantAvgSize:                0,
+			wantAvgLastAnalyzeDuration: 0,
+			wantPartitions:             []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotAvgChangePercentage,
+				gotAvgSize,
+				gotAvgLastAnalyzeDuration,
+				gotPartitions :=
+				calculateIndicatorsForPartitions(
+					tt.tblInfo,
+					tt.partitionStats,
+					tt.defs,
+					tt.autoAnalyzeRatio,
+					tt.currentTs,
+				)
+			require.Equal(t, tt.wantAvgChangePercentage, gotAvgChangePercentage)
+			require.Equal(t, tt.wantAvgSize, gotAvgSize)
+			require.Equal(t, tt.wantAvgLastAnalyzeDuration, gotAvgLastAnalyzeDuration)
+			require.Equal(t, tt.wantPartitions, gotPartitions)
+		})
+	}
+}
+
+func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
+	tblInfo := model.TableInfo{
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  model.NewCIStr("index1"),
+				State: model.StatePublic,
+			},
+			{
+				ID:    2,
+				Name:  model.NewCIStr("index2"),
+				State: model.StatePublic,
+			},
+		},
+		Columns: []*model.ColumnInfo{
+			{
+				ID: 1,
+			},
+			{
+				ID: 2,
+			},
+		},
+	}
+	partitionStats := map[int64]*statistics.Table{
+		1: {
+			HistColl: statistics.HistColl{
+				Pseudo:        false,
+				RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+				ModifyCount:   0,
+				Indices:       map[int64]*statistics.Index{},
+			},
+		},
+		2: {
+			HistColl: statistics.HistColl{
+				Pseudo:        false,
+				RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+				ModifyCount:   0,
+				Indices: map[int64]*statistics.Index{
+					2: {
+						StatsVer: 2,
+					},
+				},
+			},
+		},
+	}
+	defs := []model.PartitionDefinition{
+		{
+			ID:   1,
+			Name: model.NewCIStr("p0"),
+		},
+		{
+			ID:   2,
+			Name: model.NewCIStr("p1"),
+		},
+	}
+
+	partitionIndexes := checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, defs, partitionStats)
+	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
+	require.Equal(t, len(expected), len(partitionIndexes))
+
+	for k, v := range expected {
+		sort.Strings(v)
+		if val, ok := partitionIndexes[k]; ok {
+			sort.Strings(val)
+			require.Equal(t, v, val)
+		} else {
+			require.Fail(t, "key not found in partitionIndexes: "+k)
+		}
 	}
 }
