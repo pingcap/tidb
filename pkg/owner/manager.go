@@ -65,6 +65,8 @@ type Manager interface {
 
 	// SetBeOwnerHook sets a hook. The hook is called before becoming an owner.
 	SetBeOwnerHook(hook func())
+	// SetRetireOwnerHook will be called after retiring the owner.
+	SetRetireOwnerHook(hook func())
 }
 
 const (
@@ -114,8 +116,10 @@ type ownerManager struct {
 	elec           unsafe.Pointer
 	sessionLease   *atomicutil.Int64
 	wg             sync.WaitGroup
-	beOwnerHook    func()
 	campaignCancel context.CancelFunc
+
+	beOwnerHook     func()
+	retireOwnerHook func()
 }
 
 // NewOwnerManager creates a new Manager.
@@ -158,6 +162,10 @@ func (*ownerManager) RequireOwner(_ context.Context) error {
 
 func (m *ownerManager) SetBeOwnerHook(hook func()) {
 	m.beOwnerHook = hook
+}
+
+func (m *ownerManager) SetRetireOwnerHook(hook func()) {
+	m.retireOwnerHook = hook
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
@@ -222,6 +230,9 @@ func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 
 // RetireOwner make the manager to be a not owner.
 func (m *ownerManager) RetireOwner() {
+	if m.retireOwnerHook != nil {
+		m.retireOwnerHook()
+	}
 	atomic.StorePointer(&m.elec, nil)
 }
 
