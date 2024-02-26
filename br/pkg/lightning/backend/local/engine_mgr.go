@@ -397,6 +397,7 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 		return nil
 	}
 	defer localEngine.unlock()
+	oldStartTS := localEngine.StartTS
 	if err := localEngine.Close(); err != nil {
 		return err
 	}
@@ -406,7 +407,10 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 	db, err := em.openEngineDB(engineUUID, false)
 	if err == nil {
 		localEngine.db.Store(db)
-		localEngine.engineMeta = engineMeta{}
+		localEngine.engineMeta = engineMeta{StartTS: oldStartTS}
+		if err = localEngine.saveEngineMeta(); err != nil {
+			return errors.Trace(err)
+		}
 		if !common.IsDirExists(localEngine.sstDir) {
 			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
 				return errors.Trace(err)
