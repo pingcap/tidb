@@ -405,11 +405,23 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "leader-and-follower", val)
 	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
 
-	err = v.SetSystemVar(TiDBRedactLog, "ON")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRedactLog)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
+	for _, c := range []struct {
+		a string
+		b string
+	}{
+		{"1", "ON"},
+		{"oN", "ON"},
+		{"OfF", "OFF"},
+		{"0", "OFF"},
+		{"marker", "MARKER"},
+		{"2", "MARKER"},
+	} {
+		err = v.SetSystemVar(TiDBRedactLog, c.a)
+		require.NoError(t, err)
+		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRedactLog)
+		require.NoError(t, err)
+		require.Equal(t, c.b, val)
+	}
 
 	err = v.SetSystemVar(TiDBFoundInPlanCache, "1")
 	require.Error(t, err)
