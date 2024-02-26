@@ -538,7 +538,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	}
 }
 
-func TestCheckIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
+func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 	tblInfo := model.TableInfo{
 		Indices: []*model.IndexInfo{
 			{
@@ -594,7 +594,7 @@ func TestCheckIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 		},
 	}
 
-	partitionIndexes := checkIndexesNeedAnalyzeForPartitionedTable(&tblInfo, defs, partitionStats)
+	partitionIndexes := checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, defs, partitionStats)
 	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
 	require.Equal(t, len(expected), len(partitionIndexes))
 

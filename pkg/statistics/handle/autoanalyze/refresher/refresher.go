@@ -341,7 +341,7 @@ func createTableAnalysisJobForPartitions(
 		autoAnalyzeRatio,
 		currentTs,
 	)
-	partitionIndexes := checkIndexesNeedAnalyzeForPartitionedTable(
+	partitionIndexes := checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		tblInfo,
 		defs,
 		partitionStats,
@@ -410,9 +410,10 @@ func calculateIndicatorsForPartitions(
 	return avgChange, avgSize, avgLastAnalyzeDuration, partitionNames
 }
 
-// checkIndexesNeedAnalyzeForPartitionedTable checks if the indexes of the partitioned table need to be analyzed.
+// checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable checks if the indexes of the partitioned table need to be analyzed.
 // It returns a map from index name to the names of the partitions that need to be analyzed.
-func checkIndexesNeedAnalyzeForPartitionedTable(
+// NOTE: This is only for newly added indexes.
+func checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 	tblInfo *model.TableInfo,
 	defs []model.PartitionDefinition,
 	partitionStats map[int64]*statistics.Table,
