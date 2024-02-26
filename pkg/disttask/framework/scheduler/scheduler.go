@@ -136,6 +136,7 @@ func (s *BaseScheduler) refreshTask() error {
 	task := s.GetTask()
 	// we only refresh the base fields of task to reduce memory usage, other fields
 	// must be maintained in memory by the scheduler itself.
+	// TODO it's possible we have a stale task meta on network partition, get task meta when needed??
 	newTaskBase, err := s.taskMgr.GetTaskBaseByID(s.ctx, task.ID)
 	if err != nil {
 		return err
