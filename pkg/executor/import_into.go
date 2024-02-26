@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -48,8 +47,6 @@ import (
 )
 
 var (
-	// TestDetachedTaskFinished is a flag for test.
-	TestDetachedTaskFinished atomic.Bool
 	// TestCancelFunc for test.
 	TestCancelFunc context.CancelFunc
 )
