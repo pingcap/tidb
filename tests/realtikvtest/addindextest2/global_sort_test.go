@@ -273,13 +273,13 @@ func TestIngestUseSameTS(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = on;")
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 
-	err = failpoint.Enable("github.com/pingcap/tidb/pkd/ddl/mockTSForGlobalSort", `return(123456789)`)
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", `return(123456789)`)
 	require.NoError(t, err)
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
 	dom.DDL().SetHook(cb)
 	tk.MustExec("alter table t add index idx(a);")
-	err = failpoint.Disable("github.com/pingcap/tidb/pkd/ddl/mockTSForGlobalSort")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort")
 	require.NoError(t, err)
 
 	dts := []types.Datum{types.NewIntDatum(1)}
