@@ -22,5 +22,5 @@ import (
 
 func TestFixedOffsetInRowLayout(t *testing.T) {
 	require.Equal(t, SizeOfNextPtr, 8)
-	require.Equal(t, SizeOfHashValue, 8)
+	require.Equal(t, SizeOfKeyLengthField, 8)
 }

@@ -92,14 +92,20 @@ type tableMeta struct {
 	// is [1, 0, 2]
 	rowColumnsOrder []int
 	// the column size of each column, -1 mean variable column
-	columnsSize              []int
+	columnsSize []int
+	// when serialize integer column, should ignore unsigned flag or not, if the join key is <signed, signed> or <unsigned, unsigned>,
+	// the unsigned flag can be ignored, if the join key is <unsigned, signed> or <signed, unsigned> the unsigned flag can not be ignored
+	// can if the unsigned flag can not be ignored, the key can not be inlined
 	ignoreIntegerKeySignFlag []bool
 	// the first n columns in row is used for other condition, if a join has other condition, we only need to extract
 	// first n columns from the RowTable to evaluate other condition
 	columnCountNeededForOtherCondition int
-	totalColumnNumber                  int
-	setUsedFlagMask                    uint32
-	usedFlagOffset                     int
+	// total column numbers for build side chunk, this is used to construct the chunk if there is join other condition
+	totalColumnNumber int
+	// a mask to set used flag
+	setUsedFlagMask uint32
+	// column index offset in null map, will be 1 when if there is usedFlag and 0 if there is no usedFlag
+	colOffsetInNullMap int
 }
 
 func (meta *tableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
@@ -119,20 +125,20 @@ func (meta *tableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer 
 }
 
 func (meta *tableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
-	byteIndex := columnIndex / 8
-	bitIndex := columnIndex % 8
+	byteIndex := (columnIndex + 1) / 8
+	bitIndex := (columnIndex + 1) % 8
 	return *(*uint8)(unsafe.Add(rowStart, SizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
 }
 
 func (meta *tableMeta) setUsedFlag(rowStart unsafe.Pointer) {
-	addr := (*uint32)(unsafe.Add(rowStart, meta.usedFlagOffset))
+	addr := (*uint32)(unsafe.Add(rowStart, SizeOfNextPtr))
 	value := atomic.LoadUint32(addr)
 	value |= meta.setUsedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
 func (meta *tableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
-	return (*(*uint32)(unsafe.Add(rowStart, meta.usedFlagOffset)) | meta.setUsedFlagMask) == meta.setUsedFlagMask
+	return (*(*uint32)(unsafe.Add(rowStart, SizeOfNextPtr)) | meta.setUsedFlagMask) == meta.setUsedFlagMask
 }
 
 type rowTable struct {
@@ -194,14 +200,12 @@ func newTableMeta(buildKeyIndex []int, buildSchema expression.Schema, probeKeyIn
 	if !meta.isFixedLength {
 		meta.rowLength = 0
 	}
+	// nullmap is 8 byte alignment
 	if needUsedFlag {
-		meta.nullMapLength = (savedColumnCount + 1 + 7) / 8
-		usedFlagOffset := (savedColumnCount + 1) / 32
-		usedFlagIndex := (savedColumnCount + 1) % 32
-		meta.usedFlagOffset = usedFlagOffset*4 + SizeOfNextPtr
-		meta.setUsedFlagMask = uint32(1) << (31 - usedFlagIndex)
+		meta.nullMapLength = (savedColumnCount + 1 + 63) / 64
+		meta.setUsedFlagMask = uint32(1) << 31
 	} else {
-		meta.nullMapLength = (savedColumnCount + 7) / 8
+		meta.nullMapLength = (savedColumnCount + 63) / 64
 	}
 
 	meta.isJoinKeysFixedLength = true

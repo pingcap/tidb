@@ -15,10 +15,6 @@
 package ddl_test
 
 import (
-	"fmt"
-	"math/rand"
-	"testing"
-
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -29,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 func BenchmarkExtractDatumByOffsets(b *testing.B) {
@@ -66,148 +63,6 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ddl.ExtractDatumByOffsetsForTest(row, offsets, c.ExprColumnInfos, handleDataBuf)
 	}
-}
-
-type myint int64
-
-type Inccer interface {
-	inc()
-}
-
-func (i *myint) inc() {
-	*i = *i + 1
-}
-
-func BenchmarkIntmethod(b *testing.B) {
-	i := new(myint)
-	incnIntmethod(i, b.N)
-}
-
-func BenchmarkInterface(b *testing.B) {
-	i := new(myint)
-	incnInterface(i, b.N)
-}
-
-func BenchmarkTypeSwitch(b *testing.B) {
-	i := new(myint)
-	incnSwitch(i, b.N)
-}
-
-func BenchmarkTypeAssertion(b *testing.B) {
-	i := new(myint)
-	incnAssertion(i, b.N)
-}
-
-func incnIntmethod(i *myint, n int) {
-	for k := 0; k < n; k++ {
-		i.inc()
-	}
-}
-
-func incnInterface(any Inccer, n int) {
-	for k := 0; k < n; k++ {
-		any.inc()
-	}
-}
-
-func incnSwitch(any Inccer, n int) {
-	for k := 0; k < n; k++ {
-		switch v := any.(type) {
-		case *myint:
-			v.inc()
-		}
-	}
-}
-
-func incnAssertion(any Inccer, n int) {
-	for k := 0; k < n; k++ {
-		if newint, ok := any.(*myint); ok {
-			newint.inc()
-		}
-	}
-}
-
-func add(a int64) int64 {
-	return a + 1
-}
-func add2(a int64) int64 {
-	return a + 2
-}
-
-func addSwitch(value int64, a int64) int64 {
-	switch value {
-	case 1:
-		return a + 1
-	case 0:
-		return a + 2
-	case 2:
-		return a + 3
-	default:
-		panic("not supported")
-
-	}
-}
-func addGeneric[T any](value T, a int64) int64 {
-	switch any(value).(type) {
-	case int64:
-		return a + 1
-	case float64:
-		return a + 2
-	case int8:
-		return a + 3
-	case int16:
-		return a + 4
-	default:
-		panic("not supported")
-	}
-}
-
-func BenchmarkTest1(b *testing.B) {
-	sum := int64(0)
-	b.ResetTimer()
-	//a := int64(rand.Int())
-	for i := 0; i < 1000000000; i++ {
-		//if (a)%2 == 1 {
-		sum += add(int64(i))
-		//} else {
-		//	sum += add2(int64(i))
-		//}
-	}
-	fmt.Println(sum)
-	//} else {
-	//	for i := 0; i < 1000000000; i++ {
-	//		sum += add2(int64(i))
-	//	}
-	//}
-}
-func BenchmarkTest(b *testing.B) {
-	sum := int64(0)
-	b.ResetTimer()
-	a := rand.Int()
-	aaa := int64(a % 3)
-	for i := 0; i < 1000000000; i++ {
-		sum += addSwitch(aaa, int64(i))
-		//sum += addGeneric(int64(1), int64(i))
-	}
-	/*
-		if a%3 == 1 {
-			for i := 0; i < 1000000000; i++ {
-				sum += addSwitch(1, int64(i))
-				//sum += addGeneric(int64(1), int64(i))
-			}
-		} else if a%3 == 2 {
-			for i := 0; i < 1000000000; i++ {
-				sum += addSwitch(2, int64(i))
-				//sum += addGeneric(float64(0), int64(i))
-			}
-		} else {
-			for i := 0; i < 1000000000; i++ {
-				sum += addSwitch(0, int64(i))
-				//sum += addGeneric(int8(0), int64(i))
-			}
-		}
-	*/
-	fmt.Println(sum)
 }
 
 func BenchmarkGenerateIndexKV(b *testing.B) {
