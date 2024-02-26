@@ -94,11 +94,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 36,
-=======
-    shard_count = 38,
->>>>>>> 7b8c876800e (log_backup: add lock for truncating (#49469))
+    shard_count = 37,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",

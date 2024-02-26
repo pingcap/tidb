@@ -21,14 +21,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
-=======
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/types"
 	"go.uber.org/multierr"
->>>>>>> 7b8c876800e (log_backup: add lock for truncating (#49469))
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
