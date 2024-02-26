@@ -1303,14 +1303,14 @@ var (
 func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
 	dom := domain.GetDomain(s)
 	for !dom.DDL().OwnerManager().IsOwner() {
-		ownerId, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
+		ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
 		if errors.ErrorEqual(err, concurrency.ErrElectionNoLeader) {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		} else if err != nil {
 			return err
 		}
-		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ownerId)
+		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ownerID)
 		if err != nil {
 			return err
 		}
