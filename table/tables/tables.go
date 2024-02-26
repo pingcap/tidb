@@ -1768,7 +1768,7 @@ func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [
 		if !sort.IsSorted(row) {
 			sort.Sort(row)
 		}
-		checksum, err := row.Checksum(sctx.GetSessionVars().StmtCtx.TimeZone())
+		checksum, err := row.Checksum(sctx.GetSessionVars().StmtCtx.TimeZone)
 		buf = row.Data
 		if err != nil {
 			logWithContext(sctx, logutil.BgLogger().Error,
