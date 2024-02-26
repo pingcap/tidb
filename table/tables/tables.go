@@ -1756,11 +1756,14 @@ func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [
 	}
 	checksums := make([]uint32, len(data))
 	for i, cols := range data {
-		row := rowcodec.RowData{Cols: cols, Data: buf}
+		row := rowcodec.RowData{
+			Cols: cols,
+			Data: buf,
+		}
 		if !sort.IsSorted(row) {
 			sort.Sort(row)
 		}
-		checksum, err := row.Checksum()
+		checksum, err := row.Checksum(sctx.GetSessionVars().StmtCtx.TimeZone)
 		buf = row.Data
 		if err != nil {
 			logWithContext(sctx, logutil.BgLogger().Error,

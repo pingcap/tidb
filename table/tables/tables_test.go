@@ -1685,7 +1685,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				data := rowcodec.RowData{Cols: cols}
 				sort.Sort(data)
-				checksum, err := data.Checksum()
+				checksum, err := data.Checksum(time.Local)
 				assert.NoError(t, err)
 				expectChecksums = append(expectChecksums, checksum)
 			}
