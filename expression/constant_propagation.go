@@ -391,7 +391,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		return con, true
 	}
 	if col.GetType().GetType() == mysql.TypeEnum {
-		d, err := con.Eval(s.ctx, chunk.Row{})
+		d, err := con.Eval(chunk.Row{})
 		if err != nil {
 			return nil, false
 		}
