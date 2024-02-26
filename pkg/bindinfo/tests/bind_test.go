@@ -869,6 +869,9 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
 	}
 	for _, test := range tests {
 		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, test.sql)
@@ -876,4 +879,9 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		require.Equal(t, test.normalized, n)
 		require.Equal(t, test.digest, digest)
 	}
+}
+
+func Test111(t *testing.T) {
+	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select 1 from b where (x) in ((1), ('3'))")
+	norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 }

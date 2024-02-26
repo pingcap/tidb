@@ -347,8 +347,8 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 		currTok.lit = "..."
 		return
 	}
-	last5 := d.tokens.back(5)
-	if d.isGenericRowLists(last5) {
+	last7 := d.tokens.back(7)
+	if d.isGenericRowLists(last7) {
 		d.tokens.popBack(5)
 		currTok.tok = genericSymbolList
 		currTok.lit = "..."
@@ -386,25 +386,30 @@ func (d *sqlDigester) isGenericLists(last4 []token) bool {
 	return true
 }
 
-// In (Row(?), Row(?))
-// In ( ...  , Row(?)) => In (...)
-func (d *sqlDigester) isGenericRowLists(last5 []token) bool {
-	if len(last5) < 5 {
+// In (Row(...), Row(...)) => In (Row(...))
+func (d *sqlDigester) isGenericRowLists(last7 []token) bool {
+	if len(last7) < 7 {
 		return false
 	}
-	if !(last5[0].tok == genericSymbol || last5[0].tok == genericSymbolList) {
+	if !d.isRowKeyword(last7[0]) {
 		return false
 	}
-	if last5[1].lit != ")" {
+	if last7[1].lit != "(" {
 		return false
 	}
-	if !d.isComma(last5[2]) {
+	if !(last7[2].tok == genericSymbol || last7[2].tok == genericSymbolList) {
 		return false
 	}
-	if !d.isRowKeyword(last5[3]) {
+	if last7[3].lit != ")" {
 		return false
 	}
-	if last5[4].lit != "(" {
+	if !d.isComma(last7[4]) {
+		return false
+	}
+	if !d.isRowKeyword(last7[5]) {
+		return false
+	}
+	if last7[6].lit != "(" {
 		return false
 	}
 	return true
@@ -447,7 +452,7 @@ func (d *sqlDigester) reduceInRowListWithSingleLiteral(currTok *token) {
 		d.isLeftParen(last5[1]) &&
 		d.isRowKeyword(last5[2]) &&
 		d.isLeftParen(last5[3]) &&
-		last5[4].tok == genericSymbolList &&
+		(last5[4].tok == genericSymbolList || last5[4].tok == genericSymbol) &&
 		d.isRightParen(last5[5]) &&
 		d.isRightParen(*currTok) {
 		d.tokens.popBack(4)
