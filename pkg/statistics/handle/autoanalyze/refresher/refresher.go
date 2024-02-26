@@ -235,6 +235,11 @@ func createTableAnalysisJob(
 	lastAnalysisDuration := getTableLastAnalyzeDuration(tblStats, currentTs)
 	indexes := checkIndexesNeedAnalyze(tblInfo, tblStats)
 
+	// No need to analyze.
+	if changePercentage == 0 && len(indexes) == 0 {
+		return nil
+	}
+
 	job := &priorityqueue.TableAnalysisJob{
 		TableID:              tblInfo.ID,
 		TableSchema:          tableSchema,
