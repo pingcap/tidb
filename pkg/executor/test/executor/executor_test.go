@@ -2795,3 +2795,33 @@ func TestIssue38756(t *testing.T) {
 	tk.MustQuery("(SELECT DISTINCT SQRT(1) FROM t)").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT DISTINCT cast(1 as double) FROM t").Check(testkit.Rows("1"))
 }
+
+func TestIssue50043(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Test simplified case by update.
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2),unique key idx2 ( c1 ));")
+	tk.MustExec("insert into t values (0,NULL);")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("update t set c2 = 5 where c1 = 0;")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000"))
+
+	// Test simplified case by insert on duplicate key update.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2));")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("alter table t add unique key idx4 ( c1 );")
+	tk.MustExec("insert into t values (0, NULL), (1, 1);")
+	tk.MustExec("insert into t values (0, 2) ,(1, 3) on duplicate key update c2 = 5;")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000", "1 5.00000000000000000"))
+
+	// Test Issue 50043.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2));")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("alter table t add unique key idx4 ( c1 );")
+	tk.MustExec("insert into t values (0, NULL), (1, 1);")
+	tk.MustExec("insert ignore into t values (0, 2) ,(1, 3) on duplicate key update c2 = 5, c1 = 0")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000", "1 1.00000000000000000"))
+}

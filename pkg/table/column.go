@@ -624,8 +624,13 @@ func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defa
 }
 
 func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInfo, args *getColOriginDefaultValue) (types.Datum, error) {
-	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
-		return types.Datum{}, nil
+	if !mysql.HasNotNullFlag(col.GetFlag()) {
+		if !mysql.HasNoDefaultValueFlag(col.GetFlag()) ||
+			(col.GetDefaultValue() == nil && col.GetOriginDefaultValue() == nil) {
+			// In CanSkip function(in table/tables pkg), if column's default value is nil, and the column value is NULL too,
+			// then the column value can be skipped and won't encode to row value.
+			return types.Datum{}, nil
+		}
 	}
 	if col.GetType() == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
