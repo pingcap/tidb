@@ -126,7 +126,7 @@ func (em *engineManager) lockEngine(engineID uuid.UUID, state importMutexState) 
 // tryRLockAllEngines tries to read lock all engines, return all `Engine`s that are successfully locked.
 func (em *engineManager) tryRLockAllEngines() []*Engine {
 	var allEngines []*Engine
-	em.engines.Range(func(k, v interface{}) bool {
+	em.engines.Range(func(k, v any) bool {
 		engine := v.(*Engine)
 		// skip closed engine
 		if engine.tryRLock() {
@@ -145,7 +145,7 @@ func (em *engineManager) tryRLockAllEngines() []*Engine {
 // state given by ignoreStateMask. Returns the list of locked engines.
 func (em *engineManager) lockAllEnginesUnless(newState, ignoreStateMask importMutexState) []*Engine {
 	var allEngines []*Engine
-	em.engines.Range(func(k, v interface{}) bool {
+	em.engines.Range(func(k, v any) bool {
 		engine := v.(*Engine)
 		if engine.lockUnless(newState, ignoreStateMask) {
 			allEngines = append(allEngines, engine)
@@ -271,7 +271,11 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 }
 
 // closeEngine closes backend engine by uuid.
-func (em *engineManager) closeEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (em *engineManager) closeEngine(
+	ctx context.Context,
+	cfg *backend.EngineConfig,
+	engineUUID uuid.UUID,
+) (errRet error) {
 	if externalCfg := cfg.External; externalCfg != nil {
 		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
 		if err != nil {
@@ -281,6 +285,11 @@ func (em *engineManager) closeEngine(ctx context.Context, cfg *backend.EngineCon
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if errRet != nil {
+				store.Close()
+			}
+		}()
 		physical, logical, err := em.GetTS(ctx)
 		if err != nil {
 			return err
@@ -482,7 +491,7 @@ func (em *engineManager) localWriter(_ context.Context, cfg *backend.LocalWriter
 }
 
 func (em *engineManager) engineFileSizes() (res []backend.EngineFileSize) {
-	em.engines.Range(func(k, v interface{}) bool {
+	em.engines.Range(func(k, v any) bool {
 		engine := v.(*Engine)
 		res = append(res, engine.getEngineFileSize())
 		return true
@@ -547,7 +556,7 @@ func (em *engineManager) getExternalEngine(uuid uuid.UUID) (common.Engine, bool)
 
 func (em *engineManager) totalMemoryConsume() int64 {
 	var memConsume int64
-	em.engines.Range(func(k, v interface{}) bool {
+	em.engines.Range(func(k, v any) bool {
 		e := v.(*Engine)
 		if e != nil {
 			memConsume += e.TotalMemorySize()

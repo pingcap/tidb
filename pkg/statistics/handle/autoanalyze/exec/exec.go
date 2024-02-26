@@ -43,7 +43,7 @@ func AutoAnalyze(
 	sysProcTracker sessionctx.SysProcTracker,
 	statsVer int,
 	sql string,
-	params ...interface{},
+	params ...any,
 ) {
 	startTime := time.Now()
 	_, _, err := execAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
@@ -72,7 +72,7 @@ func execAnalyzeStmt(
 	sysProcTracker sessionctx.SysProcTracker,
 	statsVer int,
 	sql string,
-	params ...interface{},
+	params ...any,
 ) ([]chunk.Row, []*ast.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot

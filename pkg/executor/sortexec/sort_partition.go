@@ -215,6 +215,7 @@ func (s *sortPartition) spillToDiskImpl() (err error) {
 				return err
 			}
 			tmpChk.Reset()
+			s.getMemTracker().HandleKillSignal()
 		}
 	}
 
@@ -329,7 +330,7 @@ func (s *sortPartition) lessRow(rowI, rowJ chunk.Row) bool {
 func (s *sortPartition) keyColumnsLess(i, j int) bool {
 	if s.timesOfRowCompare >= signalCheckpointForSort {
 		// Trigger Consume for checking the NeedKill signal
-		s.memTracker.Consume(1)
+		s.memTracker.HandleKillSignal()
 		s.timesOfRowCompare = 0
 	}
 

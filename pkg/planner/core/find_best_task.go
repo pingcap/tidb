@@ -209,46 +209,20 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	return nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan,
-	prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
+	physicalPlans []PhysicalPlan,
+	prop *property.PhysicalProperty,
+	addEnforcer bool,
+	planCounter *PlanCounterTp,
+	opt *physicalOptimizeOp,
+) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
 	var err error
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
-	iteration := func(
-		selfPhysicalPlan PhysicalPlan,
-		childTasks []task,
-		childCnts []int64,
-		prop *property.PhysicalProperty,
-		opt *physicalOptimizeOp,
-	) ([]task, int64, []int64, error) {
-		// Find best child tasks firstly.
-		childTasks = childTasks[:0]
-		// The curCntPlan records the number of possible plans for pp
-		curCntPlan := int64(1)
-		for j, child := range p.children {
-			childProp := selfPhysicalPlan.GetChildReqProps(j)
-			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
-			childCnts[j] = cnt
-			if err != nil {
-				return nil, 0, childCnts, err
-			}
-			curCntPlan = curCntPlan * cnt
-			if childTask != nil && childTask.invalid() {
-				return nil, 0, childCnts, nil
-			}
-			childTasks = append(childTasks, childTask)
-		}
-
-		// This check makes sure that there is no invalid child task.
-		if len(childTasks) != len(p.children) {
-			return nil, 0, childCnts, nil
-		}
-		return childTasks, curCntPlan, childCnts, nil
-	}
-
+	iteration := p.iteratePhysicalPlan
 	if seq, ok := p.self.(*LogicalSequence); ok {
 		iteration = seq.iterateChildPlan
 	}
@@ -258,7 +232,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
 
 		childTasks, curCntPlan, childCnts, err = iteration(pp, childTasks, childCnts, prop, opt)
-
 		if err != nil {
 			return nil, 0, err
 		}
@@ -278,9 +251,8 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			}
 		}
 
-		// Combine best child tasks with parent physical plan.
+		// Combine the best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
-
 		if curTask.invalid() {
 			continue
 		}
@@ -317,6 +289,39 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+// iteratePhysicalPlan is used to iterate the physical plan and get all child tasks.
+func (p *baseLogicalPlan) iteratePhysicalPlan(
+	selfPhysicalPlan PhysicalPlan,
+	childTasks []task,
+	childCnts []int64,
+	_ *property.PhysicalProperty,
+	opt *physicalOptimizeOp,
+) ([]task, int64, []int64, error) {
+	// Find best child tasks firstly.
+	childTasks = childTasks[:0]
+	// The curCntPlan records the number of possible plans for pp
+	curCntPlan := int64(1)
+	for j, child := range p.children {
+		childProp := selfPhysicalPlan.GetChildReqProps(j)
+		childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
+		childCnts[j] = cnt
+		if err != nil {
+			return nil, 0, childCnts, err
+		}
+		curCntPlan = curCntPlan * cnt
+		if childTask != nil && childTask.invalid() {
+			return nil, 0, childCnts, nil
+		}
+		childTasks = append(childTasks, childTask)
+	}
+
+	// This check makes sure that there is no invalid child task.
+	if len(childTasks) != len(p.children) {
+		return nil, 0, childCnts, nil
+	}
+	return childTasks, curCntPlan, childCnts, nil
 }
 
 // iterateChildPlan does the special part for sequence. We need to iterate its child one by one to check whether the former child is a valid plan and then go to the nex

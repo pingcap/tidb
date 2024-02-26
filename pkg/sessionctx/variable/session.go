@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -50,6 +49,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -186,7 +186,7 @@ type TxnCtxNeedToRestore struct {
 	pessimisticLockCache map[string][]byte
 
 	// CachedTables is not nil if the transaction write on cached table.
-	CachedTables map[int64]interface{}
+	CachedTables map[int64]any
 
 	// InsertTTLRowsCount counts how many rows are inserted in this statement
 	InsertTTLRowsCount int
@@ -195,9 +195,9 @@ type TxnCtxNeedToRestore struct {
 // TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
 type TxnCtxNoNeedToRestore struct {
 	forUpdateTS uint64
-	Binlog      interface{}
-	InfoSchema  interface{}
-	History     interface{}
+	Binlog      any
+	InfoSchema  any
+	History     any
 	StartTS     uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
@@ -401,7 +401,7 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
 	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
 	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
-	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
+	cachedTables := make(map[int64]any, len(tc.CachedTables))
 	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
@@ -693,7 +693,7 @@ type SessionVars struct {
 	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
 	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
-	PreparedStmts        map[uint32]interface{}
+	PreparedStmts        map[uint32]any
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
@@ -711,7 +711,7 @@ type SessionVars struct {
 	TxnCtxMu sync.Mutex
 
 	// TxnManager is used to manage txn context in session
-	TxnManager interface{}
+	TxnManager any
 
 	// KVVars is the variables for KV storage.
 	KVVars *tikvstore.Variables
@@ -722,8 +722,8 @@ type SessionVars struct {
 		value string
 	}
 
-	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
-	Status uint16
+	// status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
+	status atomic.Uint32
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32
@@ -741,7 +741,7 @@ type SessionVars struct {
 	PlanColumnID atomic.Int64
 
 	// MapScalarSubQ maps the scalar sub queries from its ID to its struct.
-	MapScalarSubQ []interface{}
+	MapScalarSubQ []any
 
 	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
 	MapHashCode2UniqueID4ExtendedCol map[string]int
@@ -759,9 +759,6 @@ type SessionVars struct {
 	// the slow log to make it be compatible with MySQL, https://github.com/pingcap/tidb/issues/17846.
 	CurrentDBChanged bool
 
-	// StrictSQLMode indicates if the session is in strict mode.
-	StrictSQLMode bool
-
 	// CommonGlobalLoaded indicates if common global variable has been loaded for this session.
 	CommonGlobalLoaded bool
 
@@ -776,7 +773,7 @@ type SessionVars struct {
 
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
-	SnapshotInfoschema interface{}
+	SnapshotInfoschema any
 
 	// BinlogClient is used to write binlog.
 	BinlogClient *pumpcli.PumpsClient
@@ -979,10 +976,6 @@ type SessionVars struct {
 
 	// BatchCommit indicates if we should split the transaction into multiple batches.
 	BatchCommit bool
-
-	// IDAllocator is provided by kvEncoder, if it is provided, we will use it to alloc auto id instead of using
-	// Table.alloc.
-	IDAllocator autoid.Allocator
 
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
@@ -1280,7 +1273,7 @@ type SessionVars struct {
 
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
-	LocalTemporaryTables interface{}
+	LocalTemporaryTables any
 
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
@@ -1671,19 +1664,19 @@ func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, hasErr bool) {
 }
 
 // GetPreparedStmtByName returns the prepared statement specified by stmtName.
-func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
+func (s *SessionVars) GetPreparedStmtByName(stmtName string) (any, error) {
 	stmtID, ok := s.PreparedStmtNameToID[stmtName]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, plannererrors.ErrStmtNotFound
 	}
 	return s.GetPreparedStmtByID(stmtID)
 }
 
 // GetPreparedStmtByID returns the prepared statement specified by stmtID.
-func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
+func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (any, error) {
 	stmt, ok := s.PreparedStmts[stmtID]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, plannererrors.ErrStmtNotFound
 	}
 	return stmt, nil
 }
@@ -1938,16 +1931,14 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		},
 		systems:                       make(map[string]string),
 		stmtVars:                      make(map[string]string),
-		PreparedStmts:                 make(map[uint32]interface{}),
+		PreparedStmts:                 make(map[uint32]any),
 		PreparedStmtNameToID:          make(map[string]uint32),
 		PlanCacheParams:               NewPlanCacheParamList(),
 		TxnCtx:                        &TransactionContext{},
 		RetryInfo:                     &RetryInfo{},
 		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:                 true,
 		AutoIncrementIncrement:        DefAutoIncrementIncrement,
 		AutoIncrementOffset:           DefAutoIncrementOffset,
-		Status:                        mysql.ServerStatusAutocommit,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
 		AllowAggPushDown:              false,
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
@@ -2037,6 +2028,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
+	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
@@ -2208,7 +2200,7 @@ func (s *SessionVars) AllocPlanColumnID() int64 {
 }
 
 // RegisterScalarSubQ register a scalar sub query into the map. This will be used for EXPLAIN.
-func (s *SessionVars) RegisterScalarSubQ(scalarSubQ interface{}) {
+func (s *SessionVars) RegisterScalarSubQ(scalarSubQ any) {
 	s.MapScalarSubQ = append(s.MapScalarSubQ, scalarSubQ)
 }
 
@@ -2272,15 +2264,36 @@ func (s *SessionVars) SetLastInsertID(insertID uint64) {
 // otherwise removes the flag.
 func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	if on {
-		s.Status |= flag
+		for {
+			status := s.status.Load()
+			if status&uint32(flag) == uint32(flag) {
+				break
+			}
+			if s.status.CompareAndSwap(status, status|uint32(flag)) {
+				break
+			}
+		}
 		return
 	}
-	s.Status &= ^flag
+	for {
+		status := s.status.Load()
+		if status&uint32(flag) == 0 {
+			break
+		}
+		if s.status.CompareAndSwap(status, status&^uint32(flag)) {
+			break
+		}
+	}
 }
 
-// GetStatusFlag gets the session server status variable, returns true if it is on.
-func (s *SessionVars) GetStatusFlag(flag uint16) bool {
-	return s.Status&flag > 0
+// HasStatusFlag gets the session server status variable, returns true if it is on.
+func (s *SessionVars) HasStatusFlag(flag uint16) bool {
+	return s.status.Load()&uint32(flag) > 0
+}
+
+// Status returns the server status.
+func (s *SessionVars) Status() uint16 {
+	return uint16(s.status.Load())
 }
 
 // SetInTxn sets whether the session is in transaction.
@@ -2294,12 +2307,12 @@ func (s *SessionVars) SetInTxn(val bool) {
 
 // InTxn returns if the session is in transaction.
 func (s *SessionVars) InTxn() bool {
-	return s.GetStatusFlag(mysql.ServerStatusInTrans)
+	return s.HasStatusFlag(mysql.ServerStatusInTrans)
 }
 
 // IsAutocommit returns if the session is set to autocommit.
 func (s *SessionVars) IsAutocommit() bool {
-	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
+	return s.HasStatusFlag(mysql.ServerStatusAutocommit)
 }
 
 // IsIsolation if true it means the transaction is at that isolation level.
@@ -2408,7 +2421,7 @@ func (k planCacheStmtKey) Hash() []byte {
 }
 
 // AddNonPreparedPlanCacheStmt adds this PlanCacheStmt into non-preapred plan-cache stmt cache
-func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) {
+func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt any) {
 	if s.nonPreparedPlanCacheStmts == nil {
 		s.nonPreparedPlanCacheStmts = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
 	}
@@ -2416,7 +2429,7 @@ func (s *SessionVars) AddNonPreparedPlanCacheStmt(sql string, stmt interface{}) 
 }
 
 // GetNonPreparedPlanCacheStmt gets the PlanCacheStmt.
-func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) interface{} {
+func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	if s.nonPreparedPlanCacheStmts == nil {
 		return nil
 	}
@@ -2425,7 +2438,7 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) interface{} {
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
-func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt interface{}) error {
+func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt any) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
 		maxPreparedStmtCount := MaxPreparedStmtCountValue.Load()
 		newPreparedStmtCount := atomic.AddInt64(&PreparedStmtCount, 1)
@@ -2652,7 +2665,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 
 	// Encode other session contexts.
 	sessionStates.PreparedStmtID = s.preparedStmtID
-	sessionStates.Status = s.Status
+	sessionStates.Status = s.status.Load()
 	sessionStates.CurrentDB = s.CurrentDB
 	sessionStates.LastTxnInfo = s.LastTxnInfo
 	if s.LastQueryInfo.StartTS != 0 {
@@ -2688,7 +2701,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 
 	// Decode other session contexts.
 	s.preparedStmtID = sessionStates.PreparedStmtID
-	s.Status = sessionStates.Status
+	s.status.Store(sessionStates.Status)
 	s.CurrentDB = sessionStates.CurrentDB
 	s.LastTxnInfo = sessionStates.LastTxnInfo
 	if sessionStates.LastQueryInfo != nil {

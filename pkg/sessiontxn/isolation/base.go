@@ -414,7 +414,7 @@ func (p *baseTxnContextProvider) AdviseWarmup() error {
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
-func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ any) error {
 	return nil
 }
 

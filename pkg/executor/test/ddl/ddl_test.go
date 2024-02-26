@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -183,8 +183,8 @@ func TestCreateDropDatabase(t *testing.T) {
 	tk.MustExec("create database drop_test;")
 	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
-	tk.MustGetDBError("drop table t;", plannercore.ErrNoDB)
-	tk.MustGetDBError("select * from t;", plannercore.ErrNoDB)
+	tk.MustGetDBError("drop table t;", plannererrors.ErrNoDB)
+	tk.MustGetDBError("select * from t;", plannererrors.ErrNoDB)
 
 	tk.MustExecToErr("drop database mysql")
 

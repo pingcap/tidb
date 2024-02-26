@@ -103,7 +103,7 @@ func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 type SubStates = []model.SchemaState
 
 // TestMatchCancelState is used to test whether the cancel state matches.
-func TestMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
+func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql string) bool {
 	switch v := cancelState.(type) {
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {

@@ -523,7 +523,7 @@ func (rs *RegionSplitter) ScatterRegionsSequentially(ctx context.Context, newReg
 			zap.Int("count", len(newRegionSet)),
 			// if all region are failed to scatter, the short error might also be verbose...
 			logutil.ShortError(err),
-			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i interface{}) []string {
+			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i any) []string {
 				m := i.(map[uint64]*split.RegionInfo)
 				result := make([]string, 0, len(m))
 				for id := range m {

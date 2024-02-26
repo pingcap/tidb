@@ -97,7 +97,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 			onlyOnceItems++
 		}
 	}
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
+	slices.SortStableFunc(sorted, func(i, j dataCnt) int { return -cmp.Compare(i.cnt, j.cnt) })
 	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
 		if val.(bool) {
 			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
@@ -684,12 +684,8 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	if c == nil {
 		return 0, false
 	}
-	idx = sort.Search(len(c.TopN), func(i int) bool {
-		cmpRst := bytes.Compare(c.TopN[i].Encoded, d)
-		if cmpRst == 0 {
-			match = true
-		}
-		return cmpRst >= 0
+	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
+		return bytes.Compare(a.Encoded, d)
 	})
 	return idx, match
 }

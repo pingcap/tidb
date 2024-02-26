@@ -30,7 +30,7 @@ func TestGenSQLForAnalyzeTable(t *testing.T) {
 	}
 
 	expectedSQL := "analyze table %n.%n"
-	expectedParams := []interface{}{"test_schema", "test_table"}
+	expectedParams := []any{"test_schema", "test_table"}
 
 	sql, params := job.genSQLForAnalyzeTable()
 
@@ -47,7 +47,7 @@ func TestGenSQLForAnalyzeIndex(t *testing.T) {
 	index := "test_index"
 
 	expectedSQL := "analyze table %n.%n index %n"
-	expectedParams := []interface{}{"test_schema", "test_table", index}
+	expectedParams := []any{"test_schema", "test_table", index}
 
 	sql, params := job.genSQLForAnalyzeIndex(index)
 

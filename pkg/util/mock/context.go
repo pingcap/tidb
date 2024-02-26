@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -53,7 +54,7 @@ type Context struct {
 	ctx           context.Context
 	sm            util.SessionManager
 	is            sessionctx.InfoschemaMetaVersion
-	values        map[fmt.Stringer]interface{}
+	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
 	cancel        context.CancelFunc
 	pcache        sessionctx.PlanCache
@@ -132,7 +133,7 @@ func (c *Context) ClearDiskFullOpt() {
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
-func (*Context) ExecuteInternal(_ context.Context, _ string, _ ...interface{}) (sqlexec.RecordSet, error) {
+func (*Context) ExecuteInternal(_ context.Context, _ string, _ ...any) (sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported")
 }
 
@@ -147,12 +148,12 @@ func (*Context) IsDDLOwner() bool {
 }
 
 // SetValue implements sessionctx.Context SetValue interface.
-func (c *Context) SetValue(key fmt.Stringer, value interface{}) {
+func (c *Context) SetValue(key fmt.Stringer, value any) {
 	c.values[key] = value
 }
 
 // Value implements sessionctx.Context Value interface.
-func (c *Context) Value(key fmt.Stringer) interface{} {
+func (c *Context) Value(key fmt.Stringer) any {
 	value := c.values[key]
 	return value
 }
@@ -455,14 +456,22 @@ func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
 	c.is = is
 }
 
+// ReportUsageStats implements the sessionctx.Context interface.
+func (*Context) ReportUsageStats() {}
+
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
+
+// NewStmtIndexUsageCollector implements the sessionctx.Context interface
+func (*Context) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector {
+	return nil
+}
 
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	sctx := &Context{
-		values: make(map[fmt.Stringer]interface{}),
+		values: make(map[fmt.Stringer]any),
 		ctx:    ctx,
 		cancel: cancel,
 	}
