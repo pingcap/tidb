@@ -258,6 +258,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			End:   lastKey,
 		},
 		ApiVersion: apiVersion,
+		StartTs:    j.ingestData.GetStartTS(),
 	}
 
 	failpoint.Inject("changeEpochVersion", func(val failpoint.Value) {
@@ -318,7 +319,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
 	}
-	dataCommitTS := j.ingestData.GetTS()
+	dataCommitTS := j.ingestData.GetStartTS()
+	// TODO(lance6716): use local.pdCli.GetTS() to get a new TS as commit TS after deduplication is ready.
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
 			CommitTs: dataCommitTS,

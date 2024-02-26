@@ -402,6 +402,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalFileSize:   int64(sm.TotalKVSize),
 			TotalKVCount:    0,
 			CheckHotspot:    false,
+			TSOfClose:       sm.TSOfClose,
 		},
 	}, engineUUID)
 	if err != nil {

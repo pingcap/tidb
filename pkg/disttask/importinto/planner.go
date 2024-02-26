@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -38,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -332,6 +336,16 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 	return result, nil
 }
 
+func createPDClientByGlobalCfg() (pd.Client, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	addrs := strings.Split(tidbCfg.Path, ",")
+	return pd.NewClient(addrs, pd.SecurityOption{
+		CAPath:   tidbCfg.Security.ClusterSSLCA,
+		CertPath: tidbCfg.Security.ClusterSSLCert,
+		KeyPath:  tidbCfg.Security.ClusterSSLKey,
+	})
+}
+
 func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	ctx := planCtx.Ctx
 	controller, err2 := buildControllerForPlan(p)
@@ -362,6 +376,17 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			},
 		}, nil)
 	})
+	pdCli, err := createPDClientByGlobalCfg()
+	if err != nil {
+		return nil, err
+	}
+	pTS, lTS, err := pdCli.GetTS(ctx)
+	if err != nil {
+		pdCli.Close()
+		return nil, err
+	}
+	ts := oracle.ComposeTS(pTS, lTS)
+	pdCli.Close()
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
@@ -409,6 +434,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					StatFiles:      statFiles,
 					RangeSplitKeys: rangeSplitKeys,
 					RangeSplitSize: splitter.GetRangeSplitSize(),
+					TSOfClose:      ts,
 				}
 				specs = append(specs, &WriteIngestSpec{m})
 

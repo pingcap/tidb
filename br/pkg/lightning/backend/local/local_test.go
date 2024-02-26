@@ -1208,7 +1208,7 @@ func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte
 	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
 }
 
-func (m mockIngestData) GetTS() uint64 { return 0 }
+func (m mockIngestData) GetStartTS() uint64 { return 0 }
 
 func (m mockIngestData) IncRef() {}
 

@@ -707,8 +707,8 @@ func (m *MemoryIngestData) NewIter(
 	}
 }
 
-// GetTS implements IngestData.GetTS.
-func (m *MemoryIngestData) GetTS() uint64 {
+// GetStartTS implements IngestData.GetStartTS.
+func (m *MemoryIngestData) GetStartTS() uint64 {
 	return m.ts
 }
 

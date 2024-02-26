@@ -290,11 +290,6 @@ func (em *engineManager) closeEngine(
 				store.Close()
 			}
 		}()
-		physical, logical, err := em.GetTS(ctx)
-		if err != nil {
-			return err
-		}
-		ts := oracle.ComposeTS(physical, logical)
 		externalEngine := external.NewExternalEngine(
 			store,
 			externalCfg.DataFiles,
@@ -308,7 +303,7 @@ func (em *engineManager) closeEngine(
 			em.duplicateDB,
 			em.DuplicateDetectOpt,
 			em.WorkerConcurrency,
-			ts,
+			externalCfg.TSOfClose,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
@@ -339,7 +334,7 @@ func (em *engineManager) closeEngine(
 		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
 		if err = engine.loadEngineMeta(); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		em.engines.Store(engineUUID, engine)
 		return nil
@@ -424,7 +419,7 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 		}
 		failpoint.Inject("mockAllocateTSErr", func() {
 			// mock generate timestamp error when reset engine.
-			localEngine.TS = 0
+			localEngine.StartTS = 0
 			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
 			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
 		})
@@ -435,7 +430,7 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 }
 
 func (em *engineManager) allocateTSIfNotExists(ctx context.Context, engine *Engine) error {
-	if engine.TS > 0 {
+	if engine.StartTS > 0 {
 		return nil
 	}
 	physical, logical, err := em.GetTS(ctx)
@@ -443,7 +438,7 @@ func (em *engineManager) allocateTSIfNotExists(ctx context.Context, engine *Engi
 		return err
 	}
 	ts := oracle.ComposeTS(physical, logical)
-	engine.TS = ts
+	engine.StartTS = ts
 	return engine.saveEngineMeta()
 }
 

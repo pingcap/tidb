@@ -173,13 +173,13 @@ func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.T
 	}
 
 	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
+	pdHTTPCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
 	switcher.ToImportMode(ctx)
-	pdCli.Close()
+	pdHTTPCli.Close()
 	sch.lastSwitchTime.Store(time.Now())
 }
 
@@ -379,13 +379,13 @@ func (sch *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
+	pdHTTPCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
 	switcher.ToNormalMode(ctx)
-	pdCli.Close()
+	pdHTTPCli.Close()
 
 	// clear it, so next task can switch TiKV mode again.
 	sch.lastSwitchTime.Store(time.Time{})
