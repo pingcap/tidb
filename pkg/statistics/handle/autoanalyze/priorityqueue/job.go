@@ -44,12 +44,16 @@ const defaultFailedAnalysisWaitTime = 30 * time.Minute
 // TableAnalysisJob defines the structure for table analysis job information.
 type TableAnalysisJob struct {
 	// Only set when partitions's indexes need to be analyzed.
+	// It looks like: {"indexName": ["partitionName1", "partitionName2"]}
+	// This is only for newly added indexes.
 	PartitionIndexes map[string][]string
 	TableSchema      string
 	TableName        string
 	// Only set when table's indexes need to be analyzed.
+	// This is only for newly added indexes.
 	Indexes []string
 	// Only set when table's partitions need to be analyzed.
+	// This will analyze all indexes and columns of the specified partitions.
 	Partitions           []string
 	TableID              int64
 	TableStatsVer        int
