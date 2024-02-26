@@ -20,9 +20,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
+=======
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/types"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -131,3 +139,27 @@ func CheckStoreLiveness(s *metapb.Store) error {
 	}
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+// WithCleanUp runs a function with a timeout, and register its error to its argument if there is one.
+// This is useful while you want to run some must run but error-prone code in a defer context.
+// Simple usage:
+//
+//	func foo() (err error) {
+//		defer WithCleanUp(&err, time.Second, func(ctx context.Context) error {
+//			// do something
+//			return nil
+//		})
+//	}
+func WithCleanUp(errOut *error, timeout time.Duration, fn func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err := fn(ctx)
+	if errOut != nil {
+		*errOut = multierr.Combine(err, *errOut)
+	} else if err != nil {
+		log.Warn("Encountered but ignored error while cleaning up.", zap.Error(err))
+	}
+}
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))

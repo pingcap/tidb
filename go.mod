@@ -72,8 +72,13 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
 	github.com/pingcap/errors v0.11.5-0.20231212100244-799fae176cfb
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
+<<<<<<< HEAD
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20231011074246-fa00d2b03372
+=======
+	github.com/pingcap/fn v1.0.0
+	github.com/pingcap/kvproto v0.0.0-20240109063850-932639606bcf
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
