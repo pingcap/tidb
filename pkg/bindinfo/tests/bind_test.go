@@ -859,3 +859,21 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 
 	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
 }
+
+func TestNormalizeStmtForBinding(t *testing.T) {
+	tests := []struct {
+		sql        string
+		normalized string
+		digest     string
+	}{
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+	}
+	for _, test := range tests {
+		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, test.sql)
+		n, digest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		require.Equal(t, test.normalized, n)
+		require.Equal(t, test.digest, digest)
+	}
+}
