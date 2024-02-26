@@ -290,16 +290,14 @@ func TestIngestUseSameTS(t *testing.T) {
 
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
-	tsLowerBound := oracle.ComposeTS(123456789, 0)
-	tsUpperBound := oracle.ComposeTS(123456790, 0)
-	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, tsLowerBound)
+	ts := oracle.ComposeTS(123456789, 0)
+	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, ts)
 	require.NoError(t, err)
 	require.NotNil(t, mvccResp)
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
-	// TODO(lance6716): startTS is different with commitTS after finishing development of ingesting with PiTR
-	require.LessOrEqual(t, tsLowerBound, mvccResp.Info.Writes[0].StartTs)
-	require.Less(t, mvccResp.Info.Writes[0].StartTs, tsUpperBound)
+	// TODO(lance6716): it should be greater than startTS after finishing development of ingesting with PiTR
+	require.Equal(t, ts, mvccResp.Info.Writes[0].CommitTs)
 
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 }
