@@ -1700,6 +1700,8 @@ func TestDefaultColumnWithStrToDate(t *testing.T) {
 	tk.MustExec("create table t2 (c int(10), c1 blob default (str_to_date('1980-01-01','%Y-%m-%d')), c2 blob default (str_to_date('9999-01-01','%m-%d')))")
 	tk.MustExec("create table t5 (c int(10), c1 json default (str_to_date('9999-01-01','%Y-%m-%d')), c2 timestamp default (str_to_date('1980-01-01','%Y-%m-%d')))")
 	tk.MustExec(fmt.Sprintf(`set session sql_mode="%s"`, sqlMode))
+	tk.MustGetErrCode("create table t6 (c int(10), c1 varchar(32) default (str_to_date(upper('1980-01-01'),'%Y-%m-%d')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t6 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01',upper('%Y-%m-%d'))))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 
 	// TODO: We need to support it.
 	tk.MustGetErrCode("alter table t0 add column c3 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'))", errno.ErrBinlogUnsafeSystemFunction)

@@ -1370,12 +1370,17 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		str, err := restoreFuncCall(expr)
-		if err != nil {
-			return nil, false, errors.Trace(err)
+		if _, ok1 := expr.Args[0].(ast.ValueExpr); ok1 {
+			if _, ok2 := expr.Args[1].(ast.ValueExpr); ok2 {
+				str, err := restoreFuncCall(expr)
+				if err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				col.DefaultIsExpr = true
+				return str, false, nil
+			}
 		}
-		col.DefaultIsExpr = true
-		return str, false, nil
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), fmt.Sprintf("%s with these args", expr.FnName.String()))
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
