@@ -34,6 +34,11 @@ type mockStorage struct {
 	LockWaits []*deadlockpb.WaitForEntry
 }
 
+// CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
+func (s *mockStorage) CurrentMinTimestamp() (uint64, error) {
+	return s.KVStore.CurrentTimestamp(kv.GlobalTxnScope) // TODO( ystaticy ) add CurrentMinTimestamp in client-go
+}
+
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache

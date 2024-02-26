@@ -28,6 +28,10 @@ type Store struct {
 	Client kv.Client
 }
 
+func (s *Store) CurrentMinTimestamp() (uint64, error) {
+	return 0, nil
+}
+
 // GetClient implements kv.Storage interface.
 func (s *Store) GetClient() kv.Client { return s.Client }
 

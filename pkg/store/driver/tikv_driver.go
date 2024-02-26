@@ -27,6 +27,7 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -214,6 +215,11 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithCodec(codec),
 	)
 
+	spkv, err = keyspace.NewEtcdSafePointKV(etcdAddrs, codec, tlsConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
 		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))
 	if err != nil {
@@ -377,6 +383,15 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), derr.ToTiDBErr(err)
+}
+
+// CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
+func (s *tikvStore) CurrentMinTimestamp() (uint64, error) {
+	ts, err := s.KVStore.CurrentTimestamp(kv.GlobalTxnScope) // TODO( ystaticy ) add CurrentMinTimestamp in client-go
+	if strings.Contains(err.Error(), "Unimplemented") {
+		ts, err = s.KVStore.CurrentTimestamp(kv.GlobalTxnScope)
+	}
+	return ts, derr.ToTiDBErr(err)
 }
 
 // ShowStatus returns the specified status of the storage
