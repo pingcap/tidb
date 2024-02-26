@@ -758,23 +758,18 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 }
 
 type indexJoinInnerChildWrapper struct {
-	ds   *DataSource
-	us   *LogicalUnionScan
-	proj *LogicalProjection
-	sel  *LogicalSelection
+	ds             *DataSource
+	hasDitryWrite  bool
+	zippedChildren []LogicalPlan
 }
 
 func (p *LogicalJoin) extractIndexJoinInnerChildPattern(innerChild LogicalPlan) *indexJoinInnerChildWrapper {
 	wrapper := &indexJoinInnerChildWrapper{}
-	switch child := innerChild.(type) {
-	case *DataSource:
-		wrapper.ds = child
-	case *LogicalUnionScan:
-		wrapper.us = child
-		ds, isDataSource := wrapper.us.Children()[0].(*DataSource)
-		if !isDataSource {
+	nextChild := func(pp LogicalPlan) LogicalPlan {
+		if len(pp.Children()) != 1 {
 			return nil
 		}
+<<<<<<< HEAD:planner/core/exhaust_physical_plans.go
 		wrapper.ds = ds
 		// If one of the union scan children is a TiFlash table, then we can't choose index join.
 		for _, child := range wrapper.us.Children() {
@@ -808,6 +803,27 @@ func (p *LogicalJoin) extractIndexJoinInnerChildPattern(innerChild LogicalPlan) 
 			return nil
 		}
 		wrapper.ds = ds
+=======
+		return pp.Children()[0]
+	}
+childLoop:
+	for curChild := innerChild; curChild != nil; curChild = nextChild(curChild) {
+		switch child := curChild.(type) {
+		case *DataSource:
+			wrapper.ds = child
+			break childLoop
+		case *LogicalProjection, *LogicalSelection:
+			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+				return nil
+			}
+			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
+		case *LogicalUnionScan:
+			wrapper.hasDitryWrite = true
+			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
+		default:
+			return nil
+		}
+>>>>>>> 6af4bbaabbb (planner, executor: enhance the index join's choice (#51128)):pkg/planner/core/exhaust_physical_plans.go
 	}
 	if wrapper.ds == nil || wrapper.ds.preferStoreType&preferTiFlash != 0 {
 		return nil
@@ -855,7 +871,6 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper, innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	ds := wrapper.ds
-	us := wrapper.us
 	var tblPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() && path.StoreType == kv.TiKV {
@@ -882,7 +897,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
-		if us == nil {
+		if !wrapper.hasDitryWrite {
 			innerTask2 = p.constructInnerTableScanTask(wrapper, helper.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 		ranges = helper.chosenRanges
@@ -922,7 +937,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
-		if us == nil {
+		if !wrapper.hasDitryWrite {
 			innerTask2 = p.constructInnerTableScanTask(wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 	}
@@ -954,8 +969,26 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper, innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	ds := wrapper.ds
+<<<<<<< HEAD:planner/core/exhaust_physical_plans.go
 	us := wrapper.us
 	helper, keyOff2IdxOff := p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return !path.IsTablePath() }, outerJoinKeys)
+=======
+	indexValid := func(path *util.AccessPath) bool {
+		if path.IsTablePath() {
+			return false
+		}
+		// if path is index path. index path currently include two kind of, one is normal, and the other is mv index.
+		// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+		// on mvi, it will return many index rows which breaks handle-unique attribute here.
+		//
+		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
+		if !isMVIndexPath(path) {
+			return true // not a MVIndex path, it can successfully be index join probe side.
+		}
+		return false
+	}
+	helper, keyOff2IdxOff := p.getIndexJoinBuildHelper(ds, innerJoinKeys, indexValid, outerJoinKeys)
+>>>>>>> 6af4bbaabbb (planner, executor: enhance the index join's choice (#51128)):pkg/planner/core/exhaust_physical_plans.go
 	if helper == nil {
 		return nil
 	}
@@ -985,8 +1018,13 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
+<<<<<<< HEAD:planner/core/exhaust_physical_plans.go
 	if us == nil {
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, outerJoinKeys, us, helper.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+=======
+	if !wrapper.hasDitryWrite {
+		innerTask2 := p.constructInnerIndexScanTask(wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, helper.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+>>>>>>> 6af4bbaabbb (planner, executor: enhance the index join's choice (#51128)):pkg/planner/core/exhaust_physical_plans.go
 		if innerTask2 != nil {
 			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		}
@@ -1116,18 +1154,21 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 }
 
 func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrapper, child PhysicalPlan) PhysicalPlan {
+<<<<<<< HEAD:planner/core/exhaust_physical_plans.go
 	if !p.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern {
 		if wrapper.us != nil {
 			return p.constructInnerUnionScan(wrapper.us, child)
+=======
+	for i := len(wrapper.zippedChildren) - 1; i >= 0; i-- {
+		switch x := wrapper.zippedChildren[i].(type) {
+		case *LogicalUnionScan:
+			child = p.constructInnerUnionScan(x, child)
+		case *LogicalProjection:
+			child = p.constructInnerProj(x, child)
+		case *LogicalSelection:
+			child = p.constructInnerSel(x, child)
+>>>>>>> 6af4bbaabbb (planner, executor: enhance the index join's choice (#51128)):pkg/planner/core/exhaust_physical_plans.go
 		}
-		return child
-	}
-	if wrapper.us != nil {
-		return p.constructInnerUnionScan(wrapper.us, child)
-	} else if wrapper.proj != nil {
-		return p.constructInnerProj(wrapper.proj, child)
-	} else if wrapper.sel != nil {
-		return p.constructInnerSel(wrapper.sel, child)
 	}
 	return child
 }
@@ -1153,6 +1194,7 @@ func (p *LogicalJoin) constructInnerProj(proj *LogicalProjection, child Physical
 		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
 	}.Init(proj.ctx, proj.stats, proj.blockOffset, nil)
 	physicalProj.SetChildren(child)
+	physicalProj.SetSchema(proj.schema)
 	return physicalProj
 }
 
