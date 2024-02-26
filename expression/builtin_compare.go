@@ -2627,27 +2627,8 @@ func (b *builtinNullEQIntSig) evalInt(row chunk.Row) (val int64, isNull bool, er
 		res = 1
 	case isNull0 != isNull1:
 		return res, false, nil
-<<<<<<< HEAD:expression/builtin_compare.go
-	case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0), uint64(arg1)) == 0:
-		res = 1
-	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
-		res = 1
-	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 {
-			return res, false, nil
-		}
-		if types.CompareInt64(arg0, arg1) == 0 {
-			res = 1
-		}
-	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 {
-			return res, false, nil
-		}
-		if types.CompareInt64(arg0, arg1) == 0 {
-=======
 	default:
 		if types.CompareInt(arg0, isUnsigned0, arg1, isUnsigned1) == 0 {
->>>>>>> 7893f1637e1 (planner: fix range partition prune with an unsigned column (#50113)):pkg/expression/builtin_compare.go
 			res = 1
 		}
 	}
@@ -2950,30 +2931,7 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 	}
 
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().GetFlag()), mysql.HasUnsignedFlag(rhsArg.GetType().GetFlag())
-<<<<<<< HEAD:expression/builtin_compare.go
-	var res int
-	switch {
-	case isUnsigned0 && isUnsigned1:
-		res = types.CompareUint64(uint64(arg0), uint64(arg1))
-	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
-			res = 1
-		} else {
-			res = types.CompareInt64(arg0, arg1)
-		}
-	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
-			res = -1
-		} else {
-			res = types.CompareInt64(arg0, arg1)
-		}
-	case !isUnsigned0 && !isUnsigned1:
-		res = types.CompareInt64(arg0, arg1)
-	}
-	return int64(res), false, nil
-=======
 	return int64(types.CompareInt(arg0, isUnsigned0, arg1, isUnsigned1)), false, nil
->>>>>>> 7893f1637e1 (planner: fix range partition prune with an unsigned column (#50113)):pkg/expression/builtin_compare.go
 }
 
 func genCompareString(collation string) func(sctx sessionctx.Context, lhsArg Expression, rhsArg Expression, lhsRow chunk.Row, rhsRow chunk.Row) (int64, bool, error) {

@@ -120,7 +120,6 @@ func CompareString(x, y, collation string) int {
 	return collate.GetCollator(collation).Compare(x, y)
 }
 
-<<<<<<< HEAD:types/compare.go
 // CompareDuration returns an integer comparing the duration x to y.
 func CompareDuration(x, y time.Duration) int {
 	if x < y {
@@ -130,7 +129,8 @@ func CompareDuration(x, y time.Duration) int {
 	}
 
 	return 1
-=======
+}
+
 // CompareInt return an integer comparing the integer x to y with signed or unsigned.
 func CompareInt(arg0 int64, isUnsigned0 bool, arg1 int64, isUnsigned1 bool) int {
 	var res int
@@ -153,5 +153,4 @@ func CompareInt(arg0 int64, isUnsigned0 bool, arg1 int64, isUnsigned1 bool) int 
 		res = cmp.Compare(arg0, arg1)
 	}
 	return res
->>>>>>> 7893f1637e1 (planner: fix range partition prune with an unsigned column (#50113)):pkg/types/compare.go
 }

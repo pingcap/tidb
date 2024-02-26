@@ -18,12 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-<<<<<<< HEAD:planner/core/rule_partition_processor.go
-	gomath "math"
-=======
 	"math"
-	"slices"
->>>>>>> 7893f1637e1 (planner: fix range partition prune with an unsigned column (#50113)):pkg/planner/core/rule_partition_processor.go
 	"sort"
 	"strings"
 
@@ -1267,12 +1262,7 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 		return 0, 0, false
 	}
 
-<<<<<<< HEAD:planner/core/rule_partition_processor.go
-	unsigned := mysql.HasUnsignedFlag(p.col.RetType.GetFlag())
-	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
-=======
-	start, end = pruneUseBinarySearch(p.lessThan, dataForPrune)
->>>>>>> 7893f1637e1 (planner: fix range partition prune with an unsigned column (#50113)):pkg/planner/core/rule_partition_processor.go
+	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune)
 	return start, end, true
 }
 
@@ -1352,12 +1342,8 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
 		} else {
-<<<<<<< HEAD:planner/core/rule_partition_processor.go
-			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
-=======
 			val, _, err = constExpr.EvalInt(sctx, chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
->>>>>>> 7893f1637e1 (planner: fix range partition prune with an unsigned column (#50113)):pkg/planner/core/rule_partition_processor.go
 		}
 		if err != nil {
 			return pruner.fullRange()
