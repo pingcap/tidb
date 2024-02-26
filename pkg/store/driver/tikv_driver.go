@@ -47,9 +47,6 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-// pdHTTPClientTimeout keeps the behavior of client-go before using PD HTTP client.
-const pdHTTPClientTimeout = 30 * time.Second
-
 type storeCache struct {
 	sync.Mutex
 	cache map[string]*tikvStore
@@ -218,7 +215,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	)
 
 	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
-		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram), pdhttp.WithTimeout(pdHTTPClientTimeout)))
+		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

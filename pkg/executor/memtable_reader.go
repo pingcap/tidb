@@ -779,10 +779,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	if !ok {
 		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(tikvStore)
 	tz := sctx.GetSessionVars().Location()
 	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas()
 	schemas := tikvHelper.FilterMemDBs(allSchemas)
@@ -882,10 +879,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 	if !ok {
 		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(tikvStore)
 	pdCli, err := tikvHelper.TryGetLongRequestPDHTTPClient()
 	if err != nil {
 		return nil, err

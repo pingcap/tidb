@@ -103,7 +103,9 @@ func NewHelper(store Storage) *Helper {
 	return helper
 }
 
-// TryGetPDHTTPClient tries to get a PD HTTP client if it's available.
+// TryGetPDHTTPClient tries to get a PD HTTP client with default timeout if it's available.
+// Helper holds the default PD HTTP client can help coder avoid
+// setting timeout for context when calling a time-intensive API.
 func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
 	if h.pdHTTPCli == nil {
 		return nil, errors.New("pd http client unavailable")

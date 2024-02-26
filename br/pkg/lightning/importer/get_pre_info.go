@@ -149,10 +149,13 @@ func NewTargetInfoGetterImpl(
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	return &TargetInfoGetterImpl{
-		cfg:       cfg,
-		db:        targetDB,
-		backend:   backendTargetInfoGetter,
-		pdHTTPCli: pdHTTPCli,
+		cfg:     cfg,
+		db:      targetDB,
+		backend: backendTargetInfoGetter,
+		// The timeout of `http.Client`` in PD HTTP client is 30s.
+		// When using GetEmptyRegions, the duration may be more than 30s,
+		// so creates `http.Client`` with a longer timeout.
+		pdHTTPCli: pdHTTPCli.WithTimeout(3 * time.Minute),
 	}, nil
 }
 
@@ -250,7 +253,7 @@ func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdhttp.Stor
 // It implements the TargetInfoGetter interface.
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp.RegionsInfo, error) {
-	return g.pdHTTPCli.WithTimeout(5 * time.Minute).GetEmptyRegions(ctx)
+	return g.pdHTTPCli.GetEmptyRegions(ctx)
 }
 
 // PreImportInfoGetterImpl implements the operations to get information used in importing preparation.

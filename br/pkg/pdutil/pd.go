@@ -133,7 +133,9 @@ func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 
 // PdController manage get/update config from pd.
 type PdController struct {
-	pdClient  pd.Client
+	pdClient pd.Client
+	// The default timeout of `http.Client` is 30s in PD HTTP client
+	// which is same with `br/pkg/httputil/http.go/NewClient`.
 	pdHTTPCli pdhttp.Client
 	version   *semver.Version
 
@@ -175,7 +177,7 @@ func NewPdController(
 		"br/lightning PD controller",
 		pdClient.GetServiceDiscovery(),
 		pdHTTPCliConfig...,
-	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second)).WithTimeout(pdCustomTimeout)
+	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second))
 	versionStr, err := pdHTTPCli.GetPDVersion(ctx)
 	if err != nil {
 		pdHTTPCli.Close()

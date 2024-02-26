@@ -821,10 +821,7 @@ func getRegionInfo(store helper.Storage, regions []regionMeta) ([]regionMeta, er
 	if len(pdHosts) == 0 {
 		return regions, nil
 	}
-	tikvHelper := &helper.Helper{
-		Store:       store,
-		RegionCache: store.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(store)
 	pdCli, err := tikvHelper.TryGetPDHTTPClient()
 	if err != nil {
 		return regions, err
