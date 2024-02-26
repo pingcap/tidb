@@ -537,18 +537,18 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *m
 }
 
 // CheckNoDefaultValueForInsert checks if the column has no default value before insert data.
+// CheckNoDefaultValueForInsert extrats the check logic from getColDefaultValueFromNil,
+// since getColDefaultValueFromNil function is public path and both read/write and other places use it.
+// But CheckNoDefaultValueForInsert logic should only check before insert.
 func CheckNoDefaultValueForInsert(ctx expression.BuildContext, col *model.ColumnInfo) error {
-	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && col.GetType() != mysql.TypeEnum {
-		if !col.DefaultIsExpr && col.GetDefaultValue() == nil {
-			sc := ctx.GetSessionVars().StmtCtx
-			ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupBadNull) != errctx.LevelError
-			if ignoreErr {
-				if !mysql.HasNotNullFlag(col.GetFlag()) {
-					sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
-				}
-			} else {
-				return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
-			}
+	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
+		sc := ctx.GetSessionVars().StmtCtx
+		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupBadNull) != errctx.LevelError
+		if !ignoreErr {
+			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
+		}
+		if !mysql.HasNotNullFlag(col.GetFlag()) {
+			sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		}
 	}
 	return nil
