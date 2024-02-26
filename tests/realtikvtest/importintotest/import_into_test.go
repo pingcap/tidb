@@ -785,7 +785,6 @@ func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
-	s.NoError(err)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
