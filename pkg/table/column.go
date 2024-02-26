@@ -537,6 +537,8 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *m
 }
 
 // GetColDefaultValue gets default value of the column.
+// param isInsert is used to indicate whether the default value is for insert.
+// Currently, isInsert only set to true in the insert execution to fill column's value.
 func GetColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, isInsert bool) (types.Datum, error) {
 	defaultValue := col.GetDefaultValue()
 	if !col.DefaultIsExpr {
@@ -631,6 +633,7 @@ func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInf
 		if !isInsert {
 			// In CanSkip function(in table/tables pkg), if column's default value is nil, and the column value is NULL too,
 			// then the column value can be skipped and won't encode to row value.
+			// So when we read the row value(isInsert = false), we should return a null datum for the column.
 			return types.Datum{}, nil
 		}
 	}
