@@ -25,6 +25,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -37,6 +38,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -397,7 +399,6 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 		return nil
 	}
 	defer localEngine.unlock()
-	oldStartTS := localEngine.StartTS
 	if err := localEngine.Close(); err != nil {
 		return err
 	}
@@ -407,15 +408,21 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 	db, err := em.openEngineDB(engineUUID, false)
 	if err == nil {
 		localEngine.db.Store(db)
-		localEngine.engineMeta = engineMeta{StartTS: oldStartTS}
-		if err = localEngine.saveEngineMeta(); err != nil {
-			return errors.Trace(err)
-		}
+		localEngine.engineMeta = engineMeta{}
 		if !common.IsDirExists(localEngine.sstDir) {
 			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
 				return errors.Trace(err)
 			}
 		}
+		if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
+			return errors.Trace(err)
+		}
+		failpoint.Inject("mockAllocateTSErr", func() {
+			// mock generate timestamp error when reset engine.
+			localEngine.StartTS = 0
+			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
+			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
+		})
 	}
 	localEngine.pendingFileSize.Store(0)
 
