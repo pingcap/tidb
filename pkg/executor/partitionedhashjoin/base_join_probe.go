@@ -16,14 +16,15 @@ package partitionedhashjoin
 
 import (
 	"bytes"
+	"hash/fnv"
+	"unsafe"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"hash/fnv"
-	"unsafe"
 )
 
 type probeProcessInfo struct {
