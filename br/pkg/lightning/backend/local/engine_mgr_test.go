@@ -90,7 +90,6 @@ func TestEngineManager(t *testing.T) {
 
 	// reset non-existent engine should work
 	require.NoError(t, em.resetEngine(ctx, uuid.New()))
-	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	require.NoError(t, em.resetEngine(ctx, engine1ID))
 	require.Equal(t, 1, syncMapLen(&em.engines))
 	_, ok = em.engines.Load(engine1ID)
