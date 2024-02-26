@@ -272,7 +272,7 @@ func (c *CheckpointAdvancer) fetchRegionHint(ctx context.Context, startKey []byt
 	metrics.LogBackupCurrentLastRegionLeaderStoreID.Set(float64(l.StoreId))
 	return fmt.Sprintf("ID=%d,Leader=%d,ConfVer=%d,Version=%d,Peers=%v,RealRange=%s",
 		r.GetId(), l.GetStoreId(), r.GetRegionEpoch().GetConfVer(), r.GetRegionEpoch().GetVersion(),
-		prs, logutil.StringifyRangeOf(r.GetStartKey(), r.GetEndKey()))
+		prs, logutil.StringifyRange{StartKey: r.GetStartKey(), EndKey: r.GetEndKey()})
 }
 
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
@@ -287,9 +287,6 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		})
 		minValue = vsf.Min()
 	})
-<<<<<<< HEAD
-	log.Info("[log backup advancer hint] current last region",
-=======
 	sctx, cancel := context.WithTimeout(ctx, time.Second)
 	// Always fetch the hint and update the metrics.
 	hint := c.fetchRegionHint(sctx, minValue.Key.StartKey)
@@ -298,7 +295,6 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		logger = log.Info
 	}
 	logger("current last region", zap.String("category", "log backup advancer hint"),
->>>>>>> 58e37356886 (log_backup: added more info for slow regions in log backup advancer (#51137))
 		zap.Stringer("min", minValue), zap.Int("for-polling", len(targets)),
 		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)),
 		zap.String("region-hint", hint),
