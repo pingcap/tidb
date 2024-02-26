@@ -213,5 +213,3 @@ func TestCreateDropCreateTable(t *testing.T) {
 	require.Less(t, create0TS, dropTS, "first create should finish before drop")
 	require.Less(t, dropTS, create1TS, "second create should finish after drop")
 }
-
-// 加一个非默认 sqlMode 和 默认 sqlMode 检测 sqlmode 的测试
