@@ -15,6 +15,8 @@
 package ddl_test
 
 import (
+	"testing"
+
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -25,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func BenchmarkExtractDatumByOffsets(b *testing.B) {
