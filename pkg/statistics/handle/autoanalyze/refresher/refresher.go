@@ -406,6 +406,8 @@ func calculateIndicatorsForPartitions(
 	return avgChange, avgSize, avgLastAnalyzeDuration, partitionNames
 }
 
+// checkIndexesNeedAnalyzeForPartitionedTable checks if the indexes of the partitioned table need to be analyzed.
+// It returns a map from index name to the names of the partitions that need to be analyzed.
 func checkIndexesNeedAnalyzeForPartitionedTable(
 	tblInfo *model.TableInfo,
 	defs []model.PartitionDefinition,
@@ -452,6 +454,7 @@ func getPartitionStats(
 	partitionStats := make(map[int64]*statistics.Table, len(defs))
 
 	for _, def := range defs {
+		// TODO: use GetPartitionStatsForAutoAnalyze to save memory.
 		partitionStats[def.ID] = statsHandle.GetPartitionStats(tblInfo, def.ID)
 	}
 
