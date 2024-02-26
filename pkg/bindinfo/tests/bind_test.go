@@ -880,8 +880,3 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		require.Equal(t, test.digest, digest)
 	}
 }
-
-func Test111(t *testing.T) {
-	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select 1 from b where (x) in ((1), ('3'))")
-	norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-}
