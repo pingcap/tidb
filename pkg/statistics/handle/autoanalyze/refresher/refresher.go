@@ -180,6 +180,7 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 						}
 					}
 					partitionStats := getPartitionStats(r.statsHandle, tblInfo, partitionDefs)
+					// If the prune mode is static, we need to analyze every partition as a separate table.
 					if pruneMode == variable.Static {
 						for _, def := range pi.Definitions {
 							job := createTableAnalysisJob(
