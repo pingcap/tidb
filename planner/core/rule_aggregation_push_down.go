@@ -572,7 +572,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
 						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 						for _, arg := range aggFunc.Args {
-							_, failed, newArg := expression.ColumnSubstituteImpl( arg, proj.schema, proj.Exprs, true)
+							_, failed, newArg := expression.ColumnSubstituteImpl(arg, proj.schema, proj.Exprs, true)
 							if failed {
 								noSideEffects = false
 								break
