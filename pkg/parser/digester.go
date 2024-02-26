@@ -236,6 +236,7 @@ func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool, forP
 		} else if forBinding {
 			// Apply binding matching specific rules, IN (?) => IN ( ... ) #44298
 			d.reduceInListWithSingleLiteral(&currTok)
+			// In (Row()) => In (...) #51222
 			d.reduceInRowListWithSingleLiteral(&currTok)
 		}
 
