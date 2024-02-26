@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -62,7 +61,6 @@ type ImportIntoExec struct {
 	exec.BaseExecutor
 	selectExec exec.Executor
 	userSctx   sessionctx.Context
-	importPlan *importer.Plan
 	controller *importer.LoadDataController
 	stmt       string
 
@@ -104,7 +102,6 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	if err != nil {
 		return err
 	}
-	e.importPlan = importPlan
 	e.controller = controller
 
 	if e.selectExec != nil {
@@ -127,7 +124,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 
-	if err := e.importPlan.InitTiKVConfigs(ctx, newSCtx); err != nil {
+	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}
 
@@ -137,53 +134,16 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		ctx = newCtx
 		TestCancelFunc = cancel
 	})
-	// todo: we don't need Job now, remove it later.
-	parentCtx := ctx
-	if e.controller.Detached {
-		parentCtx = context.Background()
-	}
-	group, groupCtx := errgroup.WithContext(parentCtx)
-	groupCtx = kv.WithInternalSourceType(groupCtx, kv.InternalDistTask)
 
-	param := &importer.JobImportParam{
-		Job:      &importer.Job{},
-		Group:    group,
-		GroupCtx: groupCtx,
-		Done:     make(chan struct{}),
-		Progress: importer.NewProgress(),
-	}
-	distImporter, err := e.getJobImporter(ctx, param)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = distImporter.Close()
-	}()
-	param.Progress.SourceFileSize = e.controller.TotalFileSize
-	jobID, task, err := distImporter.SubmitTask(ctx)
+	jobID, task, err := e.submitTask(ctx)
 	if err != nil {
 		return err
 	}
 
-	if e.controller.Detached {
-		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
-		se, err := CreateSession(e.userSctx)
-		if err != nil {
+	if !e.controller.Detached {
+		if err = e.waitTask(ctx, jobID, task); err != nil {
 			return err
 		}
-		go func() {
-			defer CloseSession(se)
-			// error is stored in system table, so we can ignore it here
-			//nolint: errcheck
-			_ = e.doImport(ctx, se, distImporter, task)
-			failpoint.Inject("testDetachedTaskFinished", func() {
-				TestDetachedTaskFinished.Store(true)
-			})
-		}()
-		return e.fillJobInfo(ctx, jobID, req)
-	}
-	if err = e.doImport(ctx, e.userSctx, distImporter, task); err != nil {
-		return err
 	}
 	return e.fillJobInfo(ctx, jobID, req)
 }
@@ -209,32 +169,32 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	return nil
 }
 
-func (e *ImportIntoExec) getJobImporter(ctx context.Context, param *importer.JobImportParam) (*importinto.DistImporter, error) {
+func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase, error) {
 	importFromServer, err := storage.IsLocalPath(e.controller.Path)
 	if err != nil {
 		// since we have checked this during creating controller, this should not happen.
-		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
+		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
 	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", variable.EnableDistTask.Load()))
 	if importFromServer {
 		ecp, err2 := e.controller.PopulateChunks(ctx)
 		if err2 != nil {
-			return nil, err2
+			return 0, nil, err2
 		}
-		return importinto.NewDistImporterServerFile(param, e.importPlan, e.stmt, ecp, e.controller.TotalFileSize)
+		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, ecp)
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if variable.EnableDistTask.Load() {
-		return importinto.NewDistImporter(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
+		return importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
 	}
-	return importinto.NewDistImporterCurrNode(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
+	return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)
 }
 
-func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, distImporter *importinto.DistImporter, task *proto.Task) error {
-	distImporter.ImportTask(task)
-	group := distImporter.Param().Group
-	err := group.Wait()
+// waitTask waits for the task to finish.
+// NOTE: WaitTaskDoneOrPaused also return error when task fails.
+func (e *ImportIntoExec) waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
+	err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
 	// when user KILL the connection, the ctx will be canceled, we need to cancel the import job.
 	if errors.Cause(err) == context.Canceled {
 		taskManager, err2 := fstorage.GetTaskManager()
@@ -242,11 +202,7 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 			return err2
 		}
 		// use background, since ctx is canceled already.
-		return cancelAndWaitImportJob(context.Background(), taskManager, distImporter.JobID())
-	}
-	importResult := distImporter.Result(ctx)
-	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, &importResult); err2 != nil {
-		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
+		return cancelAndWaitImportJob(context.Background(), taskManager, jobID)
 	}
 	return err
 }
@@ -266,25 +222,16 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
-	if err := e.importPlan.InitTiKVConfigs(ctx, newSCtx); err != nil {
+	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}
 
-	// TODO: we didn't use this `group` here, but have to init GroupCtx, refactor this later.
-	group, groupCtx := errgroup.WithContext(ctx)
-	param := &importer.JobImportParam{
-		Job:      &importer.Job{},
-		Group:    group,
-		GroupCtx: groupCtx,
-		Done:     make(chan struct{}),
-		Progress: importer.NewProgress(),
-	}
 	importID := uuid.New().String()
 	logutil.Logger(ctx).Info("importing data from select statement",
 		zap.String("import-id", importID), zap.Int("concurrency", e.controller.ThreadCnt),
 		zap.String("target-table", e.controller.FullTableName()),
 		zap.Int64("target-table-id", e.controller.TableInfo.ID))
-	ti, err2 := importer.NewTableImporter(param, e.controller, importID)
+	ti, err2 := importer.NewTableImporter(ctx, e.controller, importID)
 	if err2 != nil {
 		return err2
 	}
@@ -336,7 +283,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err
 	}
 
-	if err2 = flushStats(ctx, newSCtx, e.importPlan.TableInfo.ID, importResult); err2 != nil {
+	if err2 = importer.FlushTableStats(ctx, newSCtx, e.controller.TableInfo.ID, importResult); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
 	}
 
@@ -398,19 +345,6 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 		return exeerrors.ErrLoadDataInvalidOperation.FastGenByArgs("CANCEL")
 	}
 	return nil
-}
-
-// flushStats flushes the stats of the table.
-func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, result *importer.JobImportResult) error {
-	if err := sessiontxn.NewTxn(ctx, se); err != nil {
-		return err
-	}
-	sessionVars := se.GetSessionVars()
-	sessionVars.TxnCtxMu.Lock()
-	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
-	se.StmtCommit(ctx)
-	return se.CommitTxn(ctx)
 }
 
 func cancelAndWaitImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
