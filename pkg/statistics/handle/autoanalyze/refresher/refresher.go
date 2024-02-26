@@ -346,6 +346,10 @@ func createTableAnalysisJobForPartitions(
 		defs,
 		partitionStats,
 	)
+	// No need to analyze.
+	if len(partitionNames) == 0 && len(partitionIndexes) == 0 {
+		return nil
+	}
 
 	job := &priorityqueue.TableAnalysisJob{
 		TableID:              tblInfo.ID,
