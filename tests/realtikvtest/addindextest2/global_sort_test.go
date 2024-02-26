@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func init() {
@@ -273,13 +274,13 @@ func TestIngestUseSameTS(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = on;")
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
 
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", `return(123456789)`)
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPhysicalTSForGlobalSort", `return(123456789)`)
 	require.NoError(t, err)
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
 	dom.DDL().SetHook(cb)
 	tk.MustExec("alter table t add index idx(a);")
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPhysicalTSForGlobalSort")
 	require.NoError(t, err)
 
 	dts := []types.Datum{types.NewIntDatum(1)}
@@ -289,13 +290,14 @@ func TestIngestUseSameTS(t *testing.T) {
 
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
-	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, 123456789)
+	ts := oracle.ComposeTS(123456789, 0)
+	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, ts)
 	require.NoError(t, err)
 	require.NotNil(t, mvccResp)
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
 	// TODO(lance6716): it should be greater than startTS after finishing development of ingesting with PiTR
-	require.Equal(t, uint64(123456789), mvccResp.Info.Writes[0].CommitTs)
+	require.Equal(t, ts, mvccResp.Info.Writes[0].CommitTs)
 
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 }
