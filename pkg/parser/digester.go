@@ -229,7 +229,7 @@ func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool, forP
 			continue
 		}
 
-		d.reduceLit(&currTok)
+		d.reduceLit(&currTok, forBinding)
 		if forPlanReplayerReload {
 			// Apply for plan replayer to match specific rules, changing IN (...) to IN (?). This can avoid plan replayer load failures caused by parse errors.
 			d.replaceSingleLiteralWithInList(&currTok)
@@ -313,7 +313,7 @@ func (d *sqlDigester) reduceOptimizerHint(tok *token) (reduced bool) {
 	return
 }
 
-func (d *sqlDigester) reduceLit(currTok *token) {
+func (d *sqlDigester) reduceLit(currTok *token, forBinding bool) {
 	if !d.isLit(*currTok) {
 		return
 	}
@@ -350,12 +350,14 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 	}
 	// reduce "In (row(...), row(...))" to "In (row(...))"
 	// final, it will be reduced to "In (...)". Issue: #51222
-	last9 := d.tokens.back(9)
-	if d.isGenericRowListsWithIn(last9) {
-		d.tokens.popBack(5)
-		currTok.tok = genericSymbolList
-		currTok.lit = "..."
-		return
+	if forBinding {
+		last9 := d.tokens.back(9)
+		if d.isGenericRowListsWithIn(last9) {
+			d.tokens.popBack(5)
+			currTok.tok = genericSymbolList
+			currTok.lit = "..."
+			return
+		}
 	}
 
 	// order by n => order by n
