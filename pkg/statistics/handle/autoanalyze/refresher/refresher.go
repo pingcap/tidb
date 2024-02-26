@@ -402,6 +402,9 @@ func calculateIndicatorsForPartitions(
 		partitionNames = append(partitionNames, def.Name.O)
 		count++
 	}
+	if len(partitionNames) == 0 {
+		return 0, 0, 0, partitionNames
+	}
 
 	avgChange = totalChangePercent / count
 	avgSize = totalSize / count

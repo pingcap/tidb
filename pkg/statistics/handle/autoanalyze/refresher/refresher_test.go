@@ -515,6 +515,76 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			wantAvgLastAnalyzeDuration: 0,
 			wantPartitions:             []string{"p0"},
 		},
+		{
+			name: "No partition meets the threshold",
+			tblInfo: &model.TableInfo{
+				Indices: []*model.IndexInfo{
+					{
+						ID:    1,
+						Name:  model.NewCIStr("index1"),
+						State: model.StatePublic,
+					},
+				},
+				Columns: []*model.ColumnInfo{
+					{
+						ID: 1,
+					},
+					{
+						ID: 2,
+					},
+				},
+			},
+			partitionStats: map[int64]*statistics.Table{
+				1: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						ModifyCount:   0,
+						Columns: map[int64]*statistics.Column{
+							1: {
+								StatsVer: 2,
+							},
+							2: {
+								StatsVer: 2,
+							},
+						},
+					},
+					Version: currentTs,
+				},
+				2: {
+					HistColl: statistics.HistColl{
+						Pseudo:        false,
+						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						ModifyCount:   0,
+						Columns: map[int64]*statistics.Column{
+							1: {
+								StatsVer: 2,
+							},
+							2: {
+								StatsVer: 2,
+							},
+						},
+					},
+					Version: currentTs,
+				},
+			},
+			defs: []model.PartitionDefinition{
+				{
+					ID:   1,
+					Name: model.NewCIStr("p0"),
+				},
+				{
+					ID:   2,
+					Name: model.NewCIStr("p1"),
+				},
+			},
+			autoAnalyzeRatio:           0.5,
+			currentTs:                  currentTs,
+			wantAvgChangePercentage:    0,
+			wantAvgSize:                0,
+			wantAvgLastAnalyzeDuration: 0,
+			wantPartitions:             []string{},
+		},
 	}
 
 	for _, tt := range tests {
