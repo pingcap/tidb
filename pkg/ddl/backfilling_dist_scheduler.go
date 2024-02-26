@@ -421,13 +421,14 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		return nil, nil
 	}
 	pdCli := store.GetPDClient()
-	physical, logical, err := pdCli.GetTS(ctx)
+	p, l, err := pdCli.GetTS(ctx)
 	if err != nil {
 		return nil, err
 	}
-	failpoint.Inject("mockPhysicalTSForGlobalSort", func(val failpoint.Value) {
+	ts := oracle.ComposeTS(p, l)
+	failpoint.Inject("mockTSForGlobalSort", func(val failpoint.Value) {
 		i := val.(int)
-		physical = int64(i)
+		ts = uint64(i)
 	})
 	splitter, err := getRangeSplitter(
 		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
@@ -461,8 +462,6 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
-		ts := oracle.ComposeTS(physical, logical)
-		logical++
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,
