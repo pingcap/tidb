@@ -1725,12 +1725,3 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
 }
-
-func isChanClosed(quitCh <-chan struct{}) bool {
-	select {
-	case <-quitCh:
-		return true
-	default:
-		return false
-	}
-}

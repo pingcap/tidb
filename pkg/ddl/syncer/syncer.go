@@ -338,19 +338,10 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			for _, kv := range resp.Kvs {
 				key := string(kv.Key)
 				tidbIDInResp := key[strings.LastIndex(key, "/")+1:]
-				ver, err := strconv.Atoi(string(kv.Value))
-				if err != nil {
-					logutil.BgLogger().Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"), zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
-					succ = false
-					break
-				}
 				// We need to check if the tidb ID is in the updatedMap, in case that deleting etcd is failed, and tidb server is down.
-				if int64(ver) < latestVer && updatedMap[tidbIDInResp] != "" {
-					if notMatchVerCnt%intervalCnt == 0 {
-						logutil.BgLogger().Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
-							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
-					}
-					succ = false
+				isUpdated := updatedMap[tidbIDInResp] != ""
+				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt, isUpdated)
+				if !succ {
 					break
 				}
 				delete(updatedMap, tidbIDInResp)
@@ -369,18 +360,8 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 					continue
 				}
 
-				ver, err := strconv.Atoi(string(kv.Value))
-				if err != nil {
-					logutil.BgLogger().Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"), zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
-					succ = false
-					break
-				}
-				if int64(ver) < latestVer {
-					if notMatchVerCnt%intervalCnt == 0 {
-						logutil.BgLogger().Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
-							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
-					}
-					succ = false
+				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt, true)
+				if !succ {
 					break
 				}
 				updatedMap[string(kv.Key)] = ""
@@ -393,6 +374,23 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 		time.Sleep(checkVersInterval)
 		notMatchVerCnt++
 	}
+}
+
+func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int, isUpdated bool) bool {
+	ver, err := strconv.Atoi(val)
+	if err != nil {
+		logutil.BgLogger().Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"),
+			zap.String("ddl", key), zap.String("value", val), zap.Error(err))
+		return false
+	}
+	if int64(ver) < latestVer && isUpdated {
+		if notMatchVerCnt%intervalCnt == 0 {
+			logutil.BgLogger().Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
+				zap.String("ddl", key), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
+		}
+		return false
+	}
+	return true
 }
 
 func (s *schemaVersionSyncer) Close() {

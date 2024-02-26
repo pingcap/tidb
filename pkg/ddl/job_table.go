@@ -283,7 +283,7 @@ func (d *ddl) startDispatchLoop() {
 	defer ticker.Stop()
 	isOnce := false
 	for {
-		if isChanClosed(d.ctx.Done()) {
+		if util.IsContextDone(d.ctx) {
 			return
 		}
 		if !d.isOwner() {
@@ -357,8 +357,6 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
 		return
 	}
-	// Release the worker resource.
-	defer pool.put(wk)
 
 	d.mu.RLock()
 	d.mu.hook.OnGetJobBefore(pool.tp().String())
@@ -370,13 +368,14 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 		if err != nil {
 			wk.jobLogger(job).Warn("get job met error", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
 		}
+		pool.put(wk)
 		return
 	}
 	d.mu.RLock()
 	d.mu.hook.OnGetJobAfter(pool.tp().String(), job)
 	d.mu.RUnlock()
 
-	d.delivery2worker(wk, pool.tp().String(), job)
+	d.delivery2Worker(wk, pool, job)
 }
 
 // delivery2LocalWorker runs the DDL job of v2 in local.
@@ -416,16 +415,16 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 	})
 }
 
-// delivery2worker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2worker(wk *worker, poolStr string, job *model.Job) {
+// delivery2Worker owns the worker, need to put it back to the pool in this function.
+func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.runningJobs.add(job)
 	d.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues(poolStr).Inc()
+		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
 			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
-			metrics.DDLRunningJobCount.WithLabelValues(poolStr).Dec()
+			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 		// check if this ddl job is synced to all servers.
 		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
@@ -433,8 +432,12 @@ func (d *ddl) delivery2worker(wk *worker, poolStr string, job *model.Job) {
 				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
 				if err != nil {
 					wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
+					// Release the worker resource.
+					pool.put(wk)
 					return
 				} else if exist {
+					// Release the worker resource.
+					pool.put(wk)
 					err = waitSchemaSyncedForMDL(d.ddlCtx, job, version)
 					if err != nil {
 						return
@@ -448,6 +451,8 @@ func (d *ddl) delivery2worker(wk *worker, poolStr string, job *model.Job) {
 				err := waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
 				if err != nil {
 					time.Sleep(time.Second)
+					// Release the worker resource.
+					pool.put(wk)
 					return
 				}
 				d.setAlreadyRunOnce(job.ID)
@@ -456,6 +461,7 @@ func (d *ddl) delivery2worker(wk *worker, poolStr string, job *model.Job) {
 
 		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
 		logCtx := wk.logCtx
+		pool.put(wk)
 		if err != nil {
 			logutil.Logger(logCtx).Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
 		} else {

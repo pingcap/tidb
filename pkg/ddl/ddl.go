@@ -922,7 +922,7 @@ func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 }
 
 func (d *ddl) close() {
-	if isChanClosed(d.ctx.Done()) {
+	if util.IsContextDone(d.ctx) {
 		return
 	}
 
