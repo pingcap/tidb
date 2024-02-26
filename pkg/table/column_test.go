@@ -486,7 +486,7 @@ func TestGetDefaultValue(t *testing.T) {
 		levels := sc.ErrLevels()
 		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)
-		val, err := GetColDefaultValue(ctx, tt.colInfo)
+		val, err := GetColDefaultValue(ctx, tt.colInfo, false)
 		if err != nil {
 			require.Errorf(t, tt.err, "%v", err)
 			continue

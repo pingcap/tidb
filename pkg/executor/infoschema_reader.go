@@ -951,7 +951,7 @@ ForColumnsTag:
 			case "CURRENT_TIMESTAMP":
 			default:
 				if ft.GetType() == mysql.TypeTimestamp && columnDefault != types.ZeroDatetimeStr {
-					timeValue, err := table.GetColDefaultValue(sctx, col)
+					timeValue, err := table.GetColDefaultValue(sctx, col, false)
 					if err == nil {
 						columnDefault = timeValue.GetMysqlTime().String()
 					}

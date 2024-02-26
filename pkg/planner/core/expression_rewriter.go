@@ -2545,7 +2545,7 @@ func (er *expressionRewriter) evalFieldDefaultValue(field *types.FieldName, tblI
 		}
 	default:
 		// for other columns, just use what it is
-		d, err := table.GetColDefaultValue(er.sctx, col)
+		d, err := table.GetColDefaultValue(er.sctx, col, false)
 		if err != nil {
 			er.err = err
 			return

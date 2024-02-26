@@ -3549,7 +3549,7 @@ func genAuthErrForGrantStmt(sctx PlanContext, dbName string) error {
 	return plannererrors.ErrDBaccessDenied.FastGenByArgs(u, h, dbName)
 }
 
-func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
+func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.Constant, error) {
 	var (
 		value types.Datum
 		err   error
@@ -3557,7 +3557,7 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
 		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
 	} else {
-		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
+		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo(), true)
 	}
 	if err != nil {
 		return nil, err
@@ -3845,7 +3845,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 			// See note in the end of the function. Only default for generated columns are OK.
 			return nil, nil
 		}
-		outExpr, err = b.getDefaultValue(refCol)
+		outExpr, err = b.getDefaultValueForInsert(refCol)
 	case *driver.ValueExpr:
 		outExpr = &expression.Constant{
 			Value:   x.Datum,
