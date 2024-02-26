@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	"sort"
 	"testing"
 	"time"
 
@@ -534,5 +535,76 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			require.Equal(t, tt.wantAvgLastAnalyzeDuration, gotAvgLastAnalyzeDuration)
 			require.Equal(t, tt.wantPartitions, gotPartitions)
 		})
+	}
+}
+
+func TestCheckIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
+	tblInfo := model.TableInfo{
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  model.NewCIStr("index1"),
+				State: model.StatePublic,
+			},
+			{
+				ID:    2,
+				Name:  model.NewCIStr("index2"),
+				State: model.StatePublic,
+			},
+		},
+		Columns: []*model.ColumnInfo{
+			{
+				ID: 1,
+			},
+			{
+				ID: 2,
+			},
+		},
+	}
+	partitionStats := map[int64]*statistics.Table{
+		1: {
+			HistColl: statistics.HistColl{
+				Pseudo:        false,
+				RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+				ModifyCount:   0,
+				Indices:       map[int64]*statistics.Index{},
+			},
+		},
+		2: {
+			HistColl: statistics.HistColl{
+				Pseudo:        false,
+				RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+				ModifyCount:   0,
+				Indices: map[int64]*statistics.Index{
+					2: {
+						StatsVer: 2,
+					},
+				},
+			},
+		},
+	}
+	defs := []model.PartitionDefinition{
+		{
+			ID:   1,
+			Name: model.NewCIStr("p0"),
+		},
+		{
+			ID:   2,
+			Name: model.NewCIStr("p1"),
+		},
+	}
+
+	partitionIndexes := checkIndexesNeedAnalyzeForPartitionedTable(&tblInfo, defs, partitionStats)
+	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
+	require.Equal(t, len(expected), len(partitionIndexes))
+
+	for k, v := range expected {
+		sort.Strings(v)
+		if val, ok := partitionIndexes[k]; ok {
+			sort.Strings(val)
+			require.Equal(t, v, val)
+		} else {
+			require.Fail(t, "key not found in partitionIndexes: "+k)
+		}
 	}
 }
