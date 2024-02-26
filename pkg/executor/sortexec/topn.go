@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"slices"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -111,7 +112,8 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.fetched = false
+	e.fetched = &atomic.Bool{}
+	e.fetched.Store(false)
 	e.chkHeap = &topNChunkHeap{TopNExec: e}
 	e.chkHeap.Idx = 0
 
@@ -121,7 +123,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if !e.fetched {
+	if e.fetched.CompareAndSwap(false, true) {
 		e.totalLimit = e.Limit.Offset + e.Limit.Count
 		e.chkHeap.Idx = int(e.Limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
@@ -132,7 +134,6 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.fetched = true
 	}
 	if e.chkHeap.Idx >= len(e.chkHeap.rowPtrs) {
 		return nil

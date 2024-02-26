@@ -1,0 +1,48 @@
+set @@tidb_enable_inl_join_inner_multi_pattern=on;
+create table t(a int, b int, index idx(a, b));
+create table t1 like t;
+insert into t values(1, 1), (1, 2), (1, 3);
+insert into t1 values(1, 1), (1, 2);
+explain format='brief' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+id	estRows	task	access object	operator info
+IndexJoin	12487.50	root		inner join, inner:Projection, outer key:planner__core__indexjoin.t.a, inner key:planner__core__indexjoin.t1.a, equal cond:eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a), eq(planner__core__indexjoin.t.b, Column#7), other cond:eq(planner__core__indexjoin.t.b, plus(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.b))
+├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+│ └─IndexFullScan	9990.00	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+└─Projection(Probe)	99800100.00	root		planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, plus(planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b)->Column#7
+  └─IndexReader	12487.50	root		index:Selection
+    └─Selection	12487.50	cop[tikv]		not(isnull(planner__core__indexjoin.t1.a))
+      └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+a	b	a	b
+1	2	1	1
+1	3	1	2
+select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+a	b	a	b
+1	2	1	1
+1	3	1	2
+begin;
+insert into t1 values(1, 3);
+insert into t values(1, 4);
+explain format='brief' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+id	estRows	task	access object	operator info
+IndexJoin	12487.50	root		inner join, inner:Projection, outer key:planner__core__indexjoin.t.a, inner key:planner__core__indexjoin.t1.a, equal cond:eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a), eq(planner__core__indexjoin.t.b, Column#7), other cond:eq(planner__core__indexjoin.t.b, plus(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.b))
+├─UnionScan(Build)	9990.00	root		not(isnull(planner__core__indexjoin.t.a))
+│ └─IndexReader	9990.00	root		index:IndexFullScan
+│   └─IndexFullScan	9990.00	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+└─Projection(Probe)	99800100.00	root		planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, plus(planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b)->Column#7
+  └─UnionScan	12487.50	root		not(isnull(planner__core__indexjoin.t1.a))
+    └─IndexReader	12487.50	root		index:Selection
+      └─Selection	12487.50	cop[tikv]		not(isnull(planner__core__indexjoin.t1.a))
+        └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)], keep order:false, stats:pseudo
+select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+a	b	a	b
+1	2	1	1
+1	3	1	2
+1	4	1	3
+select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+a	b	a	b
+1	2	1	1
+1	3	1	2
+1	4	1	3
+rollback;
+set @@tidb_enable_inl_join_inner_multi_pattern=default;
