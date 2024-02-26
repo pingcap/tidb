@@ -280,7 +280,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 				e.SessionCtx.Vars.TxnCtx = nil
 			}()
 		}
-		value, err = table.GetColDefaultValue(e.SessionCtx, col.ToInfo(), false)
+		value, err = table.GetColDefaultValue(e.SessionCtx, col.ToInfo())
 	}
 	return value, err
 }

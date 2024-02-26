@@ -1614,7 +1614,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		if c.DefaultIsExpr {
 			return nil
 		}
-		if _, err := table.GetColDefaultValue(ctx, c.ToInfo(), false); err != nil {
+		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
 		return nil

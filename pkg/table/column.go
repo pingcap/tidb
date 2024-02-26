@@ -526,23 +526,21 @@ type getColOriginDefaultValue struct {
 
 // GetColOriginDefaultValue gets default value of the column from original default value.
 func GetColOriginDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo) (types.Datum, error) {
-	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), nil, false)
+	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), nil)
 }
 
 // GetColOriginDefaultValueWithoutStrictSQLMode gets default value of the column from original default value with Strict SQL mode.
 func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), &getColOriginDefaultValue{
 		StrictSQLMode: false,
-	}, false)
+	})
 }
 
 // GetColDefaultValue gets default value of the column.
-// param isInsert is used to indicate whether the default value is for insert.
-// Currently, isInsert only set to true in the insert execution to fill column's value.
-func GetColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, isInsert bool) (types.Datum, error) {
+func GetColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo) (types.Datum, error) {
 	defaultValue := col.GetDefaultValue()
 	if !col.DefaultIsExpr {
-		return getColDefaultValue(ctx, col, defaultValue, nil, isInsert)
+		return getColDefaultValue(ctx, col, defaultValue, nil)
 	}
 	return getColDefaultExprValue(ctx, col, defaultValue.(string))
 }
@@ -580,9 +578,9 @@ func getColDefaultExprValue(ctx expression.BuildContext, col *model.ColumnInfo, 
 	return value, nil
 }
 
-func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defaultVal any, args *getColOriginDefaultValue, isInsert bool) (types.Datum, error) {
+func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defaultVal any, args *getColOriginDefaultValue) (types.Datum, error) {
 	if defaultVal == nil {
-		return getColDefaultValueFromNil(ctx, col, args, isInsert)
+		return getColDefaultValueFromNil(ctx, col, args)
 	}
 
 	switch col.GetType() {
@@ -625,15 +623,12 @@ func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defa
 	return value, nil
 }
 
-func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInfo, args *getColOriginDefaultValue, isInsert bool) (types.Datum, error) {
+func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInfo, args *getColOriginDefaultValue) (types.Datum, error) {
 	if !mysql.HasNotNullFlag(col.GetFlag()) {
-		if !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
-			return types.Datum{}, nil
-		}
-		if !isInsert {
+		if !mysql.HasNoDefaultValueFlag(col.GetFlag()) ||
+			(col.GetDefaultValue() == nil && col.GetOriginDefaultValue() == nil) {
 			// In CanSkip function(in table/tables pkg), if column's default value is nil, and the column value is NULL too,
 			// then the column value can be skipped and won't encode to row value.
-			// So when we read the row value(isInsert = false), we should return a null datum for the column.
 			return types.Datum{}, nil
 		}
 	}
