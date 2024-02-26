@@ -207,6 +207,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 		return &cloneTask, nil
 	})
 	sch.scheduleTask()
+	require.True(t, ctrl.Satisfied())
 
 	// scheduler not allocated slots, task from paused to running. Should exit the scheduler.
 	task.State = proto.TaskStatePaused
@@ -217,6 +218,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 		return &cloneTask, nil
 	})
 	sch.scheduleTask()
+	require.True(t, ctrl.Satisfied())
 
 	// scheduler not allocated slots, but won't exit the scheduler.
 	task.State = proto.TaskStateReverting
@@ -239,6 +241,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 		return &cloneTask, nil
 	})
 	sch.scheduleTask()
+	require.True(t, ctrl.Satisfied())
 
 	task.State = proto.TaskStatePausing
 	cloneTask = task
@@ -257,4 +260,5 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 	})
 	taskMgr.EXPECT().PausedTask(gomock.Any(), cloneTask.ID).Return(nil)
 	sch.scheduleTask()
+	require.True(t, ctrl.Satisfied())
 }
