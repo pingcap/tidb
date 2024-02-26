@@ -131,7 +131,7 @@ func checkStoresAlive(ctx context.Context,
 func NewMgr(
 	ctx context.Context,
 	g glue.Glue,
-	pdAddrs string,
+	pdAddrs []string,
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 	keepalive keepalive.ClientParameters,
@@ -146,7 +146,7 @@ func NewMgr(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	log.Info("new mgr", zap.String("pdAddrs", pdAddrs))
+	log.Info("new mgr", zap.Strings("pdAddrs", pdAddrs))
 
 	controller, err := pdutil.NewPdController(ctx, pdAddrs, tlsConf, securityOption)
 	if err != nil {
@@ -176,7 +176,10 @@ func NewMgr(
 	}
 
 	// Disable GC because TiDB enables GC already.
-	path := fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", pdAddrs, config.GetGlobalKeyspaceName())
+	path := fmt.Sprintf(
+		"tikv://%s?disableGC=true&keyspaceName=%s",
+		strings.Join(pdAddrs, ","), config.GetGlobalKeyspaceName(),
+	)
 	storage, err := g.Open(path, securityOption)
 	if err != nil {
 		return nil, errors.Trace(err)

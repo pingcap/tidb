@@ -213,6 +213,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			WithSysTable:              true,
 			ResetSysUsers:             []string{"cloud_admin", "root"}},
 		NoSchema:            false,
+		LoadStats:           true,
 		PDConcurrency:       0x1,
 		StatsConcurrency:    0xc,
 		BatchFlushInterval:  16000000000,

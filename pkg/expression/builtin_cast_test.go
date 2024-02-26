@@ -290,22 +290,9 @@ var (
 
 func TestCastFuncSig(t *testing.T) {
 	ctx := createContext(t)
-
+	ctx.ResetSessionAndStmtTimeZone(time.UTC)
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.TypeFlags().IgnoreTruncateErr()
-	originTZ := sc.TimeZone()
 	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-	sc.SetTimeZone(time.UTC)
-	defer func() {
-		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(originIgnoreTruncate))
-		sc.SetTimeZone(originTZ)
-	}()
-
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	var sig builtinFunc
 
 	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
@@ -1307,12 +1294,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 
 func TestWrapWithCastAsTime(t *testing.T) {
 	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	save := sc.TimeZone()
-	sc.SetTimeZone(time.UTC)
-	defer func() {
-		sc.SetTimeZone(save)
-	}()
+	ctx.ResetSessionAndStmtTimeZone(time.UTC)
 	cases := []struct {
 		expr Expression
 		tp   *types.FieldType

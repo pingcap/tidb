@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -115,21 +113,19 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 func TestCalculateRegionBatch(t *testing.T) {
 	// Test calculate in cloud storage.
 	batchCnt := ddl.CalculateRegionBatchForTest(100, 8, false)
-	require.Equal(t, 12, batchCnt)
+	require.Equal(t, 13, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(2, 8, false)
 	require.Equal(t, 1, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(8, 8, false)
 	require.Equal(t, 1, batchCnt)
 
 	// Test calculate in local storage.
-	variable.DDLDiskQuota.Store(96 * units.MiB * 1000)
 	batchCnt = ddl.CalculateRegionBatchForTest(100, 8, true)
-	require.Equal(t, 12, batchCnt)
+	require.Equal(t, 13, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(2, 8, true)
 	require.Equal(t, 1, batchCnt)
-	variable.DDLDiskQuota.Store(96 * units.MiB * 2)
 	batchCnt = ddl.CalculateRegionBatchForTest(24, 8, true)
-	require.Equal(t, 2, batchCnt)
+	require.Equal(t, 3, batchCnt)
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
@@ -184,7 +180,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 	// update meta, same as import into.
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
-		SortedKVMeta: external.SortedKVMeta{
+		MetaGroups: []*external.SortedKVMeta{{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
@@ -195,7 +191,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 					},
 				},
 			},
-		},
+		}},
 	}
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
@@ -224,7 +220,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	gotSubtasks, err = mgr.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
-		SortedKVMeta: external.SortedKVMeta{
+		MetaGroups: []*external.SortedKVMeta{{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
@@ -235,7 +231,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 					},
 				},
 			},
-		},
+		}},
 	}
 	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
 	require.NoError(t, err)
@@ -262,7 +258,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
-		Step: proto.StepInit,
+		TaskBase: proto.TaskBase{Step: proto.StepInit},
 	}
 	ext := &ddl.BackfillingSchedulerExt{}
 
@@ -317,10 +313,12 @@ func createAddIndexTask(t *testing.T,
 	require.NoError(t, err)
 
 	task := &proto.Task{
-		ID:              time.Now().UnixMicro(),
-		Type:            taskType,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
+		TaskBase: proto.TaskBase{
+			ID:    time.Now().UnixMicro(),
+			Type:  taskType,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),
 		StateUpdateTime: time.Now(),

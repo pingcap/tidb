@@ -125,8 +125,9 @@ WHERE
 	require.NotNil(b, cols)
 
 	b.ResetTimer()
+	pctx := sctx.GetPlanCtx()
 	for i := 0; i < b.N; i++ {
-		_, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+		_, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()

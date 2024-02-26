@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "priorityqueue",
     srcs = [
+        "calculator.go",
         "interval.go",
         "job.go",
         "queue.go",
@@ -13,8 +14,10 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -29,7 +32,7 @@ go_test(
     ],
     embed = [":priorityqueue"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 15,
     deps = [
         "//pkg/parser/model",
         "//pkg/session",

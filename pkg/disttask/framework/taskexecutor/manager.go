@@ -35,9 +35,15 @@ import (
 )
 
 var (
-	// same as scheduler
-	defaultCheckInterval    = 300 * time.Millisecond
-	maxCheckInterval        = 2 * time.Second
+	// TaskCheckInterval is the interval to check whether there are tasks to run.
+	// TODO maybe change this interval larger for performance.
+	TaskCheckInterval = 300 * time.Millisecond
+	// SubtaskCheckInterval is the interval to check whether there are subtasks to run.
+	// exported for testing.
+	SubtaskCheckInterval = 300 * time.Millisecond
+	// MaxSubtaskCheckInterval is the max interval to check whether there are subtasks to run.
+	// exported for testing.
+	MaxSubtaskCheckInterval = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
@@ -88,16 +94,12 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 	logger.Info("build task executor manager", zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))))
 	m := &Manager{
-		id:        id,
-		taskTable: taskTable,
-		logger:    logger,
-		slotManager: &slotManager{
-			taskID2Index:  make(map[int64]int),
-			executorTasks: make([]*proto.Task, 0),
-			available:     totalCPU,
-		},
-		totalCPU: totalCPU,
-		totalMem: int64(totalMem),
+		id:          id,
+		taskTable:   taskTable,
+		logger:      logger,
+		slotManager: newSlotManager(totalCPU),
+		totalCPU:    totalCPU,
+		totalMem:    int64(totalMem),
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
@@ -156,6 +158,12 @@ func (m *Manager) Start() error {
 	return nil
 }
 
+// Cancel cancels the executor manager.
+// used in test to simulate tidb node shutdown.
+func (m *Manager) Cancel() {
+	m.cancel()
+}
+
 // Stop stops the Manager.
 func (m *Manager) Stop() {
 	m.cancel()
@@ -173,7 +181,7 @@ func (m *Manager) Stop() {
 // NOT running by executor before mark the task as paused.
 func (m *Manager) handleTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "handleTasksLoop", m.handleTasksLoop, false)
-	ticker := time.NewTicker(defaultCheckInterval)
+	ticker := time.NewTicker(TaskCheckInterval)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -196,16 +204,16 @@ func (m *Manager) handleTasks() {
 	executableTasks := make([]*storage.TaskExecInfo, 0, len(tasks))
 	for _, task := range tasks {
 		switch task.State {
-		case proto.TaskStateRunning, proto.TaskStateReverting:
-			if task.State == proto.TaskStateReverting {
-				m.cancelRunningSubtaskOf(task.ID)
-			}
-			// TaskStateReverting require executor to run rollback logic.
+		case proto.TaskStateRunning:
 			if !m.isExecutorStarted(task.ID) {
 				executableTasks = append(executableTasks, task)
 			}
 		case proto.TaskStatePausing:
 			if err := m.handlePausingTask(task.ID); err != nil {
+				m.logErr(err)
+			}
+		case proto.TaskStateReverting:
+			if err := m.handleRevertingTask(task.ID); err != nil {
 				m.logErr(err)
 			}
 		}
@@ -219,12 +227,10 @@ func (m *Manager) handleTasks() {
 // handleExecutableTasks handles executable tasks.
 func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
-		m.logger.Info("detect new subtask", zap.Int64("task-id", task.ID))
-
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(&task.Task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
-			// do not handle the tasks with lower priority if current task is waiting tasks free.
+			// do not handle the tasks with lower rank if current task is waiting tasks free.
 			break
 		}
 
@@ -260,6 +266,11 @@ func (m *Manager) handlePausingTask(taskID int64) error {
 	return m.taskTable.PauseSubtasks(m.ctx, m.id, taskID)
 }
 
+func (m *Manager) handleRevertingTask(taskID int64) error {
+	m.cancelRunningSubtaskOf(taskID)
+	return m.taskTable.CancelSubtask(m.ctx, m.id, taskID)
+}
+
 // recoverMetaLoop recovers dist_framework_meta for the tidb node running the taskExecutor manager.
 // This is necessary when the TiDB node experiences a prolonged network partition
 // and the scheduler deletes `dist_framework_meta`.
@@ -284,7 +295,7 @@ func (m *Manager) recoverMetaLoop() {
 
 // cancelTaskExecutors cancels the task executors.
 // unlike cancelRunningSubtaskOf, this function doesn't change subtask state.
-func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
+func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
@@ -301,9 +312,6 @@ type TestContext struct {
 	mockDown           atomic.Bool
 }
 
-// TestContexts only used in tests.
-var TestContexts sync.Map
-
 // startTaskExecutor handles a runnable task.
 func (m *Manager) startTaskExecutor(task *proto.Task) {
 	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
@@ -319,10 +327,11 @@ func (m *Manager) startTaskExecutor(task *proto.Task) {
 		m.logErrAndPersist(err, task.ID, executor)
 		return
 	}
-	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 	m.addTaskExecutor(executor)
-	m.slotManager.alloc(task)
+	m.slotManager.alloc(&task.TaskBase)
 	resource := m.getStepResource(task.Concurrency)
+	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
+		zap.Stringer("type", task.Type), zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {
 			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))

@@ -159,7 +159,7 @@ func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexSca
 		access = append(access, newCond)
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, access, idxCols, colLens, 0)
+	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx.GetPlanCtx(), access, idxCols, colLens, 0)
 	return ranges, err
 }
 
@@ -227,7 +227,7 @@ func (e *IndexReaderExecutor) setDummy() {
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() (err error) {
 	if e.indexUsageReporter != nil {
-		e.indexUsageReporter.ReportCopIndexUsage(e.physicalTableID, e.index.ID, e.plans[0].ID())
+		e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, e.index.ID, e.plans[0].ID())
 	}
 
 	if e.result != nil {
@@ -832,8 +832,8 @@ func (e *IndexLookUpExecutor) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.indexUsageReporter != nil {
-		e.indexUsageReporter.ReportCopIndexUsage(
-			e.table.Meta().ID,
+		e.indexUsageReporter.ReportCopIndexUsageForTable(
+			e.table,
 			e.index.ID,
 			e.idxPlans[0].ID())
 	}

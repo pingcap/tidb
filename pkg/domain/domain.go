@@ -68,7 +68,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -123,9 +122,8 @@ func init() {
 
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
-	do := &Domain{
-		infoCache: infoschema.NewCache(1),
-	}
+	do := &Domain{}
+	do.infoCache = infoschema.NewCache(do, 1)
 	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 0)
 	return do
 }
@@ -206,7 +204,7 @@ type mdlCheckTableInfo struct {
 	mu         sync.Mutex
 	newestVer  int64
 	jobsVerMap map[int64]int64
-	jobsIdsMap map[int64]string
+	jobsIDsMap map[int64]string
 }
 
 // InfoCache export for test.
@@ -301,7 +299,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -450,7 +448,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
@@ -797,10 +795,10 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 
 	do.mdlCheckTableInfo.newestVer = domainSchemaVer
 	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
-	do.mdlCheckTableInfo.jobsIdsMap = make(map[int64]string, len(rows))
+	do.mdlCheckTableInfo.jobsIDsMap = make(map[int64]string, len(rows))
 	for i := 0; i < len(rows); i++ {
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
-		do.mdlCheckTableInfo.jobsIdsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
+		do.mdlCheckTableInfo.jobsIDsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
 }
 
@@ -841,12 +839,12 @@ func (do *Domain) mdlCheckLoop() {
 		}
 
 		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
-		jobsIdsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIdsMap))
+		jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
 		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
 			jobsVerMap[k] = v
 		}
-		for k, v := range do.mdlCheckTableInfo.jobsIdsMap {
-			jobsIdsMap[k] = v
+		for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
+			jobsIDsMap[k] = v
 		}
 		do.mdlCheckTableInfo.mu.Unlock()
 
@@ -856,7 +854,7 @@ func (do *Domain) mdlCheckLoop() {
 		if sm == nil {
 			logutil.BgLogger().Info("session manager is nil")
 		} else {
-			sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
+			sm.CheckOldRunningTxn(jobsVerMap, jobsIDsMap)
 		}
 
 		if len(jobsVerMap) == jobNeedToCheckCnt {
@@ -1073,16 +1071,17 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		exit:              make(chan struct{}),
 		sysSessionPool:    newSessionPool(capacity, factory),
 		statsLease:        statsLease,
-		infoCache:         infoschema.NewCache(int(variable.SchemaVersionCacheLimit.Load())),
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
-			jobsIdsMap: make(map[int64]string),
+			jobsIDsMap: make(map[int64]string),
 		},
 		mdlCheckCh: make(chan struct{}),
 	}
+
+	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -1422,13 +1421,13 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	if err != nil {
 		return err
 	}
-	svrIdsInThisZone := make([]string, 0)
+	svrIDsInThisZone := make([]string, 0)
 	for _, s := range servers {
 		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
 			if _, ok := storeZones[v]; ok {
 				storeZones[v]++
 				if v == zone {
-					svrIdsInThisZone = append(svrIdsInThisZone, s.ID)
+					svrIDsInThisZone = append(svrIDsInThisZone, s.ID)
 				}
 			}
 		}
@@ -1442,13 +1441,13 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	// sort tidb in the same AZ by ID and disable the tidb with bigger ID
 	// because ID is unchangeable, so this is a simple and stable algorithm to select
 	// some instances across all tidb servers.
-	if enabledCount < len(svrIdsInThisZone) {
-		sort.Slice(svrIdsInThisZone, func(i, j int) bool {
-			return strings.Compare(svrIdsInThisZone[i], svrIdsInThisZone[j]) < 0
+	if enabledCount < len(svrIDsInThisZone) {
+		sort.Slice(svrIDsInThisZone, func(i, j int) bool {
+			return strings.Compare(svrIDsInThisZone[i], svrIDsInThisZone[j]) < 0
 		})
 	}
 	enabled := true
-	for _, s := range svrIdsInThisZone[enabledCount:] {
+	for _, s := range svrIDsInThisZone[enabledCount:] {
 		if s == serverInfo.ID {
 			enabled = false
 			break
@@ -1908,61 +1907,6 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 			}
 		}
 	}, "globalBindHandleWorkerLoop")
-}
-
-// TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once
-// in BootstrapSession.
-func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
-	ctx.GetSessionVars().InRestrictedSQL = true
-	err := telemetry.InitialRun(ctx, do.etcdClient)
-	if err != nil {
-		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
-	}
-
-	do.wg.Run(func() {
-		defer func() {
-			logutil.BgLogger().Info("TelemetryReportLoop exited.")
-		}()
-		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
-
-		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
-		for {
-			select {
-			case <-do.exit:
-				owner.Cancel()
-				return
-			case <-time.After(telemetry.ReportInterval):
-				if !owner.IsOwner() {
-					continue
-				}
-				err := telemetry.ReportUsageData(ctx, do.etcdClient)
-				if err != nil {
-					// Only status update errors will be printed out
-					logutil.BgLogger().Warn("TelemetryReportLoop status update failed", zap.Error(err))
-				}
-			}
-		}
-	}, "TelemetryReportLoop")
-}
-
-// TelemetryRotateSubWindowLoop create a goroutine that rotates the telemetry window regularly.
-func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
-	ctx.GetSessionVars().InRestrictedSQL = true
-	do.wg.Run(func() {
-		defer func() {
-			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
-		}()
-		defer util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
-
-		for {
-			select {
-			case <-do.exit:
-				return
-			case <-time.After(telemetry.SubWindowSize):
-				telemetry.RotateSubWindow()
-			}
-		}
-	}, "TelemetryRotateSubWindowLoop")
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
@@ -2992,9 +2936,6 @@ func (do *Domain) StopAutoAnalyze() {
 
 func init() {
 	initByLDFlagsForGlobalKill()
-	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
-		return GetDomain(ctx).InfoSchema()
-	}
 }
 
 var (

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -51,38 +50,58 @@ type Aggregation interface {
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
-func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx sessionctx.Context) (Aggregation, error) {
+func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx expression.BuildContext) (Aggregation, *AggFuncDesc, error) {
 	args := make([]expression.Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
 		arg, err := expression.PBToExpr(ctx, child, fieldTps)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, arg)
 	}
 	switch expr.Tp {
 	case tipb.ExprType_Sum:
-		return &sumFunction{aggFunction: newAggFunc(ast.AggFuncSum, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncSum, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &sumFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Count:
-		return &countFunction{aggFunction: newAggFunc(ast.AggFuncCount, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncCount, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &countFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Avg:
-		return &avgFunction{aggFunction: newAggFunc(ast.AggFuncAvg, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncAvg, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &avgFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_GroupConcat:
-		return &concatFunction{aggFunction: newAggFunc(ast.AggFuncGroupConcat, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncGroupConcat, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &concatFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Max:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMax, args, false), isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
+		aggF := newAggFunc(ast.AggFuncMax, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &maxMinFunction{aggFunction: aggF, isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Min:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false), ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
+		aggF := newAggFunc(ast.AggFuncMin, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &maxMinFunction{aggFunction: aggF, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_First:
-		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncFirstRow, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &firstRowFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Agg_BitOr:
-		return &bitOrFunction{aggFunction: newAggFunc(ast.AggFuncBitOr, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncBitOr, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &bitOrFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Agg_BitXor:
-		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncBitXor, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &bitXorFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Agg_BitAnd:
-		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncBitAnd, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &bitAndFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	}
-	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
+	return nil, nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
 
 // AggEvaluateContext is used to store intermediate result when calculating aggregate functions.

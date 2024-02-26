@@ -30,10 +30,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/errctx"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -265,8 +269,10 @@ func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
 // optimized for Lightning.
 type Session struct {
 	sessionctx.Context
-	txn  transaction
-	Vars *variable.SessionVars
+	planctx.EmptyPlanContextExtended
+	txn    transaction
+	Vars   *variable.SessionVars
+	tblctx *tbctximpl.TableContextImpl
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]any
 }
@@ -291,7 +297,8 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	typeFlags := vars.StmtCtx.TypeFlags().
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
+			!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode())
 	vars.StmtCtx.SetTypeFlags(typeFlags)
 
 	errLevels := vars.StmtCtx.ErrLevels()
@@ -326,6 +333,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.txn.kvPairs = &Pairs{}
 
 	return s
@@ -353,6 +361,16 @@ func (se *Session) GetSessionVars() *variable.SessionVars {
 	return se.Vars
 }
 
+// GetPlanCtx returns the PlanContext.
+func (se *Session) GetPlanCtx() planctx.PlanContext {
+	return se
+}
+
+// GetTableCtx returns the table.MutateContext
+func (se *Session) GetTableCtx() tbctx.MutateContext {
+	return se.tblctx
+}
+
 // SetValue saves a value associated with this context for key.
 func (se *Session) SetValue(key fmt.Stringer, value any) {
 	se.values[key] = value
@@ -367,18 +385,8 @@ func (se *Session) Value(key fmt.Stringer) any {
 func (*Session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
 
 // GetInfoSchema implements the sessionctx.Context interface.
-func (*Session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (*Session) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
 	return nil
-}
-
-// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
-// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-func (*Session) GetBuiltinFunctionUsage() map[string]uint32 {
-	return make(map[string]uint32)
-}
-
-// BuiltinFunctionUsageInc implements the sessionctx.Context interface.
-func (*Session) BuiltinFunctionUsageInc(_ string) {
 }
 
 // GetStmtStats implements the sessionctx.Context interface.

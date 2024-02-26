@@ -17,9 +17,11 @@ go_test(
     timeout = "short",
     srcs = ["checksum_test.go"],
     flaky = True,
+    shard_count = 3,
     deps = [
         ":verification",
         "//br/pkg/lightning/common",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
     ],
 )

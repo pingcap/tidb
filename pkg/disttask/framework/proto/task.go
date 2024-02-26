@@ -79,9 +79,9 @@ const (
 // TODO: remove this limit later.
 var MaxConcurrentTask = 4
 
-// Task represents the task of distributed framework.
-// tasks are run in the order of: priority asc, create_time asc, id asc.
-type Task struct {
+// TaskBase contains the basic information of a task.
+// we define this to avoid load task meta which might be very large into memory.
+type TaskBase struct {
 	ID    int64
 	Key   string
 	Type  TaskType
@@ -94,31 +94,22 @@ type Task struct {
 	// of slots the task can use on each node.
 	Concurrency int
 	CreateTime  time.Time
-
-	// depends on query, below fields might not be filled.
-
-	// SchedulerID is not used now.
-	SchedulerID     string
-	StartTime       time.Time
-	StateUpdateTime time.Time
-	Meta            []byte
-	Error           error
 }
 
 // IsDone checks if the task is done.
-func (t *Task) IsDone() bool {
+func (t *TaskBase) IsDone() bool {
 	return t.State == TaskStateSucceed || t.State == TaskStateReverted ||
 		t.State == TaskStateFailed
 }
 
-var (
-	// EmptyMeta is the empty meta of task/subtask.
-	EmptyMeta = []byte("{}")
-)
+// CompareTask a wrapper of Compare.
+func (t *TaskBase) CompareTask(other *Task) int {
+	return t.Compare(&other.TaskBase)
+}
 
-// Compare compares two tasks by task order.
-// returns < 0 represents priority of t is higher than other.
-func (t *Task) Compare(other *Task) int {
+// Compare compares two tasks by task rank.
+// returns < 0 represents rank of t is higher than 'other'.
+func (t *TaskBase) Compare(other *TaskBase) int {
 	if t.Priority != other.Priority {
 		return t.Priority - other.Priority
 	}
@@ -130,3 +121,35 @@ func (t *Task) Compare(other *Task) int {
 	}
 	return int(t.ID - other.ID)
 }
+
+// Task represents the task of distributed framework.
+// A task is abstracted as multiple steps that runs in sequence, each step contains
+// multiple sub-tasks that runs in parallel, such as:
+//
+//	task
+//	├── step1
+//	│   ├── subtask1
+//	│   ├── subtask2
+//	│   └── subtask3
+//	└── step2
+//	    ├── subtask1
+//	    ├── subtask2
+//	    └── subtask3
+//
+// tasks are run in the order of rank, and the rank is defined by:
+//
+//	priority asc, create_time asc, id asc.
+type Task struct {
+	TaskBase
+	// SchedulerID is not used now.
+	SchedulerID     string
+	StartTime       time.Time
+	StateUpdateTime time.Time
+	Meta            []byte
+	Error           error
+}
+
+var (
+	// EmptyMeta is the empty meta of task/subtask.
+	EmptyMeta = []byte("{}")
+)

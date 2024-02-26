@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -43,6 +42,10 @@ var (
 	// checkBalanceSubtaskInterval is the default check interval for checking
 	// subtasks balance to/away from this node.
 	checkBalanceSubtaskInterval = 2 * time.Second
+
+	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
+	// subtask table.
+	updateSubtaskSummaryInterval = 3 * time.Second
 )
 
 var (
@@ -56,6 +59,8 @@ var (
 
 	// TestSyncChan is used to sync the test.
 	TestSyncChan = make(chan struct{})
+	// MockTiDBDown is used to mock TiDB node down, return true if it's chosen.
+	MockTiDBDown func(execID string, task *proto.Task) bool
 )
 
 // BaseTaskExecutor is the base implementation of TaskExecutor.
@@ -136,7 +141,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			return
 		}
 
-		extraRunningSubtasks := make([]*proto.Subtask, 0, len(subtasks))
+		extraRunningSubtasks := make([]*proto.SubtaskBase, 0, len(subtasks))
 		for _, st := range subtasks {
 			if st.ID == e.currSubtaskID.Load() {
 				continue
@@ -145,7 +150,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 				e.updateSubtaskStateAndErrorImpl(ctx, st.ExecID, st.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
 				return
 			}
-			extraRunningSubtasks = append(extraRunningSubtasks, st)
+			extraRunningSubtasks = append(extraRunningSubtasks, &st.SubtaskBase)
 		}
 		if len(extraRunningSubtasks) > 0 {
 			if err = e.taskTable.RunningSubtasksBack2Pending(ctx, extraRunningSubtasks); err != nil {
@@ -155,6 +160,30 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 					zap.Stringers("subtasks", extraRunningSubtasks))
 			}
 		}
+	}
+}
+
+func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
+	checkCtx, runStepCtx context.Context, stepExec execute.StepExecutor) {
+	taskMgr := e.taskTable.(*storage.TaskManager)
+	ticker := time.NewTicker(updateSubtaskSummaryInterval)
+	defer ticker.Stop()
+	curSubtaskID := e.currSubtaskID.Load()
+	update := func() {
+		summary := stepExec.RealtimeSummary()
+		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
+		if err != nil {
+			e.logger.Info("update subtask row count failed", zap.Error(err))
+		}
+	}
+	for {
+		select {
+		case <-checkCtx.Done():
+			update()
+			return
+		case <-ticker.C:
+		}
+		update()
 	}
 }
 
@@ -175,24 +204,14 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.
 	// 300ms + 600ms + 1.2s + 2s * 4 = 10.1s
-	backoffer := backoff.NewExponential(defaultCheckInterval, 2, maxCheckInterval)
-	checkInterval, noSubtaskCheckCnt := defaultCheckInterval, 0
+	backoffer := backoff.NewExponential(SubtaskCheckInterval, 2, MaxSubtaskCheckInterval)
+	checkInterval, noSubtaskCheckCnt := SubtaskCheckInterval, 0
 	for {
 		select {
 		case <-e.ctx.Done():
 			return
 		case <-time.After(checkInterval):
 		}
-		failpoint.Inject("mockStopManager", func() {
-			TestContexts.Store(e.id, &TestContext{make(chan struct{}), atomic.Bool{}})
-			go func() {
-				v, ok := TestContexts.Load(e.id)
-				if ok {
-					<-v.(*TestContext).TestSyncSubtaskRun
-					infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(e.id)
-				}
-			}()
-		})
 		if err = e.refreshTask(); err != nil {
 			if errors.Cause(err) == storage.ErrTaskNotFound {
 				return
@@ -201,7 +220,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			continue
 		}
 		task := e.task.Load()
-		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
+		if task.State != proto.TaskStateRunning {
 			return
 		}
 		if exist, err := e.taskTable.HasSubtasksInStates(e.ctx, e.id, task.ID, task.Step,
@@ -218,15 +237,8 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			continue
 		}
 		// reset it when we get a subtask
-		checkInterval, noSubtaskCheckCnt = defaultCheckInterval, 0
-
-		switch task.State {
-		case proto.TaskStateRunning:
-			err = e.RunStep(resource)
-		case proto.TaskStateReverting:
-			// TODO: will remove it later, leave it now.
-			err = e.Rollback()
-		}
+		checkInterval, noSubtaskCheckCnt = SubtaskCheckInterval, 0
+		err = e.RunStep(resource)
 		if err != nil {
 			e.logger.Error("failed to handle task", zap.Error(err))
 		}
@@ -287,13 +299,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		stepLogger.End(zap.InfoLevel, resErr)
 	}()
 
-	summary, cleanup, err := runSummaryCollectLoop(runStepCtx, task, e.taskTable)
-	if err != nil {
-		e.onError(err)
-		return e.getError()
-	}
-	defer cleanup()
-	stepExecutor, err := e.GetStepExecutor(task, summary, resource)
+	stepExecutor, err := e.GetStepExecutor(task, resource)
 	if err != nil {
 		e.onError(err)
 		return e.getError()
@@ -343,6 +349,8 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 				e.markErrorHandled()
 				break
 			}
+			e.logger.Info("subtask in running state and is idempotent",
+				zap.Int64("subtask-id", subtask.ID))
 		} else {
 			// subtask.State == proto.SubtaskStatePending
 			err := e.startSubtask(runStepCtx, subtask.ID)
@@ -358,15 +366,6 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 			}
 		}
 
-		failpoint.Inject("mockCleanExecutor", func() {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				if v.(*TestContext).mockDown.Load() {
-					failpoint.Break()
-				}
-			}
-		})
-
 		failpoint.Inject("cancelBeforeRunSubtask", func() {
 			runStepCancel(nil)
 		})
@@ -374,6 +373,11 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		e.runSubtask(runStepCtx, stepExecutor, subtask)
 	}
 	return e.getError()
+}
+
+func (e *BaseTaskExecutor) hasRealtimeSummary(stepExecutor execute.StepExecutor) bool {
+	_, ok := e.taskTable.(*storage.TaskManager)
+	return ok && stepExecutor.RealtimeSummary() != nil
 }
 
 func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.StepExecutor, subtask *proto.Subtask) {
@@ -385,11 +389,16 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		wg.RunWithLog(func() {
 			e.checkBalanceSubtask(checkCtx)
 		})
+
+		if e.hasRealtimeSummary(stepExecutor) {
+			wg.RunWithLog(func() {
+				e.updateSubtaskSummaryLoop(checkCtx, ctx, stepExecutor)
+			})
+		}
 		defer func() {
 			checkCancel()
 			wg.Wait()
 		}()
-
 		return stepExecutor.RunSubtask(ctx, subtask)
 	}()
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
@@ -413,35 +422,9 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		return
 	}
 
-	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
-		e.logger.Info("trigger mockTiDBDown")
-		if e.id == val.(string) || e.id == ":4001" || e.id == ":4002" {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
-				v.(*TestContext).mockDown.Store(true)
-				e.logger.Info("mockTiDBDown")
-				time.Sleep(2 * time.Second)
-				failpoint.Return()
-			}
-		}
-	})
-	failpoint.Inject("mockTiDBDown2", func() {
-		if e.id == ":4003" && subtask.Step == proto.StepTwo {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
-				v.(*TestContext).mockDown.Store(true)
-				time.Sleep(2 * time.Second)
-				return
-			}
-		}
-	})
-
-	failpoint.Inject("mockTiDBPartitionThenResume", func(val failpoint.Value) {
-		if val.(bool) && (e.id == ":4000" || e.id == ":4001" || e.id == ":4002") {
-			infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(e.id)
-			time.Sleep(20 * time.Second)
+	failpoint.Inject("mockTiDBShutdown", func() {
+		if MockTiDBDown(e.id, e.GetTask()) {
+			failpoint.Return()
 		}
 	})
 
@@ -496,36 +479,6 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 	})
 }
 
-// Rollback rollbacks the subtask.
-// TODO no need to start executor to do it, refactor it later.
-func (e *BaseTaskExecutor) Rollback() error {
-	task := e.task.Load()
-	e.resetError()
-	e.logger.Info("taskExecutor rollback a step", zap.String("step", proto.Step2Str(task.Type, task.Step)))
-
-	// We should cancel all subtasks before rolling back
-	for {
-		// TODO we can update them using one sql, but requires change the metric
-		// gathering logic.
-		subtask, err := e.taskTable.GetFirstSubtaskInStates(e.ctx, e.id, task.ID, task.Step,
-			proto.SubtaskStatePending, proto.SubtaskStateRunning)
-		if err != nil {
-			e.onError(err)
-			return e.getError()
-		}
-
-		if subtask == nil {
-			break
-		}
-
-		e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
-		if err = e.getError(); err != nil {
-			return err
-		}
-	}
-	return e.getError()
-}
-
 // GetTask implements TaskExecutor.GetTask.
 func (e *BaseTaskExecutor) GetTask() *proto.Task {
 	return e.task.Load()
@@ -555,31 +508,6 @@ func (e *BaseTaskExecutor) refreshTask() error {
 	}
 	e.task.Store(newTask)
 	return nil
-}
-
-func runSummaryCollectLoop(
-	ctx context.Context,
-	task *proto.Task,
-	taskTable TaskTable,
-) (summary *execute.Summary, cleanup func(), err error) {
-	failpoint.Inject("mockSummaryCollectErr", func() {
-		failpoint.Return(nil, func() {}, errors.New("summary collect err"))
-	})
-	taskMgr, ok := taskTable.(*storage.TaskManager)
-	if !ok {
-		return nil, func() {}, nil
-	}
-	opt, ok := taskTypes[task.Type]
-	if !ok {
-		return nil, func() {}, errors.Errorf("taskExecutor option for type %s not found", task.Type)
-	}
-	if opt.Summary != nil {
-		go opt.Summary.UpdateRowCountLoop(ctx, taskMgr)
-		return opt.Summary, func() {
-			opt.Summary.PersistRowCount(ctx, taskMgr)
-		}, nil
-	}
-	return nil, func() {}, nil
 }
 
 func (e *BaseTaskExecutor) registerRunStepCancelFunc(cancel context.CancelCauseFunc) {

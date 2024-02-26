@@ -22,19 +22,15 @@ import (
 )
 
 func TestSlotManager(t *testing.T) {
-	sm := slotManager{
-		taskID2Index:  make(map[int64]int),
-		executorTasks: make([]*proto.Task, 0),
-		available:     10,
-	}
+	sm := newSlotManager(10)
 
 	var (
-		task = &proto.Task{
+		task = &proto.TaskBase{
 			ID:          1,
 			Priority:    1,
 			Concurrency: 1,
 		}
-		task2 = &proto.Task{
+		task2 = &proto.TaskBase{
 			ID:          2,
 			Priority:    2,
 			Concurrency: 10,
@@ -47,7 +43,7 @@ func TestSlotManager(t *testing.T) {
 	sm.alloc(task)
 	require.Len(t, sm.executorTasks, 1)
 	require.Equal(t, task, sm.executorTasks[sm.taskID2Index[task.ID]])
-	require.Equal(t, 9, sm.available)
+	require.Equal(t, 9, sm.availableSlots())
 
 	// the available slots is not enough for task2
 	canAlloc, tasksNeedFree = sm.canAlloc(task2)
@@ -58,10 +54,10 @@ func TestSlotManager(t *testing.T) {
 	task2.Priority = 0
 	canAlloc, tasksNeedFree = sm.canAlloc(task2)
 	require.True(t, canAlloc)
-	require.Equal(t, []*proto.Task{task}, tasksNeedFree)
+	require.Equal(t, []*proto.TaskBase{task}, tasksNeedFree)
 
 	// task with higher priority
-	task3 := &proto.Task{
+	task3 := &proto.TaskBase{
 		ID:          3,
 		Priority:    -1,
 		Concurrency: 1,
@@ -74,9 +70,9 @@ func TestSlotManager(t *testing.T) {
 	sm.alloc(task3)
 	require.Len(t, sm.executorTasks, 2)
 	require.Equal(t, task3, sm.executorTasks[sm.taskID2Index[task3.ID]])
-	require.Equal(t, 8, sm.available)
+	require.Equal(t, 8, sm.availableSlots())
 
-	task4 := &proto.Task{
+	task4 := &proto.TaskBase{
 		ID:          4,
 		Priority:    1,
 		Concurrency: 1,
@@ -85,7 +81,7 @@ func TestSlotManager(t *testing.T) {
 	require.True(t, canAlloc)
 	require.Nil(t, tasksNeedFree)
 	sm.alloc(task4)
-	task5 := &proto.Task{
+	task5 := &proto.TaskBase{
 		ID:          5,
 		Priority:    0,
 		Concurrency: 1,
@@ -96,17 +92,17 @@ func TestSlotManager(t *testing.T) {
 	sm.alloc(task5)
 	require.Len(t, sm.executorTasks, 4)
 	// test the order of executorTasks
-	require.Equal(t, []*proto.Task{task4, task, task5, task3}, sm.executorTasks)
-	require.Equal(t, 6, sm.available)
+	require.Equal(t, []*proto.TaskBase{task4, task, task5, task3}, sm.executorTasks)
+	require.Equal(t, 6, sm.availableSlots())
 
-	task6 := &proto.Task{
+	task6 := &proto.TaskBase{
 		ID:          6,
 		Priority:    0,
 		Concurrency: 8,
 	}
 	canAlloc, tasksNeedFree = sm.canAlloc(task6)
 	require.True(t, canAlloc)
-	require.Equal(t, []*proto.Task{task4, task}, tasksNeedFree)
+	require.Equal(t, []*proto.TaskBase{task4, task}, tasksNeedFree)
 	task6.Concurrency++
 	canAlloc, tasksNeedFree = sm.canAlloc(task6)
 	require.False(t, canAlloc)
@@ -121,7 +117,7 @@ func TestSlotManager(t *testing.T) {
 	// task2 is waiting for allocation again
 	canAlloc, tasksNeedFree = sm.canAlloc(task2)
 	require.True(t, canAlloc)
-	require.Equal(t, []*proto.Task{task}, tasksNeedFree)
+	require.Equal(t, []*proto.TaskBase{task}, tasksNeedFree)
 
 	sm.free(task.ID)
 	require.Len(t, sm.executorTasks, 0)
@@ -130,7 +126,7 @@ func TestSlotManager(t *testing.T) {
 	sm.alloc(task2)
 	require.Len(t, sm.executorTasks, 1)
 	require.Equal(t, task2, sm.executorTasks[sm.taskID2Index[task2.ID]])
-	require.Equal(t, 0, sm.available)
+	require.Equal(t, 0, sm.availableSlots())
 	sm.free(task2.ID)
 	require.Len(t, sm.executorTasks, 0)
 	require.Len(t, sm.taskID2Index, 0)

@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/ranger",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errctx",
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/parser/ast",
@@ -20,8 +21,8 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/planner/context",
         "//pkg/planner/util/fixcontrol",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "//pkg/types/parser_driver",

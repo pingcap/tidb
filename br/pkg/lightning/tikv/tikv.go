@@ -235,17 +235,32 @@ func CheckTiKVVersion(
 	pdHTTPCli pdhttp.Client,
 	requiredMinVersion, requiredMaxVersion semver.Version,
 ) error {
+	return ForTiKVVersions(
+		ctx,
+		pdHTTPCli,
+		func(ver *semver.Version, addrMsg string) error {
+			return version.CheckVersion(addrMsg, *ver, requiredMinVersion, requiredMaxVersion)
+		},
+	)
+}
+
+// ForTiKVVersions runs the given action for all versions of TiKV nodes.
+func ForTiKVVersions(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	action func(ver *semver.Version, addrMsg string) error,
+) error {
 	return ForAllStores(
 		ctx,
 		pdHTTPCli,
 		metapb.StoreState_Offline,
-		func(c context.Context, store *pdhttp.MetaStore) error {
+		func(_ context.Context, store *pdhttp.MetaStore) error {
 			component := fmt.Sprintf("TiKV (at %s)", store.Address)
 			ver, err := semver.NewVersion(strings.TrimPrefix(store.Version, "v"))
 			if err != nil {
 				return errors.Annotate(err, component)
 			}
-			return version.CheckVersion(component, *ver, requiredMinVersion, requiredMaxVersion)
+			return action(ver, component)
 		},
 	)
 }

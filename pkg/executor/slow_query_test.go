@@ -56,7 +56,7 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 }
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
-	newISBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	newISBuilder, err := infoschema.NewBuilder(nil, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +108,7 @@ select * from t;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
+	sctx.ResetSessionAndStmtTimeZone(loc)
 	sctx.GetSessionVars().TimeZone = loc
 	_, err = parseSlowLog(sctx, reader)
 	require.Error(t, err)
@@ -150,7 +151,7 @@ select * from t;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	rows, err := parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -250,7 +251,7 @@ func TestParseSlowLogFileSerial(t *testing.T) {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	// test for bufio.Scanner: token too long.
 	slowLog := bytes.NewBufferString(
 		`# Time: 2019-04-28T15:24:04.309074+08:00
@@ -318,7 +319,7 @@ select * from t;`)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	_, err = parseSlowLog(ctx, scanner)
 	require.NoError(t, err)
 
@@ -459,7 +460,7 @@ select 7;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone = loc
+	sctx.ResetSessionAndStmtTimeZone(loc)
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0}
@@ -633,7 +634,7 @@ select 9;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone = loc
+	sctx.ResetSessionAndStmtTimeZone(loc)
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0, Desc: true}

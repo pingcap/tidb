@@ -487,7 +487,7 @@ func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*
 	}
 }
 
-func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+func partitionPruning(ctx PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
 	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
 	idxArr, err := PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
 	if err != nil {
@@ -554,7 +554,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		tbl := tmp.(table.PartitionedTable)
 		if !tiFlashStaticPrune {
 			var partitions []table.PhysicalTable
-			partitions, err = partitionPruning(e.ctx, tbl, ts.PlanPartInfo.PruningConds, ts.PlanPartInfo.PartitionNames, ts.PlanPartInfo.Columns, ts.PlanPartInfo.ColumnNames)
+			partitions, err = partitionPruning(e.ctx.GetPlanCtx(), tbl, ts.PlanPartInfo.PruningConds, ts.PlanPartInfo.PartitionNames, ts.PlanPartInfo.Columns, ts.PlanPartInfo.ColumnNames)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

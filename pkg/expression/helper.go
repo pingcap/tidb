@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -60,7 +59,7 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 }
 
 // GetTimeCurrentTimestamp is used for generating a timestamp for some special cases: cast null value to timestamp type with not null flag.
-func GetTimeCurrentTimestamp(ctx sessionctx.Context, tp byte, fsp int) (d types.Datum, err error) {
+func GetTimeCurrentTimestamp(ctx BuildContext, tp byte, fsp int) (d types.Datum, err error) {
 	var t types.Time
 	t, err = getTimeCurrentTimeStamp(ctx, tp, fsp)
 	if err != nil {
@@ -135,7 +134,7 @@ func GetTimeValue(ctx BuildContext, v any, tp byte, fsp int, explicitTz *time.Lo
 		return d, errDefaultValue
 	case *ast.UnaryOperationExpr:
 		// support some expression, like `-1`
-		v, err := EvalAstExpr(ctx, x)
+		v, err := EvalSimpleAst(ctx, x)
 		if err != nil {
 			return d, err
 		}

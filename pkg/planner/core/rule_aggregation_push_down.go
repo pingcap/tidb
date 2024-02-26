@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -193,7 +192,7 @@ func (a *aggregationPushDownSolver) splitAggFuncsAndGbyCols(agg *LogicalAggregat
 }
 
 // addGbyCol adds a column to gbyCols. If a group by column has existed, it will not be added repeatedly.
-func (*aggregationPushDownSolver) addGbyCol(ctx sessionctx.Context, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
+func (*aggregationPushDownSolver) addGbyCol(ctx PlanContext, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
@@ -216,7 +215,7 @@ func (*aggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
-func (*aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc,
+func (*aggregationPushDownSolver) decompose(ctx PlanContext, aggFunc *aggregation.AggFuncDesc,
 	schema *expression.Schema, nullGenerating bool) ([]*aggregation.AggFuncDesc, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
@@ -325,7 +324,7 @@ func (*aggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncDes
 // TODO:
 //  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
 //  2. remove this method and use splitPartialAgg instead for clean code.
-func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
+func (a *aggregationPushDownSolver) makeNewAgg(ctx PlanContext, aggFuncs []*aggregation.AggFuncDesc,
 	gbyCols []*expression.Column, preferAggType uint, preferAggToCop bool, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
 		GroupByItems:   expression.Column2Exprs(gbyCols),
@@ -558,7 +557,12 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 				noSideEffects := true
 				newGbyItems := make([]expression.Expression, 0, len(agg.GroupByItems))
 				for _, gbyItem := range agg.GroupByItems {
-					newGbyItems = append(newGbyItems, expression.ColumnSubstitute(ctx, gbyItem, proj.schema, proj.Exprs))
+					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx, gbyItem, proj.schema, proj.Exprs, true)
+					if failed {
+						noSideEffects = false
+						break
+					}
+					newGbyItems = append(newGbyItems, groupBy)
 					if ExprsHasSideEffects(newGbyItems) {
 						noSideEffects = false
 						break
@@ -573,7 +577,12 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
 						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 						for _, arg := range aggFunc.Args {
-							newArgs = append(newArgs, expression.ColumnSubstitute(ctx, arg, proj.schema, proj.Exprs))
+							_, failed, newArg := expression.ColumnSubstituteImpl(ctx, arg, proj.schema, proj.Exprs, true)
+							if failed {
+								noSideEffects = false
+								break
+							}
+							newArgs = append(newArgs, newArg)
 						}
 						if ExprsHasSideEffects(newArgs) {
 							noSideEffects = false
@@ -585,7 +594,12 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
 							newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
 							for _, oby := range aggFunc.OrderByItems {
-								newOrderByItems = append(newOrderByItems, expression.ColumnSubstitute(ctx, oby.Expr, proj.schema, proj.Exprs))
+								_, failed, byItem := expression.ColumnSubstituteImpl(ctx, oby.Expr, proj.schema, proj.Exprs, true)
+								if failed {
+									noSideEffects = false
+									break
+								}
+								newOrderByItems = append(newOrderByItems, byItem)
 							}
 							if ExprsHasSideEffects(newOrderByItems) {
 								noSideEffects = false
@@ -604,6 +618,9 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					}
 				}
 				for i, funcsArgs := range oldAggFuncsArgs {
+					if !noSideEffects {
+						break
+					}
 					for j := range funcsArgs {
 						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
 							noSideEffects = false
@@ -619,9 +636,6 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							noSideEffects = false
 							break
 						}
-					}
-					if !noSideEffects {
-						break
 					}
 				}
 				if noSideEffects {

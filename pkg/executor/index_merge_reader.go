@@ -912,14 +912,13 @@ func (e *IndexMergeReaderExecutor) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.indexUsageReporter != nil {
-		tableID := e.table.Meta().ID
 		for _, p := range e.partialPlans {
 			is, ok := p[0].(*plannercore.PhysicalIndexScan)
 			if !ok {
 				continue
 			}
 
-			e.indexUsageReporter.ReportCopIndexUsage(tableID, is.Index.ID, is.ID())
+			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID())
 		}
 	}
 	if e.finished == nil {
@@ -1008,7 +1007,8 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 
 	requiredCnt := uint64(0)
 	if w.indexMerge.pushedLimit != nil {
-		requiredCnt = max(requiredCnt, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
+		// Pre-allocate up to 1024 to avoid oom
+		requiredCnt = min(1024, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
 	}
 	return &handleHeap{
 		requiredCnt: requiredCnt,

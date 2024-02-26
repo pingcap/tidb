@@ -140,7 +140,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	return errors.Trace(v.err)
 }
 
-type preprocessorFlag uint8
+type preprocessorFlag uint64
 
 const (
 	// inPrepare is set when visiting in prepare statement.
@@ -160,6 +160,8 @@ const (
 	initTxnContextProvider
 	// inImportInto is set when visiting an import into statement.
 	inImportInto
+	// inAnalyze is set when visiting an analyze statement.
+	inAnalyze
 )
 
 // Make linter happy.
@@ -402,6 +404,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			p.IsStaleness = true
 		}
+	case *ast.AnalyzeTableStmt:
+		p.flag |= inAnalyze
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -546,7 +550,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			return
 		}
 		tableInfo := tbl.Meta()
-		dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
+		dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
 		tn.TableInfo = tableInfo
 		tn.DBInfo = dbInfo
 	}
@@ -1567,7 +1571,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx.GetPlanCtx(), model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1575,7 +1579,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	tableInfo := table.Meta()
-	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
+	dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1784,7 +1788,7 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
@@ -1804,7 +1808,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 	} else if tbl.Meta().TempTableType == model.TempTableGlobal {
 		skipLock = true
 	}
-	if IsAutoCommitTxn(sctx) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
+	if IsAutoCommitTxn(sctx.GetSessionVars()) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
@@ -1891,7 +1895,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
 			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
-		db, _ := domainSchema.SchemaByTable(tbl.Meta())
+		db, _ := infoschema.SchemaByTable(domainSchema, tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
 			return nil, err
@@ -1912,5 +1916,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 func (p *preprocessor) skipLockMDL() bool {
 	// skip lock mdl for IMPORT INTO statement,
 	// because it's a batch process and will do both DML and DDL.
-	return p.flag&inImportInto > 0
+	// skip lock mdl for ANALYZE statement.
+	return p.flag&inImportInto > 0 || p.flag&inAnalyze > 0
 }

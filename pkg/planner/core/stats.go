@@ -220,7 +220,7 @@ func init() {
 }
 
 // getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
-func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo) {
+func getTblInfoForUsedStatsByPhysicalID(sctx PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
 	is := domain.GetDomain(sctx).InfoSchema()
@@ -262,13 +262,13 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.physicalTableID)
-	statsRecord[ds.physicalTableID] = &stmtctx.UsedStatsInfoForTable{
+	statsRecord.RecordUsedInfo(ds.physicalTableID, &stmtctx.UsedStatsInfoForTable{
 		Name:          name,
 		TblInfo:       tblInfo,
 		Version:       tableStats.StatsVersion,
 		RealtimeCount: tableStats.HistColl.RealtimeCount,
 		ModifyCount:   tableStats.HistColl.ModifyCount,
-	}
+	})
 
 	for _, col := range ds.schema.Columns {
 		tableStats.ColNDVs[col.UniqueID] = cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
@@ -343,7 +343,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			selected = path
 			break
 		}
-		if path.OnlyPointRange(ds.SCtx()) {
+		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()) {
 			if path.IsTablePath() || path.Index.Unique {
 				if path.IsSingleScan {
 					selected = path
@@ -1071,14 +1071,14 @@ func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expre
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
 func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) {
 	statsRecord := ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
-	if _, ok := statsRecord[pid]; ok {
+	if statsRecord.GetUsedInfo(pid) != nil {
 		return
 	}
 
-	tableStats := getStatsTable(ctx, tblInfo, pid)
-	name, _ := getTblInfoForUsedStatsByPhysicalID(ctx, pid)
-
-	statsRecord[pid] = &stmtctx.UsedStatsInfoForTable{
+	pctx := ctx.GetPlanCtx()
+	tableStats := getStatsTable(pctx, tblInfo, pid)
+	name, _ := getTblInfoForUsedStatsByPhysicalID(pctx, pid)
+	usedStats := &stmtctx.UsedStatsInfoForTable{
 		Name:          name,
 		TblInfo:       tblInfo,
 		RealtimeCount: tableStats.HistColl.RealtimeCount,
@@ -1086,6 +1086,7 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 		Version:       tableStats.Version,
 	}
 	if tableStats.Pseudo {
-		statsRecord[pid].Version = statistics.PseudoVersion
+		usedStats.Version = statistics.PseudoVersion
 	}
+	statsRecord.RecordUsedInfo(pid, usedStats)
 }
