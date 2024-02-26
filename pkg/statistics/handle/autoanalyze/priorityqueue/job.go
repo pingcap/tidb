@@ -46,6 +46,9 @@ type TableAnalysisJob struct {
 	// Only set when partitions's indexes need to be analyzed.
 	// It looks like: {"indexName": ["partitionName1", "partitionName2"]}
 	// This is only for newly added indexes.
+	// The reason why we need to record the partition names is that we need to analyze partitions in batch mode
+	// and we don't want to analyze the same partition multiple times.
+	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
 	PartitionIndexes map[string][]string
 	TableSchema      string
 	TableName        string
