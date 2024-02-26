@@ -21,7 +21,6 @@ package session
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	osuser "os/user"
@@ -1305,7 +1304,7 @@ func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
 	dom := domain.GetDomain(s)
 	for !dom.DDL().OwnerManager().IsOwner() {
 		ownerId, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
-		if errors.Is(err, concurrency.ErrElectionNoLeader) {
+		if errors.ErrorEqual(err, concurrency.ErrElectionNoLeader) {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		} else if err != nil {
