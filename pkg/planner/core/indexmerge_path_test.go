@@ -143,6 +143,7 @@ func TestMultiMVIndexRandom(t *testing.T) {
 			return "d"
 		}
 		nQueries := 20
+		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
 		for i := 0; i < nQueries; i++ {
 			cnf := true
 			if i >= 10 {
@@ -150,9 +151,24 @@ func TestMultiMVIndexRandom(t *testing.T) {
 				cnf = false
 			}
 			// composed condition at least two to make sense.
-			conds := randMVIndexCondsXNF4MemberOf(rand.Intn(3)+2, testCase.queryValsOpts, cnf, randJColName, randNColName)
+			conds, conds4PlanCache, params := randMVIndexCondsXNF4MemberOf(rand.Intn(3)+2, testCase.queryValsOpts, cnf, randJColName, randNColName)
 			r1 := tk.MustQuery("select /*+ ignore_index(t1, idx, idx2, idx3, idx4) */ * from t1 where " + conds).Sort()
 			tk.MustQuery("select /*+ use_index_merge(t1, idx, idx2, idx3, idx4) */ * from t1 where " + conds).Sort().Check(r1.Rows())
+
+			prepareStmt := fmt.Sprintf(`prepare st from 'select /*+ use_index_merge(t, kj) */ * from t1 where %v'`, conds4PlanCache)
+			tk.MustExec(prepareStmt)
+			var setStmt, usingStmt string
+			for i, p := range params {
+				vName := fmt.Sprintf("@a%v", i)
+				if i > 0 {
+					setStmt += ", "
+					usingStmt += ", "
+				}
+				setStmt += fmt.Sprintf("%v=%v", vName, p)
+				usingStmt += vName
+			}
+			tk.MustExec("set " + setStmt)
+			tk.MustQuery("execute st using " + usingStmt).Sort().Check(r1.Rows())
 		}
 	}
 }
@@ -192,56 +208,86 @@ func TestMVIndexRandom(t *testing.T) {
 			return "a"
 		}
 		nQueries := 20
+		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
 		for i := 0; i < nQueries; i++ {
-			conds := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts, randJColName, randNColName)
+			conds, conds4PlanCache, params := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts, randJColName, randNColName)
 			r1 := tk.MustQuery("select /*+ ignore_index(t, kj) */ * from t where " + conds).Sort()
 			tk.MustQuery("select /*+ use_index_merge(t, kj) */ * from t where " + conds).Sort().Check(r1.Rows())
+
+			prepareStmt := fmt.Sprintf(`prepare st from 'select /*+ use_index_merge(t, kj) */ * from t where %v'`, conds4PlanCache)
+			tk.MustExec(prepareStmt)
+			var setStmt, usingStmt string
+			for i, p := range params {
+				vName := fmt.Sprintf("@a%v", i)
+				if i > 0 {
+					setStmt += ", "
+					usingStmt += ", "
+				}
+				setStmt += fmt.Sprintf("%v=%v", vName, p)
+				usingStmt += vName
+			}
+			tk.MustExec("set " + setStmt)
+			tk.MustQuery("execute st using " + usingStmt).Sort().Check(r1.Rows())
 		}
 	}
 }
 
-func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bool, randJCol, randNCol func() string) string {
-	var conds string
+func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bool, randJCol, randNCol func() string) (conds, conds4PlanCache string, params []string) {
 	for i := 0; i < nConds; i++ {
 		if i > 0 {
 			if CNF {
 				conds += " AND "
+				conds4PlanCache += " AND "
 			} else {
 				conds += " OR "
+				conds4PlanCache += " OR "
 			}
 		}
-		cond := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
+		cond, cond4PlanCache, param := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
 		conds += cond
+		conds4PlanCache += cond4PlanCache
+		params = append(params, param)
 	}
-	return conds
+	return
 }
 
-func randMVIndexConds(nConds int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) string {
-	var conds string
+func randMVIndexConds(nConds int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) (conds, conds4PlanCache string, params []string) {
 	for i := 0; i < nConds; i++ {
 		if i > 0 {
 			if rand.Intn(5) < 1 { // OR
 				conds += " OR "
+				conds4PlanCache += " OR "
 			} else { // AND
 				conds += " AND "
+				conds4PlanCache += " AND "
 			}
 		}
-		cond := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
+		cond, cond4PlanCache, param := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
 		conds += cond
+		conds4PlanCache += cond4PlanCache
+		params = append(params, param)
 	}
-	return conds
+	return
 }
 
-func randMVIndexCond(condType int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) string {
+func randMVIndexCond(condType int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) (cond, cond4PlanCache, param string) {
 	switch condType {
 	case 0: // member_of
-		return fmt.Sprintf(`(%v member of (%v))`, randMVIndexValue(valOpts), randJCol())
+		col, v := randJCol(), randMVIndexValue(valOpts)
+		return fmt.Sprintf(`(%v member of (%v))`, v, col),
+			fmt.Sprintf(`(? member of (%v))`, col), v
 	case 1: // json_contains
-		return fmt.Sprintf(`json_contains(%v, '%v')`, randJCol(), randArray(valOpts))
+		col, v := randJCol(), randArray(valOpts)
+		return fmt.Sprintf(`json_contains(%v, '%v')`, col, v),
+			fmt.Sprintf(`json_contains(%v, ?)`, col), fmt.Sprintf("'%v'", v)
 	case 2: // json_overlaps
-		return fmt.Sprintf(`json_overlaps(%v, '%v')`, randJCol(), randArray(valOpts))
+		col, v := randJCol(), randArray(valOpts)
+		return fmt.Sprintf(`json_overlaps(%v, '%v')`, col, v),
+			fmt.Sprintf(`json_overlaps(%v, ?)`, col), fmt.Sprintf("'%v'", v)
 	default: // others
-		return fmt.Sprintf(`%v < %v`, randNCol(), rand.Intn(valOpts.distinct))
+		col, v := randNCol(), rand.Intn(valOpts.distinct)
+		return fmt.Sprintf(`%v < %v`, col, v),
+			fmt.Sprintf(`%v < ?`, col), fmt.Sprintf("%v", v)
 	}
 }
 
