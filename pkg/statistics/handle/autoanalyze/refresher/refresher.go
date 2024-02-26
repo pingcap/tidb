@@ -364,6 +364,9 @@ func createTableAnalysisJobForPartitions(
 
 // calculateIndicatorsForPartitions calculates the average change percentage,
 // average size and average last analyze duration for the partitions that meet the threshold.
+// Change percentage is the ratio of the number of modified rows to the total number of rows.
+// Size is the product of the number of rows and the number of columns.
+// Last analyze duration is the duration since the last analyze.
 func calculateIndicatorsForPartitions(
 	tblInfo *model.TableInfo,
 	partitionStats map[int64]*statistics.Table,
