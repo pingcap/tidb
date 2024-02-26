@@ -1050,7 +1050,7 @@ func (e *Engine) NewIter(
 	)
 }
 
-// GetTSOfClose implements IngestData interface.
+// GetStartTS implements IngestData interface.
 func (e *Engine) GetStartTS() uint64 {
 	return e.StartTS
 }

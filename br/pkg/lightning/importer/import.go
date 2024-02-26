@@ -1609,6 +1609,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 
 		// Disable GC because TiDB enables GC already.
 		urlsWithScheme := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
+		if len(urlsWithScheme) == 0 {
+			urlsWithScheme = strings.Split(rc.cfg.TiDB.PdAddr, ",")
+		}
 		// remove URL scheme
 		urlsWithoutScheme := make([]string, 0, len(urlsWithScheme))
 		for _, u := range urlsWithScheme {
@@ -1840,7 +1843,11 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 }
 
 func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
-	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetServiceDiscovery().GetServiceURLs())
+	pdAddr := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
+	if len(pdAddr) == 0 {
+		pdAddr = strings.Split(rc.cfg.TiDB.PdAddr, ",")
+	}
+	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, pdAddr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2142,6 +2149,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 	if isLocalBackend(rc.cfg) {
 		pdAddrs := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
+		if len(pdAddrs) == 0 {
+			pdAddrs = strings.Split(rc.cfg.TiDB.PdAddr, ",")
+		}
 		pdController, err := pdutil.NewPdController(
 			ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
 		)

@@ -508,9 +508,11 @@ func NewBackend(
 		pdAddrs = pdSvcDiscovery.GetServiceURLs()
 		// TODO(lance6716): if PD client can support creating a client with external
 		// service discovery, we can directly pass pdSvcDiscovery.
-	} else {
+	}
+	if len(pdAddrs) == 0 {
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
+
 	pdCli, err := pd.NewClientWithContext(
 		ctx, pdAddrs, tls.ToPDSecurityOption(),
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
