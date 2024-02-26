@@ -1001,6 +1001,7 @@ import (
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	ImportIntoStmt             "IMPORT INTO statement"
+	ImportBindingIntoStmt      "IMPORT BINDING INTO statement"
 	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
@@ -12033,6 +12034,7 @@ Statement:
 |	GrantRoleStmt
 |	CallStmt
 |	ImportIntoStmt
+|   ImportBindingIntoStmt
 |	InsertIntoStmt
 |	IndexAdviseStmt
 |	KillStmt
@@ -12138,6 +12140,7 @@ ExplainableStmt:
 		$$ = sel
 	}
 |	AlterTableStmt
+|   ImportBindingIntoStmt
 |	ImportIntoStmt
 
 StatementList:
@@ -14616,6 +14619,16 @@ LoadDataOption:
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
 	}
+
+ImportBindingIntoStmt:
+    "IMPORT" "BINDING" "INTO" "MEMORY" StringList
+    {
+        x := &ast.ImportBindingIntoStmt{
+            SQLDigest:        $5,
+        }
+        $$ = x
+    }
+
 
 ImportIntoStmt:
 	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" stringLit FormatOpt LoadDataOptionListOpt

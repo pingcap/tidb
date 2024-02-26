@@ -54,6 +54,7 @@ var (
 	_ StmtNode = &CreateBindingStmt{}
 	_ StmtNode = &DropBindingStmt{}
 	_ StmtNode = &SetBindingStmt{}
+	_ StmtNode = &ImportBindingIntoStmt{}
 	_ StmtNode = &ShutdownStmt{}
 	_ StmtNode = &RestartStmt{}
 	_ StmtNode = &RenameUserStmt{}
@@ -2147,6 +2148,26 @@ func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
 			n.HintedNode = hintedNode.(StmtNode)
 		}
 	}
+	return v.Leave(n)
+}
+
+type ImportBindingIntoStmt struct {
+	stmtNode
+	SQLDigest []string
+}
+
+func (n *ImportBindingIntoStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("IMPORT BINDING INTO MEMORY ")
+	ctx.WriteString(strings.Join(n.SQLDigest, ","))
+	return nil
+}
+
+func (n *ImportBindingIntoStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ImportBindingIntoStmt)
 	return v.Leave(n)
 }
 
