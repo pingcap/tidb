@@ -63,7 +63,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
-	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -127,30 +126,6 @@ func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (str
 	return sortDir, nil
 }
 
-// GetTiKVModeSwitcherWithPDClient creates a new TiKV mode switcher with its pd Client.
-func GetTiKVModeSwitcherWithPDClient(logger *zap.Logger) (pdhttp.Client, local.TiKVModeSwitcher, error) {
-	tidbCfg := tidb.GetGlobalConfig()
-	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-	tls, err := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		hostPort,
-		nil, nil, nil,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	addrs := strings.Split(tidbCfg.Path, ",")
-	var opts []pdhttp.ClientOption
-	if o := tls.TLSConfig(); o != nil {
-		opts = append(opts, pdhttp.WithTLSConfig(o))
-	}
-	pdHTTPCli := NewPDHttpClient("dist-task", addrs, opts...)
-	// TODO: let disttask framework pass-in the PD HTTP client from domain
-	return pdHTTPCli, NewTiKVModeSwitcher(tls, pdHTTPCli, logger), nil
-}
-
 // GetCachedKVStoreFrom gets a cached kv store from PD address.
 // Callers should NOT close the kv store.
 func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
@@ -188,7 +163,12 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 }
 
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (ti *TableImporter, err error) {
+func NewTableImporter(
+	param *JobImportParam,
+	e *LoadDataController,
+	id string,
+	kvStore tidbkv.Storage,
+) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -212,12 +192,6 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (
 	)
 	if err != nil {
 		return nil, err
-	}
-
-	// no need to close kvStore, since it's a cached store.
-	kvStore, err := GetCachedKVStoreFrom(tidbCfg.Path, tls)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)

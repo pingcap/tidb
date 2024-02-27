@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"os"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -811,7 +811,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	backup := importer.NewTiKVModeSwitcher
-	importer.NewTiKVModeSwitcher = func(*common.TLS, pdhttp.Client, *zap.Logger) local.TiKVModeSwitcher {
+	importer.NewTiKVModeSwitcher = func(*tls.Config, pdhttp.Client, *zap.Logger) local.TiKVModeSwitcher {
 		return switcher
 	}
 	s.T().Cleanup(func() {

@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -176,8 +175,6 @@ var (
 	GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
 	// NewClientWithContext returns a kv.Client.
 	NewClientWithContext = pd.NewClientWithContext
-	// NewPDHttpClient returns a pdhttp.Client.
-	NewPDHttpClient = pdhttp.NewClient
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
