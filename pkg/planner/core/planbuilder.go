@@ -1464,7 +1464,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as}, nil
 	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
-		return &Simple{Statement: as}, nil
+		ret = &Simple{Statement: as}
 	case ast.AdminShowBDRRole:
 		p := &AdminShowBDRRole{}
 		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
