@@ -198,7 +198,7 @@ func (c *RegionCache) locateKeyRange(bo *Backoffer, startKey, endKey []byte) ([]
 
 // SplitKeyRangesByLocationsNew splits the KeyRanges by logical info in the cache.
 func (c *RegionCache) SplitKeyRangesByLocationsNew(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
-	locs, err := c.locateKeyRange(bo, ranges.first.StartKey, ranges.last.EndKey)
+	locs, err := c.locateKeyRange(bo, ranges.RefAt(0).StartKey, ranges.RefAt(ranges.Len()-1).EndKey)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
