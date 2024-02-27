@@ -2026,6 +2026,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			for _, engine := range largeEngines {
 				// Use a larger split region size to avoid split the same region by many times.
 				if err := localBackend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
+					// TODO: if importErr is ErrFoundDuplicateKeys error, convert it to ErrFoundDataConflictRecords/ErrFoundIndexConflictRecords error
 					importErr = multierr.Append(importErr, err)
 				}
 			}

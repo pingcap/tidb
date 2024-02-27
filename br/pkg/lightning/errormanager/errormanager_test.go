@@ -23,15 +23,18 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -331,6 +334,17 @@ func TestReplaceConflictOneKey(t *testing.T) {
 	require.Equal(t, int32(1), fnDeleteKeyCount.Load())
 	err = mockDB.ExpectationsWereMet()
 	require.NoError(t, err)
+}
+
+func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
+	remain, d, err := codec.DecodeOne(keySuffix)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(remain) == 0 && d.Kind() == types.KindInt64 {
+		return kv.IntHandle(d.GetInt64()), nil
+	}
+	return kv.NewCommonHandle(keySuffix)
 }
 
 func TestReplaceConflictOneUniqueKey(t *testing.T) {

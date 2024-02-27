@@ -50,6 +50,7 @@ go_library(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/errno",
+        "//pkg/executor/importer",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta/autoid",

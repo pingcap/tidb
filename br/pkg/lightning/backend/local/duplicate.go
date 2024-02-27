@@ -17,14 +17,11 @@ package local
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
@@ -45,15 +42,10 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -495,7 +487,7 @@ func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKV
 		}
 
 		if algorithm == config.DupeResAlgErr {
-			return common.ErrFoundConflictRecords.FastGenByArgs(m.tableName, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val))
+			return common.ErrFoundDataConflictRecords.FastGenByArgs(m.tableName, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val))
 		}
 
 		conflictInfo := errormanager.DataConflictInfo{
@@ -573,7 +565,7 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 		}
 
 		if algorithm == config.DupeResAlgErr {
-			return common.ErrFoundConflictRecords.FastGenByArgs(m.tableName, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val))
+			return common.ErrFoundIndexConflictRecords.FastGenByArgs(m.tableName, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val))
 		}
 
 		conflictInfo := errormanager.DataConflictInfo{
@@ -1117,50 +1109,4 @@ func (local *DupeController) deleteDuplicateRow(
 	err = txn.Delete(key)
 
 	return errors.Trace(err)
-}
-
-func ConvertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
-	tErr, ok := errors.Cause(originErr).(*terror.Error)
-	if !ok {
-		return originErr
-	}
-	if len(tErr.Args()) != 2 {
-		return originErr
-	}
-	key, keyIsByte := tErr.Args()[0].([]byte)
-	value, valIsByte := tErr.Args()[1].([]byte)
-	if !keyIsByte || !valIsByte {
-		return originErr
-	}
-	return GenKeyExistsErr(key, value, idxInfo, tblInfo)
-}
-
-func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
-	idxColLen := len(idxInfo.Columns)
-	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
-	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
-	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
-	if err != nil {
-		tidblogutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
-			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
-		return tidbkv.ErrKeyExists.FastGenByArgs(key, indexName)
-	}
-	valueStr := make([]string, 0, idxColLen)
-	for i, val := range values[:idxColLen] {
-		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
-		if err != nil {
-			tidblogutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
-				zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
-			return tidbkv.ErrKeyExists.FastGenByArgs(key, indexName)
-		}
-		str, err := d.ToString()
-		if err != nil {
-			str = string(val)
-		}
-		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
-			str = util.FmtNonASCIIPrintableCharToHex(str)
-		}
-		valueStr = append(valueStr, str)
-	}
-	return tidbkv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }

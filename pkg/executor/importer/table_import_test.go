@@ -23,9 +23,20 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -231,9 +242,107 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 }
 
 func TestRetrieveKeyAndValueFromErrFoundDuplicateKeys(t *testing.T) {
-	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs("1", "1.csv")
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table a (a int primary key, b int not null, c text, key key_b(b));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(6),
+		types.NewStringDatum("1.csv"),
+	}
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	data1RowKey := kvPairs.Pairs[0].Key
+	data1RowValue := kvPairs.Pairs[0].Val
+
+	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data1RowKey, data1RowValue)
 	rawKey, rawValue, err := RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	require.NoError(t, err)
-	require.Equal(t, []byte("1"), rawKey)
-	require.Equal(t, []byte("1.csv"), rawValue)
+	require.Equal(t, data1RowKey, rawKey)
+	require.Equal(t, data1RowValue, rawValue)
+}
+
+func TestConvertToErrFoundConflictRecords(t *testing.T) {
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table a (a int primary key, b int not null, c text, key key_b(b));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(6),
+		types.NewStringDatum("1.csv"),
+	}
+	data2 := []types.Datum{
+		types.NewIntDatum(2),
+		types.NewIntDatum(6),
+		types.NewStringDatum("2.csv"),
+	}
+	data3 := []types.Datum{
+		types.NewIntDatum(3),
+		types.NewIntDatum(3),
+		types.NewStringDatum("3.csv"),
+	}
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	data2RowKey := kvPairs.Pairs[2].Key
+	data2RowValue := kvPairs.Pairs[2].Val
+	data3IndexKey := kvPairs.Pairs[5].Key
+	data3IndexValue := kvPairs.Pairs[5].Val
+
+	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data2RowKey, data2RowValue)
+
+	newErr := ConvertToErrFoundConflictRecords(originalErr, tbl)
+	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '[KindInt64 2 KindInt64 6 KindString 2.csv]'")
+
+	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
+
+	newErr = ConvertToErrFoundConflictRecords(originalErr, tbl)
+	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, unique key is '3', primary key is '3'")
 }

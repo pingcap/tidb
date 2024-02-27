@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -50,14 +51,17 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -544,9 +548,23 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 }
 
 func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
+	//tErr, ok := errors.Cause(originErr).(*terror.Error)
+	//if !ok {
+	//	return nil, nil, originErr
+	//}
+	//if len(tErr.Args()) != 2 {
+	//	return nil, nil, originErr
+	//}
+	//key, keyIsByte := tErr.Args()[0].([]byte)
+	//value, valIsByte := tErr.Args()[1].([]byte)
+	//if !keyIsByte || !valIsByte {
+	//	return nil, nil, originErr
+	//}
+	//return key, value, nil
+
 	errString := err.Error()
 
-	pattern := `found duplicate key (.+), value (.+)`
+	pattern := `found duplicate key '(.+)', value '(.+)'`
 	regex := regexp.MustCompile(pattern)
 	matches := regex.FindStringSubmatch(errString)
 
@@ -565,29 +583,81 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 		return errors.Trace(err)
 	}
 
-	sessionOpts := encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-	}
-	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
-		Table:          tbl,
-		SessionOptions: sessionOpts,
-		Logger:         log.Logger{},
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
+	if tablecodec.IsRecordKey(rawKey) {
+		// for data KV
+		sessionOpts := encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+		}
+		encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+			Table:          tbl,
+			SessionOptions: sessionOpts,
+			Logger:         log.Logger{},
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-	handle, err := tablecodec.DecodeRowKey(rawKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rowData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
-		tbl.Meta(), handle, tbl.Cols(), rawValue)
-	if err != nil {
-		return errors.Trace(err)
-	}
+		handle, err := tablecodec.DecodeRowKey(rawKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rowData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+			tbl.Meta(), handle, tbl.Cols(), rawValue)
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-	return common.ErrFoundConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData)
+		return common.ErrFoundDataConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData)
+	} else {
+		// for index KV
+		_, idxID, idxValues, err := tablecodec.DecodeIndexKey(rawKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		idxInfo, err := GetIndexInfoByIndexId(tbl, idxID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		idxColLen := len(idxInfo.Columns)
+		indexName := fmt.Sprintf("%s.%s", tbl.Meta().Name.String(), idxInfo.Name.String())
+		colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tbl.Meta())
+		values, err := tablecodec.DecodeIndexKV(rawKey, rawValue, idxColLen, tablecodec.HandleNotNeeded, colInfos)
+		if err != nil {
+			logutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
+				zap.String("key", hex.EncodeToString(rawKey)), zap.String("value", hex.EncodeToString(rawValue)), zap.Error(err))
+			return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue)
+		}
+		valueStr := make([]string, 0, idxColLen)
+		for i, val := range values[:idxColLen] {
+			d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
+			if err != nil {
+				logutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
+					zap.String("key", hex.EncodeToString(rawKey)), zap.String("value", hex.EncodeToString(rawValue)), zap.Error(err))
+				return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue)
+			}
+			str, err := d.ToString()
+			if err != nil {
+				str = string(val)
+			}
+			if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
+				str = tidbutil.FmtNonASCIIPrintableCharToHex(str)
+			}
+			valueStr = append(valueStr, str)
+		}
+
+		return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, idxValues[0], valueStr[0])
+	}
+}
+
+func GetIndexInfoByIndexId(tbl table.Table, indexID int64) (*model.IndexInfo, error) {
+	for _, indexInfo := range tbl.Meta().Indices {
+		if indexInfo.ID == indexID {
+			return indexInfo, nil
+		}
+	}
+	return nil, common.ErrGetIndexInfoByIndexId
 }
 
 // ImportAndCleanup imports the engine and cleanup the engine data.
@@ -595,8 +665,7 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if common.ErrFoundDuplicateKeys.Equal(importErr) {
-		err := ConvertToErrFoundConflictRecords(importErr, ti.encTable)
-		return 0, err
+		importErr = ConvertToErrFoundConflictRecords(importErr, ti.encTable)
 	}
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
@@ -686,6 +755,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 				int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio),
 				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
 			); err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = ConvertToErrFoundConflictRecords(err, ti.encTable)
+				}
 				importErr = multierr.Append(importErr, err)
 			}
 		}
@@ -780,6 +852,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		failpoint.Return(nil, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = ConvertToErrFoundConflictRecords(err, ti.encTable)
+		}
 		return nil, err
 	}
 	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
@@ -789,6 +864,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		return nil, err
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = ConvertToErrFoundConflictRecords(err, ti.encTable)
+		}
 		return nil, err
 	}
 
