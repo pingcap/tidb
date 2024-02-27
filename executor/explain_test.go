@@ -315,6 +315,14 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 	}
 }
 
+func TestPointGetOrderby(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key)")
+	require.Equal(t, tk.ExecToErr("select * from t where i = 1 order by j limit 10;").Error(), "[planner:1054]Unknown column 'j' in 'order clause'")
+}
+
 func TestCheckActRowsWithUnistore(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
