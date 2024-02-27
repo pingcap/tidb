@@ -155,7 +155,7 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 	debug.SetMemoryLimit(memoryLimit)
 }
 
-func (t *memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
+func (*memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * percentage) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if memoryLimit == 0 {
 		memoryLimit = math.MaxInt64
