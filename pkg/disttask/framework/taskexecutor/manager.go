@@ -17,7 +17,6 @@ package taskexecutor
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -200,7 +199,7 @@ func (m *Manager) handleTasks() {
 // handleExecutableTasks handles executable tasks.
 func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(&task.Task.TaskBase)
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
 			// do not handle the tasks with lower rank if current task is waiting tasks free.
@@ -211,7 +210,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
-		m.startTaskExecutor(task.Task)
+		m.startTaskExecutor(task.TaskBase)
 	}
 }
 
@@ -279,14 +278,14 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 	}
 }
 
-// TestContext only used in tests.
-type TestContext struct {
-	TestSyncSubtaskRun chan struct{}
-	mockDown           atomic.Bool
-}
-
 // startTaskExecutor handles a runnable task.
-func (m *Manager) startTaskExecutor(task *proto.Task) {
+func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
+	// TODO: remove it when we can create task executor with task base.
+	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
+	if err != nil {
+		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
+		return
+	}
 	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
@@ -295,7 +294,7 @@ func (m *Manager) startTaskExecutor(task *proto.Task) {
 		return
 	}
 	executor := factory(m.ctx, m.id, task, m.taskTable)
-	err := executor.Init(m.ctx)
+	err = executor.Init(m.ctx)
 	if err != nil {
 		m.failSubtask(err, task.ID, executor)
 		return
@@ -327,13 +326,13 @@ func (m *Manager) getStepResource(concurrency int) *proto.StepResource {
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mu.taskExecutors[executor.GetTask().ID] = executor
+	m.mu.taskExecutors[executor.GetTaskBase().ID] = executor
 }
 
 func (m *Manager) delTaskExecutor(executor TaskExecutor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.mu.taskExecutors, executor.GetTask().ID)
+	delete(m.mu.taskExecutors, executor.GetTaskBase().ID)
 }
 
 func (m *Manager) isExecutorStarted(taskID int64) bool {
