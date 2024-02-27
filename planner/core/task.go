@@ -101,7 +101,7 @@ type copTask struct {
 }
 
 func (t *copTask) invalid() bool {
-	return t.tablePlan == nil && t.indexPlan == nil
+	return t.tablePlan == nil && t.indexPlan == nil && len(t.idxMergePartPlans) == 0
 }
 
 func (t *rootTask) invalid() bool {
@@ -120,6 +120,8 @@ func (t *copTask) copy() task {
 	return &nt
 }
 
+// copTask plan should be careful with indexMergeReader, whose real plan is stored in
+// idxMergePartPlans, when its indexPlanFinished is marked with false.
 func (t *copTask) plan() PhysicalPlan {
 	if t.indexPlanFinished {
 		return t.tablePlan
