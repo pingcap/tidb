@@ -44,17 +44,26 @@ const defaultFailedAnalysisWaitTime = 30 * time.Minute
 // TableAnalysisJob defines the structure for table analysis job information.
 type TableAnalysisJob struct {
 	// Only set when partitions's indexes need to be analyzed.
+	// It looks like: {"indexName": ["partitionName1", "partitionName2"]}
+	// This is only for newly added indexes.
+	// The reason why we need to record the partition names is that we need to analyze partitions in batch mode
+	// and we don't want to analyze the same partition multiple times.
+	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
 	PartitionIndexes map[string][]string
 	TableSchema      string
 	TableName        string
 	// Only set when table's indexes need to be analyzed.
+	// This is only for newly added indexes.
 	Indexes []string
 	// Only set when table's partitions need to be analyzed.
-	Partitions       []string
-	TableID          int64
-	TableStatsVer    int
-	ChangePercentage float64
-	Weight           float64
+	// This will analyze all indexes and columns of the specified partitions.
+	Partitions           []string
+	TableID              int64
+	TableStatsVer        int
+	ChangePercentage     float64
+	TableSize            float64
+	LastAnalysisDuration time.Duration
+	Weight               float64
 }
 
 // IsValidToAnalyze checks whether the table is valid to analyze.

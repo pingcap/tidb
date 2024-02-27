@@ -119,14 +119,15 @@ WHERE
 	require.NotNil(b, selection)
 	conds := make([]expression.Expression, len(selection.Conditions))
 	for i, cond := range selection.Conditions {
-		conds[i] = expression.PushDownNot(sctx, cond)
+		conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 	}
 	cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
 	require.NotNil(b, cols)
 
 	b.ResetTimer()
+	pctx := sctx.GetPlanCtx()
 	for i := 0; i < b.N; i++ {
-		_, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+		_, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()

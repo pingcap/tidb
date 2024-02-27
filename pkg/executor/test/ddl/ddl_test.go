@@ -580,7 +580,7 @@ func TestShardRowIDBits(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	maxID := 1<<(64-15-1) - 1
-	alloc := tbl.Allocators(tk.Session().GetSessionVars()).Get(autoid.RowIDAllocType)
+	alloc := tbl.Allocators(tk.Session().GetTableCtx()).Get(autoid.RowIDAllocType)
 	err = alloc.Rebase(context.Background(), int64(maxID)-1, false)
 	require.NoError(t, err)
 	tk.MustExec("insert into t1 values(1)")

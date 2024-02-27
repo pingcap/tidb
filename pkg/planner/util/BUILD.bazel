@@ -16,7 +16,6 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/planner/context",
-        "//pkg/sessionctx",
         "//pkg/types",
         "//pkg/util/collate",
         "//pkg/util/ranger",
