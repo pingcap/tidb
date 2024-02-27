@@ -547,6 +547,8 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 	return mgr.OpenEngine(ctx, dataEngineCfg, ti.FullTableName(), engineID)
 }
 
+// RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
+// from ErrFoundDuplicateKeys error.
 func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
 	//tErr, ok := errors.Cause(originErr).(*terror.Error)
 	//if !ok {
@@ -577,6 +579,8 @@ func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, er
 	return nil, nil, err
 }
 
+// ConvertToErrFoundConflictRecords converts ErrFoundDuplicateKeys
+// to ErrFoundDuplicateKeys error.
 func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error {
 	rawKey, rawValue, err := RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	if err != nil {
@@ -608,50 +612,53 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 		}
 
 		return common.ErrFoundDataConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData)
-	} else {
-		// for index KV
-		_, idxID, idxValues, err := tablecodec.DecodeIndexKey(rawKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	}
 
-		idxInfo, err := GetIndexInfoByIndexId(tbl, idxID)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	// for index KV
+	_, idxID, idxValues, err := tablecodec.DecodeIndexKey(rawKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-		idxColLen := len(idxInfo.Columns)
-		indexName := fmt.Sprintf("%s.%s", tbl.Meta().Name.String(), idxInfo.Name.String())
-		colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tbl.Meta())
-		values, err := tablecodec.DecodeIndexKV(rawKey, rawValue, idxColLen, tablecodec.HandleNotNeeded, colInfos)
+	idxInfo, err := GetIndexInfoByIndexID(tbl, idxID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	idxColLen := len(idxInfo.Columns)
+	indexName := fmt.Sprintf("%s.%s", tbl.Meta().Name.String(), idxInfo.Name.String())
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tbl.Meta())
+	values, err := tablecodec.DecodeIndexKV(rawKey, rawValue, idxColLen, tablecodec.HandleNotNeeded, colInfos)
+	if err != nil {
+		logutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
+			zap.String("key", hex.EncodeToString(rawKey)), zap.String("value", hex.EncodeToString(rawValue)), zap.Error(err))
+		return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue)
+	}
+	valueStr := make([]string, 0, idxColLen)
+	for i, val := range values[:idxColLen] {
+		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
-			logutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
+			logutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
 				zap.String("key", hex.EncodeToString(rawKey)), zap.String("value", hex.EncodeToString(rawValue)), zap.Error(err))
 			return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue)
 		}
-		valueStr := make([]string, 0, idxColLen)
-		for i, val := range values[:idxColLen] {
-			d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
-			if err != nil {
-				logutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
-					zap.String("key", hex.EncodeToString(rawKey)), zap.String("value", hex.EncodeToString(rawValue)), zap.Error(err))
-				return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue)
-			}
-			str, err := d.ToString()
-			if err != nil {
-				str = string(val)
-			}
-			if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
-				str = tidbutil.FmtNonASCIIPrintableCharToHex(str)
-			}
-			valueStr = append(valueStr, str)
+		str, err := d.ToString()
+		if err != nil {
+			str = string(val)
 		}
-
-		return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, idxValues[0], valueStr[0])
+		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
+			str = tidbutil.FmtNonASCIIPrintableCharToHex(str)
+		}
+		valueStr = append(valueStr, str)
 	}
+
+	return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, idxValues[0], valueStr[0])
+
 }
 
-func GetIndexInfoByIndexId(tbl table.Table, indexID int64) (*model.IndexInfo, error) {
+// GetIndexInfoByIndexID get index info from table.Table
+// by index ID.
+func GetIndexInfoByIndexID(tbl table.Table, indexID int64) (*model.IndexInfo, error) {
 	for _, indexInfo := range tbl.Meta().Indices {
 		if indexInfo.ID == indexID {
 			return indexInfo, nil
