@@ -97,6 +97,22 @@ func TestCalculateWeight(t *testing.T) {
 		},
 	}
 	testWeightCalculation(t, pc, lastAnalysisDurationGroup)
+	// The system should not assign a higher weight to a recently analyzed table, even if it has undergone significant changes.
+	justBeingAnalyzedGroup := []testData{
+		{
+			ChangePercentage:     0.5,
+			TableSize:            1000,
+			LastAnalysisDuration: 2 * time.Hour,
+			hasNewIndex:          true,
+		},
+		{
+			ChangePercentage:     1,
+			TableSize:            1000,
+			LastAnalysisDuration: 10 * time.Minute,
+			hasNewIndex:          true,
+		},
+	}
+	testWeightCalculation(t, pc, justBeingAnalyzedGroup)
 }
 
 // testWeightCalculation is a helper function to test the weight calculation.
