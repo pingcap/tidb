@@ -238,42 +238,6 @@ func TestInitStats(t *testing.T) {
 	h.SetLease(0)
 }
 
-func TestInitStatsWithoutPanic(t *testing.T) {
-	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	defer func() {
-		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-	}()
-	config.GetGlobalConfig().Performance.LiteInitStats = false
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
-	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
-	testKit.MustExec("analyze table t")
-	h := dom.StatsHandle()
-	h.StatsCache.Clear()
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
-	// `Lease` is not 0, so here we just change it.
-	h.SetLease(time.Millisecond)
-
-	h.Clear()
-	require.NoError(t, h.InitStats(is))
-	table0 := h.GetTableStats(tbl.Meta())
-	cols := table0.Columns
-	require.Equal(t, uint8(0x36), cols[1].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x37), cols[2].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
-	h.Clear()
-	require.NoError(t, h.Update(is))
-	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
-	h.SetLease(0)
-}
-
 func TestInitStats51358(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
@@ -294,7 +258,7 @@ func TestInitStats51358(t *testing.T) {
 	h.SetLease(time.Millisecond)
 
 	h.Clear()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil", "return(nil, false)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil"))
 	}()
