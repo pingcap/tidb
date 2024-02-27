@@ -13,10 +13,8 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/spf13/pflag"
-	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -336,39 +334,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	}
 
 	bucket := client.Bucket(gcs.Bucket)
-<<<<<<< HEAD
-	// check whether it's a bug before #647, to solve case #2
-	// If the storage is set as gcs://bucket/prefix/,
-	// the backupmeta is written correctly to gcs://bucket/prefix/backupmeta,
-	// but the SSTs are written wrongly to gcs://bucket/prefix//*.sst (note the extra slash).
-	// see details about case 2 at https://github.com/pingcap/br/issues/675#issuecomment-753780742
-	sstInPrefix := hasSSTFiles(ctx, bucket, gcs.Prefix)
-	sstInPrefixSlash := hasSSTFiles(ctx, bucket, gcs.Prefix+"//")
-	if sstInPrefixSlash && !sstInPrefix {
-		// This is a old bug, but we must make it compatible.
-		// so we need find sst in slash directory
-		gcs.Prefix += "//"
-	}
 	return &GCSStorage{gcs: gcs, bucket: bucket}, nil
-=======
-	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
-}
-
-func shouldRetry(err error) bool {
-	if storage.ShouldRetry(err) {
-		return true
-	}
-
-	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
-	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
-		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
-			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
-			return true
-		}
-	}
-
-	return false
->>>>>>> c92094fcb48 (external: remove old compatibility check of BR (#50534))
 }
 
 // gcsObjectReader wrap storage.Reader and add the `Seek` method.
