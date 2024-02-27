@@ -144,6 +144,43 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 }
 
+func TestManagerSchedulersOrdered(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := NewManager(context.Background(), nil, "1")
+	for i := 1; i <= 5; i++ {
+		task := &proto.Task{TaskBase: proto.TaskBase{
+			ID: int64(i * 10),
+		}}
+		mockScheduler := mock.NewMockScheduler(ctrl)
+		mockScheduler.EXPECT().GetTask().Return(task).AnyTimes()
+		mgr.addScheduler(task.ID, mockScheduler)
+	}
+	ordered := func(schedulers []Scheduler) bool {
+		for i := 1; i < len(schedulers); i++ {
+			if schedulers[i-1].GetTask().CompareTask(schedulers[i].GetTask()) >= 0 {
+				return false
+			}
+		}
+		return true
+	}
+	require.Len(t, mgr.getSchedulers(), 5)
+	require.True(t, ordered(mgr.getSchedulers()))
+
+	task35 := &proto.Task{TaskBase: proto.TaskBase{
+		ID: int64(35),
+	}}
+	mockScheduler35 := mock.NewMockScheduler(ctrl)
+	mockScheduler35.EXPECT().GetTask().Return(task35).AnyTimes()
+
+	mgr.delScheduler(30)
+	require.False(t, mgr.hasScheduler(30))
+	mgr.addScheduler(task35.ID, mockScheduler35)
+	require.True(t, mgr.hasScheduler(35))
+	require.Len(t, mgr.getSchedulers(), 5)
+	require.True(t, ordered(mgr.getSchedulers()))
+}
+
 func TestGetEligibleNodes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
