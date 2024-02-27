@@ -145,7 +145,7 @@ func TestSplitBatchCreateTable(t *testing.T) {
 
 	// keep/reused table id verification
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(1)"))
 	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return false
 	}))
@@ -184,7 +184,7 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_3'").
 		Check(testkit.Rows("1236"))
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
 
 // batch create table with table id reused
@@ -213,14 +213,14 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 	sctx := tk.Session()
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(0)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(0)"))
 	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return true
 	}))
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 	require.True(t, kv.ErrEntryTooLarge.Equal(err))
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
 
 func TestBRIECreateDatabase(t *testing.T) {
