@@ -32,7 +32,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager, ctrl *gomock.Controller) *BaseScheduler {
+func createScheduler(task *proto.Task, taskMgr TaskManager) *BaseScheduler {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler")
 	nodeMgr := NewNodeManager()
@@ -56,7 +56,7 @@ func TestSchedulerOnNextStage(t *testing.T) {
 		},
 	}
 	cloneTask := task
-	sch := createScheduler(&cloneTask, true, taskMgr, ctrl)
+	sch := createScheduler(&cloneTask, taskMgr)
 	schExt := mockScheduler.NewMockExtension(ctrl)
 	sch.Extension = schExt
 
@@ -202,7 +202,7 @@ func TestTaskStateTransition(t *testing.T) {
 		},
 	}
 	cloneTask := task
-	sch := createScheduler(&cloneTask, true, taskMgr, ctrl)
+	sch := createScheduler(&cloneTask, taskMgr)
 	schExt := mockScheduler.NewMockExtension(ctrl)
 	schExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{"node1"}, nil).AnyTimes()
@@ -251,7 +251,7 @@ func TestTaskStateTransition(t *testing.T) {
 
 	// pending->running->reverting->reverted.
 	cloneTask = task
-	sch = createScheduler(&cloneTask, true, taskMgr, ctrl)
+	sch = createScheduler(&cloneTask, taskMgr)
 	sch.Extension = schExt
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
 		return &cloneTask, nil
@@ -282,7 +282,7 @@ func TestTaskStateTransition(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 	// pending->running->pausing->paused.
 	cloneTask = task
-	sch = createScheduler(&cloneTask, true, taskMgr, ctrl)
+	sch = createScheduler(&cloneTask, taskMgr)
 	sch.Extension = schExt
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
 		return &cloneTask, nil
@@ -307,7 +307,7 @@ func TestTaskStateTransition(t *testing.T) {
 
 	// pending->running->cancelling->reverting->reverted.
 	cloneTask = task
-	sch = createScheduler(&cloneTask, true, taskMgr, ctrl)
+	sch = createScheduler(&cloneTask, taskMgr)
 	sch.Extension = schExt
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
 		return &cloneTask, nil
@@ -337,7 +337,7 @@ func TestTaskStateTransition(t *testing.T) {
 
 	// pending->pausing->paused.
 	cloneTask = task
-	sch = createScheduler(&cloneTask, true, taskMgr, ctrl)
+	sch = createScheduler(&cloneTask, taskMgr)
 	sch.Extension = schExt
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
 		cloneTask.State = proto.TaskStatePausing
@@ -400,7 +400,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 		},
 	}
 	cloneTask := task
-	sch := createScheduler(&cloneTask, false, taskMgr, ctrl)
+	sch := createScheduler(&cloneTask, taskMgr)
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
 		cloneTask.State = proto.TaskStateResuming
 		return &cloneTask, nil
@@ -410,7 +410,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 	// scheduler not allocated slots, task from paused to running. Should exit the scheduler.
 	task.State = proto.TaskStatePaused
 	cloneTask = task
-	sch = createScheduler(&cloneTask, false, taskMgr, ctrl)
+	sch = createScheduler(&cloneTask, taskMgr)
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
 		cloneTask.State = proto.TaskStateRunning
 		return &cloneTask, nil
@@ -421,7 +421,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 	task.State = proto.TaskStateReverting
 	cloneTask = task
 
-	sch = createScheduler(&cloneTask, false, taskMgr, ctrl)
+	sch = createScheduler(&cloneTask, taskMgr)
 	schExt := mockScheduler.NewMockExtension(ctrl)
 	sch.Extension = schExt
 	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
@@ -441,7 +441,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 
 	task.State = proto.TaskStatePausing
 	cloneTask = task
-	sch = createScheduler(&cloneTask, false, taskMgr, ctrl)
+	sch = createScheduler(&cloneTask, taskMgr)
 	schExt = mockScheduler.NewMockExtension(ctrl)
 	sch.Extension = schExt
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
