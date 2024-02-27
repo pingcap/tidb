@@ -30,6 +30,7 @@ type testData struct {
 }
 
 func TestCalculateWeight(t *testing.T) {
+	// Note: all group are sorted by weight in ascending order.
 	pc := NewPriorityCalculator()
 	// Only focus on change percentage. Bigger change percentage, higher weight.
 	changePercentageGroup := []testData{
