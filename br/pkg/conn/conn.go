@@ -176,7 +176,10 @@ func NewMgr(
 	}
 
 	// Disable GC because TiDB enables GC already.
-	path := fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", pdAddrs, config.GetGlobalKeyspaceName())
+	path := fmt.Sprintf(
+		"tikv://%s?disableGC=true&keyspaceName=%s",
+		strings.Join(pdAddrs, ","), config.GetGlobalKeyspaceName(),
+	)
 	storage, err := g.Open(path, securityOption)
 	if err != nil {
 		return nil, errors.Trace(err)
