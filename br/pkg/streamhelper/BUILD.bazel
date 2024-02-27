@@ -67,7 +67,7 @@ go_test(
         "subscription_test.go",
     ],
     flaky = True,
-    shard_count = 21,
+    shard_count = 22,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
