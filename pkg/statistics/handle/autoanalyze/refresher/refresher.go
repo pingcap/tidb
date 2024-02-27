@@ -117,7 +117,7 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 		func(sctx sessionctx.Context) error {
 			parameters := exec.GetAutoAnalyzeParameters(sctx)
 			autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-			calculator := priorityqueue.NewPriorityCalculator(autoAnalyzeRatio)
+			calculator := priorityqueue.NewPriorityCalculator()
 			pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 			// Query locked tables once to minimize overhead.
