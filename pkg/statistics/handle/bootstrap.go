@@ -164,7 +164,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		table, ok := cache.Get(tblID)
-		table = table.Copy()
 		if !ok {
 			continue
 		}
