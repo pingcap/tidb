@@ -402,8 +402,12 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 }
 
 func TestCalculateIndicatorsForPartitions(t *testing.T) {
-	currentTs := oracle.ComposeTS((time.Hour.Nanoseconds()+time.Second.Nanoseconds())*1000, 0)
-
+	// 2024-01-01 10:00:00
+	currentTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	currentTs := oracle.GoTimeToTS(currentTime)
+	// 2023-12-31 10:00:00
+	lastUpdateTime := time.Date(2023, 12, 31, 10, 0, 0, 0, time.UTC)
+	lastUpdateTs := oracle.GoTimeToTS(lastUpdateTime)
 	tests := []struct {
 		name                       string
 		tblInfo                    *model.TableInfo
@@ -441,14 +445,12 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Pseudo:        false,
 						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
 					},
-					Version: currentTs,
 				},
 				2: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
 						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
 					},
-					Version: currentTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -465,7 +467,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			currentTs:                  currentTs,
 			wantAvgChangePercentage:    1,
 			wantAvgSize:                2002,
-			wantAvgLastAnalyzeDuration: 0,
+			wantAvgLastAnalyzeDuration: 1800 * time.Second,
 			wantPartitions:             []string{"p0", "p1"},
 		},
 		{
@@ -496,9 +498,15 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Columns: map[int64]*statistics.Column{
 							1: {
 								StatsVer: 2,
+								Histogram: statistics.Histogram{
+									LastUpdateVersion: lastUpdateTs,
+								},
 							},
 							2: {
 								StatsVer: 2,
+								Histogram: statistics.Histogram{
+									LastUpdateVersion: lastUpdateTs,
+								},
 							},
 						},
 					},
@@ -512,9 +520,15 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Columns: map[int64]*statistics.Column{
 							1: {
 								StatsVer: 2,
+								Histogram: statistics.Histogram{
+									LastUpdateVersion: lastUpdateTs,
+								},
 							},
 							2: {
 								StatsVer: 2,
+								Histogram: statistics.Histogram{
+									LastUpdateVersion: lastUpdateTs,
+								},
 							},
 						},
 					},
@@ -535,7 +549,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			currentTs:                  currentTs,
 			wantAvgChangePercentage:    2,
 			wantAvgSize:                2002,
-			wantAvgLastAnalyzeDuration: 0,
+			wantAvgLastAnalyzeDuration: 24 * time.Hour,
 			wantPartitions:             []string{"p0"},
 		},
 		{
@@ -566,9 +580,15 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Columns: map[int64]*statistics.Column{
 							1: {
 								StatsVer: 2,
+								Histogram: statistics.Histogram{
+									LastUpdateVersion: lastUpdateTs,
+								},
 							},
 							2: {
 								StatsVer: 2,
+								Histogram: statistics.Histogram{
+									LastUpdateVersion: lastUpdateTs,
+								},
 							},
 						},
 					},
@@ -582,9 +602,15 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Columns: map[int64]*statistics.Column{
 							1: {
 								StatsVer: 2,
+								Histogram: statistics.Histogram{
+									LastUpdateVersion: lastUpdateTs,
+								},
 							},
 							2: {
 								StatsVer: 2,
+								Histogram: statistics.Histogram{
+									LastUpdateVersion: lastUpdateTs,
+								},
 							},
 						},
 					},
