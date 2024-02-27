@@ -96,9 +96,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
 	require.NoError(t, err)
 	ti, err := importer.NewTableImporterForTest(
-		&importer.JobImportParam{
-			GroupCtx: ctx,
-		},
+		ctx,
 		controller,
 		"11",
 		store,
