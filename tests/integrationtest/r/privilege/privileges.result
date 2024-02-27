@@ -611,18 +611,6 @@ admin show ddl jobs;
 Error 8121 (HY000): privilege check for 'Super' fail
 admin show ddl job queries 10;
 Error 8121 (HY000): privilege check for 'Super' fail
-admin reload expr_pushdown_blacklist;
-Error 8121 (HY000): privilege check for 'Super' fail
-admin plugins enable p;
-Error 8121 (HY000): privilege check for 'Super' fail
-admin plugins disable p;
-Error 8121 (HY000): privilege check for 'Super' fail
-ADMIN FLUSH bindings;
-Error 8121 (HY000): privilege check for 'Super' fail
-ADMIN CAPTURE bindings;
-Error 8121 (HY000): privilege check for 'Super' fail
-ADMIN RELOAD bindings;
-Error 8121 (HY000): privilege check for 'Super' fail
 ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
 Error 8121 (HY000): privilege check for 'Super' fail
 ADMIN SHOW SLOW RECENT 3;

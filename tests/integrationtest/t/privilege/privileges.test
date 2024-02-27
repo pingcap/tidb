@@ -836,18 +836,6 @@ admin show ddl jobs;
 -- error 8121
 admin show ddl job queries 10;
 -- error 8121
-admin reload expr_pushdown_blacklist;
--- error 8121
-admin plugins enable p;
--- error 8121
-admin plugins disable p;
--- error 8121
-ADMIN FLUSH bindings;
--- error 8121
-ADMIN CAPTURE bindings;
--- error 8121
-ADMIN RELOAD bindings;
--- error 8121
 ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
 -- error 8121
 ADMIN SHOW SLOW RECENT 3;
