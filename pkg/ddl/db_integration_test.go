@@ -1661,17 +1661,17 @@ func TestDefaultColumnWithDateFormat(t *testing.T) {
 	tk.MustQuery("show create table t0").Check(testkit.Rows(
 		"t0 CREATE TABLE `t0` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4''%Y-%m'')\n" +
+			"  `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4'%Y-%m')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
 		"t1 CREATE TABLE `t1` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` datetime DEFAULT date_format(now(), _utf8mb4''%Y-%m-%d'')\n" +
+			"  `c1` datetime DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4''%Y-%m-%d %H.%i.%s'')\n" +
+			"  `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H.%i.%s')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t0 modify column c1 varchar(30) default 'xx';")
 	tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
@@ -1691,7 +1691,7 @@ func TestDefaultColumnWithDateFormat(t *testing.T) {
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
 		"t1 CREATE TABLE `t1` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` datetime DEFAULT date_format(now(), _utf8mb4''%Y-%m-%d'')\n" +
+			"  `c1` datetime DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
