@@ -154,6 +154,7 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
+		Args:       []any{true},
 	}
 }
 
