@@ -190,7 +190,7 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 
 // waitTask waits for the task to finish.
 // NOTE: WaitTaskDoneOrPaused also return error when task fails.
-func (e *ImportIntoExec) waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
+func (*ImportIntoExec) waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
 	err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
 	// when user KILL the connection, the ctx will be canceled, we need to cancel the import job.
 	if errors.Cause(err) == context.Canceled {
