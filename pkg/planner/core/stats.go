@@ -1075,8 +1075,9 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 		return
 	}
 
-	tableStats := getStatsTable(ctx, tblInfo, pid)
-	name, _ := getTblInfoForUsedStatsByPhysicalID(ctx, pid)
+	pctx := ctx.GetPlanCtx()
+	tableStats := getStatsTable(pctx, tblInfo, pid)
+	name, _ := getTblInfoForUsedStatsByPhysicalID(pctx, pid)
 	usedStats := &stmtctx.UsedStatsInfoForTable{
 		Name:          name,
 		TblInfo:       tblInfo,

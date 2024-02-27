@@ -202,7 +202,7 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 		newRowID := en.AutoIDFn(rowID)
 		value = types.NewIntDatum(newRowID)
 		record = append(record, value)
-		alloc := en.Table.Allocators(en.SessionCtx.GetSessionVars()).Get(autoid.RowIDAllocType)
+		alloc := en.Table.Allocators(en.SessionCtx.GetTableCtx()).Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}

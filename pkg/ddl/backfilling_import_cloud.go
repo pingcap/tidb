@@ -32,7 +32,6 @@ import (
 type cloudImportExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	job           *model.Job
-	jobID         int64
 	index         *model.IndexInfo
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
@@ -41,15 +40,17 @@ type cloudImportExecutor struct {
 
 func newCloudImportExecutor(
 	job *model.Job,
-	jobID int64,
 	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bc ingest.BackendCtx,
+	bcGetter func() (ingest.BackendCtx, error),
 	cloudStoreURI string,
 ) (*cloudImportExecutor, error) {
+	bc, err := bcGetter()
+	if err != nil {
+		return nil, err
+	}
 	return &cloudImportExecutor{
 		job:           job,
-		jobID:         jobID,
 		index:         index,
 		ptbl:          ptbl,
 		bc:            bc,
@@ -101,8 +102,10 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return err
 }
 
-func (*cloudImportExecutor) Cleanup(ctx context.Context) error {
+func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
+	// cleanup backend context
+	ingest.LitBackCtxMgr.Unregister(m.job.ID)
 	return nil
 }
 

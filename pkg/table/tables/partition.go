@@ -1574,7 +1574,7 @@ func checkConstraintForExchangePartition(sctx table.MutateContext, row []types.D
 		}
 	}
 	type CheckConstraintTable interface {
-		CheckRowConstraint(ctx expression.EvalContext, rowToCheck []types.Datum) error
+		CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error
 	}
 	cc, ok := nt.(CheckConstraintTable)
 	if !ok {
@@ -1594,7 +1594,7 @@ func (t *partitionedTable) AddRecord(ctx table.MutateContext, r []types.Datum, o
 }
 
 func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
-	pid, err := t.locatePartition(ctx, r)
+	pid, err := t.locatePartition(ctx.GetExprCtx(), r)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1625,7 +1625,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r [
 	}
 	if _, ok := t.reorganizePartitions[pid]; ok {
 		// Double write to the ongoing reorganized partition
-		pid, err = t.locateReorgPartition(ctx, r)
+		pid, err = t.locateReorgPartition(ctx.GetExprCtx(), r)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1672,7 +1672,8 @@ func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
-	pid, err := t.locatePartition(ctx, r)
+	ectx := ctx.GetExprCtx()
+	pid, err := t.locatePartition(ectx, r)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1684,7 +1685,7 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 	}
 
 	if _, ok := t.reorganizePartitions[pid]; ok {
-		pid, err = t.locateReorgPartition(ctx, r)
+		pid, err = t.locateReorgPartition(ectx, r)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1720,11 +1721,12 @@ func (t *partitionTableWithGivenSets) UpdateRecord(ctx context.Context, sctx tab
 }
 
 func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
-	from, err := t.locatePartition(ctx, currData)
+	ectx := ctx.GetExprCtx()
+	from, err := t.locatePartition(ectx, currData)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	to, err := t.locatePartition(ctx, newData)
+	to, err := t.locatePartition(ectx, newData)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1769,14 +1771,14 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 		newTo, newFrom := int64(0), int64(0)
 		if _, ok := t.reorganizePartitions[to]; ok {
-			newTo, err = t.locateReorgPartition(ctx, newData)
+			newTo, err = t.locateReorgPartition(ectx, newData)
 			// There might be valid cases when errors should be accepted?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 		if _, ok := t.reorganizePartitions[from]; ok {
-			newFrom, err = t.locateReorgPartition(ctx, currData)
+			newFrom, err = t.locateReorgPartition(ectx, currData)
 			// There might be valid cases when errors should be accepted?
 			if err != nil {
 				return errors.Trace(err)
@@ -1812,11 +1814,11 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 	if _, ok := t.reorganizePartitions[to]; ok {
 		// Even if to == from, in the reorganized partitions they may differ
 		// like in case of a split
-		newTo, err := t.locateReorgPartition(ctx, newData)
+		newTo, err := t.locateReorgPartition(ectx, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		newFrom, err := t.locateReorgPartition(ctx, currData)
+		newFrom, err := t.locateReorgPartition(ectx, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}

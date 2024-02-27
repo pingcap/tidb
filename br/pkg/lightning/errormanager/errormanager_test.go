@@ -256,15 +256,16 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		types.NewIntDatum(4),
 		types.NewStringDatum("5.csv"),
 	}
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	_, err = encoder.Table.AddRecord(tctx, data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	_, err = encoder.Table.AddRecord(tctx, data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data4)
+	_, err = encoder.Table.AddRecord(tctx, data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data5)
+	_, err = encoder.Table.AddRecord(tctx, data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -447,15 +448,16 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		types.NewIntDatum(4),
 		types.NewStringDatum("5.csv"),
 	}
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	_, err = encoder.Table.AddRecord(tctx, data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	_, err = encoder.Table.AddRecord(tctx, data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data4)
+	_, err = encoder.Table.AddRecord(tctx, data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data5)
+	_, err = encoder.Table.AddRecord(tctx, data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 

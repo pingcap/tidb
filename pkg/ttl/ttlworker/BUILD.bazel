@@ -82,7 +82,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics/handle/autoanalyze",
+        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/timer/api",

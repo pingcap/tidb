@@ -118,19 +118,20 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(7),
 	}
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	_, err = encoder.Table.AddRecord(tctx, data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	_, err = encoder.Table.AddRecord(tctx, data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data4)
+	_, err = encoder.Table.AddRecord(tctx, data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data5)
+	_, err = encoder.Table.AddRecord(tctx, data5)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data6)
+	_, err = encoder.Table.AddRecord(tctx, data6)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data7)
+	_, err = encoder.Table.AddRecord(tctx, data7)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -309,15 +310,16 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	_, err = encoder.Table.AddRecord(tctx, data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	_, err = encoder.Table.AddRecord(tctx, data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data4)
+	_, err = encoder.Table.AddRecord(tctx, data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data5)
+	_, err = encoder.Table.AddRecord(tctx, data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -461,15 +463,16 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	_, err = encoder.Table.AddRecord(tctx, data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	_, err = encoder.Table.AddRecord(tctx, data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data4)
+	_, err = encoder.Table.AddRecord(tctx, data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data5)
+	_, err = encoder.Table.AddRecord(tctx, data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -661,15 +664,16 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	_, err = encoder.Table.AddRecord(tctx, data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	_, err = encoder.Table.AddRecord(tctx, data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data4)
+	_, err = encoder.Table.AddRecord(tctx, data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data5)
+	_, err = encoder.Table.AddRecord(tctx, data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -805,6 +809,95 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(21), fnGetLatestCount.Load())
 	require.Equal(t, int32(5), fnDeleteKeyCount.Load())
+	err = mockDB.ExpectationsWereMet()
+	require.NoError(t, err)
+}
+
+func TestResolveConflictKeysError(t *testing.T) {
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table a (a varchar(20) primary key clustered, b int not null, c text, key uni_b(b));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(6),
+		types.NewStringDatum("1.csv"),
+		types.NewIntDatum(1),
+	}
+	data2 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(6),
+		types.NewStringDatum("2.csv"),
+		types.NewIntDatum(2),
+	}
+	data3 := []types.Datum{
+		types.NewIntDatum(3),
+		types.NewIntDatum(3),
+		types.NewStringDatum("3.csv"),
+		types.NewIntDatum(3),
+	}
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(tctx, data2)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(tctx, data3)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	data1RowKey := kvPairs.Pairs[0].Key
+	data1RowValue := kvPairs.Pairs[0].Val
+
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectQuery("\\QSELECT COUNT(*) FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"COUNT(*)"}).
+			AddRow(2))
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_row FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
+			AddRow(data1RowKey, data1RowValue))
+
+	cfg := config.NewConfig()
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgErr
+	cfg.App.TaskInfoSchemaName = "lightning_task_info"
+	em := errormanager.New(db, cfg, log.L())
+	err = em.Init(ctx)
+	require.NoError(t, err)
+
+	err = em.ResolveConflictKeysError(
+		ctx, "a",
+	)
+	require.Error(t, err, common.ErrFoundDuplicateKeys)
 	err = mockDB.ExpectationsWereMet()
 	require.NoError(t, err)
 }

@@ -83,7 +83,6 @@ go_test(
         "planner_test.go",
         "scheduler_test.go",
         "scheduler_testkit_test.go",
-        "subtask_executor_test.go",
         "task_executor_test.go",
         "task_executor_testkit_test.go",
         "wrapper_test.go",

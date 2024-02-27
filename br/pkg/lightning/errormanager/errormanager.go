@@ -553,7 +553,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				// for nonclustered PK, need to append handle to decodedData for AddRecord
 				decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
 			}
-			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -662,7 +662,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						// for nonclustered PK, need to append handle to decodedData for AddRecord
 						decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 					}
-					_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+					_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -691,7 +691,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				// for nonclustered PK, need to append handle to decodedData for AddRecord
 				decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 			}
-			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
 			if err != nil {
 				return errors.Trace(err)
 			}

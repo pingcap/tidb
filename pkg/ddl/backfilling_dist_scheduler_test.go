@@ -258,7 +258,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
-		Step: proto.StepInit,
+		TaskBase: proto.TaskBase{Step: proto.StepInit},
 	}
 	ext := &ddl.BackfillingSchedulerExt{}
 
@@ -313,10 +313,12 @@ func createAddIndexTask(t *testing.T,
 	require.NoError(t, err)
 
 	task := &proto.Task{
-		ID:              time.Now().UnixMicro(),
-		Type:            taskType,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
+		TaskBase: proto.TaskBase{
+			ID:    time.Now().UnixMicro(),
+			Type:  taskType,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),
 		StateUpdateTime: time.Now(),

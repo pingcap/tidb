@@ -72,7 +72,7 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
 		key, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
+		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
 		val, err := txn.Get(context.Background(), key)
 		require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
 		key, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
+		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
 		val, err := txn.Get(context.Background(), key)
 		require.NoError(t, err)
