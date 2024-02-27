@@ -643,7 +643,7 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 			return errors.Trace(err)
 		}
 
-		return common.ErrFoundDataConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData)
+		return errors.Trace(common.ErrFoundDataConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData))
 	}
 
 	// for index KV
@@ -664,7 +664,7 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 	if err != nil {
 		tidblogutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
 			zap.String("key", hex.EncodeToString(rawKey)), zap.String("value", hex.EncodeToString(rawValue)), zap.Error(err))
-		return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue)
+		return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue))
 	}
 	valueStr := make([]string, 0, idxColLen)
 	for i, val := range values[:idxColLen] {
@@ -672,7 +672,7 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 		if err != nil {
 			tidblogutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
 				zap.String("key", hex.EncodeToString(rawKey)), zap.String("value", hex.EncodeToString(rawValue)), zap.Error(err))
-			return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue)
+			return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, rawKey, rawValue))
 		}
 		str, err := d.ToString()
 		if err != nil {
@@ -684,7 +684,7 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 		valueStr = append(valueStr, str)
 	}
 
-	return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, idxValues[0], valueStr[0])
+	return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, idxValues[0], valueStr[0]))
 }
 
 // GetIndexInfoByIndexID get index info from table.Table
