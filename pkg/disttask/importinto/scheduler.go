@@ -140,7 +140,7 @@ type ImportSchedulerExt struct {
 	currTaskID            atomic.Int64
 	disableTiKVImportMode atomic.Bool
 
-	store kv.Storage
+	storeWithPD kv.StorageWithPD
 }
 
 var _ scheduler.Extension = (*ImportSchedulerExt)(nil)
@@ -188,7 +188,7 @@ func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.T
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.store.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToImportMode(ctx)
@@ -401,7 +401,7 @@ func (sch *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
-	pdHTTPCli := sch.store.(kv.StorageWithPD).GetPDHTTPClient()
+	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
 	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
 
 	switcher.ToNormalMode(ctx)
@@ -422,7 +422,7 @@ func (sch *ImportSchedulerExt) updateCurrentTask(task *proto.Task) {
 
 type importScheduler struct {
 	*scheduler.BaseScheduler
-	store kv.Storage
+	storeWithPD kv.StorageWithPD
 }
 
 // NewImportScheduler creates a new import scheduler.
@@ -430,13 +430,13 @@ func NewImportScheduler(
 	ctx context.Context,
 	task *proto.Task,
 	param scheduler.Param,
-	store kv.Storage,
+	storeWithPD kv.StorageWithPD,
 ) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
-		store:         store,
+		storeWithPD:   storeWithPD,
 	}
 	return &sch
 }
@@ -454,8 +454,8 @@ func (sch *importScheduler) Init() (err error) {
 	}
 
 	sch.BaseScheduler.Extension = &ImportSchedulerExt{
-		GlobalSort: taskMeta.Plan.CloudStorageURI != "",
-		store:      sch.store,
+		GlobalSort:  taskMeta.Plan.CloudStorageURI != "",
+		storeWithPD: sch.storeWithPD,
 	}
 	return sch.BaseScheduler.Init()
 }

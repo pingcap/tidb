@@ -3308,7 +3308,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	scheduler.RegisterSchedulerFactory(
 		proto.ImportInto,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
-			return importinto.NewImportScheduler(ctx, task, param, store)
+			return importinto.NewImportScheduler(ctx, task, param, store.(kv.StorageWithPD))
 		},
 	)
 	taskexecutor.RegisterTaskType(
