@@ -750,3 +750,11 @@ id	estRows	task	access object	operator info
 TableReader	10.00	root		data:Selection
 └─Selection	10.00	cop[tikv]		eq(list_partition_pruning.t.col, "LINPIN")
   └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p4	keep order:false, stats:pseudo
+insert into t values('1'), ('f3NKs');
+select col from t where col='1';
+col
+1
+select col from t where col='f3NKs';
+col
+f3NKs
+drop table t;

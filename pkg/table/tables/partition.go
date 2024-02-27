@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -303,10 +302,6 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 		if val.Kind() == types.KindNull {
 			h.Write([]byte{0})
 		} else {
-			if val.Collation() != charset.CollationBin {
-				val.SetCollation(charset.CollationBin)
-			}
-
 			data, err := val.ToHashKey()
 			if err != nil {
 				return 0, err
