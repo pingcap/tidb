@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1308,10 +1309,12 @@ func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		} else if err != nil {
+			logutil.BgLogger().Error("unexpected error", zap.Error(err))
 			return err
 		}
-		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ownerID)
+		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ddl.DDLOwnerKey)
 		if err != nil {
+			logutil.BgLogger().Error("unexpected error", zap.Error(err), zap.String("ownerID", ownerID))
 			return err
 		}
 		time.Sleep(50 * time.Millisecond)
