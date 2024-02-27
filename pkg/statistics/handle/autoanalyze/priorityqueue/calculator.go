@@ -60,7 +60,7 @@ func (pc *PriorityCalculator) CalculateWeight(job *TableAnalysisJob) float64 {
 }
 
 func (*PriorityCalculator) getSpecialEvent(job *TableAnalysisJob) float64 {
-	if len(job.PartitionIndexes) > 0 || len(job.Indexes) > 0 {
+	if job.HasNewlyAddedIndex() {
 		return eventNewIndex
 	}
 
