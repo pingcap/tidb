@@ -9,8 +9,8 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 // Range represents a backup response.
@@ -220,7 +220,6 @@ func (rangeTree *RangeTree) MergedRanges(splitSizeBytes, splitKeyCount uint64) [
 		} else {
 			// need to merge from rg to sortedRages[mergeTargetIndex]
 			sortedRanges[mergeTargetIndex].EndKey = rg.EndKey
-			sortedRanges[mergeTargetIndex].Size += rg.Size
 			sortedRanges[mergeTargetIndex].Files = append(sortedRanges[mergeTargetIndex].Files, rg.Files...)
 		}
 

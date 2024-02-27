@@ -11,8 +11,8 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/redact",
-        "//pkg/kv",
-        "//pkg/tablecodec",
+        "//kv",
+        "//tablecodec",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
@@ -35,13 +35,9 @@ go_test(
     shard_count = 4,
     deps = [
         ":rtree",
-<<<<<<< HEAD
+        "//kv",
+        "//tablecodec",
         "//testkit/testsetup",
-=======
-        "//pkg/kv",
-        "//pkg/tablecodec",
-        "//pkg/testkit/testsetup",
->>>>>>> 7cdab1935df (br: merge range in lightweight when snapshot restore (#50648))
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

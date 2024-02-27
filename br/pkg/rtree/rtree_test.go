@@ -8,8 +8,8 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -202,7 +202,6 @@ func TestRangeTreeMerge(t *testing.T) {
 					TotalBytes: 1,
 				},
 			},
-			Size: i,
 		}
 		rangeTree.Update(item)
 	}
@@ -211,7 +210,6 @@ func TestRangeTreeMerge(t *testing.T) {
 	for i, rg := range sortedRanges {
 		require.Equal(t, encodeTableRecord(tablePrefix, uint64(i)*10), rg.StartKey)
 		require.Equal(t, encodeTableRecord(tablePrefix, uint64(i+1)*10), rg.EndKey)
-		require.Equal(t, uint64(i*10*10+45), rg.Size)
 		require.Equal(t, 10, len(rg.Files))
 		for j, file := range rg.Files {
 			require.Equal(t, fmt.Sprintf("%20d", i*10+j), file.Name)
