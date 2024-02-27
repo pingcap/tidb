@@ -87,6 +87,7 @@ func (d *DataInDiskByChunks) Add(chk *Chunk) (err error) {
 	if err := injectChunkInDiskRandomError(); err != nil {
 		return err
 	}
+
 	if chk.NumRows() == 0 {
 		return errors2.New("Chunk spilled to disk should have at least 1 row")
 	}
