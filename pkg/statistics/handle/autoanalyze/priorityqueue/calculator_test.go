@@ -26,7 +26,6 @@ type testData struct {
 	ChangePercentage     float64
 	TableSize            float64
 	LastAnalysisDuration time.Duration
-	hasNewIndex          bool
 }
 
 func TestCalculateWeight(t *testing.T) {
@@ -38,19 +37,16 @@ func TestCalculateWeight(t *testing.T) {
 			ChangePercentage:     0.6,
 			TableSize:            1000,
 			LastAnalysisDuration: time.Hour,
-			hasNewIndex:          true,
 		},
 		{
 			ChangePercentage:     1,
 			TableSize:            1000,
 			LastAnalysisDuration: time.Hour,
-			hasNewIndex:          true,
 		},
 		{
 			ChangePercentage:     10,
 			TableSize:            1000,
 			LastAnalysisDuration: time.Hour,
-			hasNewIndex:          true,
 		},
 	}
 	testWeightCalculation(t, pc, changePercentageGroup)
@@ -60,19 +56,16 @@ func TestCalculateWeight(t *testing.T) {
 			ChangePercentage:     0.6,
 			TableSize:            100000,
 			LastAnalysisDuration: time.Hour,
-			hasNewIndex:          true,
 		},
 		{
 			ChangePercentage:     0.6,
 			TableSize:            10000,
 			LastAnalysisDuration: time.Hour,
-			hasNewIndex:          true,
 		},
 		{
 			ChangePercentage:     0.6,
 			TableSize:            1000,
 			LastAnalysisDuration: time.Hour,
-			hasNewIndex:          true,
 		},
 	}
 	testWeightCalculation(t, pc, tableSizeGroup)
@@ -82,19 +75,16 @@ func TestCalculateWeight(t *testing.T) {
 			ChangePercentage:     0.6,
 			TableSize:            1000,
 			LastAnalysisDuration: time.Hour,
-			hasNewIndex:          true,
 		},
 		{
 			ChangePercentage:     0.6,
 			TableSize:            1000,
 			LastAnalysisDuration: time.Hour * 12,
-			hasNewIndex:          true,
 		},
 		{
 			ChangePercentage:     0.6,
 			TableSize:            1000,
 			LastAnalysisDuration: time.Hour * 24,
-			hasNewIndex:          true,
 		},
 	}
 	testWeightCalculation(t, pc, lastAnalysisDurationGroup)
@@ -104,13 +94,11 @@ func TestCalculateWeight(t *testing.T) {
 			ChangePercentage:     0.5,
 			TableSize:            1000,
 			LastAnalysisDuration: 2 * time.Hour,
-			hasNewIndex:          true,
 		},
 		{
 			ChangePercentage:     1,
 			TableSize:            1000,
 			LastAnalysisDuration: 10 * time.Minute,
-			hasNewIndex:          true,
 		},
 	}
 	testWeightCalculation(t, pc, justBeingAnalyzedGroup)
@@ -126,10 +114,8 @@ func testWeightCalculation(t *testing.T, pc *PriorityCalculator, group []testDat
 			TableSize:            tc.TableSize,
 			LastAnalysisDuration: tc.LastAnalysisDuration,
 		}
-		if tc.hasNewIndex {
-			job.Indexes = []string{"index1"}
-		}
 		weight := pc.CalculateWeight(job)
+		require.Greater(t, weight, 0.0)
 		require.Greater(t, weight, prevWeight)
 		prevWeight = weight
 	}
