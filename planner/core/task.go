@@ -2155,6 +2155,12 @@ func RemoveUnnecessaryFirstRow(
 					// the firstrow in root task can not be removed.
 					break
 				}
+				// Skip if it's a constant.
+				// For SELECT DISTINCT SQRT(1) FROM t.
+				// We shouldn't remove the firstrow(SQRT(1)).
+				if _, ok := gbyExpr.(*expression.Constant); ok {
+					continue
+				}
 				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {
 					canOptimize = true
 					firstRowFuncMap[aggFunc].Args[0] = finalGbyItems[j]

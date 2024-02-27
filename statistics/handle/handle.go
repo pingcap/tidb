@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -636,6 +637,15 @@ func (h *Handle) UpdateSessionVar() error {
 		return err
 	}
 	h.mu.ctx.GetSessionVars().AnalyzeVersion = int(ver)
+	verInString, err = h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMergePartitionStatsConcurrency)
+	if err != nil {
+		return err
+	}
+	ver2, err := strconv.ParseInt(verInString, 10, 64)
+	if err != nil {
+		return err
+	}
+	h.mu.ctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver2)
 	return err
 }
 
@@ -838,6 +848,9 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 func mergeGlobalStatsTopN(sc sessionctx.Context, wrapper *statistics.StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
+		return nil, nil, wrapper.AllHg, nil
+	}
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
 	killed := &sc.GetSessionVars().Killed
 	// use original method if concurrency equals 1 or for version1
@@ -877,10 +890,10 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 	taskNum := len(tasks)
 	taskCh := make(chan *statistics.TopnStatsMergeTask, taskNum)
 	respCh := make(chan *statistics.TopnStatsMergeResponse, taskNum)
+	worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 		wg.Run(func() {
-			worker.Run(timeZone, isIndex, n, version)
+			worker.Run(timeZone, isIndex, version)
 		})
 	}
 	for _, task := range tasks {
@@ -906,17 +919,16 @@ func MergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchSize int, wra
 	}
 
 	// fetch the response from each worker and merge them into global topn stats
-	sorted := make([]statistics.TopNMeta, 0, mergeConcurrency)
-	leftTopn := make([]statistics.TopNMeta, 0)
-	for _, resp := range resps {
-		if resp.TopN != nil {
-			sorted = append(sorted, resp.TopN.TopN...)
-		}
-		leftTopn = append(leftTopn, resp.PopedTopn...)
+	counter := worker.Result()
+	numTop := len(counter)
+	sorted := make([]statistics.TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
 	}
 
 	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-	return globalTopN, statistics.SortTopnMeta(append(leftTopn, popedTopn...)), wrapper.AllHg, nil
+	return globalTopN, popedTopn, wrapper.AllHg, nil
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {

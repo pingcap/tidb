@@ -129,3 +129,27 @@ func CompareDuration(x, y time.Duration) int {
 
 	return 1
 }
+
+// CompareInt return an integer comparing the integer x to y with signed or unsigned.
+func CompareInt(arg0 int64, isUnsigned0 bool, arg1 int64, isUnsigned1 bool) int {
+	var res int
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		res = compareUint64(uint64(arg0), uint64(arg1))
+	case isUnsigned0 && !isUnsigned1:
+		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
+			res = 1
+		} else {
+			res = CompareInt64(arg0, arg1)
+		}
+	case !isUnsigned0 && isUnsigned1:
+		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
+			res = -1
+		} else {
+			res = CompareInt64(arg0, arg1)
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		res = CompareInt64(arg0, arg1)
+	}
+	return res
+}

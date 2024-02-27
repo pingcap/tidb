@@ -406,11 +406,11 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 		If(clientv3.Compare(clientv3.ModRevision(ownerKey), "=", modRevision)).
 		Then(clientv3.OpPut(ownerKey, string(newOwnerVal), leaseOp)).
 		Commit()
-	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
-		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Bool("isSuc", resp.Succeeded), zap.Error(err))
-	if !resp.Succeeded {
+	if err == nil && !resp.Succeeded {
 		err = errors.New("put owner key failed, cmp is false")
 	}
+	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
+		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Error(err))
 	metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.PutValue+"_"+metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
