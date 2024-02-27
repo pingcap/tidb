@@ -967,21 +967,12 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-<<<<<<< HEAD
-github.com/tikv/client-go/v2 v2.0.8-0.20231211100325-d44bb7f9cb9e h1:MuTNChL77sMvCvtOuGhuU/u1YBaSDPfqnO6roUCKwOA=
-github.com/tikv/client-go/v2 v2.0.8-0.20231211100325-d44bb7f9cb9e/go.mod h1:45NuHB8x+VAoztMIjF6hEgXvPQXhXWPfMxDg0N8CoRY=
+github.com/tikv/client-go/v2 v2.0.8-0.20240227133143-d5ccdf66f80c h1:7jGKpdA+Amwe8J5XyRI9gjrBNxmqsqE9z/2MBn132x4=
+github.com/tikv/client-go/v2 v2.0.8-0.20240227133143-d5ccdf66f80c/go.mod h1:45NuHB8x+VAoztMIjF6hEgXvPQXhXWPfMxDg0N8CoRY=
 github.com/tikv/pd/client v0.0.0-20231211083919-fe6fd1721aa6 h1:BBwUZAaBl7DKdyaduOxXqias4xCtdDgIAGsDBuri3lg=
 github.com/tikv/pd/client v0.0.0-20231211083919-fe6fd1721aa6/go.mod h1:8XEP9aqUvvc9guWJZ7vo0av0H6QsJtjIrOmLAQlL2Jo=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e/go.mod h1:27bSVNWSBOHm+qRp1T9qzaIpsWEP6TbUnei/43HK+PQ=
-=======
-github.com/tikv/client-go/v2 v2.0.8-0.20240202121323-8b3b01e8d770 h1:+ISGAm7M0T4SrK1nrkZI9nWmhe62XR48eTh898vKvFM=
-github.com/tikv/client-go/v2 v2.0.8-0.20240202121323-8b3b01e8d770/go.mod h1:jZLZhtui1Po+x616K7jxVAMe+aQfAuWqUZluRdO75Kc=
-github.com/tikv/pd/client v0.0.0-20240126020320-567c7d43a008 h1:McTV/45piKWPinw0m7gFospPEGBW8AfK5J0RB/G9DP4=
-github.com/tikv/pd/client v0.0.0-20240126020320-567c7d43a008/go.mod h1:Z/QAgOt29zvwBTd0H6pdx45VO6KRNc/O/DzGkVmSyZg=
-github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
-github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
->>>>>>> 1621e0fde21 (driver: convert ErrQueryInterrupted to actual error types (#50517))
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
 github.com/tklauser/go-sysconf v0.3.11 h1:89WgdJhk5SNwJfu+GKyYveZ4IaJ7xAkecBo+KdJV0CM=
 github.com/tklauser/go-sysconf v0.3.11/go.mod h1:GqXfhXY3kiPa0nAXPDIQIWzJbMCB7AmcWpGR8lSZfqI=

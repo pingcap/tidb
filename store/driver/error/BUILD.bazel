@@ -6,19 +6,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/store/driver/error",
     visibility = ["//visibility:public"],
     deps = [
-<<<<<<< HEAD:store/driver/error/BUILD.bazel
         "//errno",
         "//kv",
         "//parser/terror",
         "//util/dbterror",
-=======
-        "//pkg/errno",
-        "//pkg/kv",
-        "//pkg/parser/terror",
-        "//pkg/util/dbterror",
-        "//pkg/util/dbterror/exeerrors",
-        "//pkg/util/sqlkiller",
->>>>>>> 1621e0fde21 (driver: convert ErrQueryInterrupted to actual error types (#50517)):pkg/store/driver/error/BUILD.bazel
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_pd_client//errs",

@@ -18,19 +18,10 @@ import (
 	stderrs "errors"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:store/driver/error/error.go
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
-=======
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
->>>>>>> 1621e0fde21 (driver: convert ErrQueryInterrupted to actual error types (#50517)):pkg/store/driver/error/error.go
 	tikverr "github.com/tikv/client-go/v2/error"
 	pderr "github.com/tikv/pd/client/errs"
 )
@@ -125,20 +116,9 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerTimeout
 	}
 
-	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryInterrupted}) {
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: 1}) {
 		// TODO: This error is defined here, while others are using exeerrors as in sql killer. Maybe unify them?
 		return ErrQueryInterrupted
-	}
-	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.MaxExecTimeExceeded}) {
-		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
-	}
-	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryMemoryExceeded}) {
-		// connection id is unknown in client, which should be logged or filled by upper layers
-		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(-1)
-	}
-	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.ServerMemoryExceeded}) {
-		// connection id is unknown in client, which should be logged or filled by upper layers
-		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(-1)
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVServerBusy) {
