@@ -370,6 +370,7 @@ func (p *Preparer) workOnPendingRanges(ctx context.Context) error {
 }
 
 func (p *Preparer) sendWaitApply(ctx context.Context, reqs pendingRequests) error {
+	logutil.CL(ctx).Info("about to send wait apply to stores", zap.Int("to-stores", len(reqs)))
 	for store, req := range reqs {
 		stream, err := p.streamOf(ctx, store)
 		if err != nil {
