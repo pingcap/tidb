@@ -15,13 +15,11 @@
 package executor
 
 import (
-	"cmp"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"os"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -1028,8 +1027,8 @@ func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas .
 			}
 		}
 		// sort the used idxes according their original indexes derived after resolveIndex.
-		slices.SortFunc(usedIdxPair, func(a, b intPair) int {
-			return cmp.Compare(a.first, b.first)
+		slices.SortFunc(usedIdxPair, func(a, b intPair) bool {
+			return a.first < b.first
 		})
 		usedIdx := make([]int, 0, len(childSchema.Columns))
 		for _, one := range usedIdxPair {
