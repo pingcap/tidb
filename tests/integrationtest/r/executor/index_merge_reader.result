@@ -556,3 +556,7 @@ Projection	2666.67	root		istrue(or(not(ge(executor__index_merge_reader.t.i, j筧
 select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
 count(*)
 16
+drop table if exists t;
+create table t(a int, b int, c int, index(b, a), index(c, a));
+select * from t use index(b, c) where b=2 or c=3 order by a limit 10000000000000000;
+a	b	c

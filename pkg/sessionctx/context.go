@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -97,6 +98,9 @@ type Context interface {
 	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
+
+	// GetTableCtx returns the table.MutateContext
+	GetTableCtx() tbctx.MutateContext
 
 	GetSessionManager() util.SessionManager
 

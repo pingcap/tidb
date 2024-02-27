@@ -1607,6 +1607,94 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 }
 
+func TestDefaultColumnWithDateFormat(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1, t2, t3, t4, t5, t6, t7")
+
+	// create table
+	tk.MustExec("create table t0 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m')))")
+	tk.MustExec("create table t1 (c int(10), c1 datetime default (date_format(now(),'%Y-%m-%d')))")
+	tk.MustExec("create table t2 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H.%i.%s')))")
+	tk.MustExec("create table t3 (c int(10), c1 timestamp default (date_format(now(),'%Y-%m-%d %H.%i.%s')))")
+	tk.MustExec("create table t4 (c int(10), c1 date default (date_format(now(),'%Y-%m-%d %H:%i:%s')))")
+	tk.MustExec("create table t5 (c int(10), c1 date default (date_format(now(),_utf8mb4'%Y-%m-%d %H:%i:%s')))")
+	tk.MustExec("create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')))")
+	tk.MustExec("create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')))")
+	tk.MustGetErrCode("create table t8 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+	tk.MustGetErrCode("create table t9 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+
+	tk.MustGetErrCode("alter table t0 add column c2 date default (date_format(now(),'%Y-%m'))", errno.ErrBinlogUnsafeSystemFunction)
+
+	// insert records
+	nowTime := time.Now()
+	for i := 0; i < 5; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t%d(c) values (1),(2)", i))
+	}
+	tk.MustGetErrCode("insert into t6(c) values (1)", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("insert into t7(c) values (1)", errno.ErrTruncatedWrongValue)
+
+	for i := 0; i < 4; i++ {
+		rows := tk.MustQuery(fmt.Sprintf("SELECT c1 from t%d order by c", i)).Rows()
+		for _, row := range rows {
+			d, ok := row[0].(string)
+			require.True(t, ok)
+			switch i {
+			case 0:
+				require.Equal(t, nowTime.Format("2006-01"), d)
+			case 1:
+				require.Equal(t, fmt.Sprintf("%v 00:00:00", nowTime.Format("2006-01-02")), d)
+			case 2:
+				if nowTime.Format("2006-01-02 15.04.05") != d {
+					require.Equal(t, nowTime.Add(1*time.Second).Format("2006-01-02 15.04.05"), d,
+						fmt.Sprintf("now time:%v, get time:%v", nowTime.Format("2006-01-02 15.04.05"), d))
+				}
+			case 3, 4, 5:
+				if nowTime.Format("2006-01-02 15:04:05") != d {
+					require.Equal(t, nowTime.Add(1*time.Second).Format("2006-01-02 15:04:05"), d)
+				}
+			}
+		}
+	}
+
+	tk.MustQuery("show create table t0").Check(testkit.Rows(
+		"t0 CREATE TABLE `t0` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4''%Y-%m'')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` datetime DEFAULT date_format(now(), _utf8mb4''%Y-%m-%d'')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t2").Check(testkit.Rows(
+		"t2 CREATE TABLE `t2` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4''%Y-%m-%d %H.%i.%s'')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t0 modify column c1 varchar(30) default 'xx';")
+	tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
+	tk.MustQuery("show create table t0").Check(testkit.Rows(
+		"t0 CREATE TABLE `t0` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` varchar(30) DEFAULT 'xx'\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` varchar(30) DEFAULT 'xx'\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustGetErrCode("alter table t0 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'))",
+		errno.ErrTruncatedWrongValue)
+	tk.MustExec("alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'))")
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` datetime DEFAULT date_format(now(), _utf8mb4''%Y-%m-%d'')\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
 func TestDefaultColumnWithReplace(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
@@ -1790,7 +1878,6 @@ func TestDefaultColumnWithUpper(t *testing.T) {
 	tk.MustGetErrCode("create table t2 (c int(10), c1 varchar(256) default (upper(substring_index('fjks@jkkl','@',1))))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t2 (c int(10), c1 varchar(256) default (upper(substring_index(user(),'x',1))))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 
-	// add column with default expression for table t is forbidden in MySQL 8.0
 	tk.MustGetErrCode("alter table t add column c2 varchar(32) default (upper(substring_index(user(),'@',1)))", errno.ErrBinlogUnsafeSystemFunction)
 	tk.MustGetErrCode("alter table t add column c3 int default (upper(substring_index('fjks@jkkl','@',1)))", errno.ErrBinlogUnsafeSystemFunction)
 

@@ -33,6 +33,8 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/table",
+        "//pkg/table/context",
+        "//pkg/table/contextimpl",
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/types",

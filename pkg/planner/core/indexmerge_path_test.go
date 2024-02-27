@@ -143,6 +143,7 @@ func TestMultiMVIndexRandom(t *testing.T) {
 			return "d"
 		}
 		nQueries := 20
+		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
 		for i := 0; i < nQueries; i++ {
 			cnf := true
 			if i >= 10 {
@@ -150,9 +151,24 @@ func TestMultiMVIndexRandom(t *testing.T) {
 				cnf = false
 			}
 			// composed condition at least two to make sense.
-			conds := randMVIndexCondsXNF4MemberOf(rand.Intn(3)+2, testCase.queryValsOpts, cnf, randJColName, randNColName)
+			conds, conds4PlanCache, params := randMVIndexCondsXNF4MemberOf(rand.Intn(3)+2, testCase.queryValsOpts, cnf, randJColName, randNColName)
 			r1 := tk.MustQuery("select /*+ ignore_index(t1, idx, idx2, idx3, idx4) */ * from t1 where " + conds).Sort()
 			tk.MustQuery("select /*+ use_index_merge(t1, idx, idx2, idx3, idx4) */ * from t1 where " + conds).Sort().Check(r1.Rows())
+
+			prepareStmt := fmt.Sprintf(`prepare st from 'select /*+ use_index_merge(t, kj) */ * from t1 where %v'`, conds4PlanCache)
+			tk.MustExec(prepareStmt)
+			var setStmt, usingStmt string
+			for i, p := range params {
+				vName := fmt.Sprintf("@a%v", i)
+				if i > 0 {
+					setStmt += ", "
+					usingStmt += ", "
+				}
+				setStmt += fmt.Sprintf("%v=%v", vName, p)
+				usingStmt += vName
+			}
+			tk.MustExec("set " + setStmt)
+			tk.MustQuery("execute st using " + usingStmt).Sort().Check(r1.Rows())
 		}
 	}
 }
@@ -192,56 +208,190 @@ func TestMVIndexRandom(t *testing.T) {
 			return "a"
 		}
 		nQueries := 20
+		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
 		for i := 0; i < nQueries; i++ {
-			conds := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts, randJColName, randNColName)
+			conds, conds4PlanCache, params := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts, randJColName, randNColName)
 			r1 := tk.MustQuery("select /*+ ignore_index(t, kj) */ * from t where " + conds).Sort()
 			tk.MustQuery("select /*+ use_index_merge(t, kj) */ * from t where " + conds).Sort().Check(r1.Rows())
+
+			prepareStmt := fmt.Sprintf(`prepare st from 'select /*+ use_index_merge(t, kj) */ * from t where %v'`, conds4PlanCache)
+			tk.MustExec(prepareStmt)
+			var setStmt, usingStmt string
+			for i, p := range params {
+				vName := fmt.Sprintf("@a%v", i)
+				if i > 0 {
+					setStmt += ", "
+					usingStmt += ", "
+				}
+				setStmt += fmt.Sprintf("%v=%v", vName, p)
+				usingStmt += vName
+			}
+			tk.MustExec("set " + setStmt)
+			tk.MustQuery("execute st using " + usingStmt).Sort().Check(r1.Rows())
 		}
 	}
 }
 
-func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bool, randJCol, randNCol func() string) string {
-	var conds string
+func TestPlanCacheMVIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE ti (
+  item_pk varbinary(255) NOT NULL,
+  item_id varchar(45) DEFAULT NULL,
+  item_set_id varchar(45) DEFAULT NULL,
+  m_id bigint(20) DEFAULT NULL,
+  m_item_id varchar(127) DEFAULT NULL,
+  m_item_set_id varchar(127) DEFAULT NULL,
+  country varchar(2) DEFAULT NULL,
+  domains json DEFAULT NULL,
+  signatures json DEFAULT NULL,
+  short_link json DEFAULT NULL,
+  long_link json DEFAULT NULL,
+  f_item_ids json DEFAULT NULL,
+  f_profile_ids json DEFAULT NULL,
+  product_sources json DEFAULT NULL,
+  PRIMARY KEY (item_pk)  /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY item_id (item_id),
+  KEY m_item_id (m_item_id),
+  KEY m_item_set_id (m_item_set_id),
+  KEY m_id (m_id),
+  KEY item_set_id (item_set_id),
+  KEY m_item_and_m_id (m_item_id, m_id),
+  KEY domains ((cast(domains as char(253) array))),
+  KEY signatures ((cast(signatures as char(32) array))),
+  KEY f_profile_ids ((cast(f_profile_ids as unsigned array))),
+  KEY short_link_old ((cast(short_link as char(1000) array))),
+  KEY long_link ((cast(long_link as char(1000) array))),
+  KEY f_item_ids ((cast(f_item_ids as unsigned array))),
+  KEY short_link ((cast(short_link as char(1000) array)),country))`)
+
+	for i := 0; i < 50; i++ {
+		var insertVals []string
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", i))                                                                            // item_pk varbinary(255) NOT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", i))                                                                            // item_id varchar(45) DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", rand.Intn(30)))                                                                // item_set_id varchar(45) DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("%v", rand.Intn(30)))                                                                  // m_id bigint(20) DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", rand.Intn(30)))                                                                // m_item_id varchar(127) DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", rand.Intn(30)))                                                                // m_item_set_id varchar(127) DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", rand.Intn(3)))                                                                 // country varchar(2) DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", randArray(randMVIndexValOpts{valType: "string", maxStrLen: 5, distinct: 10}))) // domains json DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", randArray(randMVIndexValOpts{valType: "string", maxStrLen: 5, distinct: 10}))) // signatures json DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", randArray(randMVIndexValOpts{valType: "string", maxStrLen: 5, distinct: 10}))) // short_link json DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", randArray(randMVIndexValOpts{valType: "string", maxStrLen: 5, distinct: 10}))) // long_link json DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", randArray(randMVIndexValOpts{valType: "unsigned", distinct: 10})))             // f_item_ids json DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", randArray(randMVIndexValOpts{valType: "unsigned", distinct: 10})))             // f_profile_ids json DEFAULT NULL,
+		insertVals = append(insertVals, fmt.Sprintf("'%v'", randArray(randMVIndexValOpts{valType: "string", maxStrLen: 5, distinct: 10}))) // product_sources json DEFAULT NULL,
+		tk.MustExec(fmt.Sprintf("insert into ti values (%v)", strings.Join(insertVals, ",")))
+	}
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
+
+	check := func(sql string, params ...string) {
+		sqlWithoutParam := sql
+		var setStmt, usingStmt string
+		for i, p := range params {
+			sqlWithoutParam = strings.Replace(sqlWithoutParam, "?", p, 1)
+			if i > 0 {
+				setStmt += ", "
+				usingStmt += ", "
+			}
+			setStmt += fmt.Sprintf("@a%v=%v", i, p)
+			usingStmt += fmt.Sprintf("@a%v", i)
+		}
+		result := tk.MustQuery(sqlWithoutParam).Sort()
+		tk.MustExec(fmt.Sprintf("set %v", setStmt))
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%v'", sql))
+		result1 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result1.Rows())
+		result2 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result2.Rows())
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+	randV := func(vs ...string) string {
+		return vs[rand.Intn(len(vs))]
+	}
+
+	for i := 0; i < 50; i++ {
+		check(`select * from ti where (? member of (short_link)) and (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(`select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(`select * from ti where (? member of (short_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(`select * from ti where (? member of (long_link)) AND (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(`select * from ti where (? member of (long_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(`select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(`select * from ti where (m_id = ? and m_item_id = ? and country = ?) OR (? member of (short_link) and not json_overlaps(product_sources, ?) and country = ?)`,
+			fmt.Sprintf("%v", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
+		check(`select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids)`,
+			fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
+		check(`select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids) AND m_item_id IS NULL AND m_id = ? AND country IS NOT NULL`,
+			fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
+		check(`select * from ti where ? member of (f_profile_ids) AND ? member of (short_link) AND json_overlaps(product_sources, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
+		check(`select * from ti where ? member of (short_link) AND ti.country = "0" AND NOT ? member of (long_link) AND ti.m_item_id = "0"`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(`select * from ti WHERE ? member of (domains) AND ? member of (signatures) AND json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
+		check(`select * from ti where ? member of (short_link) AND ? member of (long_link) OR ? member of (f_profile_ids) AND ti.m_item_id = "0" OR ti.m_item_set_id = ?`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR ? member of (f_profile_ids) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(`select * from ti WHERE ? member of (domains) OR ? member of (signatures) OR ? member of (long_link) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR (? member of (f_profile_ids))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
+		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR json_overlaps(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+	}
+}
+
+func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bool, randJCol, randNCol func() string) (conds, conds4PlanCache string, params []string) {
 	for i := 0; i < nConds; i++ {
 		if i > 0 {
 			if CNF {
 				conds += " AND "
+				conds4PlanCache += " AND "
 			} else {
 				conds += " OR "
+				conds4PlanCache += " OR "
 			}
 		}
-		cond := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
+		cond, cond4PlanCache, param := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
 		conds += cond
+		conds4PlanCache += cond4PlanCache
+		params = append(params, param)
 	}
-	return conds
+	return
 }
 
-func randMVIndexConds(nConds int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) string {
-	var conds string
+func randMVIndexConds(nConds int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) (conds, conds4PlanCache string, params []string) {
 	for i := 0; i < nConds; i++ {
 		if i > 0 {
 			if rand.Intn(5) < 1 { // OR
 				conds += " OR "
+				conds4PlanCache += " OR "
 			} else { // AND
 				conds += " AND "
+				conds4PlanCache += " AND "
 			}
 		}
-		cond := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
+		cond, cond4PlanCache, param := randMVIndexCond(rand.Intn(4), valOpts, randJCol, randNCol)
 		conds += cond
+		conds4PlanCache += cond4PlanCache
+		params = append(params, param)
 	}
-	return conds
+	return
 }
 
-func randMVIndexCond(condType int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) string {
+func randMVIndexCond(condType int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) (cond, cond4PlanCache, param string) {
 	switch condType {
 	case 0: // member_of
-		return fmt.Sprintf(`(%v member of (%v))`, randMVIndexValue(valOpts), randJCol())
+		col, v := randJCol(), randMVIndexValue(valOpts)
+		return fmt.Sprintf(`(%v member of (%v))`, v, col),
+			fmt.Sprintf(`(? member of (%v))`, col), v
 	case 1: // json_contains
-		return fmt.Sprintf(`json_contains(%v, '%v')`, randJCol(), randArray(valOpts))
+		col, v := randJCol(), randArray(valOpts)
+		return fmt.Sprintf(`json_contains(%v, '%v')`, col, v),
+			fmt.Sprintf(`json_contains(%v, ?)`, col), fmt.Sprintf("'%v'", v)
 	case 2: // json_overlaps
-		return fmt.Sprintf(`json_overlaps(%v, '%v')`, randJCol(), randArray(valOpts))
+		col, v := randJCol(), randArray(valOpts)
+		return fmt.Sprintf(`json_overlaps(%v, '%v')`, col, v),
+			fmt.Sprintf(`json_overlaps(%v, ?)`, col), fmt.Sprintf("'%v'", v)
 	default: // others
-		return fmt.Sprintf(`%v < %v`, randNCol(), rand.Intn(valOpts.distinct))
+		col, v := randNCol(), rand.Intn(valOpts.distinct)
+		return fmt.Sprintf(`%v < %v`, col, v),
+			fmt.Sprintf(`%v < ?`, col), fmt.Sprintf("%v", v)
 	}
 }
 

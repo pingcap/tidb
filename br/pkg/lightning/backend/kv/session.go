@@ -36,6 +36,8 @@ import (
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -268,8 +270,9 @@ func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
 type Session struct {
 	sessionctx.Context
 	planctx.EmptyPlanContextExtended
-	txn  transaction
-	Vars *variable.SessionVars
+	txn    transaction
+	Vars   *variable.SessionVars
+	tblctx *tbctximpl.TableContextImpl
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]any
 }
@@ -330,6 +333,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.txn.kvPairs = &Pairs{}
 
 	return s
@@ -360,6 +364,11 @@ func (se *Session) GetSessionVars() *variable.SessionVars {
 // GetPlanCtx returns the PlanContext.
 func (se *Session) GetPlanCtx() planctx.PlanContext {
 	return se
+}
+
+// GetTableCtx returns the table.MutateContext
+func (se *Session) GetTableCtx() tbctx.MutateContext {
+	return se.tblctx
 }
 
 // SetValue saves a value associated with this context for key.

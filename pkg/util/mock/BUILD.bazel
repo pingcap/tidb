@@ -23,6 +23,8 @@ go_library(
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/table/context",
+        "//pkg/table/contextimpl",
         "//pkg/util",
         "//pkg/util/disk",
         "//pkg/util/memory",
