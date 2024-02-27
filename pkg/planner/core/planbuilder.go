@@ -3557,7 +3557,7 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
 		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
 	} else {
-		if err := table.CheckNoDefaultValueForInsert(b.ctx, col.ToInfo()); err != nil {
+		if err := table.CheckNoDefaultValueForInsert(b.ctx.GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
 			return nil, err
 		}
 		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -540,9 +541,8 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *m
 // CheckNoDefaultValueForInsert extrats the check logic from getColDefaultValueFromNil,
 // since getColDefaultValueFromNil function is public path and both read/write and other places use it.
 // But CheckNoDefaultValueForInsert logic should only check before insert.
-func CheckNoDefaultValueForInsert(ctx expression.BuildContext, col *model.ColumnInfo) error {
+func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
-		sc := ctx.GetSessionVars().StmtCtx
 		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupBadNull) != errctx.LevelError
 		if !ignoreErr {
 			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
@@ -648,14 +648,11 @@ func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInf
 	if col.GetType() == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		if mysql.HasNotNullFlag(col.GetFlag()) {
-			defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
-			if err != nil {
-				return types.Datum{}, err
-			}
-			return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
+		defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
+		if err != nil {
+			return types.Datum{}, err
 		}
-		return types.Datum{}, nil
+		return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
 	}
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 		// Auto increment column doesn't have default value and we should not return error.
