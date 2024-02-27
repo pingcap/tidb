@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
+// sessionctx.Context + *ExprCtxExtendedImpl should implement `expression.BuildContext`
+// Only used to assert `ExprCtxExtendedImpl` should implement all methods not in `sessionctx.Context`
 var _ exprctx.BuildContext = struct {
 	sessionctx.Context
 	*ExprCtxExtendedImpl
