@@ -3200,7 +3200,7 @@ func TestUnknowHintIgnore(t *testing.T) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8061 Optimizer hint unknown_hint is not supported by TiDB and is ignored"))
 	rs, err := tk.Exec("select 1 from /*+ test1() */ t")
 	require.NoError(t, err)
 	rs.Close()
