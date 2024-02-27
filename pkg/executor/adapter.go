@@ -517,12 +517,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 	}
 
-	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
-	if err = a.openExecutor(ctx, e); err != nil {
-		terror.Log(exec.Close(e))
-		return nil, err
-	}
-
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
 	cmd := byte(cmd32)
 	var pi processinfoSetter
@@ -539,6 +533,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+	}
+
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
+	if err = a.openExecutor(ctx, e); err != nil {
+		terror.Log(exec.Close(e))
+		return nil, err
 	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
