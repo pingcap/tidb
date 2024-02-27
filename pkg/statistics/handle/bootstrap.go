@@ -97,14 +97,14 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 		if !ok {
 			continue
 		}
+		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+		flag := row.GetInt64(9)
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
 		ndv := row.GetInt64(3)
 		version := row.GetUint64(4)
 		nullCount := row.GetInt64(5)
 		statsVer := row.GetInt64(7)
-		flag := row.GetInt64(9)
-		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if isIndex > 0 {
 			var idxInfo *model.IndexInfo
@@ -163,13 +163,13 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
+		statsVer, tblID := row.GetInt64(8), row.GetInt64(0)
 		table, ok := cache.Get(tblID)
 		table = table.Copy()
 		if !ok {
 			continue
 		}
-		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
+		totColSize, id, ndv, nullCount, version := row.GetInt64(7), row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if row.GetInt64(1) > 0 {
@@ -378,7 +378,7 @@ func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 
 func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+		histID, tableID, isIndex := row.GetInt64(2), row.GetInt64(0), row.GetInt64(1)
 		table, ok := cache.Get(tableID)
 		if !ok {
 			continue
@@ -392,7 +392,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 				continue
 			}
 			hist = &index.Histogram
-			lower, upper = types.NewBytesDatum(row.GetBytes(5)), types.NewBytesDatum(row.GetBytes(6))
+			upper, lower = types.NewBytesDatum(row.GetBytes(6)), types.NewBytesDatum(row.GetBytes(5))
 		} else {
 			column, ok := table.Columns[histID]
 			if !ok {
