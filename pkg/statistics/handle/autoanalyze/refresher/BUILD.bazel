@@ -29,7 +29,7 @@ go_test(
     srcs = ["refresher_test.go"],
     embed = [":refresher"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/parser/model",
         "//pkg/statistics",
