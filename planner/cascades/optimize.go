@@ -115,14 +115,9 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	return p, cost, err
 }
 
-<<<<<<< HEAD:planner/cascades/optimize.go
 func (*Optimizer) onPhasePreprocessing(_ sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
-	err := plan.PruneColumns(plan.Schema().Columns, nil)
-=======
-func (*Optimizer) onPhasePreprocessing(_ plannercore.PlanContext, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
 	var err error
 	plan, err = plan.PruneColumns(plan.Schema().Columns, nil)
->>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203)):pkg/planner/cascades/optimize.go
 	if err != nil {
 		return nil, err
 	}
