@@ -948,7 +948,7 @@ ForColumnsTag:
 			case "CURRENT_TIMESTAMP":
 			default:
 				if ft.GetType() == mysql.TypeTimestamp && columnDefault != types.ZeroDatetimeStr {
-					timeValue, err := table.GetColDefaultValue(sctx, col)
+					timeValue, err := table.GetColDefaultValue(sctx.GetExprCtx(), col)
 					if err == nil {
 						columnDefault = timeValue.GetMysqlTime().String()
 					}
@@ -2647,7 +2647,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		}
 		// Retrieve the SQL texts if necessary.
 		if sqlRetriever != nil {
-			err1 := sqlRetriever.RetrieveLocal(ctx, sctx)
+			err1 := sqlRetriever.RetrieveLocal(ctx, sctx.GetExprCtx())
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -2768,7 +2768,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					sqlRetriever.SQLDigestsMap[digest] = ""
 				}
 			}
-			err := sqlRetriever.RetrieveGlobal(ctx, sctx)
+			err := sqlRetriever.RetrieveGlobal(ctx, sctx.GetExprCtx())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2966,7 +2966,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 		}
 		// Retrieve the SQL texts if necessary.
 		if sqlRetriever != nil {
-			err1 := sqlRetriever.RetrieveGlobal(ctx, sctx)
+			err1 := sqlRetriever.RetrieveGlobal(ctx, sctx.GetExprCtx())
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
