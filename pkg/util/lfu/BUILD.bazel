@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "lfu",
+    srcs = [
+        "key.go",
+        "key_set.go",
+        "key_set_shard.go",
+        "lfu_cache.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/lfu",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "@com_github_cespare_xxhash_v2//:xxhash",
+        "@com_github_dgraph_io_ristretto//:ristretto",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@org_golang_x_exp//maps",
+        "@org_golang_x_exp//rand",
+        "@org_uber_go_zap//:zap",
+    ],
+)

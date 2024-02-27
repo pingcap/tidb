@@ -14,47 +14,43 @@
 
 package lfu
 
-import (
-	"github.com/pingcap/tidb/pkg/statistics"
-)
-
 const keySetCnt = 256
 
-type keySetShard struct {
-	resultKeySet [keySetCnt]keySet
+type keySetShard[k K, v V] struct {
+	resultKeySet [keySetCnt]keySet[k, v]
 }
 
-func newKeySetShard() *keySetShard {
-	result := keySetShard{}
+func newKeySetShard[k K, v V]() *keySetShard[k, v] {
+	result := keySetShard[k, v]{}
 	for i := 0; i < keySetCnt; i++ {
-		result.resultKeySet[i] = keySet{
-			set: make(map[int64]*statistics.Table),
+		result.resultKeySet[i] = keySet[k, v]{
+			set: make(map[k]v),
 		}
 	}
 	return &result
 }
 
-func (kss *keySetShard) Get(key int64) (*statistics.Table, bool) {
-	return kss.resultKeySet[key%keySetCnt].Get(key)
+func (kss *keySetShard[K, V]) Get(key K) (V, bool) {
+	return kss.resultKeySet[KeyToHash(key)%keySetCnt].Get(key)
 }
 
-func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table) {
-	kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table)
+func (kss *keySetShard[K, V]) AddKeyValue(key K, table V) {
+	kss.resultKeySet[KeyToHash(key)%keySetCnt].AddKeyValue(key, table)
 }
 
-func (kss *keySetShard) Remove(key int64) {
-	kss.resultKeySet[key%keySetCnt].Remove(key)
+func (kss *keySetShard[K, V]) Remove(key K) {
+	kss.resultKeySet[KeyToHash(key)%keySetCnt].Remove(key)
 }
 
-func (kss *keySetShard) Keys() []int64 {
-	result := make([]int64, 0, len(kss.resultKeySet))
+func (kss *keySetShard[K, V]) Keys() []K {
+	result := make([]K, 0, len(kss.resultKeySet))
 	for idx := range kss.resultKeySet {
 		result = append(result, kss.resultKeySet[idx].Keys()...)
 	}
 	return result
 }
 
-func (kss *keySetShard) Len() int {
+func (kss *keySetShard[K, V]) Len() int {
 	result := 0
 	for idx := range kss.resultKeySet {
 		result += kss.resultKeySet[idx].Len()
@@ -62,7 +58,7 @@ func (kss *keySetShard) Len() int {
 	return result
 }
 
-func (kss *keySetShard) Clear() {
+func (kss *keySetShard[K, V]) Clear() {
 	for idx := range kss.resultKeySet {
 		kss.resultKeySet[idx].Clear()
 	}
