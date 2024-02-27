@@ -185,11 +185,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.attempt = 0
 		default:
 			switch status.Code(e) {
-<<<<<<< HEAD
-			case codes.Unavailable, codes.Aborted:
-=======
 			case codes.Unavailable, codes.Aborted, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Internal:
->>>>>>> d6ef1c722a9 (br: add more retry strategy (s3.ReadFile: body reader / pushBackup: backoffer) (#50541))
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:

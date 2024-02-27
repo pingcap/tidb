@@ -72,7 +72,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-    shard_count = 46,
+    shard_count = 47,
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",

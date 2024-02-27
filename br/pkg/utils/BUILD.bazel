@@ -94,11 +94,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 36,
-=======
-    shard_count = 34,
->>>>>>> d6ef1c722a9 (br: add more retry strategy (s3.ReadFile: body reader / pushBackup: backoffer) (#50541))
+    shard_count = 37,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
