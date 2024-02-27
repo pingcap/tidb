@@ -23,6 +23,13 @@ const (
 	eventNewIndex = 2.0
 )
 
+// TODO: make these configurable.
+const (
+	changeRatioWeight = 0.6
+	sizeWeight        = 0.1
+	analysisInterval  = 0.3
+)
+
 // PriorityCalculator implements the WeightCalculator interface.
 type PriorityCalculator struct{}
 
@@ -46,9 +53,9 @@ func NewPriorityCalculator() *PriorityCalculator {
 //	                  special_event[event])
 func (pc *PriorityCalculator) CalculateWeight(job *TableAnalysisJob) float64 {
 	changeRatio := 100 * job.ChangePercentage
-	return 0.6*math.Log10(1+changeRatio) +
-		0.1*(1-math.Log10(1+job.TableSize)) +
-		0.3*math.Log10(1+math.Sqrt(job.LastAnalysisDuration.Seconds())) +
+	return changeRatioWeight*math.Log10(1+changeRatio) +
+		sizeWeight*(1-math.Log10(1+job.TableSize)) +
+		analysisInterval*math.Log10(1+math.Sqrt(job.LastAnalysisDuration.Seconds())) +
 		pc.getSpecialEvent(job)
 }
 
