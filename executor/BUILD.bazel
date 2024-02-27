@@ -277,12 +277,9 @@ go_test(
         "batch_point_get_test.go",
         "benchmark_test.go",
         "brie_test.go",
-<<<<<<< HEAD:executor/BUILD.bazel
+        "brie_utils_test.go",
         "calibrate_resource_test.go",
         "charset_test.go",
-=======
-        "brie_utils_test.go",
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/BUILD.bazel
         "chunk_size_control_test.go",
         "cluster_table_test.go",
         "collation_test.go",
