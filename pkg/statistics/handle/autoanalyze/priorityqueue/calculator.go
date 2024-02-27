@@ -14,23 +14,48 @@
 
 package priorityqueue
 
-// WeightCalculator is an interface for calculating weights of analysis jobs.
-type WeightCalculator interface {
-	CalculateWeight(job *TableAnalysisJob) float64
-}
+import "math"
+
+const (
+	// EventNone represents no special event.
+	eventNone = 0.0
+	// EventNewIndex represents a special event for newly added indexes.
+	eventNewIndex = 2.0
+)
 
 // PriorityCalculator implements the WeightCalculator interface.
-type PriorityCalculator struct {
-	threshold float64
-}
+type PriorityCalculator struct{}
 
-// NewPriorityCalculator creates a new PriorityCalculator with the given threshold.
+// NewPriorityCalculator creates a new PriorityCalculator.
+//
+// For more information, please visit:
+// https://github.com/pingcap/tidb/blob/master/docs/design/2023-11-29-priority-queue-for-auto-analyze.md
 func NewPriorityCalculator(threshold float64) *PriorityCalculator {
-	return &PriorityCalculator{threshold: threshold}
+	return &PriorityCalculator{}
 }
 
 // CalculateWeight calculates the weight based on the given rules.
-func (*PriorityCalculator) CalculateWeight(_ *TableAnalysisJob) float64 {
-	// TODO: implement the weight calculation
-	return 1
+// - Table Change Ratio (Change Ratio): Accounts for 60%
+// - Table Size (Size): Accounts for 10%
+// - Analysis Interval (Analysis Interval): Accounts for 30%
+// priority_score calculates the priority score based on the following formula:
+//
+//	priority_score = (0.6 * math.Log10(1 + ChangeRatio) +
+//	                  0.1 * (1 - math.Log10(1 + TableSize)) +
+//	                  0.3 * math.Log10(1 + math.Sqrt(AnalysisInterval)) +
+//	                  special_event[event])
+func (pc *PriorityCalculator) CalculateWeight(job *TableAnalysisJob) float64 {
+	changeRatio := 100 * job.ChangePercentage
+	return 0.6*math.Log10(1+changeRatio) +
+		0.1*(1-math.Log10(1+job.TableSize)) +
+		0.3*math.Log10(1+math.Sqrt(job.LastAnalysisDuration.Seconds())) +
+		pc.getSpecialEvent(job)
+}
+
+func (*PriorityCalculator) getSpecialEvent(job *TableAnalysisJob) float64 {
+	if len(job.PartitionIndexes) > 0 || len(job.Indexes) > 0 {
+		return eventNewIndex
+	}
+
+	return eventNone
 }
