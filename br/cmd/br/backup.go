@@ -3,6 +3,8 @@
 package main
 
 import (
+	"runtime/debug"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
@@ -13,6 +15,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -47,6 +51,10 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 
 	// No need to cache the coproceesor result
 	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
+
+	// Set the ServerMemoryLimit and Tuner Percentage to make the memory limit tuner available
+	memory.ServerMemoryLimit.Store(uint64(debug.SetMemoryLimit(-1)))
+	gctuner.GlobalMemoryLimitTuner.SetPercentage(1)
 
 	if err := task.RunBackup(ctx, tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to backup", zap.Error(err))

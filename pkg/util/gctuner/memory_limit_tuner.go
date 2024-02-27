@@ -17,7 +17,6 @@ package gctuner
 import (
 	"math"
 	"runtime/debug"
-	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -26,43 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	atomicutil "go.uber.org/atomic"
 )
-
-var globalSetMemoryLimitSwitch = &setMemoryLimitSwitch{}
-
-type setMemoryLimitSwitch struct {
-	sync.RWMutex
-	disable int
-}
-
-func setMemoryLimit(limit int64) int64 {
-	if globalSetMemoryLimitSwitch.TryRLock() {
-		defer globalSetMemoryLimitSwitch.RUnlock()
-		if globalSetMemoryLimitSwitch.disable == 0 {
-			return debug.SetMemoryLimit(limit)
-		}
-	}
-	return 0
-}
-
-// EnableSetMemoryLimit enables the memory limit tuner to set go memory limit.
-// Then the memory limit tuner reset go memory limit later.
-func EnableSetMemoryLimit() {
-	globalSetMemoryLimitSwitch.Lock()
-	globalSetMemoryLimitSwitch.disable--
-	globalSetMemoryLimitSwitch.Unlock()
-}
-
-// DisableSetMemoryLimit disables the memory limit tuner to set go memory limit.
-// It also set the go memory limit and return the original go memory limit if in need.
-func DisableSetMemoryLimit(limit int64) int64 {
-	globalSetMemoryLimitSwitch.Lock()
-	globalSetMemoryLimitSwitch.disable++
-	globalSetMemoryLimitSwitch.Unlock()
-	if limit > 0 {
-		return debug.SetMemoryLimit(limit)
-	}
-	return 0
-}
 
 // GlobalMemoryLimitTuner only allow one memory limit tuner in one process
 var GlobalMemoryLimitTuner = &memoryLimitTuner{}
@@ -111,7 +73,7 @@ func (t *memoryLimitTuner) tuning() {
 	//   why the **last** GC is triggered. And MemoryLimit will not be reset this time.
 	// - Only if NextGC >= MemoryLimit , the **next** GC will be triggered by MemoryLimit. Thus, we need to reset
 	//   MemoryLimit after the **next** GC happens if needed.
-	if float64(r.HeapInuse)*ratio > float64(setMemoryLimit(-1)) {
+	if float64(r.HeapInuse)*ratio > float64(debug.SetMemoryLimit(-1)) {
 		if t.nextGCTriggeredByMemoryLimit.Load() && t.adjustPercentageInProgress.CompareAndSwap(false, true) {
 			// It's ok to update `adjustPercentageInProgress`, `serverMemLimitBeforeAdjust` and `percentageBeforeAdjust` not in a transaction.
 			// The update of memory limit is eventually consistent.
@@ -124,7 +86,7 @@ func (t *memoryLimitTuner) tuning() {
 				}
 				memory.MemoryLimitGCLast.Store(time.Now())
 				memory.MemoryLimitGCTotal.Add(1)
-				setMemoryLimit(t.calcMemoryLimit(fallbackPercentage))
+				debug.SetMemoryLimit(t.calcMemoryLimit(fallbackPercentage))
 				resetInterval := 1 * time.Minute // Wait 1 minute and set back, to avoid frequent GC
 				if intest.InTest {
 					resetInterval = 3 * time.Second
@@ -141,8 +103,10 @@ func (t *memoryLimitTuner) tuning() {
 					}
 				})
 				time.Sleep(resetInterval)
-				setMemoryLimit(t.calcMemoryLimit(t.GetPercentage()))
-				t.adjustPercentageInProgress.Store(false)
+				debug.SetMemoryLimit(t.calcMemoryLimit(t.GetPercentage()))
+				for !t.adjustPercentageInProgress.CompareAndSwap(true, false) {
+					continue
+				}
 			}()
 			memory.TriggerMemoryLimitGC.Store(true)
 		}
@@ -188,10 +152,10 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 	} else {
 		t.isValidValueSet.Store(true)
 	}
-	setMemoryLimit(memoryLimit)
+	debug.SetMemoryLimit(memoryLimit)
 }
 
-func (*memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
+func (t *memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * percentage) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if memoryLimit == 0 {
 		memoryLimit = math.MaxInt64
@@ -202,6 +166,6 @@ func (*memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 var initGOMemoryLimitValue int64
 
 func init() {
-	initGOMemoryLimitValue = setMemoryLimit(-1)
+	initGOMemoryLimitValue = debug.SetMemoryLimit(-1)
 	GlobalMemoryLimitTuner.Start()
 }
