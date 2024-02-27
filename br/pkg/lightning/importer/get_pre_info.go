@@ -136,6 +136,12 @@ func NewTargetInfoGetterImpl(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if pdHTTPCli != nil {
+		// The timeout of `http.Client`` in PD HTTP client is 30s.
+		// When using GetEmptyRegions, the duration may be more than 30s,
+		// so creates `http.Client`` with a longer timeout.
+		pdHTTPCli = pdHTTPCli.WithTimeout(3 * time.Minute)
+	}
 	var backendTargetInfoGetter backend.TargetInfoGetter
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
@@ -149,13 +155,10 @@ func NewTargetInfoGetterImpl(
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	return &TargetInfoGetterImpl{
-		cfg:     cfg,
-		db:      targetDB,
-		backend: backendTargetInfoGetter,
-		// The timeout of `http.Client`` in PD HTTP client is 30s.
-		// When using GetEmptyRegions, the duration may be more than 30s,
-		// so creates `http.Client`` with a longer timeout.
-		pdHTTPCli: pdHTTPCli.WithTimeout(3 * time.Minute),
+		cfg:       cfg,
+		db:        targetDB,
+		backend:   backendTargetInfoGetter,
+		pdHTTPCli: pdHTTPCli,
 	}, nil
 }
 
