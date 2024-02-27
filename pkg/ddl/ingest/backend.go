@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -197,7 +198,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		se, _ := concurrency.NewSession(bc.etcdClient)
 		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
-			return true, false, err
+			return true, false, errors.Trace(err)
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {

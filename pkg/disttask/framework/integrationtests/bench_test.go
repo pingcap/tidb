@@ -27,23 +27,31 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/mock/gomock"
 )
 
 var (
-	maxConcurrentTask = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
-	waitDuration      = flag.Duration("task-wait-duration", time.Minute, "task wait duration")
-	taskMetaSize      = flag.Int("task-meta-size", 1<<10, "task meta size")
-	noTask            = flag.Bool("no-task", false, "no task")
+	maxConcurrentTask       = flag.Int("max-concurrent-task", proto.MaxConcurrentTask, "max concurrent task")
+	waitDuration            = flag.Duration("task-wait-duration", 2*time.Minute, "task wait duration")
+	schedulerInterval       = flag.Duration("scheduler-interval", scheduler.CheckTaskFinishedInterval, "scheduler interval")
+	taskExecutorMgrInterval = flag.Duration("task-executor-mgr-interval", taskexecutor.TaskCheckInterval, "task executor mgr interval")
+	taskMetaSize            = flag.Int("task-meta-size", 1<<10, "task meta size")
+	noTask                  = flag.Bool("no-task", false, "no task")
 )
 
 // test overhead when starting multiple schedulers
@@ -60,40 +68,74 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		cancel()
 		statusWG.Wait()
 	}()
+	schIntervalBak := scheduler.CheckTaskFinishedInterval
+	exeMgrIntervalBak := taskexecutor.TaskCheckInterval
 	bak := proto.MaxConcurrentTask
 	b.Cleanup(func() {
 		proto.MaxConcurrentTask = bak
+		scheduler.CheckTaskFinishedInterval = schIntervalBak
+		taskexecutor.TaskCheckInterval = exeMgrIntervalBak
 	})
 	proto.MaxConcurrentTask = *maxConcurrentTask
+	scheduler.CheckTaskFinishedInterval = *schedulerInterval
+	taskexecutor.TaskCheckInterval = *taskExecutorMgrInterval
+
 	b.Logf("max concurrent task: %d", proto.MaxConcurrentTask)
 	b.Logf("taks wait duration: %s", *waitDuration)
 	b.Logf("task meta size: %d", *taskMetaSize)
+	b.Logf("scheduler interval: %s", scheduler.CheckTaskFinishedInterval)
+	b.Logf("task executor mgr interval: %s", taskexecutor.TaskCheckInterval)
 
+	prepareForBenchTest(b)
 	c := testutil.NewTestDXFContext(b, 1, 2*proto.MaxConcurrentTask, false)
-
-	tk := testkit.NewTestKit(c.T, c.Store)
-	tk.MustExec("delete from mysql.tidb_global_task")
-	tk.MustExec("delete from mysql.tidb_global_task_history")
-	tk.MustExec("delete from mysql.tidb_background_subtask")
-	tk.MustExec("delete from mysql.tidb_background_subtask_history")
 
 	registerTaskTypeForBench(c)
 
 	if *noTask {
 		time.Sleep(*waitDuration)
 	} else {
-		var wg util.WaitGroupWrapper
-		for i := 0; i < proto.MaxConcurrentTask; i++ {
-			taskKey := fmt.Sprintf("task-%d", i)
+		// in this test, we will start 4*proto.MaxConcurrentTask tasks, but only
+		// proto.MaxConcurrentTask will be scheduled at the same time, for other
+		// tasks will be in queue only to check the performance of querying them.
+		for i := 0; i < 4*proto.MaxConcurrentTask; i++ {
+			taskKey := fmt.Sprintf("task-%03d", i)
 			taskMeta := make([]byte, *taskMetaSize)
 			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, taskMeta)
 			require.NoError(c.T, err)
-			wg.RunWithLog(func() {
-				testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
-			})
 		}
-		wg.Wait()
+		// task has 2 steps, each step has 1 subtask，wait in serial to reduce WaitTask check overhead.
+		// only wait first proto.MaxConcurrentTask and exit
+		time.Sleep(2 * *waitDuration)
+		for i := 0; i < proto.MaxConcurrentTask; i++ {
+			taskKey := fmt.Sprintf("task-%03d", i)
+			testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
+		}
 	}
+}
+
+func prepareForBenchTest(b *testing.B) {
+	testkit.EnableFailPoint(b, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	var d driver.TiKVDriver
+	var err error
+	store, err := d.Open("tikv://" + *testkit.WithTiKV)
+	require.NoError(b, err)
+
+	var dom *domain.Domain
+	dom, err = session.BootstrapSession(store)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(b, err)
+		view.Stop()
+	}()
+	require.NoError(b, err)
+
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("delete from mysql.tidb_global_task")
+	tk.MustExec("delete from mysql.tidb_global_task_history")
+	tk.MustExec("delete from mysql.tidb_background_subtask")
+	tk.MustExec("delete from mysql.tidb_background_subtask_history")
 }
 
 // we run this test on a k8s environment, so we need to mock the TiDB server status port
@@ -148,7 +190,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 			cnt := 1
 			res := make([][]byte, cnt)
 			for i := 0; i < cnt; i++ {
-				res[i] = []byte(fmt.Sprintf("subtask-%d", i))
+				res[i] = []byte(task.Key)
 			}
 			return res, nil
 		},

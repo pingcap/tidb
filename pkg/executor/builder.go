@@ -4031,14 +4031,8 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	case *plannercore.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
-	// The inner child of IndexJoin might be Projection when a combination of the following conditions is true:
-	// 	1. The inner child fetch data using indexLookupReader
-	// 	2. PK is not handle
-	// 	3. The inner child needs to keep order
-	// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
-	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
 	case *plannercore.PhysicalProjection:
-		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
@@ -4487,23 +4481,20 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	return ret, err
 }
 
-func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProjection,
-	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
-	var (
-		childExec exec.Executor
-		err       error
-	)
-	switch op := v.Children()[0].(type) {
-	case *plannercore.PhysicalIndexLookUpReader:
-		if childExec, err = builder.buildIndexLookUpReaderForIndexJoin(ctx, op, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal); err != nil {
-			return nil, err
-		}
-	case *plannercore.PhysicalTableReader:
-		if childExec, err = builder.buildTableReaderForIndexJoin(ctx, op, lookUpContents, indexRanges, keyOff2IdxOff, cwc, true, memTracker, interruptSignal); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader/TableReader, but got %T", v.Children()[0])
+func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
+	ctx context.Context,
+	v *plannercore.PhysicalProjection,
+	lookUpContents []*indexJoinLookUpContent,
+	indexRanges []*ranger.Range,
+	keyOff2IdxOff []int,
+	cwc *plannercore.ColWithCmpFuncManager,
+	canReorderHandles bool,
+	memTracker *memory.Tracker,
+	interruptSignal *atomic.Value,
+) (exec.Executor, error) {
+	childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	if err != nil {
+		return nil, err
 	}
 
 	e := &ProjectionExec{
