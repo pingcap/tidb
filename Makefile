@@ -129,11 +129,7 @@ integrationtest: server_check
 ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
 
-generate-test-build-cache:
-	@echo "generate test build cache"
-	@cd cmd/tidb-server && go test -tags intest -exec true -vet off
-
-ut: tools/bin/ut tools/bin/xprog failpoint-enable generate-test-build-cache
+ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
