@@ -870,7 +870,7 @@ func buildTestBinary(pkg string) error {
 }
 
 func generateBuildCache() error {
-	// cd cmd/tidb-server && go test -tags intest -exec true -vet off
+	// cd cmd/tidb-server && go test -tags intest -exec true -vet off -toolexec=go-compile-without-link
 	cmd := exec.Command("go", "test", "-tags=intest", "-exec=true", "-vet=off")
 	goCompileWithoutLink := fmt.Sprintf("-toolexec=%s/tools/check/go-compile-without-link.sh", workDir)
 	cmd.Args = append(cmd.Args, goCompileWithoutLink)
