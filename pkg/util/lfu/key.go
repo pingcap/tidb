@@ -16,7 +16,7 @@ package lfu
 
 import "github.com/cespare/xxhash/v2"
 
-func KeyToHash(key interface{}) uint64 {
+func keyToHash(key interface{}) uint64 {
 	if key == nil {
 		return 0
 	}

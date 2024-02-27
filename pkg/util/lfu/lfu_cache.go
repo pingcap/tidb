@@ -28,7 +28,7 @@ import (
 )
 
 // LFU is a LFU based on the ristretto.Cache
-type LFU[k K, v V] struct {
+type LFU[k Key, v Value] struct {
 	cache *ristretto.Cache
 	// This is a secondary cache layer used to store all tables,
 	// including those that have been evicted from the primary cache.
@@ -59,7 +59,7 @@ type LFU[k K, v V] struct {
 }
 
 // NewLFU creates a new LFU cache.
-func NewLFU[k K, v V](totalMemCost int64, dropEvicted func(any), capacityGauge prometheus.Gauge) (*LFU[k, v], error) {
+func NewLFU[k Key, v Value](totalMemCost int64, dropEvicted func(any), capacityGauge prometheus.Gauge) (*LFU[k, v], error) {
 	cost, err := adjustMemCost(totalMemCost)
 	if err != nil {
 		return nil, err
@@ -240,12 +240,13 @@ func (s *LFU[K, V]) SetCapacity(maxCost int64) {
 	s.costGauge.Set(float64(s.Cost()))
 }
 
-// wait blocks until all buffered writes have been applied. This ensures a call to Set()
+// Wait blocks until all buffered writes have been applied. This ensures a call to Set()
 // will be visible to future calls to Get(). it is only used for test.
 func (s *LFU[K, V]) Wait() {
 	s.cache.Wait()
 }
 
+// Metrics is to get metrics. It is only used for test.
 func (s *LFU[K, V]) Metrics() *ristretto.Metrics {
 	return s.cache.Metrics
 }

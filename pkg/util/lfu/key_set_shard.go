@@ -16,11 +16,11 @@ package lfu
 
 const keySetCnt = 256
 
-type keySetShard[k K, v V] struct {
+type keySetShard[k Key, v Value] struct {
 	resultKeySet [keySetCnt]keySet[k, v]
 }
 
-func newKeySetShard[k K, v V]() *keySetShard[k, v] {
+func newKeySetShard[k Key, v Value]() *keySetShard[k, v] {
 	result := keySetShard[k, v]{}
 	for i := 0; i < keySetCnt; i++ {
 		result.resultKeySet[i] = keySet[k, v]{
@@ -31,15 +31,15 @@ func newKeySetShard[k K, v V]() *keySetShard[k, v] {
 }
 
 func (kss *keySetShard[K, V]) Get(key K) (V, bool) {
-	return kss.resultKeySet[KeyToHash(key)%keySetCnt].Get(key)
+	return kss.resultKeySet[keyToHash(key)%keySetCnt].Get(key)
 }
 
 func (kss *keySetShard[K, V]) AddKeyValue(key K, table V) {
-	kss.resultKeySet[KeyToHash(key)%keySetCnt].AddKeyValue(key, table)
+	kss.resultKeySet[keyToHash(key)%keySetCnt].AddKeyValue(key, table)
 }
 
 func (kss *keySetShard[K, V]) Remove(key K) {
-	kss.resultKeySet[KeyToHash(key)%keySetCnt].Remove(key)
+	kss.resultKeySet[keyToHash(key)%keySetCnt].Remove(key)
 }
 
 func (kss *keySetShard[K, V]) Keys() []K {

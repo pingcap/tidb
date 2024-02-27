@@ -20,15 +20,18 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-type K interface {
+// Key is the key of cache
+type Key interface {
 	~uint64 | ~string | ~int | ~int32 | ~uint32 | ~int64
 }
-type V interface {
+
+// Value is the value of cache
+type Value interface {
 	DeepCopy() any
 	TotalTrackingMemUsage() int64
 }
 
-type keySet[k K, v V] struct {
+type keySet[k Key, v Value] struct {
 	set map[k]v
 	mu  sync.RWMutex
 }
