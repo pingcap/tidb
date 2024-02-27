@@ -178,6 +178,87 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	return res, nil
 }
 
+// todo move to client.go
+func (c *RegionCache) locateKeyRange(bo *Backoffer, startKey, endKey []byte) ([]*tikv.KeyLocation, error) {
+	regions, err := c.LoadRegionsInKeyRange(bo.TiKVBackoffer(), startKey, endKey)
+	if err != nil {
+		return nil, err
+	}
+	res := make([]*tikv.KeyLocation, 0, len(regions))
+	for _, r := range regions {
+		res = append(res, &tikv.KeyLocation{
+			Region:   r.VerID(),
+			StartKey: r.StartKey(),
+			EndKey:   r.EndKey(),
+			Buckets:  nil,
+		})
+	}
+	return res, nil
+}
+
+// SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
+func (c *RegionCache) SplitKeyRangesByLocationsNew(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
+	locs, err := c.locateKeyRange(bo, ranges.first.StartKey, ranges.last.EndKey)
+	if err != nil {
+		return nil, derr.ToTiDBErr(err)
+	}
+
+	res := make([]*LocationKeyRanges, 0, len(locs))
+	// All ranges belong to the same region.
+	if len(locs) == 1 {
+		res = append(res, &LocationKeyRanges{Location: locs[0], Ranges: ranges})
+		return res, nil
+	}
+
+	curLocIndex := 0
+	for ranges.Len() > 0 {
+		loc := locs[curLocIndex]
+		if curLocIndex == (len(locs) - 1) {
+			res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
+			break
+		}
+
+		// Iterate to the first range that is not complete in the region.
+		var r kv.KeyRange
+		var i int
+		for ; i < ranges.Len(); i++ {
+			r = ranges.At(i)
+			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
+				break
+			}
+		}
+		// All rest ranges belong to the same region.
+		if i == ranges.Len() {
+			res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
+			break
+		}
+
+		if loc.Contains(r.StartKey) {
+			// Part of r is not in the region. We need to split it.
+			taskRanges := ranges.Slice(0, i)
+			taskRanges.last = &kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   loc.EndKey,
+			}
+			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
+			curLocIndex++
+
+			ranges = ranges.Slice(i+1, ranges.Len())
+			ranges.first = &kv.KeyRange{
+				StartKey: loc.EndKey,
+				EndKey:   r.EndKey,
+			}
+		} else {
+			// rs[i] is not in the region.
+			taskRanges := ranges.Slice(0, i)
+			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
+			curLocIndex++
+			ranges = ranges.Slice(i, ranges.Len())
+		}
+	}
+	return res, nil
+}
+
 // SplitKeyRangesByBuckets splits the KeyRanges by buckets information in the cache. If regions don't have buckets,
 // it's equal to SplitKeyRangesByLocations.
 //
