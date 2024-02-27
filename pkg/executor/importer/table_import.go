@@ -653,7 +653,6 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 	}
 
 	return common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, idxValues[0], valueStr[0])
-
 }
 
 // GetIndexInfoByIndexID get index info from table.Table
