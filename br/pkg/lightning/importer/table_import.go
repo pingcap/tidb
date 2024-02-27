@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -1342,7 +1341,7 @@ func (tr *TableImporter) importKV(
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
 	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = importer.ConvertToErrFoundConflictRecords(err, tr.encTable)
+		err = local.ConvertToErrFoundConflictRecords(err, tr.encTable)
 	}
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
