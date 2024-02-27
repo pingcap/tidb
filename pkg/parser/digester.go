@@ -456,6 +456,7 @@ func (d *sqlDigester) reduceInListWithSingleLiteral(currTok *token) {
 	}
 }
 
+// In (Row(...)) => In (...) #51222
 func (d *sqlDigester) reduceInRowListWithSingleLiteral(currTok *token) {
 	last5 := d.tokens.back(6)
 	if len(last5) == 6 &&
