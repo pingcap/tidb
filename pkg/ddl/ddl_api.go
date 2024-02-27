@@ -1290,7 +1290,100 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		if err := expr.Restore(restoreCtx); err != nil {
 			return "", false, err
 		}
+<<<<<<< HEAD
 		return sb.String(), false, nil
+=======
+		nowFunc, ok := expr.Args[0].(*ast.FuncCallExpr)
+		if ok && nowFunc.FnName.L == ast.Now {
+			if err := expression.VerifyArgsWrapper(nowFunc.FnName.L, len(nowFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			valExpr, isValue := expr.Args[1].(ast.ValueExpr)
+			if !isValue || (valExpr.GetString() != "%Y-%m" && valExpr.GetString() != "%Y-%m-%d" &&
+				valExpr.GetString() != "%Y-%m-%d %H.%i.%s" && valExpr.GetString() != "%Y-%m-%d %H:%i:%s") {
+				return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), valExpr)
+			}
+			str, err := restoreFuncCall(expr)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			col.DefaultIsExpr = true
+			return str, false, nil
+		}
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), nowFunc.FnName.String())
+	case ast.Replace:
+		// Support REPLACE(UPPER(UUID()), '-', '').
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		funcCall := expr.Args[0]
+		// Support REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', ''))
+		if convertFunc, ok := funcCall.(*ast.FuncCallExpr); ok && convertFunc.FnName.L == ast.Convert {
+			if err := expression.VerifyArgsWrapper(convertFunc.FnName.L, len(convertFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			funcCall = convertFunc.Args[0]
+		}
+		if upperFunc, ok := funcCall.(*ast.FuncCallExpr); ok && upperFunc.FnName.L == ast.Upper {
+			if err := expression.VerifyArgsWrapper(upperFunc.FnName.L, len(upperFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			if uuidFunc, ok := upperFunc.Args[0].(*ast.FuncCallExpr); ok && uuidFunc.FnName.L == ast.UUID {
+				if err := expression.VerifyArgsWrapper(uuidFunc.FnName.L, len(uuidFunc.Args)); err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				str, err := restoreFuncCall(expr)
+				if err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				col.DefaultIsExpr = true
+				return str, false, nil
+			}
+		}
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+	case ast.Upper:
+		// Support UPPER(SUBSTRING_INDEX(USER(), '@', 1)).
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		if substringIndexFunc, ok := expr.Args[0].(*ast.FuncCallExpr); ok && substringIndexFunc.FnName.L == ast.SubstringIndex {
+			if err := expression.VerifyArgsWrapper(substringIndexFunc.FnName.L, len(substringIndexFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			if userFunc, ok := substringIndexFunc.Args[0].(*ast.FuncCallExpr); ok && userFunc.FnName.L == ast.User {
+				if err := expression.VerifyArgsWrapper(userFunc.FnName.L, len(userFunc.Args)); err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				valExpr, isValue := substringIndexFunc.Args[1].(ast.ValueExpr)
+				if !isValue || valExpr.GetString() != "@" {
+					return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), valExpr)
+				}
+				str, err := restoreFuncCall(expr)
+				if err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				col.DefaultIsExpr = true
+				return str, false, nil
+			}
+		}
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+	case ast.StrToDate:
+		// Support STR_TO_DATE('1980-01-01', '%Y-%m-%d').
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		if _, ok1 := expr.Args[0].(ast.ValueExpr); ok1 {
+			if _, ok2 := expr.Args[1].(ast.ValueExpr); ok2 {
+				str, err := restoreFuncCall(expr)
+				if err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				col.DefaultIsExpr = true
+				return str, false, nil
+			}
+		}
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), fmt.Sprintf("%s with these args", expr.FnName.String()))
+>>>>>>> 3c3ba00cb40 (ddl: data type default values support `STR_TO_DATE('1980-01-01','%Y-%m-%d')` (#51278))
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -4110,7 +4203,11 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 						return nil, errors.Trace(err)
 					}
 					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
+<<<<<<< HEAD
 				case ast.Rand, ast.UUID:
+=======
+				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.Replace, ast.Upper, ast.DateFormat, ast.StrToDate:
+>>>>>>> 3c3ba00cb40 (ddl: data type default values support `STR_TO_DATE('1980-01-01','%Y-%m-%d')` (#51278))
 					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 				}
 			}
@@ -5255,12 +5352,24 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		col.DefaultIsExpr = isSeqExpr
 	}
 
+<<<<<<< HEAD
 	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
 	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
+=======
+	// When the default value is expression, we skip check and convert.
+	if !col.DefaultIsExpr {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
+		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+		if err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
+>>>>>>> 3c3ba00cb40 (ddl: data type default values support `STR_TO_DATE('1980-01-01','%Y-%m-%d')` (#51278))
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
