@@ -744,6 +744,20 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	return p.buildIndexJoinInner2IndexScan(prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
 }
 
+// indexJoinInnerChildWrapper is a wrapper for the inner child of an index join.
+// It contains the lowest DataSource operator and other inner child operator
+// which is flattened into a list structure from tree structure .
+// For example, the inner child of an index join is a tree structure like:
+//
+//	Projection
+//	       Aggregation
+//				Selection
+//					DataSource
+//
+// The inner child wrapper will be:
+// DataSource: the lowest DataSource operator.
+// hasDitryWrite: whether the inner child contains dirty data.
+// zippedChildren: [Projection, Aggregation, Selection]
 type indexJoinInnerChildWrapper struct {
 	ds             *DataSource
 	hasDitryWrite  bool
@@ -764,7 +778,7 @@ childLoop:
 		case *DataSource:
 			wrapper.ds = child
 			break childLoop
-		case *LogicalProjection, *LogicalSelection:
+		case *LogicalProjection, *LogicalSelection, *LogicalAggregation:
 			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 				return nil
 			}
@@ -989,7 +1003,8 @@ type indexJoinBuildHelper struct {
 	curPossibleUsedKeys []*expression.Column
 	curNotUsedIndexCols []*expression.Column
 	curNotUsedColLens   []int
-	curIdxOff2KeyOff    []int
+	// Store the corresponding innerKeys offset of each column in the current path, reset by "resetContextForIndex()"
+	curIdxOff2KeyOff []int
 }
 
 func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
@@ -1092,24 +1107,33 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
-	t := copTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
-	reader := t.GetPlan()
-	t.SetPlan(p.constructInnerByWrapper(wrapper, reader))
-	return t
+	return p.constructIndexJoinInnerSideTask(copTask, ds, nil, wrapper)
 }
 
-func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrapper, child base.PhysicalPlan) base.PhysicalPlan {
-	for i := len(wrapper.zippedChildren) - 1; i >= 0; i-- {
-		switch x := wrapper.zippedChildren[i].(type) {
+func (p *LogicalJoin) constructInnerByZippedChildren(zippedChildren []LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
+	for i := len(zippedChildren) - 1; i >= 0; i-- {
+		switch x := zippedChildren[i].(type) {
 		case *LogicalUnionScan:
 			child = p.constructInnerUnionScan(x, child)
 		case *LogicalProjection:
 			child = p.constructInnerProj(x, child)
 		case *LogicalSelection:
 			child = p.constructInnerSel(x, child)
+		case *LogicalAggregation:
+			child = p.constructInnerAgg(x, child)
 		}
 	}
 	return child
+}
+
+func (*LogicalJoin) constructInnerAgg(logicalAgg *LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
+	if logicalAgg == nil {
+		return child
+	}
+	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), nil)
+	physicalHashAgg.SetSchema(logicalAgg.schema.Clone())
+	physicalHashAgg.SetChildren(child)
+	return physicalHashAgg
 }
 
 func (*LogicalJoin) constructInnerSel(sel *LogicalSelection, child base.PhysicalPlan) base.PhysicalPlan {
@@ -1380,10 +1404,115 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
-	t := cop.ConvertToRootTask(ds.SCtx()).(*RootTask)
-	reader := t.GetPlan()
-	t.SetPlan(p.constructInnerByWrapper(wrapper, reader))
-	return t
+	return p.constructIndexJoinInnerSideTask(cop, ds, path, wrapper)
+}
+
+// construct the inner join task by inner child plan tree
+// The Logical include two parts: logicalplan->physicalplan, physicalplan->task
+// Step1: whether agg can be pushed down to coprocessor
+//
+//	Step1.1: If the agg can be pushded down to coprocessor, we will build a copTask and attach the agg to the copTask
+//	There are two kinds of agg: stream agg and hash agg. Stream agg depends on some conditions, such as the group by cols
+//
+// Step2: build other inner plan node to task
+func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
+	if len(wrapper.zippedChildren) == 0 {
+		t := dsCopTask.ConvertToRootTask(ds.SCtx())
+		return t
+	}
+	la, canPushAggToCop := wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*LogicalAggregation)
+	if la != nil && la.HasDistinct() {
+		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
+		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
+		if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
+			canPushAggToCop = false
+		}
+	}
+
+	if canPushAggToCop {
+		// Try stream aggregation first.
+		// We will choose the stream aggregation if the following conditions are met:
+		// 1. Force hint stream agg by /*+ stream_agg() */
+		// 2. Other conditions copy from getStreamAggs() in exhaust_physical_plans.go
+		_, preferStream := la.ResetHintIfConflicted()
+		for _, aggFunc := range la.AggFuncs {
+			if aggFunc.Mode == aggregation.FinalMode {
+				preferStream = false
+				break
+			}
+		}
+		// group by a + b is not interested in any order.
+		groupByCols := la.GetGroupByCols()
+		if len(groupByCols) != len(la.GroupByItems) {
+			preferStream = false
+		}
+		if la.HasDistinct() && !la.distinctArgsMeetsProperty() {
+			preferStream = false
+		}
+		// sort items must be the super set of group by items
+		if path != nil && path.Index != nil && !path.Index.MVIndex &&
+			ds.tableInfo.GetPartitionInfo() == nil {
+			if len(path.IdxCols) < len(groupByCols) {
+				preferStream = false
+			}
+			sctx := p.SCtx()
+			for i, groupbyCol := range groupByCols {
+				if path.IdxColLens[i] != types.UnspecifiedLength ||
+					!groupbyCol.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), path.IdxCols[i]) {
+					preferStream = false
+				}
+			}
+		} else {
+			preferStream = false
+		}
+
+		// build physical agg and attach to task
+		var aggTask base.Task
+		// build stream agg and change ds keep order to true
+		if preferStream {
+			newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+			copy(newGbyItems, la.GroupByItems)
+			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+			copy(newAggFuncs, la.AggFuncs)
+			streamAgg := basePhysicalAgg{
+				GroupByItems: newGbyItems,
+				AggFuncs:     newAggFuncs,
+			}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), nil)
+			streamAgg.SetSchema(la.schema.Clone())
+			// change to keep order for index scan and dsCopTask
+			if dsCopTask.indexPlan != nil {
+				// get the index scan from dsCopTask.indexPlan
+				physicalIndexScan, _ := dsCopTask.indexPlan.(*PhysicalIndexScan)
+				if physicalIndexScan == nil && len(dsCopTask.indexPlan.Children()) == 1 {
+					physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
+				}
+				if physicalIndexScan != nil {
+					physicalIndexScan.KeepOrder = true
+					dsCopTask.keepOrder = true
+					aggTask = streamAgg.Attach2Task(dsCopTask)
+				}
+			}
+		}
+
+		// build hash agg, when the stream agg is illegal such as the order by prop is not matched
+		if aggTask == nil {
+			physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), nil)
+			physicalHashAgg.SetSchema(la.schema.Clone())
+			aggTask = physicalHashAgg.Attach2Task(dsCopTask)
+		}
+
+		// build other inner plan node to task
+		result, ok := aggTask.(*RootTask)
+		if !ok {
+			return nil
+		}
+		result.p = p.constructInnerByZippedChildren(wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p)
+		return result
+	}
+
+	result := dsCopTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
+	result.SetPlan(p.constructInnerByZippedChildren(wrapper.zippedChildren, result.GetPlan()))
+	return result
 }
 
 var symmetricOp = map[string]string{
@@ -1504,6 +1633,16 @@ func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
 	return
 }
 
+// Reset the 'curIdxOff2KeyOff', 'curNotUsedIndexCols' and 'curNotUsedColLens' by innerKeys and idxCols
+/*
+For each idxCols,
+  If column can be found in innerKeys
+	save offset of innerKeys in 'curIdxOff2KeyOff'
+  Else,
+	save -1 in 'curIdxOff2KeyOff'
+*/
+// For example, innerKeys[t1.a, t1.sum_b, t1.c], idxCols [a, b, c]
+// 'curIdxOff2KeyOff' = [0, -1, 2]
 func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int, outerKeys []*expression.Column) {
 	tmpSchema := expression.NewSchema(innerKeys...)
 	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
