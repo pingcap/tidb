@@ -7065,14 +7065,17 @@ OnDuplicateKeyUpdate:
  *
  **********************************************************************************/
 ReplaceIntoStmt:
-	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
+	"REPLACE" TableOptimizerHintsOpt PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
 	{
-		x := $6.(*ast.InsertStmt)
+		x := $7.(*ast.InsertStmt)
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
 		x.IsReplace = true
-		x.Priority = $2.(mysql.PriorityEnum)
-		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
+		x.Priority = $3.(mysql.PriorityEnum)
+		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
-		x.PartitionNames = $5.([]model.CIStr)
+		x.PartitionNames = $6.([]model.CIStr)
 		$$ = x
 	}
 

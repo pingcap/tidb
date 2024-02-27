@@ -1093,6 +1093,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"calibrate resource workload oltp_read_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_READ_ONLY"},
 		{"calibrate resource workload oltp_write_only", true, "CALIBRATE RESOURCE WORKLOAD OLTP_WRITE_ONLY"},
 		{"calibrate resource workload = oltp_read_write START_TIME '2023-04-01 13:00:00'", false, ""},
+
+		// for issue 34325, "replace into" with hints
+		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = ALLOW_INVALID_DATES)*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
 	}
 	RunTest(t, table, false)
 }
