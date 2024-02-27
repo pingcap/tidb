@@ -16,11 +16,9 @@ package executor
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"fmt"
 	"math"
-	sl "slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -3079,8 +3077,8 @@ func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expr
 			}
 		}
 		// sort the used idxes according their original indexes derived after resolveIndex.
-		sl.SortFunc(usedIdxPair, func(a, b intPair) int {
-			return cmp.Compare(a.first, b.first)
+		slices.SortFunc(usedIdxPair, func(a, b intPair) bool {
+			return a.first < b.first
 		})
 		usedIdx := make([]int, 0, len(childSchema.Columns))
 		for _, one := range usedIdxPair {
