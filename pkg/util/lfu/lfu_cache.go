@@ -179,7 +179,7 @@ func (s *LFU[K, V]) dropMemory(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
-	table := item.Value.(V).Copy().(V)
+	table := item.Value.(V).DeepCopy().(V)
 	s.dropEvicted(table)
 	s.resultKeySet.AddKeyValue(K(item.Key), table)
 	after := table.TotalTrackingMemUsage()
@@ -242,11 +242,11 @@ func (s *LFU[K, V]) SetCapacity(maxCost int64) {
 
 // wait blocks until all buffered writes have been applied. This ensures a call to Set()
 // will be visible to future calls to Get(). it is only used for test.
-func (s *LFU[K, V]) wait() {
+func (s *LFU[K, V]) Wait() {
 	s.cache.Wait()
 }
 
-func (s *LFU[K, V]) metrics() *ristretto.Metrics {
+func (s *LFU[K, V]) Metrics() *ristretto.Metrics {
 	return s.cache.Metrics
 }
 

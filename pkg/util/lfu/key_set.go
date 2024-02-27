@@ -24,8 +24,7 @@ type K interface {
 	~uint64 | ~string | ~int | ~int32 | ~uint32 | ~int64
 }
 type V interface {
-	comparable
-	Copy() any
+	DeepCopy() any
 	TotalTrackingMemUsage() int64
 }
 
@@ -38,9 +37,8 @@ func (ks *keySet[K, V]) Remove(key K) int64 {
 	var cost int64
 	ks.mu.Lock()
 	if table, ok := ks.set[key]; ok {
-		if table != nil {
-			cost = table.TotalTrackingMemUsage()
-		}
+		// if table is nil, it still return 0.
+		cost = table.TotalTrackingMemUsage()
 		delete(ks.set, key)
 	}
 	ks.mu.Unlock()

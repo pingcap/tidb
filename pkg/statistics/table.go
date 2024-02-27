@@ -70,6 +70,11 @@ type Table struct {
 	TblInfoUpdateTS uint64
 }
 
+// DeepCopy implements the interface of LFU' key.
+func (t *Table) DeepCopy() any {
+	return t.Copy()
+}
+
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
 type ExtendedStatsItem struct {
 	StringVals string
@@ -275,6 +280,14 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 		}
 	}
 	return tMemUsage
+}
+
+// TotalTrackingMemUsage return Total Tracking Mem Usage
+func (t *Table) TotalTrackingMemUsage() int64 {
+	if t == nil {
+		return 0
+	}
+	return t.MemoryUsage().TotalTrackingMemUsage()
 }
 
 // Copy copies the current table.
