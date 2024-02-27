@@ -486,7 +486,10 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
-		tmpNewTp := convertStringFTToBinaryCollate(newTp[i])
+		tmpNewTp := newTp[i]
+		if d.convertToSortKey {
+			tmpNewTp = convertStringFTToBinaryCollate(tmpNewTp)
+		}
 		if i == 0 {
 			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
 		} else {
