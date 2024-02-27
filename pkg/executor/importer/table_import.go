@@ -657,7 +657,7 @@ func GetIndexInfoByIndexId(tbl table.Table, indexID int64) (*model.IndexInfo, er
 			return indexInfo, nil
 		}
 	}
-	return nil, common.ErrGetIndexInfoByIndexId
+	return nil, common.ErrGetIndexInfoByIndexID
 }
 
 // ImportAndCleanup imports the engine and cleanup the engine data.
