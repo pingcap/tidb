@@ -338,10 +338,10 @@ func TestUnparallelSortSpillDisk(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
 	for i := 0; i < 50; i++ {
-		// onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
-		// onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
-		// multiPartitionCase(t, ctx, sortCase, false)
-		// multiPartitionCase(t, ctx, sortCase, true)
+		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
+		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
+		multiPartitionCase(t, ctx, sortCase, false)
+		multiPartitionCase(t, ctx, sortCase, true)
 		inMemoryThenSpillCase(t, ctx, sortCase)
 	}
 }
