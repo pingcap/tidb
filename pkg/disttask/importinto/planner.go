@@ -205,11 +205,12 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
-	var localChecksum verify.KVChecksum
+	localChecksum := verify.NewKVGroupChecksumForAdd()
 	maxIDs := make(map[autoid.AllocatorType]int64, 3)
 	for _, subtaskMeta := range subtaskMetas {
-		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
-		localChecksum.Add(&checksum)
+		for id, c := range subtaskMeta.Checksum {
+			localChecksum.AddRawGroup(id, c.Size, c.KVs, c.Sum)
+		}
 
 		for key, val := range subtaskMeta.MaxIDs {
 			if maxIDs[key] < val {
@@ -217,13 +218,17 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 			}
 		}
 	}
+	c := localChecksum.GetInnerChecksums()
 	postProcessStepMeta := &PostProcessStepMeta{
-		Checksum: Checksum{
-			Size: localChecksum.SumSize(),
-			KVs:  localChecksum.SumKVS(),
-			Sum:  localChecksum.Sum(),
-		},
-		MaxIDs: maxIDs,
+		Checksum: make(map[int64]Checksum, len(c)),
+		MaxIDs:   maxIDs,
+	}
+	for id, cksum := range c {
+		postProcessStepMeta.Checksum[id] = Checksum{
+			Size: cksum.SumSize(),
+			KVs:  cksum.SumKVS(),
+			Sum:  cksum.Sum(),
+		}
 	}
 	return json.Marshal(postProcessStepMeta)
 }

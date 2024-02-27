@@ -23,9 +23,11 @@ type AnalysisPriorityQueue struct {
 
 // NewAnalysisPriorityQueue creates a new AnalysisPriorityQueue.
 func NewAnalysisPriorityQueue() *AnalysisPriorityQueue {
-	return &AnalysisPriorityQueue{
+	q := &AnalysisPriorityQueue{
 		inner: &analysisInnerQueue{},
 	}
+	heap.Init(q.inner)
+	return q
 }
 
 // Push adds a job to the priority queue with the given weight.

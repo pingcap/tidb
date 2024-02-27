@@ -28,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -821,7 +819,7 @@ func TestTime(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func resetStmtContext(ctx sessionctx.Context) {
+func resetStmtContext(ctx EvalContext) {
 	ctx.GetSessionVars().StmtCtx.ResetStmtCache()
 }
 
@@ -1186,7 +1184,7 @@ func TestSysDate(t *testing.T) {
 	require.Error(t, err)
 }
 
-func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
+func convertToTimeWithFsp(tc types.Context, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
 	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
@@ -1194,7 +1192,7 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	f := types.NewFieldType(tp)
 	f.SetDecimal(fsp)
 
-	d, err = arg.ConvertTo(sc.TypeCtx(), f)
+	d, err = arg.ConvertTo(tc, f)
 	if err != nil {
 		d.SetNull()
 		return d, err
@@ -1211,12 +1209,12 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	return
 }
 
-func convertToTime(sc *stmtctx.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
-	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
+func convertToTime(tc types.Context, arg types.Datum, tp byte) (d types.Datum, err error) {
+	return convertToTimeWithFsp(tc, arg, tp, types.MaxFsp)
 }
 
-func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datum, err error) {
-	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
+func builtinDateFormat(tc types.Context, args []types.Datum) (d types.Datum, err error) {
+	date, err := convertToTime(tc, args[0], mysql.TypeDatetime)
 	if err != nil {
 		return d, err
 	}
@@ -1288,7 +1286,7 @@ func TestFromUnixTime(t *testing.T) {
 			require.NoError(t, err)
 			v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.NoError(t, err)
-			result, err := builtinDateFormat(ctx, []types.Datum{types.NewStringDatum(c.expect), format})
+			result, err := builtinDateFormat(ctx.GetSessionVars().StmtCtx.TypeCtx(), []types.Datum{types.NewStringDatum(c.expect), format})
 			require.NoError(t, err)
 			require.Equalf(t, result.GetString(), v.GetString(), "%+v", t)
 		}

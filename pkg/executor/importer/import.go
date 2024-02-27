@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -98,6 +99,7 @@ const (
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
 	cloudStorageURIOption       = "cloud_storage_uri"
+	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
 )
@@ -123,6 +125,7 @@ var (
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
 		cloudStorageURIOption:       true,
+		disablePrecheckOption:       false,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -137,7 +140,8 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
-		threadOption: {},
+		threadOption:          {},
+		disablePrecheckOption: {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -237,6 +241,7 @@ type Plan struct {
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
+	DisablePrecheck       bool
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -535,8 +540,7 @@ func (e *LoadDataController) checkFieldParams() error {
 func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 	if p.DataSourceType == DataSourceTypeQuery {
-		// TODO: change after spec is ready.
-		threadCnt = 1
+		threadCnt = 2
 	}
 
 	p.Checksum = config.OpLevelRequired
@@ -594,7 +598,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalString(seCtx, chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -605,7 +609,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalInt(seCtx, chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -742,6 +746,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if err = p.MaxEngineSize.UnmarshalText([]byte(v)); err != nil || p.MaxEngineSize < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+	}
+	if _, ok := specifiedOptions[disablePrecheckOption]; ok {
+		p.DisablePrecheck = true
 	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.
@@ -1283,7 +1290,7 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	allWarnings := []stmtctx.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
-		newExpr, err := expression.RewriteAstExpr(sctx, assign.Expr, nil, nil, false)
+		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		allWarnings = append(allWarnings, sctx.GetSessionVars().StmtCtx.GetWarnings()...)

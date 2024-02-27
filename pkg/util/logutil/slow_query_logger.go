@@ -36,7 +36,7 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error)
 
 	// replace 2018-12-19-unified-log-format text encoder with slow log encoder
 	newCore := log.NewTextCore(&slowLogEncoder{}, prop.Syncer, prop.Level)
-	sqLogger = sqLogger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+	sqLogger = sqLogger.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
 		return newCore
 	}))
 	prop.Core = newCore

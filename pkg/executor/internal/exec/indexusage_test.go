@@ -43,10 +43,10 @@ func TestIndexUsageReporter(t *testing.T) {
 
 	sc := tk.Session().GetSessionVars().StmtCtx
 	statsMap := sc.GetUsedStatsInfo(true)
-	statsMap[tableID] = &stmtctx.UsedStatsInfoForTable{
+	statsMap.RecordUsedInfo(tableID, &stmtctx.UsedStatsInfoForTable{
 		Version:       123,
 		RealtimeCount: 100,
-	}
+	})
 	reporter := exec.NewIndexUsageReporter(sc.IndexUsageCollector, sc.RuntimeStatsColl, statsMap)
 	runtimeStatsColl := sc.RuntimeStatsColl
 
@@ -82,10 +82,10 @@ func TestIndexUsageReporter(t *testing.T) {
 	}, time.Second*5, time.Millisecond)
 
 	// If the version is pseudo, skip it
-	statsMap[tableID] = &stmtctx.UsedStatsInfoForTable{
+	statsMap.RecordUsedInfo(tableID, &stmtctx.UsedStatsInfoForTable{
 		Version:       statistics.PseudoVersion,
 		RealtimeCount: 100,
-	}
+	})
 	planID = 4
 	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
 	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)

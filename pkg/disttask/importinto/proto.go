@@ -53,7 +53,7 @@ type ImportStepMeta struct {
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk
-	Checksum Checksum
+	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
 	Result   Result
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
 	// the max id is same among all allocator types for now, since we're using same base, see
@@ -94,8 +94,9 @@ type WriteIngestStepMeta struct {
 
 // PostProcessStepMeta is the meta of post process step.
 type PostProcessStepMeta struct {
-	// accumulated checksum of all subtasks in import step.
-	Checksum Checksum
+	// accumulated checksum of all subtasks in import step. See KVGroupChecksum for
+	// definition of map key.
+	Checksum map[int64]Checksum
 	// MaxIDs of max all max-ids of subtasks in import step.
 	MaxIDs map[autoid.AllocatorType]int64
 }
@@ -110,7 +111,7 @@ type SharedVars struct {
 	Progress      *importer.Progress
 
 	mu       sync.Mutex
-	Checksum *verification.KVChecksum
+	Checksum *verification.KVGroupChecksum
 
 	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.

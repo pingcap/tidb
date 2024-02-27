@@ -752,19 +752,19 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 // CDCPITRCheckItem check downstream has enabled CDC or PiTR. It's exposed to let
 // caller override the Instruction message.
 type CDCPITRCheckItem struct {
-	cfg              *config.Config
-	Instruction      string
-	leaderAddrGetter func(context.Context) string
+	cfg           *config.Config
+	Instruction   string
+	pdAddrsGetter func(context.Context) []string
 	// used in test
 	etcdCli *clientv3.Client
 }
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
-func NewCDCPITRCheckItem(cfg *config.Config, leaderAddrGetter func(context.Context) string) precheck.Checker {
+func NewCDCPITRCheckItem(cfg *config.Config, pdAddrsGetter func(context.Context) []string) precheck.Checker {
 	return &CDCPITRCheckItem{
-		cfg:              cfg,
-		Instruction:      "local backend is not compatible with them. Please switch to tidb backend then try again.",
-		leaderAddrGetter: leaderAddrGetter,
+		cfg:           cfg,
+		Instruction:   "local backend is not compatible with them. Please switch to tidb backend then try again.",
+		pdAddrsGetter: pdAddrsGetter,
 	}
 }
 
@@ -776,7 +776,7 @@ func (*CDCPITRCheckItem) GetCheckItemID() precheck.CheckItemID {
 func dialEtcdWithCfg(
 	ctx context.Context,
 	cfg *config.Config,
-	leaderAddr string,
+	addrs []string,
 ) (*clientv3.Client, error) {
 	cfg2, err := cfg.ToTLS()
 	if err != nil {
@@ -786,7 +786,7 @@ func dialEtcdWithCfg(
 
 	return clientv3.New(clientv3.Config{
 		TLS:              tlsConfig,
-		Endpoints:        []string{leaderAddr},
+		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -813,7 +813,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 
 	if ci.etcdCli == nil {
 		var err error
-		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.leaderAddrGetter(ctx))
+		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.pdAddrsGetter(ctx))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

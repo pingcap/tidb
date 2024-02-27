@@ -35,7 +35,8 @@ func readAllData(
 	store storage.ExternalStorage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
-	bufPool *membuf.Pool,
+	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
@@ -69,36 +70,59 @@ func readAllData(
 		startKey,
 		endKey,
 	)
-	// TODO(lance6716): refine adjust concurrency
-	for i, c := range concurrences {
-		if c < readAllDataConcThreshold {
-			concurrences[i] = 1
-		}
-	}
-
 	if err != nil {
 		return err
 	}
+
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	// limit the concurrency to avoid open too many connections at the same time
-	eg.SetLimit(1000)
-	for i := range dataFiles {
-		i := i
+	readConn := 1000
+	readConn = min(readConn, len(dataFiles))
+	taskCh := make(chan int)
+	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
+	for readIdx := 0; readIdx < readConn; readIdx++ {
+		readIdx := readIdx
 		eg.Go(func() error {
-			err2 := readOneFile(
-				egCtx,
-				store,
-				dataFiles[i],
-				startKey,
-				endKey,
-				startOffsets[i],
-				concurrences[i],
-				bufPool,
-				output,
-			)
-			return errors.Annotatef(err2, "failed to read file %s", dataFiles[i])
+			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
+			output.memKVBuffers[readIdx+readConn] = largeBlockBufPool.NewBuffer()
+			smallBlockBuf := output.memKVBuffers[readIdx]
+			largeBlockBuf := output.memKVBuffers[readIdx+readConn]
+
+			for {
+				select {
+				case <-egCtx.Done():
+					return egCtx.Err()
+				case fileIdx, ok := <-taskCh:
+					if !ok {
+						return nil
+					}
+					err2 := readOneFile(
+						egCtx,
+						store,
+						dataFiles[fileIdx],
+						startKey,
+						endKey,
+						startOffsets[fileIdx],
+						concurrences[fileIdx],
+						smallBlockBuf,
+						largeBlockBuf,
+						output,
+					)
+					if err2 != nil {
+						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
+					}
+				}
+			}
 		})
 	}
+
+	for fileIdx := range dataFiles {
+		select {
+		case <-egCtx.Done():
+			return eg.Wait()
+		case taskCh <- fileIdx:
+		}
+	}
+	close(taskCh)
 	return eg.Wait()
 }
 
@@ -109,7 +133,8 @@ func readOneFile(
 	startKey, endKey []byte,
 	startOffset uint64,
 	concurrency uint64,
-	bufPool *membuf.Pool,
+	smallBlockBuf *membuf.Buffer,
+	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
 ) error {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
@@ -127,7 +152,7 @@ func readOneFile(
 			dataFile,
 			int(concurrency),
 			ConcurrentReaderBufferSizePerConc,
-			bufPool.NewBuffer(),
+			largeBlockBuf,
 		)
 		err = rd.byteReader.switchConcurrentMode(true)
 		if err != nil {
@@ -135,8 +160,6 @@ func readOneFile(
 		}
 	}
 
-	// this buffer is associated with data slices and will return to caller
-	memBuf := bufPool.NewBuffer()
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
 	size := 0
@@ -159,15 +182,14 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		keys = append(keys, memBuf.AddBytes(k))
-		values = append(values, memBuf.AddBytes(v))
+		keys = append(keys, smallBlockBuf.AddBytes(k))
+		values = append(values, smallBlockBuf.AddBytes(v))
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
 	output.keysPerFile = append(output.keysPerFile, keys)
 	output.valuesPerFile = append(output.valuesPerFile, values)
-	output.memKVBuffers = append(output.memKVBuffers, memBuf)
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()

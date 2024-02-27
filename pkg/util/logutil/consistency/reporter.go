@@ -102,7 +102,7 @@ type Reporter struct {
 
 // DecodeRowMvccData creates a closure that captures the tableInfo to be used a decode function in GetMvccByKey.
 func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any) {
-	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]any) {
+	return func(_ kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]any) {
 		colMap := make(map[int64]*types.FieldType, 3)
 		for _, col := range tableInfo.Columns {
 			var fieldType = col.FieldType

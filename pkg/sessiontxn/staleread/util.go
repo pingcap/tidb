@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	pctx "github.com/pingcap/tidb/pkg/planner/context"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -31,7 +33,7 @@ import (
 )
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
-func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr ast.ExprNode) (uint64, error) {
+func CalculateAsOfTsExpr(ctx context.Context, sctx pctx.PlanContext, tsExpr ast.ExprNode) (uint64, error) {
 	sctx.GetSessionVars().StmtCtx.SetStaleTSOProvider(func() (uint64, error) {
 		failpoint.Inject("mockStaleReadTSO", func(val failpoint.Value) (uint64, error) {
 			return uint64(val.(int)), nil
@@ -41,7 +43,7 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr as
 		// this can be more accurate than `time.Now() - staleness`, because TiDB's local time can drift.
 		return sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
 	})
-	tsVal, err := expression.EvalAstExprWithPlanCtx(sctx, tsExpr)
+	tsVal, err := plannerutil.EvalAstExprWithPlanCtx(sctx, tsExpr)
 	if err != nil {
 		return 0, err
 	}
@@ -66,12 +68,12 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr as
 
 // CalculateTsWithReadStaleness calculates the TsExpr for readStaleness duration
 func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
-	nowVal, err := expression.GetStmtTimestamp(sctx)
+	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx())
 	if err != nil {
 		return 0, err
 	}
 	tsVal := nowVal.Add(readStaleness)
-	minTsVal := expression.GetMinSafeTime(sctx)
+	minTsVal := expression.GetMinSafeTime(sctx.GetExprCtx())
 	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
 }
 
@@ -81,10 +83,9 @@ func IsStmtStaleness(sctx sessionctx.Context) bool {
 }
 
 // GetExternalTimestamp returns the external timestamp in cache, or get and store it in cache
-func GetExternalTimestamp(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+func GetExternalTimestamp(ctx context.Context, sc *stmtctx.StatementContext) (uint64, error) {
 	// Try to get from the stmt cache to make sure this function is deterministic.
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	externalTimestamp, err := stmtCtx.GetOrEvaluateStmtCache(stmtctx.StmtExternalTSCacheKey, func() (any, error) {
+	externalTimestamp, err := sc.GetOrEvaluateStmtCache(stmtctx.StmtExternalTSCacheKey, func() (any, error) {
 		return variable.GetExternalTimestamp(ctx)
 	})
 

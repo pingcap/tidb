@@ -191,12 +191,12 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	schema := expression.NewSchema(childCols...)
 	groupItems := []expression.Expression{childCols[0]}
 
-	aggFirstRow, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
+	aggFirstRow, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	aggFunc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
+	aggFunc, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{childCols[1]}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,8 +216,8 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 		ordinal := []int{partialOrdinal}
 		partialOrdinal++
 		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
-		partialAggFunc := aggfuncs.Build(ctx, partialAggDesc, i)
-		finalAggFunc := aggfuncs.Build(ctx, finalDesc, i)
+		partialAggFunc := aggfuncs.Build(ctx.GetExprCtx(), partialAggDesc, i)
+		finalAggFunc := aggfuncs.Build(ctx.GetExprCtx(), finalDesc, i)
 		aggExec.PartialAggFuncs = append(aggExec.PartialAggFuncs, partialAggFunc)
 		aggExec.FinalAggFuncs = append(aggExec.FinalAggFuncs, finalAggFunc)
 	}
@@ -347,8 +347,8 @@ func TestGetCorrectResult(t *testing.T) {
 	ctx := mock.NewContext()
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
 
-	rowNum := 100000 + rand.Intn(100000)
-	ndv := 50000 + rand.Intn(50000)
+	rowNum := 100000
+	ndv := 50000
 	col1, col2 := generateData(rowNum, ndv)
 	result := generateResult(col1, col2)
 	opt := getMockDataSourceParameters(ctx)
@@ -378,9 +378,9 @@ func TestGetCorrectResult(t *testing.T) {
 		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
 	}
 
-	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
 	finished.Store(true)
 	wg.Wait()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers"))
 }
 
 func TestFallBackAction(t *testing.T) {

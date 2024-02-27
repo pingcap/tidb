@@ -4023,5 +4023,52 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestSubsetIdxCardinality",
+    "Cases": [
+      {
+        "Query": "explain format = 'brief' select distinct a from t",
+        "Result": [
+          "StreamAgg 31.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "└─IndexReader 31.00 root  index:StreamAgg",
+          "  └─StreamAgg 31.00 cop[tikv]  group by:test.t.a, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:true"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select distinct b from t",
+        "Result": [
+          "HashAgg 14.00 root  group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b",
+          "└─IndexReader 14.00 root  index:HashAgg",
+          "  └─HashAgg 14.00 cop[tikv]  group by:test.t.b, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:false"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select distinct a, b, c from t",
+        "Result": [
+          "StreamAgg 70.00 root  group by:test.t.a, test.t.b, test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(test.t.b)->test.t.b, funcs:firstrow(test.t.c)->test.t.c",
+          "└─IndexReader 70.00 root  index:StreamAgg",
+          "  └─StreamAgg 70.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:true"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1",
+        "Result": [
+          "Projection 16.00 root  test.t.a, test.t.b",
+          "└─IndexReader 16.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 16.00 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1 1,1 1 1], keep order:false"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1",
+        "Result": [
+          "IndexReader 20.32 root  index:IndexRangeScan",
+          "└─IndexRangeScan 20.32 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
+        ]
+      }
+    ]
   }
 ]

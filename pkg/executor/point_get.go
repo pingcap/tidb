@@ -328,10 +328,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
 			!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
 			return (&consistency.Reporter{
-				HandleEncode: func(handle kv.Handle) kv.Key {
+				HandleEncode: func(kv.Handle) kv.Key {
 					return key
 				},
-				IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+				IndexEncode: func(*consistency.RecordData) kv.Key {
 					return e.idxKey
 				},
 				Tbl:  e.tblInfo,
@@ -637,7 +637,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
 			colInfo := getColInfoByID(tblInfo, col.ID)
-			d, err1 := table.GetColOriginDefaultValue(sctx, colInfo)
+			d, err1 := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 			if err1 != nil {
 				return err1
 			}

@@ -300,12 +300,14 @@ func TestSlowLogFormat(t *testing.T) {
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
-		UsedStats:         map[int64]*stmtctx.UsedStatsInfoForTable{1: usedStats1, 2: usedStats2},
+		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
 		RRU:               50.0,
 		WRU:               100.56,
 		WaitRUDuration:    134 * time.Millisecond,
 	}
+	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
+	logItems.UsedStats.RecordUsedInfo(2, usedStats2)
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
 

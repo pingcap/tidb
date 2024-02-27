@@ -42,7 +42,7 @@ type SortExec struct {
 	exec.BaseExecutor
 
 	ByItems    []*plannerutil.ByItems
-	fetched    atomic.Bool
+	fetched    *atomic.Bool
 	ExecSchema *expression.Schema
 
 	// keyColumns is the column index of the by items.
@@ -98,7 +98,10 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	close(e.finishCh)
+	// TopN not initialize `e.finishCh` but it will call the Close function
+	if e.finishCh != nil {
+		close(e.finishCh)
+	}
 	if e.Unparallel.spillAction != nil {
 		e.Unparallel.spillAction.SetFinished()
 	}
@@ -107,18 +110,18 @@ func (e *SortExec) Close() error {
 		for _, partition := range e.Unparallel.sortPartitions {
 			partition.close()
 		}
-	} else {
+	} else if e.finishCh != nil {
 		if e.fetched.CompareAndSwap(false, true) {
 			close(e.Parallel.resultChannel)
 			close(e.Parallel.chunkChannel)
-		}
-
-		for {
-			_, ok := <-e.Parallel.chunkChannel
-			if !ok {
-				break
+		} else {
+			for {
+				_, ok := <-e.Parallel.chunkChannel
+				if !ok {
+					break
+				}
+				e.Parallel.fetcherAndWorkerSyncer.Done()
 			}
-			e.Parallel.fetcherAndWorkerSyncer.Done()
 		}
 
 		<-e.Parallel.closeSync
@@ -149,6 +152,7 @@ func (e *SortExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
+	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
 	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
 	e.finishCh = make(chan struct{}, 1)
@@ -453,9 +457,8 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			err := util.GetRecoverError(r)
-			e.Parallel.resultChannel <- rowWithError{err: err}
-			logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))
+			processPanicAndLog(e.Parallel.resultChannel, r)
+			logutil.BgLogger().Error("parallel sort panicked", zap.Error(util.GetRecoverError(r)), zap.Stack("stack"))
 		}
 
 		close(e.Parallel.resultChannel)
@@ -825,7 +828,7 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {
 	return 0
 }
 
-func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
+func (e *SortExec) compareRow(rowI, rowJ chunk.Row) int {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)

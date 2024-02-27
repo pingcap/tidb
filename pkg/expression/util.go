@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -271,7 +271,7 @@ func extractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
 }
 
 // ExtractConstantEqColumnsOrScalar detects the constant equal relationship from CNF exprs.
-func ExtractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expression, exprs []Expression) []Expression {
+func ExtractConstantEqColumnsOrScalar(ctx BuildContext, result []Expression, exprs []Expression) []Expression {
 	// exprs are CNF expressions, EQ condition only make sense in the top level of every expr.
 	for _, expr := range exprs {
 		result = extractConstantEqColumnsOrScalar(ctx, result, expr)
@@ -279,7 +279,7 @@ func ExtractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expressio
 	return result
 }
 
-func extractConstantEqColumnsOrScalar(ctx sessionctx.Context, result []Expression, expr Expression) []Expression {
+func extractConstantEqColumnsOrScalar(ctx BuildContext, result []Expression, expr Expression) []Expression {
 	switch v := expr.(type) {
 	case *ScalarFunction:
 		if v.FuncName.L == ast.EQ || v.FuncName.L == ast.NullEQ {
@@ -410,7 +410,7 @@ func SetExprColumnInOperand(expr Expression) Expression {
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 // TODO: remove this function and only use ColumnSubstituteImpl since this function swallows the error, which seems unsafe.
-func ColumnSubstitute(ctx sessionctx.Context, expr Expression, schema *Schema, newExprs []Expression) Expression {
+func ColumnSubstitute(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression) Expression {
 	_, _, resExpr := ColumnSubstituteImpl(ctx, expr, schema, newExprs, false)
 	return resExpr
 }
@@ -420,7 +420,7 @@ func ColumnSubstitute(ctx sessionctx.Context, expr Expression, schema *Schema, n
 //
 //	1: substitute them all once find col in schema.
 //	2: nothing in expr can be substituted.
-func ColumnSubstituteAll(ctx sessionctx.Context, expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+func ColumnSubstituteAll(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
 	_, hasFail, resExpr := ColumnSubstituteImpl(ctx, expr, schema, newExprs, true)
 	return hasFail, resExpr
 }
@@ -430,7 +430,7 @@ func ColumnSubstituteAll(ctx sessionctx.Context, expr Expression, schema *Schema
 // @return bool means whether the expr has changed.
 // @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
 // @return Expression, the original expr or the changed expr, it depends on the first @return bool.
-func ColumnSubstituteImpl(ctx sessionctx.Context, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
+func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
@@ -586,7 +586,7 @@ Loop:
 
 // SubstituteCorCol2Constant will substitute correlated column to constant value which it contains.
 // If the args of one scalar function are all constant, we will substitute it to constant.
-func SubstituteCorCol2Constant(ctx sessionctx.Context, expr Expression) (Expression, error) {
+func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		allConstant := true
@@ -710,7 +710,7 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
-func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]Expression, bool) {
+func pushNotAcrossArgs(ctx BuildContext, exprs []Expression, not bool) ([]Expression, bool) {
 	newExprs := make([]Expression, 0, len(exprs))
 	flag := false
 	for _, expr := range exprs {
@@ -752,7 +752,7 @@ func noPrecisionLossCastCompatible(cast, argCol *types.FieldType) bool {
 	return true
 }
 
-func unwrapCast(sctx sessionctx.Context, parentF *ScalarFunction, castOffset int) (Expression, bool) {
+func unwrapCast(sctx BuildContext, parentF *ScalarFunction, castOffset int) (Expression, bool) {
 	_, collation := parentF.CharsetAndCollation()
 	cast, ok := parentF.GetArgs()[castOffset].(*ScalarFunction)
 	if !ok || cast.FuncName.L != ast.Cast {
@@ -788,7 +788,7 @@ func unwrapCast(sctx sessionctx.Context, parentF *ScalarFunction, castOffset int
 // eliminateCastFunction will detect the original arg before and the cast type after, once upon
 // there is no precision loss between them, current cast wrapper can be eliminated. For string
 // type, collation is also taken into consideration. (mainly used to build range or point)
-func eliminateCastFunction(sctx sessionctx.Context, expr Expression) (_ Expression, changed bool) {
+func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, changed bool) {
 	f, ok := expr.(*ScalarFunction)
 	if !ok {
 		return expr, false
@@ -871,7 +871,7 @@ func eliminateCastFunction(sctx sessionctx.Context, expr Expression) (_ Expressi
 // Input `not` indicates whether there's a `NOT` be pushed down.
 // Output `changed` indicates whether the output expression differs from the
 // input `expr` because of the pushed-down-not.
-func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Expression, changed bool) {
+func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expression, changed bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
@@ -935,7 +935,7 @@ func GetExprInsideIsTruth(expr Expression) Expression {
 }
 
 // PushDownNot pushes the `not` function down to the expression's arguments.
-func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
+func PushDownNot(ctx BuildContext, expr Expression) Expression {
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
 	return newExpr
 }
@@ -944,7 +944,7 @@ func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 // 1: deeper cast embedded in other complicated function will not be considered.
 // 2: cast args should be one for original base column and one for constant.
 // 3: some collation compatibility and precision loss will be considered when remove this cast func.
-func EliminateNoPrecisionLossCast(sctx sessionctx.Context, expr Expression) Expression {
+func EliminateNoPrecisionLossCast(sctx BuildContext, expr Expression) Expression {
 	newExpr, _ := eliminateCastFunction(sctx, expr)
 	return newExpr
 }
@@ -998,7 +998,7 @@ func Contains(exprs []Expression, e Expression) bool {
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
 // The original DNF will be replaced by the remained part or just be deleted if remained part is nil.
 // And the extracted part will be appended to the end of the orignal slice.
-func ExtractFiltersFromDNFs(ctx sessionctx.Context, conditions []Expression) []Expression {
+func ExtractFiltersFromDNFs(ctx BuildContext, conditions []Expression) []Expression {
 	var allExtracted []Expression
 	for i := len(conditions) - 1; i >= 0; i-- {
 		if sf, ok := conditions[i].(*ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
@@ -1015,7 +1015,7 @@ func ExtractFiltersFromDNFs(ctx sessionctx.Context, conditions []Expression) []E
 }
 
 // extractFiltersFromDNF extracts the same condition that occurs in every DNF item and remove them from dnf leaves.
-func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]Expression, Expression) {
+func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Expression, Expression) {
 	dnfItems := FlattenDNFConditions(dnfFunc)
 	codeMap := make(map[string]int)
 	hashcode2Expr := make(map[string]Expression)
@@ -1082,7 +1082,7 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 // the original expression must satisfy the derived expression. Return nil when the derived expression is universal set.
 // A running example is: for schema of t1, `(t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)` would be derived as
 // `t1.a=1 or t1.a=2`, while `t1.a=1 or t2.a=1` would get nil.
-func DeriveRelaxedFiltersFromDNF(ctx sessionctx.Context, expr Expression, schema *Schema) Expression {
+func DeriveRelaxedFiltersFromDNF(ctx BuildContext, expr Expression, schema *Schema) Expression {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok || sf.FuncName.L != ast.LogicOr {
 		return nil
@@ -1164,7 +1164,7 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 }
 
 // ParamMarkerExpression generate a getparam function expression.
-func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
+func ParamMarkerExpression(ctx variable.SessionVarsProvider, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)
@@ -1221,7 +1221,7 @@ func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
 }
 
 // PosFromPositionExpr generates a position value from PositionExpr.
-func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool, error) {
+func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, error) {
 	if v.P == nil {
 		return v.N, false, nil
 	}
@@ -1392,7 +1392,7 @@ func RemoveDupExprs(exprs []Expression) []Expression {
 }
 
 // GetUint64FromConstant gets a uint64 from constant expression.
-func GetUint64FromConstant(ctx sessionctx.Context, expr Expression) (uint64, bool, bool) {
+func GetUint64FromConstant(ctx EvalContext, expr Expression) (uint64, bool, bool) {
 	con, ok := expr.(*Constant)
 	if !ok {
 		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo(ctx)))

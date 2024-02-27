@@ -84,7 +84,7 @@ func makeDupHandlerConstructor(
 ) duplicate.HandlerConstructor {
 	switch onDup {
 	case config.ErrorOnDup:
-		return func(ctx context.Context) (duplicate.Handler, error) {
+		return func(context.Context) (duplicate.Handler, error) {
 			return &errorOnDup{}, nil
 		}
 	case config.ReplaceOnDup:

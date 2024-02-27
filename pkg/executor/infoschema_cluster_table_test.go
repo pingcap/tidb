@@ -245,6 +245,7 @@ func TestTiDBClusterInfo(t *testing.T) {
 		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,1001",
 		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
 		"tiproxy,127.0.0.1:6000," + mockAddr + ",mock-version,mock-githash,0",
+		"ticdc,127.0.0.1:8300," + mockAddr + ",mock-version,mock-githash,0",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo", fpExpr))
@@ -256,6 +257,7 @@ func TestTiDBClusterInfo(t *testing.T) {
 		row("tidb", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "1001"),
 		row("tikv", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
 		row("tiproxy", "127.0.0.1:6000", mockAddr, "mock-version", "mock-githash", "0"),
+		row("ticdc", "127.0.0.1:8300", mockAddr, "mock-version", "mock-githash", "0"),
 	))
 	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 key1 value1",
@@ -279,9 +281,17 @@ func TestTiDBClusterInfo(t *testing.T) {
 		"tikv 127.0.0.1:11080 key3.key4.nest4 n-value5",
 		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
 		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
+		"ticdc 127.0.0.1:8300 key1 value1",
+		"ticdc 127.0.0.1:8300 key2.nest1 n-value1",
+		"ticdc 127.0.0.1:8300 key2.nest2 n-value2",
+		"ticdc 127.0.0.1:8300 key3.key4.nest3 n-value4",
+		"ticdc 127.0.0.1:8300 key3.key4.nest4 n-value5",
+		"ticdc 127.0.0.1:8300 key3.nest1 n-value1",
+		"ticdc 127.0.0.1:8300 key3.nest2 n-value2",
 	))
 	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
 		"pd key3.key4.nest4 n-value5",
+		"ticdc key3.key4.nest4 n-value5",
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
 	))
@@ -387,7 +397,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 56
+	result := 54
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

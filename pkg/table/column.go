@@ -530,7 +530,7 @@ func GetColOriginDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo
 }
 
 // GetColOriginDefaultValueWithoutStrictSQLMode gets default value of the column from original default value with Strict SQL mode.
-func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+func GetColOriginDefaultValueWithoutStrictSQLMode(ctx expression.BuildContext, col *model.ColumnInfo) (types.Datum, error) {
 	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), &getColOriginDefaultValue{
 		StrictSQLMode: false,
 	})
@@ -546,13 +546,13 @@ func GetColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo) (typ
 }
 
 // EvalColDefaultExpr eval default expr node to explicit default value.
-func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultExpr ast.ExprNode) (types.Datum, error) {
-	d, err := expression.EvalAstExpr(ctx, defaultExpr)
+func EvalColDefaultExpr(ctx expression.BuildContext, col *model.ColumnInfo, defaultExpr ast.ExprNode) (types.Datum, error) {
+	d, err := expression.EvalSimpleAst(ctx, defaultExpr)
 	if err != nil {
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, d, col, false, false)
+	value, err := CastColumnValue(ctx.GetSessionVars(), d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -566,7 +566,7 @@ func getColDefaultExprValue(ctx expression.BuildContext, col *model.ColumnInfo, 
 	if err == nil {
 		defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	}
-	d, err := expression.EvalAstExpr(ctx, defaultExpr)
+	d, err := expression.EvalSimpleAst(ctx, defaultExpr)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -736,7 +736,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	iter := chunk.NewIterator4Chunk(req)
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := expCols[idx].EvalVirtualColumn(sctx, row)
+			datum, err := expCols[idx].EvalVirtualColumn(sctx.GetExprCtx(), row)
 			if err != nil {
 				return err
 			}

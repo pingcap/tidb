@@ -277,7 +277,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 
 		e.partialWorkers[i] = HashAggPartialWorker{
-			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
+			baseHashAggWorker:    newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			idForTest:            i,
 			ctx:                  ctx,
 			inputCh:              e.partialInputChs[i],
@@ -321,7 +321,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
-			baseHashAggWorker:          newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
+			baseHashAggWorker:          newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:           make(aggfuncs.AggPartialResultMapper),
 			BInMap:                     0,
 			inputCh:                    e.partialOutputChs[i],
@@ -625,6 +625,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
+		exprCtx := e.Ctx().GetExprCtx()
 		if e.prepared.Load() {
 			// Since we return e.MaxChunkSize() rows every time, so we should not traverse
 			// `groupSet` because of its randomness.
@@ -634,7 +635,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 					chk.SetNumVirtualRows(chk.NumRows() + 1)
 				}
 				for i, af := range e.PartialAggFuncs {
-					if err := af.AppendFinalResult2Chunk(e.Ctx(), partialResults[i], chk); err != nil {
+					if err := af.AppendFinalResult2Chunk(exprCtx, partialResults[i], chk); err != nil {
 						return err
 					}
 				}
@@ -684,6 +685,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			e.tmpChkForSpill.Reset()
 		}
 	}()
+	exprCtx := e.Ctx().GetExprCtx()
 	for {
 		mSize := e.childResult.MemoryUsage()
 		if err := e.getNextChunk(ctx); err != nil {
@@ -726,7 +728,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
 				tmpBuf[0] = e.childResult.GetRow(j)
-				memDelta, err := af.UpdatePartialResult(e.Ctx(), tmpBuf[:], partialResults[i])
+				memDelta, err := af.UpdatePartialResult(exprCtx, tmpBuf[:], partialResults[i])
 				if err != nil {
 					return err
 				}

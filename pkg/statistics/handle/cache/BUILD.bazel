@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/infoschema",
+        "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",

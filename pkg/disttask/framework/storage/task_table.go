@@ -72,7 +72,7 @@ var (
 
 // TaskExecInfo is the execution information of a task, on some exec node.
 type TaskExecInfo struct {
-	*proto.Task
+	*proto.TaskBase
 	// SubtaskConcurrency is the concurrency of subtask in current task step.
 	// TODO: will be used when support subtask have smaller concurrency than task,
 	// TODO: such as post-process of import-into.
@@ -230,7 +230,7 @@ func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx
 }
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
-func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
+func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select `+basicTaskColumns+` from mysql.tidb_global_task t
 		where state in (%?, %?, %?, %?, %?, %?)
@@ -245,19 +245,20 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 		proto.MaxConcurrentTask*2,
 	)
 	if err != nil {
-		return task, err
+		return nil, err
 	}
 
+	tasks := make([]*proto.TaskBase, 0, len(rs))
 	for _, r := range rs {
-		task = append(task, row2TaskBasic(r))
+		tasks = append(tasks, row2TaskBasic(r))
 	}
-	return task, nil
+	return tasks, nil
 }
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+TaskColumns+`, max(st.concurrency)
+		`select `+basicTaskColumns+`, max(st.concurrency)
 			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
 				on t.id = st.task_key and t.step = st.step
 			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
@@ -272,8 +273,8 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	res := make([]*TaskExecInfo, 0, len(rs))
 	for _, r := range rs {
 		res = append(res, &TaskExecInfo{
-			Task:               Row2Task(r),
-			SubtaskConcurrency: int(r.GetInt64(13)),
+			TaskBase:           row2TaskBasic(r),
+			SubtaskConcurrency: int(r.GetInt64(8)),
 		})
 	}
 	return res, nil
@@ -312,6 +313,19 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 	return Row2Task(rs[0]), nil
 }
 
+// GetTaskBaseByID implements the TaskManager.GetTaskBaseByID interface.
+func (mgr *TaskManager) GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, ErrTaskNotFound
+	}
+
+	return row2TaskBasic(rs[0]), nil
+}
+
 // GetTaskByIDWithHistory gets the task by the task ID from both tidb_global_task and tidb_global_task_history.
 func (mgr *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64) (task *proto.Task, err error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where id = %? "+
@@ -324,6 +338,20 @@ func (mgr *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 	}
 
 	return Row2Task(rs[0]), nil
+}
+
+// GetTaskBaseByIDWithHistory gets the task by the task ID from both tidb_global_task and tidb_global_task_history.
+func (mgr *TaskManager) GetTaskBaseByIDWithHistory(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %? "+
+		"union select "+basicTaskColumns+" from mysql.tidb_global_task_history t where id = %?", taskID, taskID)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, ErrTaskNotFound
+	}
+
+	return row2TaskBasic(rs[0]), nil
 }
 
 // GetTaskByKey gets the task by the task key.
@@ -351,6 +379,20 @@ func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	}
 
 	return Row2Task(rs[0]), nil
+}
+
+// GetTaskBaseByKeyWithHistory gets the task base from history table by the task key.
+func (mgr *TaskManager) GetTaskBaseByKeyWithHistory(ctx context.Context, key string) (task *proto.TaskBase, err error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where task_key = %?"+
+		"union select "+basicTaskColumns+" from mysql.tidb_global_task_history t where task_key = %?", key, key)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, ErrTaskNotFound
+	}
+
+	return row2TaskBasic(rs[0]), nil
 }
 
 // GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states on one node.
@@ -393,7 +435,7 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 }
 
 // GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
-func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error) {
+func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state in (%?, %?)`,
@@ -401,7 +443,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 	if err != nil {
 		return nil, err
 	}
-	subtasks := make([]*proto.Subtask, 0, len(rs))
+	subtasks := make([]*proto.SubtaskBase, 0, len(rs))
 	for _, r := range rs {
 		subtasks = append(subtasks, row2BasicSubTask(r))
 	}
@@ -518,7 +560,7 @@ func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, 
 }
 
 // UpdateSubtasksExecIDs update subtasks' execID.
-func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error {
+func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil
@@ -732,7 +774,7 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 }
 
 // GetAllSubtasks gets all subtasks with basic columns.
-func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, error) {
+func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicSubtaskColumns+` from mysql.tidb_background_subtask`)
 	if err != nil {
 		return nil, err
@@ -740,9 +782,25 @@ func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, e
 	if len(rs) == 0 {
 		return nil, nil
 	}
-	subtasks := make([]*proto.Subtask, 0, len(rs))
+	subtasks := make([]*proto.SubtaskBase, 0, len(rs))
 	for _, r := range rs {
 		subtasks = append(subtasks, row2BasicSubTask(r))
 	}
 	return subtasks, nil
+}
+
+// AdjustTaskOverflowConcurrency change the task concurrency to a max value supported by current cluster.
+// This is a workaround for an upgrade bug: in v7.5.x, the task concurrency is hard-coded to 16, resulting in
+// a stuck issue if the new version TiDB has less than 16 CPU count.
+// We don't adjust the concurrency in subtask table because this field does not exist in v7.5.0.
+// For details, see https://github.com/pingcap/tidb/issues/50894.
+// For the following versions, there is a check when submiting a new task. This function should be a no-op.
+func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se sessionctx.Context) error {
+	cpuCount, err := mgr.getCPUCountOfManagedNode(ctx, se)
+	if err != nil {
+		return err
+	}
+	sql := "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;"
+	_, err = sqlexec.ExecSQL(ctx, se, sql, cpuCount, cpuCount)
+	return err
 }

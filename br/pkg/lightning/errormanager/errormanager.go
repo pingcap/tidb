@@ -19,9 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 	"strings"
-	"sync"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -138,13 +136,6 @@ const (
 
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
 
-	selectConflictKeysRemove = `
-		SELECT _tidb_rowid, raw_handle, raw_row
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
-	`
-
 	selectIndexConflictKeysReplace = `
 		SELECT raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
@@ -157,6 +148,24 @@ const (
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND is_data_kv = 1
 		ORDER BY raw_key;
+	`
+
+	deleteNullDataRow = `
+		DELETE FROM %s.` + ConflictErrorTableName + `
+		WHERE key_data = "" and row_data = "";
+	`
+
+	selectConflictKeysCountError = `
+		SELECT COUNT(*)
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ?;
+	`
+
+	selectConflictKeysError = `
+		SELECT raw_key, raw_row
+		FROM %s.` + ConflictErrorTableName + `
+		WHERE table_name = ?
+		LIMIT 1;
 	`
 
 	insertIntoDupRecord = `
@@ -459,86 +468,6 @@ func (em *ErrorManager) RecordIndexConflictError(
 	return gerr
 }
 
-// RemoveAllConflictKeys query all conflicting rows (handle and their
-// values) from the current error report and resolve them concurrently by removing all of them.
-func (em *ErrorManager) RemoveAllConflictKeys(
-	ctx context.Context,
-	tableName string,
-	pool *utils.WorkerPool,
-	fn func(ctx context.Context, handleRows [][2][]byte) error,
-) error {
-	if em.db == nil {
-		return nil
-	}
-
-	const rowLimit = 1000
-	taskCh := make(chan [2]int64)
-	taskWg := &sync.WaitGroup{}
-	g, gCtx := errgroup.WithContext(ctx)
-
-	go func() {
-		//nolint:staticcheck
-		//lint:ignore SA2000
-		taskWg.Add(1)
-		taskCh <- [2]int64{0, math.MaxInt64}
-		taskWg.Wait()
-		close(taskCh)
-	}()
-
-	for t := range taskCh {
-		start, end := t[0], t[1]
-		pool.ApplyOnErrorGroup(g, func() error {
-			defer taskWg.Done()
-
-			var handleRows [][2][]byte
-			for start < end {
-				rows, err := em.db.QueryContext(
-					gCtx, common.SprintfWithIdentifiers(selectConflictKeysRemove, em.schema),
-					tableName, start, end, rowLimit)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				var lastRowID int64
-				for rows.Next() {
-					var handleRow [2][]byte
-					if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
-						return errors.Trace(err)
-					}
-					handleRows = append(handleRows, handleRow)
-				}
-				if err := rows.Err(); err != nil {
-					return errors.Trace(err)
-				}
-				if err := rows.Close(); err != nil {
-					return errors.Trace(err)
-				}
-				if len(handleRows) == 0 {
-					break
-				}
-				if err := fn(gCtx, handleRows); err != nil {
-					return errors.Trace(err)
-				}
-				start = lastRowID + 1
-				// If the remaining tasks cannot be processed at once, split the task
-				// into two subtasks and send one of them to the other idle worker if possible.
-				if end-start > rowLimit {
-					mid := start + (end-start)/2
-					taskWg.Add(1)
-					select {
-					case taskCh <- [2]int64{mid, end}:
-						end = mid
-					default:
-						taskWg.Done()
-					}
-				}
-				handleRows = handleRows[:0]
-			}
-			return nil
-		})
-	}
-	return errors.Trace(g.Wait())
-}
-
 // ReplaceConflictKeys query all conflicting rows (handle and their
 // values) from the current error report and resolve them
 // by replacing the necessary rows and reserving the others.
@@ -568,6 +497,13 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	}
 
 	g, gCtx := errgroup.WithContext(ctx)
+
+	exec := common.SQLWithRetry{
+		DB:           em.db,
+		Logger:       em.logger,
+		HideQueryLog: redact.NeedRedact(),
+	}
+
 	pool.ApplyOnErrorGroup(g, func() error {
 		// TODO: provide a detailed document to explain the algorithm and link it here
 		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
@@ -630,19 +566,13 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				// for nonclustered PK, need to append handle to decodedData for AddRecord
 				decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
 			}
-			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
 			// find out all the KV pairs that are contained in the data KV
 			kvPairs := encoder.SessionCtx.TakeKvPairs()
-
-			exec := common.SQLWithRetry{
-				DB:           em.db,
-				Logger:       em.logger,
-				HideQueryLog: redact.NeedRedact(),
-			}
 
 			for _, kvPair := range kvPairs.Pairs {
 				em.logger.Debug("got encoded KV",
@@ -674,7 +604,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 							sb := &strings.Builder{}
 							_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
 							if err2 != nil {
-								return err2
+								return errors.Trace(err2)
 							}
 							var sqlArgs []any
 							sb.WriteString(sqlValuesConflictErrorData)
@@ -688,9 +618,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 								1,
 							)
 							_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
-							return err
+							return errors.Trace(err)
 						}); err != nil {
-						return err
+						return errors.Trace(err)
 					}
 					if err := fnDeleteKey(gCtx, rawHandle); err != nil {
 						return errors.Trace(err)
@@ -745,7 +675,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						// for nonclustered PK, need to append handle to decodedData for AddRecord
 						decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 					}
-					_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+					_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -774,7 +704,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				// for nonclustered PK, need to append handle to decodedData for AddRecord
 				decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 			}
-			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -819,10 +749,82 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			return errors.Trace(err)
 		}
 
+		// delete the additionally inserted rows for nonclustered PK
+		if err := exec.Transact(ctx, "delete additionally inserted rows for conflict detection 'replace' mode",
+			func(c context.Context, txn *sql.Tx) error {
+				sb := &strings.Builder{}
+				_, err2 := common.FprintfWithIdentifiers(sb, deleteNullDataRow, em.schema)
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+				_, err := txn.ExecContext(c, sb.String())
+				return errors.Trace(err)
+			}); err != nil {
+			return errors.Trace(err)
+		}
+
 		return nil
 	})
 
 	return errors.Trace(g.Wait())
+}
+
+// ResolveConflictKeysError query all conflicting rows (handle and their
+// values) from the current error report and return error
+// if the number of the conflicting rows is larger than 0.
+func (em *ErrorManager) ResolveConflictKeysError(
+	ctx context.Context,
+	tableName string,
+) error {
+	if em.db == nil {
+		return nil
+	}
+
+	_, gCtx := errgroup.WithContext(ctx)
+
+	kvRows, err := em.db.QueryContext(
+		gCtx, common.SprintfWithIdentifiers(selectConflictKeysCountError, em.schema),
+		tableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer kvRows.Close()
+	var kvRowsCount int64
+	for kvRows.Next() {
+		if err := kvRows.Scan(&kvRowsCount); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := kvRows.Err(); err != nil {
+		return errors.Trace(err)
+	}
+
+	em.logger.Debug("got kv rows count from table",
+		zap.Int64("kv rows count", kvRowsCount))
+	if kvRowsCount > 0 {
+		rows, err := em.db.QueryContext(
+			gCtx, common.SprintfWithIdentifiers(selectConflictKeysError, em.schema),
+			tableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer rows.Close()
+
+		var rawKey, rawRow []byte
+		for rows.Next() {
+			if err := rows.Scan(&rawKey, &rawRow); err != nil {
+				return errors.Trace(err)
+			}
+			em.logger.Debug("got raw_key, raw_row from table",
+				logutil.Key("raw_key", rawKey),
+				zap.Binary("raw_row", rawRow))
+		}
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		return common.ErrFoundDuplicateKeys.FastGenByArgs(rawKey, rawRow)
+	}
+	return nil
 }
 
 // RecordDuplicateCount reduce the counter of "duplicate entry" errors.
@@ -975,9 +977,9 @@ func (em *ErrorManager) LogErrorDetails() {
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
 		if em.conflictV1Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", ConflictErrorTableName))
+			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
 		} else {
-			em.logger.Warn(fmtErrMsg(errCnt, "data conflict", DupRecordTable))
+			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTable))
 		}
 	}
 }
@@ -1000,7 +1002,7 @@ func (em *ErrorManager) Output() string {
 		{Name: "Error Count", WidthMax: 12},
 		{Name: "Error Data Table", WidthMax: 42},
 	})
-	t.SetRowPainter(func(row table.Row) text.Colors {
+	t.SetRowPainter(func(table.Row) text.Colors {
 		return text.Colors{text.FgRed}
 	})
 

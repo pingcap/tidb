@@ -26,25 +26,24 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
-func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
+func rewriteSimpleExpr(ctx expression.BuildContext, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	if str == "" {
 		return nil, nil
 	}
-	filters, err := expression.ParseSimpleExprsWithNames(ctx, str, schema, names)
+	filter, err := expression.ParseSimpleExpr(ctx, str, expression.WithInputSchemaAndNames(schema, names, nil))
 	if err != nil {
 		return nil, err
 	}
-	if sf, ok := filters[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
-		filters = expression.FlattenCNFConditions(sf)
+	if sf, ok := filter.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+		return expression.FlattenCNFConditions(sf), nil
 	}
-	return filters, nil
+	return []expression.Expression{filter}, nil
 }
 
 type indexJoinContext struct {
@@ -62,8 +61,8 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		do.StatsHandle().Close()
 	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
-	joinNode := LogicalJoin{}.Init(ctx, 0)
-	dataSourceNode := DataSource{}.Init(ctx, 0)
+	joinNode := LogicalJoin{}.Init(ctx.GetPlanCtx(), 0)
+	dataSourceNode := DataSource{}.Init(ctx.GetPlanCtx(), 0)
 	dsSchema := expression.NewSchema()
 	var dsNames types.NameSlice
 	dsSchema.Append(&expression.Column{
@@ -340,7 +339,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	}
 }
 
-func checkRangeFallbackAndReset(t *testing.T, ctx sessionctx.Context, expectedRangeFallback bool) {
+func checkRangeFallbackAndReset(t *testing.T, ctx PlanContext, expectedRangeFallback bool) {
 	require.Equal(t, expectedRangeFallback, ctx.GetSessionVars().StmtCtx.RangeFallback)
 	ctx.GetSessionVars().StmtCtx.RangeFallback = false
 }

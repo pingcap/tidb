@@ -150,7 +150,7 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	for _, idx := range w.indexes {
 		idx := idx // Make linter noloopclosure happy.
-		errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 			taskCtx.addedCount = 0
 			taskCtx.scanCount = 0
 			updateTxnEntrySizeLimitIfNeeded(txn)

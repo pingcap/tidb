@@ -95,6 +95,8 @@ var (
 		"shuffle-leader-scheduler":     {},
 		"shuffle-region-scheduler":     {},
 		"shuffle-hot-region-scheduler": {},
+
+		"evict-slow-store-scheduler": {},
 	}
 	expectPDCfgGenerators = map[string]pauseConfigGenerator{
 		"merge-schedule-limit": zeroPauseConfig,
@@ -143,17 +145,16 @@ type PdController struct {
 // NewPdController creates a new PdController.
 func NewPdController(
 	ctx context.Context,
-	pdAddrs string,
+	pdAddrs []string,
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 ) (*PdController, error) {
-	addrs := strings.Split(pdAddrs, ",")
 	maxCallMsgSize := []grpc.DialOption{
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
 	}
 	pdClient, err := pd.NewClientWithContext(
-		ctx, addrs, securityOption,
+		ctx, pdAddrs, securityOption,
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.

@@ -155,3 +155,33 @@ show create table test.issue50972_2;
 show create table test.issue50972_3;
 drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
 
+# TestCreateKeyPartitonWithEmptyColumn
+drop table if exists k1, k2, k3, k4;
+CREATE TABLE k1 (
+    id INT NOT NULL PRIMARY KEY,
+    name VARCHAR(20))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k1;
+CREATE TABLE k2 (
+    id INT NOT NULL,
+    name VARCHAR(20),
+    UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k2;
+CREATE TABLE k3 (
+    id INT NOT NULL PRIMARY KEY NONCLUSTERED,
+    name VARCHAR(20),
+    UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k3;
+--error 1105
+CREATE TABLE k4(
+    id INT NOT NULL,
+    id1 int,
+    name VARCHAR(20),
+    UNIQUE KEY (id, id1))
+PARTITION BY KEY()
+PARTITIONS 2;
