@@ -1388,3 +1388,47 @@ func TestDropBindBySQLDigest(t *testing.T) {
 	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", "1"), "can't find any binding for '1'")
 	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", ""), "sql digest is empty")
 }
+<<<<<<< HEAD:bindinfo/bind_test.go
+=======
+
+func TestJoinOrderHintWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+
+	tk.MustExec("create global binding for select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b using select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) left join `test` . `t3` on `t2` . `b` = `t3` . `b`")
+
+	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+}
+
+func TestNormalizeStmtForBinding(t *testing.T) {
+	tests := []struct {
+		sql        string
+		normalized string
+		digest     string
+	}{
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+	}
+	for _, test := range tests {
+		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, test.sql)
+		n, digest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		require.Equal(t, test.normalized, n)
+		require.Equal(t, test.digest, digest)
+	}
+}
+>>>>>>> 707b0a4e381 (parser: support (Row(..),Row(..))=>(..) in the binding mode (#51319)):pkg/bindinfo/tests/bind_test.go
