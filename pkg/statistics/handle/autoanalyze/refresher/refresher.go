@@ -158,7 +158,12 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 						}
 						// Calculate the weight of the job.
 						job.Weight = calculator.CalculateWeight(job)
-						if job.Weight == 0 {
+						if job.Weight <= 0 {
+							statslogutil.StatsLogger().Info(
+								"Table is not ready to analyze",
+								zap.String("reason", "weight is not positive"),
+								zap.Stringer("job", job),
+							)
 							return
 						}
 						// Push the job onto the queue.
