@@ -103,7 +103,7 @@ type dest struct {
 }
 
 func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, min, max int64) {
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, KeyspaceID: uint32(tikv.NullspaceID)}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0}
 	ctx := context.Background()
 	resp, err := cli.AllocAutoID(ctx, req)
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 	if len(more) >= 2 {
 		offset = more[1]
 	}
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, KeyspaceID: uint32(tikv.NullspaceID)}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset}
 	resp, err := cli.AllocAutoID(context.Background(), req)
 	return autoIDResp{resp, err, t}
 }
@@ -150,41 +150,7 @@ func TestAPI(t *testing.T) {
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
-<<<<<<< HEAD:autoid_service/autoid_test.go
-	ctx := context.Background()
-	checkCurrValue := func(t *testing.T, cli autoid.AutoIDAllocClient, min, max int64) {
-		req := &autoid.AutoIDRequest{DbID: dbInfo.ID, TblID: tbInfo.ID, N: 0}
-		resp, err := cli.AllocAutoID(ctx, req)
-		require.NoError(t, err)
-		require.Equal(t, resp, &autoid.AutoIDResponse{Min: min, Max: max})
-	}
-	autoIDRequest := func(t *testing.T, cli autoid.AutoIDAllocClient, unsigned bool, n uint64, more ...int64) autoIDResp {
-		increment := int64(1)
-		offset := int64(1)
-		if len(more) >= 1 {
-			increment = more[0]
-		}
-		if len(more) >= 2 {
-			offset = more[1]
-		}
-		req := &autoid.AutoIDRequest{DbID: dbInfo.ID, TblID: tbInfo.ID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset}
-		resp, err := cli.AllocAutoID(ctx, req)
-		return autoIDResp{resp, err, t}
-	}
-	rebaseRequest := func(t *testing.T, cli autoid.AutoIDAllocClient, unsigned bool, n int64, force ...struct{}) rebaseResp {
-		req := &autoid.RebaseRequest{
-			DbID:       dbInfo.ID,
-			TblID:      tbInfo.ID,
-			Base:       n,
-			IsUnsigned: unsigned,
-			Force:      len(force) > 0,
-		}
-		resp, err := cli.Rebase(ctx, req)
-		return rebaseResp{resp, err, t}
-	}
-=======
 	to := dest{dbID: dbInfo.ID, tblID: tbInfo.ID}
->>>>>>> ede0d6913c1 (pkg/autoid_service: add lock to make API thread-safe (#50820)):pkg/autoid_service/autoid_test.go
 	var force = struct{}{}
 
 	// basic auto id operation
