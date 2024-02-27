@@ -138,6 +138,24 @@ func TestShowStatsBuckets(t *testing.T) {
 	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1) 0"))
 }
 
+func TestShowStatsBucketWithDateNullValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime, b int, index ia(a,b));")
+	tk.MustExec("insert into t value('2023-12-27',1),(null, 2),('2023-12-28',3),(null,4);")
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain format=\"brief\" select * from t where a > 1;").Check(testkit.Rows(
+		"IndexReader 3.20 root  index:Selection",
+		"└─Selection 3.20 cop[tikv]  gt(cast(test.t.a, double BINARY), 1)",
+		"  └─IndexFullScan 4.00 cop[tikv] table:t, index:ia(a, b) keep order:false"))
+	tk.MustQuery("show stats_buckets where db_name = 'test' and Column_name = 'ia';").Check(testkit.Rows(
+		"test t  ia 1 0 1 1 (NULL, 4) (NULL, 4) 0",
+		"test t  ia 1 1 2 1 (2023-12-27 00:00:00, 1) (2023-12-27 00:00:00, 1) 0",
+		"test t  ia 1 2 3 1 (2023-12-28 00:00:00, 3) (2023-12-28 00:00:00, 3) 0"))
+}
+
 func TestShowStatsHasNullValue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

@@ -16,6 +16,7 @@ package handle
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -204,7 +205,10 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 			case errExit:
 				return
 			default:
-				time.Sleep(h.Lease() / 10)
+				// To avoid the thundering herd effect
+				// thundering herd effect: Everyone tries to retry a large number of requests simultaneously when a problem occurs.
+				r := rand.Intn(500)
+				time.Sleep(h.Lease()/10 + time.Duration(r)*time.Microsecond)
 				continue
 			}
 		}
