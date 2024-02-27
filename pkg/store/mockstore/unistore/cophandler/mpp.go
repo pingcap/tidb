@@ -509,13 +509,16 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 		return nil, errors.Trace(err)
 	}
 	e.children = []mppExec{chExec}
+	// restore the aggDesc from tipb-agg.
+	tmpAggDescs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFunc))
 	for _, aggFunc := range agg.AggFunc {
 		ft := expression.PbTypeToFieldType(aggFunc.FieldType)
 		e.fieldTypes = append(e.fieldTypes, ft)
-		aggExpr, _, err := aggregation.NewDistAggFunc(aggFunc, chExec.getFieldTypes(), b.sctx)
+		aggExpr, aggDesc, err := aggregation.NewDistAggFunc(aggFunc, chExec.getFieldTypes(), b.sctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		tmpAggDescs = append(tmpAggDescs, aggDesc)
 		e.aggExprs = append(e.aggExprs, aggExpr)
 	}
 	e.sctx = b.sctx
@@ -529,6 +532,26 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 			return nil, errors.Trace(err)
 		}
 		e.groupByExprs = append(e.groupByExprs, gbyExpr)
+	}
+
+	// fill the default value. logic copied from `func (b *executorBuilder) buildHashAgg`
+	if len(e.groupByExprs) != 0 || aggregation.IsAllFirstRow(tmpAggDescs) {
+		e.DefaultVal = nil
+	} else {
+		// Only do this for final agg, see issue #35295, #30923
+		isFinalAgg := false
+		if len(tmpAggDescs) > 0 {
+			if tmpAggDescs[0].Mode == aggregation.FinalMode || tmpAggDescs[0].Mode == aggregation.CompleteMode {
+				isFinalAgg = true
+			}
+		}
+		if isFinalAgg {
+			e.DefaultVal = chunk.NewChunkWithCapacity(e.fieldTypes, 1)
+			for i, aggDesc := range tmpAggDescs {
+				result := aggDesc.GetDefaultValue()
+				e.DefaultVal.AppendDatum(i, &result)
+			}
+		}
 	}
 	return e, nil
 }
