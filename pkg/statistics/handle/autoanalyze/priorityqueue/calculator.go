@@ -30,7 +30,7 @@ type PriorityCalculator struct{}
 //
 // For more information, please visit:
 // https://github.com/pingcap/tidb/blob/master/docs/design/2023-11-29-priority-queue-for-auto-analyze.md
-func NewPriorityCalculator(threshold float64) *PriorityCalculator {
+func NewPriorityCalculator() *PriorityCalculator {
 	return &PriorityCalculator{}
 }
 

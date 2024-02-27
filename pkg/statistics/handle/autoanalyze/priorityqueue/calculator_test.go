@@ -21,21 +21,105 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCalculateWeight(t *testing.T) {
-	pc := NewPriorityCalculator(0.5)
-	job := &TableAnalysisJob{
-		ChangePercentage:     0.6,
-		TableSize:            1000,
-		LastAnalysisDuration: time.Duration(3600) * time.Second, // 1 hour
-		PartitionIndexes:     map[string][]string{},
-		Indexes:              []string{},
-	}
+type testData struct {
+	ID                   int
+	ChangePercentage     float64
+	TableSize            float64
+	LastAnalysisDuration time.Duration
+	hasNewIndex          bool
+}
 
-	require.Equal(t, 1.4067534437617586, pc.CalculateWeight(job))
+func TestCalculateWeight(t *testing.T) {
+	pc := NewPriorityCalculator()
+	// Only focus on change percentage. Bigger change percentage, higher weight.
+	changePercentageGroup := []testData{
+		{
+			ChangePercentage:     0.6,
+			TableSize:            1000,
+			LastAnalysisDuration: time.Hour,
+			hasNewIndex:          true,
+		},
+		{
+			ChangePercentage:     1,
+			TableSize:            1000,
+			LastAnalysisDuration: time.Hour,
+			hasNewIndex:          true,
+		},
+		{
+			ChangePercentage:     10,
+			TableSize:            1000,
+			LastAnalysisDuration: time.Hour,
+			hasNewIndex:          true,
+		},
+	}
+	testWeightCalculation(t, pc, changePercentageGroup)
+	// Only focus on table size. Bigger table size, lower weight.
+	tableSizeGroup := []testData{
+		{
+			ChangePercentage:     0.6,
+			TableSize:            100000,
+			LastAnalysisDuration: time.Hour,
+			hasNewIndex:          true,
+		},
+		{
+			ChangePercentage:     0.6,
+			TableSize:            10000,
+			LastAnalysisDuration: time.Hour,
+			hasNewIndex:          true,
+		},
+		{
+			ChangePercentage:     0.6,
+			TableSize:            1000,
+			LastAnalysisDuration: time.Hour,
+			hasNewIndex:          true,
+		},
+	}
+	testWeightCalculation(t, pc, tableSizeGroup)
+	// Only focus on last analysis duration. Longer duration, higher weight.
+	lastAnalysisDurationGroup := []testData{
+		{
+			ChangePercentage:     0.6,
+			TableSize:            1000,
+			LastAnalysisDuration: time.Hour,
+			hasNewIndex:          true,
+		},
+		{
+			ChangePercentage:     0.6,
+			TableSize:            1000,
+			LastAnalysisDuration: time.Hour * 12,
+			hasNewIndex:          true,
+		},
+		{
+			ChangePercentage:     0.6,
+			TableSize:            1000,
+			LastAnalysisDuration: time.Hour * 24,
+			hasNewIndex:          true,
+		},
+	}
+	testWeightCalculation(t, pc, lastAnalysisDurationGroup)
+}
+
+// testWeightCalculation is a helper function to test the weight calculation.
+// It will check if the weight is increasing for each test data group.
+func testWeightCalculation(t *testing.T, pc *PriorityCalculator, group []testData) {
+	prevWeight := -1.0
+	for _, tc := range group {
+		job := &TableAnalysisJob{
+			ChangePercentage:     tc.ChangePercentage,
+			TableSize:            tc.TableSize,
+			LastAnalysisDuration: tc.LastAnalysisDuration,
+		}
+		if tc.hasNewIndex {
+			job.Indexes = []string{"index1"}
+		}
+		weight := pc.CalculateWeight(job)
+		require.Greater(t, weight, prevWeight)
+		prevWeight = weight
+	}
 }
 
 func TestGetSpecialEvent(t *testing.T) {
-	pc := NewPriorityCalculator(0.5)
+	pc := NewPriorityCalculator()
 
 	jobWithIndex := &TableAnalysisJob{
 		PartitionIndexes: map[string][]string{
