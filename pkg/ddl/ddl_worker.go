@@ -256,8 +256,8 @@ func (d *ddl) addBatchDDLJobsV1(tasks []*limitJobTask) {
 	}
 }
 
-// addBatchDDLJobsV2 gets global job IDs and delivery the DDL jobs to local TiDB
-func (d *ddl) addBatchDDLJobsV2(tasks []*limitJobTask) {
+// addBatchLocalDDLJobs gets global job IDs and delivery the DDL jobs to local TiDB
+func (d *ddl) addBatchLocalDDLJobs(tasks []*limitJobTask) {
 	err := d.addBatchDDLJobs(tasks)
 	if err != nil {
 		for _, task := range tasks {
@@ -1003,12 +1003,12 @@ func (w *worker) checkOwnerBeforeCommit() error {
 	return nil
 }
 
-// HandleDDLJobV2 handles v2 ddl job.
-// Compare with v1:
+// HandleLocalDDLJob handles local ddl job like fast create table.
+// Compare with normal ddl job:
 // 1. directly insert the job to history job table(incompatible with CDC).
 // 2. no need to wait schema version(only support create table now).
 // 3. no register mdl info(only support create table now).
-func (w *worker) HandleDDLJobV2(d *ddlCtx, job *model.Job) (err error) {
+func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 	defer func() {
 		w.unlockSeqNum(err)
 	}()
