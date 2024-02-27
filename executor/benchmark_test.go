@@ -21,11 +21,8 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-<<<<<<< HEAD:executor/benchmark_test.go
-	"sort"
-=======
 	"slices"
->>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203)):pkg/executor/benchmark_test.go
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -887,9 +884,6 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	return tc
 }
 
-<<<<<<< HEAD:executor/benchmark_test.go
-func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor) *HashJoinExec {
-=======
 func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType core.JoinType) *expression.Schema {
 	colsNeedResolving := joinSchema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
@@ -910,7 +904,7 @@ func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, join
 	for i := 0; i < colsNeedResolving; i++ {
 		findIdx := -1
 		for j := 0; j < len(mergedSchema.Columns); j++ {
-			if !joinSchema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
+			if !joinSchema.Columns[i].Equal(nil, mergedSchema.Columns[j]) || marked[j] {
 				continue
 			}
 			// resolve to a same unique id one, and it not being marked.
@@ -928,8 +922,7 @@ func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, join
 	return joinSchema
 }
 
-func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *HashJoinExec {
->>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203)):pkg/executor/benchmark_test.go
+func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor) *HashJoinExec {
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
 	}
@@ -952,6 +945,10 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 		joinSchema.Append(cols0...)
 		joinSchema.Append(cols1...)
 	}
+	// todo: need systematic way to protect.
+	// physical join should resolveIndices to get right schema column index.
+	// otherwise, markChildrenUsedColsForTest will fail below.
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), core.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
@@ -1007,19 +1004,11 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 
 // markChildrenUsedColsForTest compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-<<<<<<< HEAD:executor/benchmark_test.go
-func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
-	childrenUsed = make([][]bool, 0, len(childSchemas))
-	markedOffsets := make(map[int]struct{})
-	for _, col := range outputSchema.Columns {
-		markedOffsets[col.Index] = struct{}{}
-=======
-func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
+func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
 	childrenUsed = make([][]int, 0, len(childSchemas))
 	markedOffsets := make(map[int]int)
 	for originalIdx, col := range outputSchema.Columns {
 		markedOffsets[col.Index] = originalIdx
->>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203)):pkg/executor/benchmark_test.go
 	}
 	prefixLen := 0
 	type intPair struct {
@@ -1038,14 +1027,6 @@ func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expressio
 				usedIdxPair = append(usedIdxPair, intPair{first: originalIdx, second: i})
 			}
 		}
-<<<<<<< HEAD:executor/benchmark_test.go
-		childrenUsed = append(childrenUsed, used)
-	}
-	for _, child := range childSchemas {
-		used := expression.GetUsedList(outputSchema.Columns, child)
-		childrenUsed = append(childrenUsed, used)
-	}
-=======
 		// sort the used idxes according their original indexes derived after resolveIndex.
 		slices.SortFunc(usedIdxPair, func(a, b intPair) int {
 			return cmp.Compare(a.first, b.first)
@@ -1057,7 +1038,6 @@ func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expressio
 		childrenUsed = append(childrenUsed, usedIdx)
 		prefixLen += childSchema.Len()
 	}
->>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203)):pkg/executor/benchmark_test.go
 	return
 }
 
@@ -1678,15 +1658,9 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		false,
 		defaultValues,
 		nil,
-<<<<<<< HEAD:executor/benchmark_test.go
 		retTypes(leftExec),
 		retTypes(rightExec),
-		tc.childrenUsedSchema,
-=======
-		exec.RetTypes(leftExec),
-		exec.RetTypes(rightExec),
 		usedIdx,
->>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203)):pkg/executor/benchmark_test.go
 		false,
 	)
 
