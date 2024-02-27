@@ -1190,7 +1190,7 @@ func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) intset.FastIntSet {
+func extractConstantCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) intset.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -1217,7 +1217,7 @@ func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Con
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]intset.FastIntSet {
+func extractEquivalenceCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) [][]intset.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]intset.FastIntSet, 0, len(equivObjsPair))
@@ -1617,7 +1617,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 }
 
 func detachCondAndBuildRangeForPath(
-	sctx sessionctx.Context,
+	sctx PlanContext,
 	path *util.AccessPath,
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
@@ -2058,7 +2058,7 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
 		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
 			var err error
-			fb.CompareCols[0], err = expression.NewFunctionBase(ctx, ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+			fb.CompareCols[0], err = expression.NewFunctionBase(ctx.GetExprCtx(), ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
 			if err != nil {
 				return err
 			}
@@ -2090,7 +2090,7 @@ func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualPartitionBy(newWindow *LogicalWindow) bool {
 	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
 		return false
 	}
@@ -2107,7 +2107,7 @@ func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *Logica
 }
 
 // EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
-func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualOrderBy(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
 	if len(p.OrderBy) != len(newWindow.OrderBy) {
 		return false
 	}
@@ -2121,7 +2121,7 @@ func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalW
 }
 
 // EqualFrame checks whether two LogicalWindow.Frames are equal.
-func (p *LogicalWindow) EqualFrame(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualFrame(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
 	if (p.Frame == nil && newWindow.Frame != nil) ||
 		(p.Frame != nil && newWindow.Frame == nil) {
 		return false

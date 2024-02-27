@@ -849,7 +849,7 @@ ChunkLoop:
 		zap.Uint64("written", totalKVSize),
 	)
 
-	trySavePendingChunks := func(flushCtx context.Context) error {
+	trySavePendingChunks := func(context.Context) error {
 		checkFlushLock.Lock()
 		cnt := 0
 		for _, chunk := range flushPendingChunks {

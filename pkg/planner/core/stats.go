@@ -220,7 +220,7 @@ func init() {
 }
 
 // getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
-func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo) {
+func getTblInfoForUsedStatsByPhysicalID(sctx PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
 	is := domain.GetDomain(sctx).InfoSchema()
@@ -343,7 +343,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			selected = path
 			break
 		}
-		if path.OnlyPointRange(ds.SCtx()) {
+		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()) {
 			if path.IsTablePath() || path.Index.Unique {
 				if path.IsSingleScan {
 					selected = path
@@ -1075,8 +1075,9 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 		return
 	}
 
-	tableStats := getStatsTable(ctx, tblInfo, pid)
-	name, _ := getTblInfoForUsedStatsByPhysicalID(ctx, pid)
+	pctx := ctx.GetPlanCtx()
+	tableStats := getStatsTable(pctx, tblInfo, pid)
+	name, _ := getTblInfoForUsedStatsByPhysicalID(pctx, pid)
 	usedStats := &stmtctx.UsedStatsInfoForTable{
 		Name:          name,
 		TblInfo:       tblInfo,

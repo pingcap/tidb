@@ -126,7 +126,7 @@ func (em *engineManager) lockEngine(engineID uuid.UUID, state importMutexState) 
 // tryRLockAllEngines tries to read lock all engines, return all `Engine`s that are successfully locked.
 func (em *engineManager) tryRLockAllEngines() []*Engine {
 	var allEngines []*Engine
-	em.engines.Range(func(k, v any) bool {
+	em.engines.Range(func(_, v any) bool {
 		engine := v.(*Engine)
 		// skip closed engine
 		if engine.tryRLock() {
@@ -145,7 +145,7 @@ func (em *engineManager) tryRLockAllEngines() []*Engine {
 // state given by ignoreStateMask. Returns the list of locked engines.
 func (em *engineManager) lockAllEnginesUnless(newState, ignoreStateMask importMutexState) []*Engine {
 	var allEngines []*Engine
-	em.engines.Range(func(k, v any) bool {
+	em.engines.Range(func(_, v any) bool {
 		engine := v.(*Engine)
 		if engine.lockUnless(newState, ignoreStateMask) {
 			allEngines = append(allEngines, engine)
@@ -491,7 +491,7 @@ func (em *engineManager) localWriter(_ context.Context, cfg *backend.LocalWriter
 }
 
 func (em *engineManager) engineFileSizes() (res []backend.EngineFileSize) {
-	em.engines.Range(func(k, v any) bool {
+	em.engines.Range(func(_, v any) bool {
 		engine := v.(*Engine)
 		res = append(res, engine.getEngineFileSize())
 		return true
@@ -556,7 +556,7 @@ func (em *engineManager) getExternalEngine(uuid uuid.UUID) (common.Engine, bool)
 
 func (em *engineManager) totalMemoryConsume() int64 {
 	var memConsume int64
-	em.engines.Range(func(k, v any) bool {
+	em.engines.Range(func(_, v any) bool {
 		e := v.(*Engine)
 		if e != nil {
 			memConsume += e.TotalMemorySize()

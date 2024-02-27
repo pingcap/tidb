@@ -424,7 +424,7 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(table.String()))
 	})
-	router.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
+	router.HandleFunc("/config", func(w http.ResponseWriter, _ *http.Request) {
 		tiflash.Lock()
 		defer tiflash.Unlock()
 		s := fmt.Sprintf("{\n    \"engine-store\": {\n        \"http_port\": %v\n    }\n}", statusPort)

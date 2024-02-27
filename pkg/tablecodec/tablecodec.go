@@ -1446,7 +1446,7 @@ func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *
 // TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
 // Caller need to make sure the table has common handle.
 func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
-	var pkColIds []int64
+	var pkColIDs []int64
 	var pkIdx *model.IndexInfo
 	for _, idx := range tbl.Indices {
 		if idx.Primary {
@@ -1455,14 +1455,14 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 		}
 	}
 	if pkIdx == nil {
-		return pkColIds
+		return pkColIDs
 	}
 	for _, idxCol := range pkIdx.Columns {
 		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
-			pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+			pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
 		}
 	}
-	return pkColIds
+	return pkColIDs
 }
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
@@ -1508,8 +1508,8 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 		}
 
 		if len(handleRestoredData) > 0 {
-			pkColIds := TryGetCommonPkColumnRestoredIds(tblInfo)
-			colIds = append(colIds, pkColIds...)
+			pkColIDs := TryGetCommonPkColumnRestoredIds(tblInfo)
+			colIds = append(colIds, pkColIDs...)
 			allRestoredData = append(allRestoredData, handleRestoredData...)
 		}
 

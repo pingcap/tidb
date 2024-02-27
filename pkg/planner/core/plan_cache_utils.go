@@ -138,7 +138,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		reason = "plan cache is disabled"
 	} else {
 		if isPrepStmt {
-			cacheable, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
+			cacheable, reason = IsASTCacheable(ctx, sctx.GetPlanCtx(), paramStmt, ret.InfoSchema)
 		} else {
 			cacheable = true // it is already checked here
 		}
@@ -166,7 +166,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	var p Plan
-	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, hint.NewQBHintHandler(nil))
+	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
 	p, err = destBuilder.Build(ctx, paramStmt)
 	if err != nil {
 		return nil, nil, 0, err
@@ -562,7 +562,7 @@ func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool 
 	return true
 }
 
-func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCache(sctx PlanContext, path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
 

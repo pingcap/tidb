@@ -29,7 +29,7 @@ type slotManager struct {
 	taskID2Index map[int64]int
 	// executorTasks is used to record the tasks that is running on the executor,
 	// the slice is sorted in reverse task order.
-	executorTasks []*proto.Task
+	executorTasks []*proto.TaskBase
 
 	// The number of slots that can be used by the executor.
 	// Its initial value is always equal to CPU cores of the instance.
@@ -39,19 +39,19 @@ type slotManager struct {
 func newSlotManager(capacity int) *slotManager {
 	sm := &slotManager{
 		taskID2Index:  make(map[int64]int),
-		executorTasks: make([]*proto.Task, 0),
+		executorTasks: make([]*proto.TaskBase, 0),
 	}
 	sm.available.Store(int32(capacity))
 	return sm
 }
 
 // subtasks inside a task will be run in serial, so they takes task.Concurrency slots.
-func (sm *slotManager) alloc(task *proto.Task) {
+func (sm *slotManager) alloc(task *proto.TaskBase) {
 	sm.Lock()
 	defer sm.Unlock()
 
 	sm.executorTasks = append(sm.executorTasks, task)
-	slices.SortFunc(sm.executorTasks, func(a, b *proto.Task) int {
+	slices.SortFunc(sm.executorTasks, func(a, b *proto.TaskBase) int {
 		return b.Compare(a)
 	})
 	for index, slotInfo := range sm.executorTasks {
@@ -78,7 +78,7 @@ func (sm *slotManager) free(taskID int64) {
 }
 
 // canAlloc is used to check whether the instance has enough slots to run the task.
-func (sm *slotManager) canAlloc(task *proto.Task) (canAlloc bool, tasksNeedFree []*proto.Task) {
+func (sm *slotManager) canAlloc(task *proto.TaskBase) (canAlloc bool, tasksNeedFree []*proto.TaskBase) {
 	sm.RLock()
 	defer sm.RUnlock()
 

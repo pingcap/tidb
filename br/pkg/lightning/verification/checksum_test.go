@@ -21,12 +21,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
-func uint64NotEqual(a uint64, b uint64) bool { return a != b }
-
-func TestChcksum(t *testing.T) {
-	checksum := verification.NewKVChecksum(0)
+func TestChecksum(t *testing.T) {
+	checksum := verification.NewKVChecksum()
 	require.Equal(t, uint64(0), checksum.Sum())
 
 	// checksum on nothing
@@ -64,7 +63,7 @@ func TestChcksum(t *testing.T) {
 	checksum.Update(kvs)
 	require.Equal(t, kvBytes<<1, checksum.SumSize())
 	require.Equal(t, uint64(len(kvs))<<1, checksum.SumKVS())
-	require.True(t, uint64NotEqual(checksum.Sum(), excpectChecksum))
+	require.NotEqual(t, excpectChecksum, checksum.Sum())
 }
 
 func TestChecksumJSON(t *testing.T) {
@@ -78,4 +77,56 @@ func TestChecksumJSON(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, []byte(`{"Checksum":{"checksum":7890,"size":123,"kvs":456}}`), res)
+}
+
+type mockCodec struct {
+	tikv.Codec
+	keyspace []byte
+}
+
+func (m *mockCodec) GetKeyspace() []byte {
+	return m.keyspace
+}
+
+func TestGroupChecksum(t *testing.T) {
+	codec := &mockCodec{}
+	kvPair := common.KvPair{Key: []byte("key"), Val: []byte("val")}
+	kvPair2 := common.KvPair{Key: []byte("key2"), Val: []byte("val2")}
+
+	c := verification.NewKVGroupChecksumWithKeyspace(codec)
+	c.UpdateOneDataKV(kvPair)
+	c.UpdateOneIndexKV(1, kvPair2)
+	inner := c.GetInnerChecksums()
+	require.Equal(t, 2, len(inner))
+	require.Equal(t, uint64(1), inner[1].SumKVS())
+	require.Equal(t, uint64(1), inner[verification.DataKVGroupID].SumKVS())
+
+	keyspaceCodec := &mockCodec{keyspace: []byte("keyspace")}
+	keyspaceC := verification.NewKVGroupChecksumWithKeyspace(keyspaceCodec)
+	keyspaceC.UpdateOneDataKV(kvPair)
+	keyspaceC.UpdateOneIndexKV(1, kvPair2)
+	keyspaceInner := keyspaceC.GetInnerChecksums()
+	require.NotEqual(t, inner, keyspaceInner)
+
+	c2 := verification.NewKVGroupChecksumWithKeyspace(codec)
+	c2.UpdateOneIndexKV(1, kvPair)
+	c2.UpdateOneIndexKV(2, kvPair2)
+	c.Add(c2)
+	inner = c.GetInnerChecksums()
+	require.Equal(t, 3, len(inner))
+	require.Equal(t, uint64(2), inner[1].SumKVS())
+	require.Equal(t, uint64(1), inner[2].SumKVS())
+	require.Equal(t, uint64(1), inner[verification.DataKVGroupID].SumKVS())
+
+	dataKVCnt, indexKVCnt := c.DataAndIndexSumKVS()
+	require.Equal(t, uint64(1), dataKVCnt)
+	require.Equal(t, uint64(3), indexKVCnt)
+
+	dataSize, indexSize := c.DataAndIndexSumSize()
+	require.Equal(t, uint64(6), dataSize)
+	require.Equal(t, uint64(22), indexSize)
+
+	merged := c.MergedChecksum()
+	require.Equal(t, uint64(4), merged.SumKVS())
+	require.Equal(t, uint64(28), merged.SumSize())
 }

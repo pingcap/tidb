@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -49,12 +48,12 @@ import (
 )
 
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
-var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (row []types.Datum, err error)
+var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx PlanContext) (row []types.Datum, err error)
 
 // evalAstExprWithPlanCtx evaluates ast expression with plan context.
 // Different with expression.EvalSimpleAst, it uses planner context and is more powerful to build some special expressions
 // like subquery, window function, etc.
-func evalAstExprWithPlanCtx(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+func evalAstExprWithPlanCtx(sctx PlanContext, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
@@ -80,7 +79,7 @@ func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, e
 // rewriteAstExprWithPlanCtx rewrites ast expression directly.
 // Different with expression.BuildSimpleExpr, it uses planner context and is more powerful to build some special expressions
 // like subquery, window function, etc.
-func rewriteAstExprWithPlanCtx(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
+func rewriteAstExprWithPlanCtx(sctx PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
@@ -1617,9 +1616,6 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	}
 	if err != nil {
 		return
-	}
-	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
-		er.sctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
 	}
 	return
 }

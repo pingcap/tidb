@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -74,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -298,7 +300,7 @@ func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	tblMeta := tbl.Meta()
 
-	allocators := tbl.Allocators(e.Ctx().GetSessionVars())
+	allocators := tbl.Allocators(e.Ctx().GetTableCtx())
 	for _, alloc := range allocators.Allocs {
 		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
@@ -1457,9 +1459,9 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
+	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, pctx planctx.PlanContext) ([]types.Datum, error) {
 		defer func(begin time.Time) {
-			s := sctx.GetSessionVars()
+			s := pctx.GetSessionVars()
 			s.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("query has uncorrelated sub-queries is un-cacheable"))
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
@@ -1468,12 +1470,18 @@ func init() {
 		r, ctx := tracing.StartRegionEx(ctx, "executor.EvalSubQuery")
 		defer r.End()
 
-		e := newExecutorBuilder(sctx, is, nil)
+		sctx, err := plannercore.AsSctx(pctx)
+		intest.AssertNoError(err)
+		if err != nil {
+			return nil, err
+		}
+
+		e := newExecutorBuilder(sctx, is)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
 		}
-		err := exec.Open(ctx, executor)
+		err = exec.Open(ctx, executor)
 		defer func() { terror.Log(exec.Close(executor)) }()
 		if err != nil {
 			return nil, err
@@ -1613,7 +1621,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.Ctx(), e.filters, e.inputIter, e.selected)
+		e.selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx(), e.filters, e.inputIter, e.selected)
 		if err != nil {
 			return err
 		}
@@ -1625,9 +1633,10 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // For sql with "SETVAR" in filter and "GETVAR" in projection, for example: "SELECT @a FROM t WHERE (@a := 2) > 0",
 // we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) error {
+	exprCtx := e.Ctx().GetExprCtx()
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			selected, _, err := expression.EvalBool(e.Ctx(), e.filters, e.inputRow)
+			selected, _, err := expression.EvalBool(exprCtx, e.filters, e.inputRow)
 			if err != nil {
 				return err
 			}
@@ -1679,7 +1688,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 		type tableIter interface {
 			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
-		err := (e.t.(tableIter)).IterRecords(ctx, e.Ctx(), columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := (e.t.(tableIter)).IterRecords(ctx, e.Ctx(), columns, func(_ kv.Handle, rec []types.Datum, _ []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -2313,7 +2322,7 @@ func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
-		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
+		plannercore.IsAutoCommitTxn(sessionVars) && plannercore.IsReadOnly(node, sessionVars)
 }
 
 // FastCheckTableExec represents a check table executor.
@@ -2809,7 +2818,7 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		return nil
 	}
 
-	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		role, err := meta.NewMeta(txn).GetBDRRole()
 		if err != nil {
 			return err

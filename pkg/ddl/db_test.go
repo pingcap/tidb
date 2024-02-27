@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -310,10 +311,10 @@ func TestProcessColumnFlags(t *testing.T) {
 }
 
 func TestForbidCacheTableForSystemTable(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	sysTables := make([]string, 0, 24)
-	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA", "SYS"}
 	for _, db := range memOrSysDB {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
@@ -323,9 +324,11 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		}
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
-			if db == "MySQL" {
-				if one == "tidb_mdl_view" {
-					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_mdl_view' is not BASE TABLE")
+			if db == "MySQL" || db == "SYS" {
+				tbl, err1 := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(one))
+				require.NoError(t, err1)
+				if tbl.Meta().View != nil {
+					require.ErrorIs(t, err, dbterror.ErrWrongObject)
 				} else {
 					require.EqualError(t, err, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
 				}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -161,7 +162,7 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 	}
 }
 
-func (s *mockSession) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (s *mockSession) GetDomainInfoSchema() infoschemactx.InfoSchemaMetaVersion {
 	return s.sessionInfoSchema
 }
 

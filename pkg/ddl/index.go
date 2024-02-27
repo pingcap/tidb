@@ -67,6 +67,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -77,7 +78,6 @@ const (
 )
 
 var (
-	telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
 	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
 )
@@ -660,8 +660,6 @@ SwitchIndexState:
 		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
-			// Increase telemetryAddIndexIngestUsage
-			telemetryAddIndexIngestUsage.Inc()
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
@@ -967,12 +965,12 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return true, 0, nil
 	}
 	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
-	var pdLeaderAddr string
+	var discovery pd.ServiceDiscovery
 	if d != nil {
 		//nolint:forcetypeassert
-		pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+		discovery = d.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, allIndexInfos[0].Unique, nil, discovery, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
@@ -1164,14 +1162,14 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		idxIds := make([]int64, 0, len(allIndexInfos))
+		idxIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateNone
 			// Set column index flag.
 			DropIndexColumnFlag(tblInfo, indexInfo)
 			RemoveDependentHiddenColumns(tblInfo, indexInfo)
 			removeIndexInfo(tblInfo, indexInfo)
-			idxIds = append(idxIds, indexInfo.ID)
+			idxIDs = append(idxIDs, indexInfo.ID)
 		}
 
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -1189,7 +1187,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = idxIds
+			job.Args[0] = idxIDs
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
@@ -1197,9 +1195,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			// Global index key has t{tableID}_ prefix.
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
 			if allIndexInfos[0].Global {
-				job.Args = append(job.Args, idxIds[0], []int64{})
+				job.Args = append(job.Args, idxIDs[0], []int64{})
 			} else {
-				job.Args = append(job.Args, idxIds[0], getPartitionIDs(tblInfo))
+				job.Args = append(job.Args, idxIDs[0], getPartitionIDs(tblInfo))
 			}
 		}
 	default:
@@ -1893,7 +1891,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) (err error) {
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -1932,7 +1930,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 			}
 
 			handle, err := w.indexes[i%len(w.indexes)].Create(
-				w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
+				w.sessCtx.GetTableCtx(), txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
@@ -1986,8 +1984,8 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				return err
 			}
 			//nolint:forcetypeassert
-			pdLeaderAddr := w.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, pdLeaderAddr)
+			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, discovery)
 		}
 	}
 
@@ -2024,7 +2022,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
-func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, pdAddr string) error {
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, discovery pd.ServiceDiscovery) error {
 	var bc ingest.BackendCtx
 	var err error
 	defer func() {
@@ -2040,7 +2038,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := logutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, pdAddr, reorgInfo.ReorgMeta.ResourceGroupName)
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName)
 				if err != nil {
 					return err
 				}
@@ -2107,7 +2105,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			defer close(done)
 			backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 			err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logutil.BgLogger(),
-				func(ctx context.Context) (bool, error) {
+				func(context.Context) (bool, error) {
 					return true, handle.ResumeTask(w.ctx, taskKey)
 				},
 			)
@@ -2124,11 +2122,6 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			return err
 		})
 	} else {
-		elemIDs := make([]int64, 0, len(reorgInfo.elements))
-		for _, elem := range reorgInfo.elements {
-			elemIDs = append(elemIDs, elem.ID)
-		}
-
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
 		cpuCount, err := handle.GetCPUCountOfManagedNode(ctx)
@@ -2141,7 +2134,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			zap.String("task-key", taskKey))
 		taskMeta := &BackfillTaskMeta{
 			Job:             *job.Clone(),
-			EleIDs:          elemIDs,
+			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 		}
@@ -2394,7 +2387,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)
@@ -2419,7 +2412,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 			// we fetch records row by row, so records will belong to
 			// index[0], index[1] ... index[n-1], index[0], index[1] ...
 			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err := w.indexes[i%n].Delete(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			err := w.indexes[i%n].Delete(w.sessCtx.GetTableCtx(), txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				return errors.Trace(err)
 			}

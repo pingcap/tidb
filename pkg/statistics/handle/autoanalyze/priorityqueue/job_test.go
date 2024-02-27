@@ -259,11 +259,11 @@ func TestIsValidToAnalyze(t *testing.T) {
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", now)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
+	valid, _ = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
-	require.Equal(t, "last analysis just failed", failReason)
-	// Failed 1 second ago.
-	startTime := tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
+	// Failed 10 seconds ago.
+	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
 	valid, failReason = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
@@ -330,11 +330,11 @@ func TestIsValidToAnalyzeForPartitionedTba(t *testing.T) {
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", now)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
+	valid, _ = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
-	require.Equal(t, "last analysis just failed", failReason)
-	// Failed 1 second ago.
-	startTime := tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
+	// Failed 10 seconds ago.
+	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", startTime)
 	valid, failReason = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)

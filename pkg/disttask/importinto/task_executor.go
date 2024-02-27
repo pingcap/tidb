@@ -80,11 +80,7 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 		return nil, err
 	}
 
-	return importer.NewTableImporter(&importer.JobImportParam{
-		GroupCtx: ctx,
-		Progress: importer.NewProgress(),
-		Job:      &importer.Job{},
-	}, controller, strconv.FormatInt(taskID, 10))
+	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10))
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
@@ -148,7 +144,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		DataEngine:       dataEngine,
 		IndexEngine:      indexEngine,
 		Progress:         importer.NewProgress(),
-		Checksum:         &verification.KVChecksum{},
+		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetCodec()),
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
@@ -201,7 +197,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	var dataKVCount int64
+	var dataKVCount uint64
 	if s.tableImporter.IsLocalSort() {
 		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
 		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
@@ -209,10 +205,11 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		if err != nil {
 			return err
 		}
-		dataKVCount, err = s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+		dataKVCount2, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
 		if err != nil {
 			return err
 		}
+		dataKVCount = uint64(dataKVCount2)
 
 		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
@@ -225,11 +222,16 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
-	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
-	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
-	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
+	subtaskMeta.Checksum = map[int64]Checksum{}
+	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
+		subtaskMeta.Checksum[id] = Checksum{
+			Sum:  c.Sum(),
+			KVs:  c.SumKVS(),
+			Size: c.SumSize(),
+		}
+	}
 	subtaskMeta.Result = Result{
-		LoadedRowCnt: uint64(dataKVCount),
+		LoadedRowCnt: dataKVCount,
 		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}
 	allocators := sharedVars.TableImporter.Allocators()
@@ -537,7 +539,7 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) 
 }
 
 func (e *importExecutor) Close() {
-	task := e.GetTask()
+	task := e.GetTaskBase()
 	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
 }

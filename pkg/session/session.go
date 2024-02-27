@@ -48,9 +48,11 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -64,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -84,9 +87,10 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -103,7 +107,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -175,6 +178,10 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
+	pctx    *planContextImpl
+	exprctx *expressionContextImpl
+	tblctx  *tbctximpl.TableContextImpl
+
 	statsCollector *usage.SessionStatsItem
 	// ddlOwnerManager is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerManager owner.Manager
@@ -189,10 +196,6 @@ type session struct {
 	// indexUsageCollector collects index usage information.
 	idxUsageCollector *indexusage.SessionIndexUsageCollector
 
-	functionUsageMu struct {
-		syncutil.RWMutex
-		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
-	}
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
 
@@ -298,7 +301,7 @@ func (s *session) cleanRetryInfo() {
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
-				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
+				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
 					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 				if err != nil {
@@ -473,7 +476,7 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
 	txnInfo.RelatedTableIDs = make(map[int64]struct{})
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value any) bool {
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
 		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
@@ -2134,7 +2137,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	}
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		plannercore.DebugTraceReceivedCommand(s, cmdByte, stmtNode)
+		plannercore.DebugTraceReceivedCommand(s.pctx, cmdByte, stmtNode)
 	}
 
 	if err := s.validateStatementInTxn(stmtNode); err != nil {
@@ -2250,16 +2253,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		return recordSet, err
 	}
-	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
-		telemetry.CurrentExecuteCount.Inc()
-		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
-		if tiFlashPushDown {
-			telemetry.CurrentTiFlashPushDownCount.Inc()
-		}
-		if tiFlashExchangePushDown {
-			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
-		}
-	}
 	return recordSet, nil
 }
 
@@ -2373,7 +2366,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	rs, err = s.Exec(ctx)
-	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
@@ -2579,7 +2571,6 @@ func (s *session) Close() {
 	if s.idxUsageCollector != nil {
 		s.idxUsageCollector.Flush()
 	}
-	telemetry.GlobalBuiltinFunctionsUsage.Collect(s.GetBuiltinFunctionUsage())
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
 	if bindValue != nil {
 		bindValue.(bindinfo.SessionBindingHandle).Close()
@@ -2601,6 +2592,21 @@ func (s *session) Close() {
 // GetSessionVars implements the context.Context interface.
 func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
+}
+
+// GetPlanCtx returns the PlanContext.
+func (s *session) GetPlanCtx() planctx.PlanContext {
+	return s.pctx
+}
+
+// GetExprCtx returns the expression context of the session.
+func (s *session) GetExprCtx() exprctx.BuildContext {
+	return s.exprctx
+}
+
+// GetTableCtx returns the table.MutateContext
+func (s *session) GetTableCtx() tbctx.MutateContext {
+	return s.tblctx
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
@@ -3117,7 +3123,7 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	if targetVer == meta.BackfillTableVersion {
 		targetTables = BackfillTables
 	}
-	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		tableVer, err := t.CheckDDLTableVersion()
 		if err != nil || tableVer >= targetVer {
@@ -3163,7 +3169,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
-	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ver, err := t.CheckDDLTableVersion()
 		if err != nil || ver >= meta.MDLTableVersion {
@@ -3197,7 +3203,7 @@ func InitMDLTable(store kv.Storage) error {
 
 // InitMDLVariableForBootstrap initializes the metadata lock variable.
 func InitMDLVariableForBootstrap(store kv.Storage) error {
-	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return t.SetMetadataLock(true)
 	})
@@ -3213,7 +3219,7 @@ func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 	isNull := false
 	enable := false
 	var err error
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		enable, isNull, err = t.GetMetadataLock()
 		if err != nil {
@@ -3234,7 +3240,7 @@ func InitMDLVariable(store kv.Storage) error {
 	isNull := false
 	enable := false
 	var err error
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		enable, isNull, err = t.GetMetadataLock()
 		if err != nil {
@@ -3374,19 +3380,6 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	err = executor.LoadOptRuleBlacklist(ctx, ses[5])
 	if err != nil {
 		return nil, err
-	}
-
-	if dom.GetEtcdClient() != nil {
-		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
-		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
-		if config.GetGlobalConfig().EnableTelemetry {
-			// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
-			// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
-			go func() {
-				dom.TelemetryReportLoop(ses[5])
-				dom.TelemetryRotateSubWindowLoop(ses[5])
-			}()
-		}
 	}
 
 	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
@@ -3577,8 +3570,10 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.sessionVars = variable.NewSessionVars(s)
+	s.exprctx = newExpressionContextImpl(s)
+	s.pctx = newPlanContextImpl(s, s.exprctx.ExprCtxExtendedImpl)
+	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 
-	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
 	}
@@ -3638,7 +3633,9 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
-	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
+	s.exprctx = newExpressionContextImpl(s)
+	s.pctx = newPlanContextImpl(s, s.exprctx.ExprCtxExtendedImpl)
+	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
@@ -3664,7 +3661,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	var ver int64
 	// check in kv store
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		t := meta.NewMeta(txn)
 		ver, err = t.GetBootstrapVersion()
@@ -3688,7 +3685,7 @@ func finishBootstrap(store kv.Storage) {
 	setStoreBootstrapped(store.UUID())
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
 		return err
@@ -4050,7 +4047,7 @@ func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
 // Transaction infoschema is returned if inside an explicit txn.
 // Otherwise the latest infoschema is returned.
-func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (s *session) GetInfoSchema() infoschemactx.InfoSchemaMetaVersion {
 	vars := s.GetSessionVars()
 	var is infoschema.InfoSchema
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
@@ -4074,7 +4071,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
-func (s *session) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (s *session) GetDomainInfoSchema() infoschemactx.InfoSchemaMetaVersion {
 	is := domain.GetDomain(s).InfoSchema()
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
@@ -4088,114 +4085,6 @@ func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.
 	// Set snapshot does not affect the witness of the local temporary table.
 	// The session always see the latest temporary tables.
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is), nil
-}
-
-func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
-	if es.Ti == nil {
-		return
-	}
-	if s.isInternal() {
-		return
-	}
-
-	ti := es.Ti
-	if ti.UseRecursive {
-		session_metrics.TelemetryCTEUsageRecurCTE.Inc()
-	} else if ti.UseNonRecursive {
-		session_metrics.TelemetryCTEUsageNonRecurCTE.Inc()
-	} else {
-		session_metrics.TelemetryCTEUsageNotCTE.Inc()
-	}
-
-	if ti.UseIndexMerge {
-		session_metrics.TelemetryIndexMerge.Inc()
-	}
-
-	if ti.UseMultiSchemaChange {
-		session_metrics.TelemetryMultiSchemaChangeUsage.Inc()
-	}
-
-	if ti.UseFlashbackToCluster {
-		session_metrics.TelemetryFlashbackClusterUsage.Inc()
-	}
-
-	if ti.UseExchangePartition {
-		session_metrics.TelemetryExchangePartitionUsage.Inc()
-	}
-
-	if ti.PartitionTelemetry != nil {
-		if ti.PartitionTelemetry.UseTablePartition {
-			session_metrics.TelemetryTablePartitionUsage.Inc()
-			session_metrics.TelemetryTablePartitionMaxPartitionsUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
-		}
-		if ti.PartitionTelemetry.UseTablePartitionList {
-			session_metrics.TelemetryTablePartitionListUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseTablePartitionRange {
-			session_metrics.TelemetryTablePartitionRangeUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseTablePartitionHash {
-			session_metrics.TelemetryTablePartitionHashUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
-			session_metrics.TelemetryTablePartitionRangeColumnsUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 {
-			session_metrics.TelemetryTablePartitionRangeColumnsGt1Usage.Inc()
-		}
-		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 {
-			session_metrics.TelemetryTablePartitionRangeColumnsGt2Usage.Inc()
-		}
-		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 {
-			session_metrics.TelemetryTablePartitionRangeColumnsGt3Usage.Inc()
-		}
-		if ti.PartitionTelemetry.UseTablePartitionListColumns {
-			session_metrics.TelemetryTablePartitionListColumnsUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseCreateIntervalPartition {
-			session_metrics.TelemetryTablePartitionCreateIntervalUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseAddIntervalPartition {
-			session_metrics.TelemetryTablePartitionAddIntervalUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseDropIntervalPartition {
-			session_metrics.TelemetryTablePartitionDropIntervalUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseCompactTablePartition {
-			session_metrics.TelemetryTableCompactPartitionUsage.Inc()
-		}
-		if ti.PartitionTelemetry.UseReorganizePartition {
-			session_metrics.TelemetryReorganizePartitionUsage.Inc()
-		}
-	}
-
-	if ti.AccountLockTelemetry != nil {
-		session_metrics.TelemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
-		session_metrics.TelemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
-		session_metrics.TelemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
-	}
-
-	if ti.UseTableLookUp.Load() && s.sessionVars.StoreBatchSize > 0 {
-		session_metrics.TelemetryStoreBatchedUsage.Inc()
-	}
-}
-
-// GetBuiltinFunctionUsage returns the replica of counting of builtin function usage
-func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
-	replica := make(map[string]uint32)
-	s.functionUsageMu.RLock()
-	defer s.functionUsageMu.RUnlock()
-	for key, value := range s.functionUsageMu.builtinFunctionUsage {
-		replica[key] = value
-	}
-	return replica
-}
-
-// BuiltinFunctionUsageInc increase the counting of the builtin function usage
-func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
-	s.functionUsageMu.Lock()
-	defer s.functionUsageMu.Unlock()
-	s.functionUsageMu.builtinFunctionUsage.Inc(scalarFuncSigName)
 }
 
 func (s *session) GetStmtStats() *stmtstats.StatementStats {

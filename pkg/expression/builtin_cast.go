@@ -548,14 +548,14 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			return jsonToInt, err
 		}
 	case types.ETReal:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, _ *types.FieldType) (any, error) {
 			if item.TypeCode != types.JSONTypeCodeFloat64 && item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
 			return types.ConvertJSONToFloat(sc.TypeCtx(), item)
 		}
 	case types.ETDatetime:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
 			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
@@ -568,7 +568,7 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			return res, nil
 		}
 	case types.ETDuration:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, _ *types.FieldType) (any, error) {
 			if item.TypeCode != types.JSONTypeCodeDuration {
 				return nil, ErrInvalidJSONForFuncIndex
 			}

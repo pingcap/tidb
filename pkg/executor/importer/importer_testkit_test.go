@@ -224,10 +224,12 @@ func TestPostProcess(t *testing.T) {
 	logger := zap.NewExample()
 
 	// verify checksum failed
-	localChecksum := verify.MakeKVChecksum(1, 2, 1)
+	localChecksum := verify.NewKVGroupChecksumForAdd()
+	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 2, 1)
 	require.ErrorIs(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger), common.ErrChecksumMismatch)
 	// success
-	localChecksum = verify.MakeKVChecksum(1, 1, 1)
+	localChecksum = verify.NewKVGroupChecksumForAdd()
+	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 1, 1)
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
 	// get KV store failed
 	importer.GetKVStore = func(path string, tls kvconfig.Security) (kv.Storage, error) {
@@ -256,7 +258,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), map[autoid.AllocatorType]int64{
 		autoid.RowIDAllocType: 123,
 	}, plan, localChecksum, logger))
-	allocators := table.Allocators(tk.Session().GetSessionVars())
+	allocators := table.Allocators(tk.Session().GetTableCtx())
 	nextGlobalAutoID, err := allocators.Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(124), nextGlobalAutoID)
@@ -288,8 +290,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path != "" {
 		require.NoError(t, controller.InitDataStore(ctx))
 	}
-	ti, err := importer.NewTableImporterForTest(&importer.JobImportParam{GroupCtx: ctx},
-		controller, "11", store, &storeHelper{kvStore: store})
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", store, &storeHelper{kvStore: store})
 	require.NoError(t, err)
 	return ti
 }
@@ -320,10 +321,13 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
-		err := importer.ProcessChunkWith(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample())
+		checksum := verify.NewKVGroupChecksumWithKeyspace(store.GetCodec())
+		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample(), checksum)
 		require.NoError(t, err)
 		require.Len(t, progress.GetColSize(), 3)
-		require.Equal(t, verify.MakeKVChecksum(74, 2, 15625182175392723123), chunkInfo.Checksum)
+		checksumMap := checksum.GetInnerChecksums()
+		require.Len(t, checksumMap, 1)
+		require.Equal(t, verify.MakeKVChecksum(74, 2, 15625182175392723123), *checksumMap[verify.DataKVGroupID])
 	})
 
 	t.Run("query chunk", func(t *testing.T) {
@@ -349,10 +353,13 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
-		err := importer.ProcessChunkWith(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample())
+		checksum := verify.NewKVGroupChecksumWithKeyspace(store.GetCodec())
+		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample(), checksum)
 		require.NoError(t, err)
 		require.Len(t, progress.GetColSize(), 3)
-		require.Equal(t, verify.MakeKVChecksum(111, 3, 14231358899564314836), chunkInfo.Checksum)
+		checksumMap := checksum.GetInnerChecksums()
+		require.Len(t, checksumMap, 1)
+		require.Equal(t, verify.MakeKVChecksum(111, 3, 14231358899564314836), *checksumMap[verify.DataKVGroupID])
 	})
 }
 

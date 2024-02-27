@@ -180,10 +180,11 @@ type Config struct {
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
 
-	Labels       prometheus.Labels       `json:"-"`
-	PromFactory  promutil.Factory        `json:"-"`
-	PromRegistry promutil.Registry       `json:"-"`
-	ExtStorage   storage.ExternalStorage `json:"-"`
+	Labels        prometheus.Labels       `json:"-"`
+	PromFactory   promutil.Factory        `json:"-"`
+	PromRegistry  promutil.Registry       `json:"-"`
+	ExtStorage    storage.ExternalStorage `json:"-"`
+	MinTLSVersion uint16                  `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
@@ -276,10 +277,14 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	} else {
 		// Use TLS first.
 		driverCfg.AllowFallbackToPlaintext = true
+		minTLSVersion := uint16(tls.VersionTLS12)
+		if conf.MinTLSVersion != 0 {
+			minTLSVersion = conf.MinTLSVersion
+		}
 		/* #nosec G402 */
 		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS12,
+			MinVersion:         minTLSVersion,
 			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}
@@ -754,6 +759,7 @@ func buildTLSConfig(conf *Config) error {
 		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
 		util.WithCAContent(conf.Security.SSLCABytes),
 		util.WithCertAndKeyContent(conf.Security.SSLCertBytes, conf.Security.SSLKeyBytes),
+		util.WithMinTLSVersion(conf.MinTLSVersion),
 	)
 	if err != nil {
 		return errors.Trace(err)

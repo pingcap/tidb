@@ -51,6 +51,7 @@ import (
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -187,7 +189,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 }
 
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (ti *TableImporter, err error) {
+func NewTableImporter(ctx context.Context, e *LoadDataController, id string) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -220,16 +222,13 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (
 	}
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-
-	// todo: use a real region size getter
-	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, regionSizeGetter)
+	d := kvStore.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
 		return nil, err
 	}
 
 	return &TableImporter{
-		JobImportParam:     param,
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
@@ -254,7 +253,6 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (
 
 // TableImporter is a table importer.
 type TableImporter struct {
-	*JobImportParam
 	*LoadDataController
 	// id is the unique id for this importer.
 	// it's the task id if we are running in distributed framework, else it's an
@@ -278,7 +276,7 @@ type TableImporter struct {
 }
 
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(param *JobImportParam, e *LoadDataController, id string, store tidbkv.Storage, helper local.StoreHelper) (*TableImporter, error) {
+func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, store tidbkv.Storage, helper local.StoreHelper) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -292,13 +290,12 @@ func NewTableImporterForTest(param *JobImportParam, e *LoadDataController, id st
 	}
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-	localBackend, err := local.NewBackendForTest(param.GroupCtx, backendConfig, helper)
+	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
 	if err != nil {
 		return nil, err
 	}
 
 	return &TableImporter{
-		JobImportParam:     param,
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
@@ -313,6 +310,11 @@ func NewTableImporterForTest(param *JobImportParam, e *LoadDataController, id st
 		logger:        e.logger.With(zap.String("import-id", id)),
 		diskQuotaLock: new(syncutil.RWMutex),
 	}, nil
+}
+
+// GetCodec gets the codec of the kv store.
+func (ti *TableImporter) GetCodec() tikv.Codec {
+	return ti.kvStore.GetCodec()
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -690,23 +692,24 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 
 	var (
 		mu         sync.Mutex
-		checksum   verify.KVChecksum
+		checksum   = verify.NewKVGroupChecksumWithKeyspace(ti.GetCodec())
 		colSizeMap = make(map[int64]int64)
 	)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
+			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.GetCodec())
 			progress := NewProgress()
 			defer func() {
 				mu.Lock()
 				defer mu.Unlock()
-				checksum.Add(&chunkCheckpoint.Checksum)
+				checksum.Add(chunkChecksum)
 				for k, v := range progress.GetColSize() {
 					colSizeMap[k] += v
 				}
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, progress, ti.logger)
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, progress, ti.logger, chunkChecksum)
 		})
 	}
 	if err = eg.Wait(); err != nil {
@@ -782,10 +785,10 @@ func PostProcess(
 	se sessionctx.Context,
 	maxIDs map[autoid.AllocatorType]int64,
 	plan *Plan,
-	localChecksum verify.KVChecksum,
+	localChecksum *verify.KVGroupChecksum,
 	logger *zap.Logger,
 ) (err error) {
-	callLog := log.BeginTask(logger.With(zap.Any("checksum", localChecksum)), "post process")
+	callLog := log.BeginTask(logger.With(zap.Object("checksum", localChecksum)), "post process")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
@@ -794,7 +797,7 @@ func PostProcess(
 		return err
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum, se, logger)
+	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), se, logger)
 }
 
 type autoIDRequirement struct {
@@ -995,4 +998,17 @@ func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) err
 func GetImportRootDir(tidbCfg *tidb.Config) string {
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
 	return filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+}
+
+// FlushTableStats flushes the stats of the table.
+func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
+	if err := sessiontxn.NewTxn(ctx, se); err != nil {
+		return err
+	}
+	sessionVars := se.GetSessionVars()
+	sessionVars.TxnCtxMu.Lock()
+	defer sessionVars.TxnCtxMu.Unlock()
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
+	se.StmtCommit(ctx)
+	return se.CommitTxn(ctx)
 }

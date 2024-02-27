@@ -154,6 +154,18 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 				"__TiDB_BR_Temporary_mysql": {"tablE"},
 			}),
 		},
+		{
+			cfgSchemas: map[string]struct{}{
+				utils.EncloseName("sys"): {},
+			},
+			cfgTables: map[string]struct{}{
+				utils.EncloseDBAndTable("sys", "t"):  {},
+				utils.EncloseDBAndTable("sys", "t2"): {},
+			},
+			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
+				"__TiDB_BR_Temporary_sys": {"T", "T2"},
+			}),
+		},
 	}
 
 	cfg := &RestoreConfig{}
