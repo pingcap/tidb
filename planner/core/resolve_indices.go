@@ -141,17 +141,6 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	copy(shallowColSlice, p.schema.Columns)
 	p.schema = expression.NewSchema(shallowColSlice...)
 	foundCnt := 0
-<<<<<<< HEAD:planner/core/resolve_indices.go
-	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
-	// So we can just move forward j if there's no matching is found.
-	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
-	//   e.g. The schema of child_0 is [col0, col0, col1]
-	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
-	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
-			j++
-			continue
-=======
 
 	// Here we want to resolve all join schema columns directly as a merged schema, and you know same name
 	// col in join schema should be separately redirected to corresponded same col in child schema. But two
@@ -161,7 +150,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	for i := 0; i < colsNeedResolving; i++ {
 		findIdx := -1
 		for j := 0; j < len(mergedSchema.Columns); j++ {
-			if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
+			if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) || marked[j] {
 				continue
 			}
 			// resolve to a same unique id one, and it not being marked.
@@ -174,7 +163,6 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			p.schema.Columns[i].Index = findIdx
 			marked[findIdx] = true
 			foundCnt++
->>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203)):pkg/planner/core/resolve_indices.go
 		}
 	}
 	if foundCnt < colsNeedResolving {
