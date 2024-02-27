@@ -67,7 +67,6 @@ go_test(
         "subscription_test.go",
     ],
     flaky = True,
-    race = "on",
     shard_count = 21,
     deps = [
         ":streamhelper",
