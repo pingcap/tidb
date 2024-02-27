@@ -116,7 +116,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*t
 	var scalar *expression.ScalarFunction
 	// when supportLower, we can support cases like
 	// lower(colName)='xxx'
-	// or upper(colName)='xxx.
+	// or upper(colName)='xxx'.
 	if supportLower {
 		var isScalar bool
 		for i := 0; i < 2; i++ {

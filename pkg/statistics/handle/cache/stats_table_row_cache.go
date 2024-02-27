@@ -98,7 +98,7 @@ func (c *StatsTableRowCache) updateDirtyIDs(sctx sessionctx.Context) error {
 	return nil
 }
 
-// UpdateByID tries to update the cache by table id.
+// UpdateByID tries to update the cache by table ID.
 func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
