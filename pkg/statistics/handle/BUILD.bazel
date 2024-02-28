@@ -24,6 +24,7 @@ go_library(
         "//pkg/statistics/handle/ddl",
         "//pkg/statistics/handle/globalstats",
         "//pkg/statistics/handle/history",
+        "//pkg/statistics/handle/loadstats",
         "//pkg/statistics/handle/lockstats",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
