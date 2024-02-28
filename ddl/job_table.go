@@ -217,31 +217,11 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 	})
 }
 
-<<<<<<< HEAD:ddl/job_table.go
-func (d *ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
-	rows, err := se.Execute(context.Background(), sql, "check conflict jobs")
-	return len(rows) == 0, err
-}
-
-func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
-	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
-=======
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
-		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-			job.ReorgMeta != nil &&
-			job.ReorgMeta.IsFastReorg &&
-			ingest.LitBackCtxMgr != nil {
-			succeed := ingest.LitBackCtxMgr.MarkJobProcessing(job.ID)
-			if !succeed {
-				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
-				return false, nil
-			}
-		}
->>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/ddl/job_table.go
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
 			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
@@ -554,27 +534,6 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 	return strconv.FormatInt(job.TableID, 10)
 }
 
-<<<<<<< HEAD:ddl/job_table.go
-func job2SchemaNames(job *model.Job) []string {
-	if job.Type == model.ActionRenameTable {
-		var oldSchemaID int64
-		var oldSchemaName model.CIStr
-		var tableName model.CIStr
-		if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
-			// TODO: Handle this error
-		}
-		names := make([]string, 0, 2)
-		names = append(names, strings.ToLower(job.SchemaName))
-		names = append(names, oldSchemaName.O)
-		return names
-	}
-	// TODO: consider about model.ActionRenameTables and model.ActionExchangeTablePartition, which need to get the schema names.
-
-	return []string{job.SchemaName}
-}
-
-=======
->>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/ddl/job_table.go
 func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
 	_, err := w.sess.Execute(context.Background(), sql, "delete_job")

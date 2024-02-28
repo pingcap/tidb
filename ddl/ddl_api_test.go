@@ -16,30 +16,19 @@ package ddl_test
 
 import (
 	"context"
-<<<<<<< HEAD:ddl/ddl_api_test.go
+	"fmt"
+	"sync"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
-=======
-	"fmt"
-	"slices"
-	"sync"
-	"testing"
-
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/chunk"
->>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/ddl/ddl_api_test.go
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
