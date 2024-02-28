@@ -21,6 +21,7 @@ package tables
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"math"
 	"sort"
 	"strconv"
@@ -59,6 +60,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var _ table.Table = &TableCommon{}
+
 // TableCommon is shared by both Table and partition.
 type TableCommon struct {
 	// TODO: Why do we need tableID, when it is already in meta.ID ?
@@ -72,6 +75,7 @@ type TableCommon struct {
 	writableColumns                 []*table.Column
 	fullHiddenColsAndVisibleColumns []*table.Column
 	indices                         []table.Index
+	indexMutators                   []table.IndexMutator
 	meta                            *model.TableInfo
 	allocs                          autoid.Allocators
 	sequence                        *sequenceCommon
@@ -85,7 +89,7 @@ type TableCommon struct {
 }
 
 // MockTableFromMeta only serves for test.
-func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
+func MockTableFromMeta(tblInfo *model.TableInfo) table.Mutator {
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {
 		col := table.ToColumn(colInfo)
@@ -120,7 +124,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
-func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Mutator, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -144,7 +148,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			if err != nil {
 				return nil, err
 			}
-			col.GeneratedExpr = table.NewClonableExprNode(func() ast.ExprNode {
+			col.GeneratedExpr = briefapi.NewClonableExprNode(func() ast.ExprNode {
 				newExpr, err1 := buildGeneratedExpr(tblInfo, genStr)
 				if err1 != nil {
 					logutil.BgLogger().Warn("unexpected parse generated string error",
@@ -227,6 +231,7 @@ func initTableIndices(t *TableCommon) error {
 		// Use partition ID for index, because TableCommon may be table or partition.
 		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
+		t.indexMutators = append(t.indexMutators, idx)
 	}
 	return nil
 }
@@ -241,9 +246,14 @@ func (t *TableCommon) Indices() []table.Index {
 	return t.indices
 }
 
+// IndexMutators implements table.Mutator IndexMutators interface.
+func (t *TableCommon) IndexMutators() []table.IndexMutator {
+	return t.indexMutators
+}
+
 // GetWritableIndexByName gets the index meta from the table by the index name.
-func GetWritableIndexByName(idxName string, t table.Table) table.Index {
-	for _, idx := range t.Indices() {
+func GetWritableIndexByName(idxName string, t table.Mutator) table.IndexMutator {
+	for _, idx := range t.IndexMutators() {
 		if !IsIndexWritable(idx) {
 			continue
 		}
@@ -255,9 +265,9 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 }
 
 // deletableIndices implements table.Table deletableIndices interface.
-func (t *TableCommon) deletableIndices() []table.Index {
+func (t *TableCommon) deletableIndices() []table.IndexMutator {
 	// All indices are deletable because we don't need to check StateNone.
-	return t.indices
+	return t.indexMutators
 }
 
 // Meta implements table.Table Meta interface.
@@ -651,7 +661,7 @@ func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction
 			break
 		}
 	}
-	for _, idx := range t.Indices() {
+	for _, idx := range t.indexMutators {
 		if !IsIndexWritable(idx) {
 			continue
 		}
@@ -1149,7 +1159,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
-	for _, v := range t.Indices() {
+	for _, v := range t.indexMutators {
 		if !IsIndexWritable(v) {
 			continue
 		}
@@ -1538,12 +1548,12 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, h kv.Handle, rec
 }
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *TableCommon) removeRowIndex(ctx table.MutateContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+func (t *TableCommon) removeRowIndex(ctx table.MutateContext, h kv.Handle, vals []types.Datum, idx table.IndexMutator, txn kv.Transaction) error {
 	return idx.Delete(ctx, txn, vals, h)
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
+func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx table.IndexMutator, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
 	var opts []table.CreateIdxOptFunc
 	opts = append(opts, popts...)
 	if untouched {
@@ -1758,7 +1768,7 @@ func (t *TableCommon) Allocators(ctx table.AllocatorContext) autoid.Allocators {
 
 // Type implements table.Table Type interface.
 func (t *TableCommon) Type() table.Type {
-	return table.NormalTable
+	return briefapi.NormalTable
 }
 
 func shouldWriteBinlog(vars *variable.SessionVars, tblInfo *model.TableInfo) bool {

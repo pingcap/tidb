@@ -55,7 +55,7 @@ var (
 //  2. err (error) : error in the update.
 func updateRecord(
 	ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool,
-	t table.Table,
+	t table.Mutator,
 	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec,
 ) (bool, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
@@ -74,7 +74,7 @@ func updateRecord(
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
+		if err = table.HandleColumnBadNull(col, sc.ErrCtx(), &newData[i], 0); err != nil {
 			return false, err
 		}
 	}
@@ -237,7 +237,7 @@ const (
 )
 
 func addUnchangedKeysForLockByRow(
-	sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum, keySet int,
+	sctx sessionctx.Context, t table.Mutator, h kv.Handle, row []types.Datum, keySet int,
 ) (int, error) {
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	if !txnCtx.IsPessimistic || keySet == 0 {
@@ -245,7 +245,7 @@ func addUnchangedKeysForLockByRow(
 	}
 	count := 0
 	physicalID := t.Meta().ID
-	if pt, ok := t.(table.PartitionedTable); ok {
+	if pt, ok := t.(table.PartitionedTableMutator); ok {
 		p, err := pt.GetPartitionByRow(sctx.GetExprCtx(), row)
 		if err != nil {
 			return 0, err
@@ -325,7 +325,7 @@ func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, t
 	if !tableFound {
 		return errors.Errorf("exchange partition process table by id failed")
 	}
-	p, ok := pt.(table.PartitionedTable)
+	p, ok := pt.(table.PartitionedTableMutator)
 	if !ok {
 		return errors.Errorf("exchange partition process assert table partition failed")
 	}

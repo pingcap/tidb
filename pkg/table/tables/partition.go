@@ -19,6 +19,7 @@ import (
 	"context"
 	stderr "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"hash/crc32"
 	"sort"
 	"strconv"
@@ -106,7 +107,7 @@ type partitionedTable struct {
 
 // TODO: Check which data structures that can be shared between all partitions and which
 // needs to be copies
-func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.PartitionedTable, error) {
+func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.PartitionedTableMutator, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || len(pi.Definitions) == 0 {
 		return nil, table.ErrUnknownPartition
@@ -1269,6 +1270,18 @@ func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
 }
 
+func (t *partitionedTable) GetPartitionForMutate(pid int64) table.PhysicalTableMutator {
+	// Attention, can't simply use `return t.partitions[pid]` here.
+	// Because A nil of type *partition is a kind of `table.PhysicalTable`
+	part, ok := t.partitions[pid]
+	if !ok {
+		// Should never happen!
+		intest.Assert(false, "Partition with id '%d' not found", pid)
+		return nil
+	}
+	return part
+}
+
 func (t *partitionedTable) CheckForExchangePartition(ctx expression.BuildContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error {
 	defID, err := t.locatePartition(ctx, r)
 	if err != nil {
@@ -1494,14 +1507,24 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	part, ok := t.partitions[pid]
 	if !ok {
 		// Should never happen!
+		intest.Assert(false, "Partition with id '%d' not found", pid)
 		return nil
 	}
 	return part
 }
 
+func (t *partitionedTable) getPartition(pid int64) *partition {
+	if p, ok := t.partitions[pid]; ok {
+		return p
+	}
+	// Should never happen!
+	intest.Assert(false, "Partition with id '%d' not found", pid)
+	return nil
+}
+
 // GetReorganizedPartitionedTable returns the same table
 // but only with the AddingDefinitions used.
-func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, error) {
+func GetReorganizedPartitionedTable(t table.Mutator) (table.PartitionedTableMutator, error) {
 	// This is used during Reorganize partitions; All data from DroppingDefinitions
 	// will be copied to AddingDefinitions, so only setup with AddingDefinitions!
 
@@ -1534,7 +1557,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
-func (t *partitionedTable) GetPartitionByRow(ctx expression.BuildContext, r []types.Datum) (table.PhysicalTable, error) {
+func (t *partitionedTable) GetPartitionByRow(ctx expression.BuildContext, r []types.Datum) (table.PhysicalTableMutator, error) {
 	pid, err := t.locatePartition(ctx, r)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1543,7 +1566,7 @@ func (t *partitionedTable) GetPartitionByRow(ctx expression.BuildContext, r []ty
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
-func (t *partitionTableWithGivenSets) GetPartitionByRow(ctx expression.BuildContext, r []types.Datum) (table.PhysicalTable, error) {
+func (t *partitionTableWithGivenSets) GetPartitionByRow(ctx expression.BuildContext, r []types.Datum) (table.PhysicalTableMutator, error) {
 	pid, err := t.locatePartition(ctx, r)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1614,7 +1637,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r [
 			return nil, errors.WithStack(err)
 		}
 	}
-	tbl := t.GetPartition(pid)
+	tbl := t.getPartition(pid)
 	recordID, err = tbl.AddRecord(ctx, r, opts...)
 	if err != nil {
 		return
@@ -1628,7 +1651,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r [
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tbl = t.GetPartition(pid)
+		tbl = t.getPartition(pid)
 		recordID, err = tbl.AddRecord(ctx, r, opts...)
 		if err != nil {
 			return
@@ -1677,7 +1700,7 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 		return errors.Trace(err)
 	}
 
-	tbl := t.GetPartition(pid)
+	tbl := t.getPartition(pid)
 	err = tbl.RemoveRecord(ctx, h, r)
 	if err != nil {
 		return errors.Trace(err)
@@ -1688,7 +1711,7 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl = t.GetPartition(pid)
+		tbl = t.getPartition(pid)
 		err = tbl.RemoveRecord(ctx, h, r)
 		if err != nil {
 			return errors.Trace(err)
@@ -1753,7 +1776,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
-		_, err = t.GetPartition(to).AddRecord(ctx, newData)
+		_, err = t.getPartition(to).AddRecord(ctx, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1763,7 +1786,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		// So this special order is chosen: add record first, errors such as
 		// 'Key Already Exists' will generally happen during step1, errors are
 		// unlikely to happen in step2.
-		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
+		err = t.getPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
 			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
 			return errors.Trace(err)
@@ -1785,18 +1808,18 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 		if newTo == newFrom && newTo != 0 {
 			// Update needs to be done in StateDeleteOnly as well
-			tbl := t.GetPartition(newTo)
+			tbl := t.getPartition(newTo)
 			return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
 		}
 		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-			tbl := t.GetPartition(newTo)
+			tbl := t.getPartition(newTo)
 			_, err = tbl.AddRecord(ctx, newData)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 		if newFrom != 0 {
-			tbl := t.GetPartition(newFrom)
+			tbl := t.getPartition(newFrom)
 			err = tbl.RemoveRecord(ctx, h, currData)
 			// TODO: Can this happen? When the data is not yet backfilled?
 			if err != nil {
@@ -1805,7 +1828,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 		return nil
 	}
-	tbl := t.GetPartition(to)
+	tbl := t.getPartition(to)
 	err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
 	if err != nil {
 		return errors.Trace(err)
@@ -1822,7 +1845,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			return errors.Trace(err)
 		}
 		if newTo == newFrom {
-			tbl = t.GetPartition(newTo)
+			tbl = t.getPartition(newTo)
 			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
 				err = tbl.RemoveRecord(ctx, h, currData)
 			} else {
@@ -1834,13 +1857,13 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			return nil
 		}
 		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-			tbl = t.GetPartition(newTo)
+			tbl = t.getPartition(newTo)
 			_, err = tbl.AddRecord(ctx, newData)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		tbl = t.GetPartition(newFrom)
+		tbl = t.getPartition(newFrom)
 		err = tbl.RemoveRecord(ctx, h, currData)
 		if err != nil {
 			return errors.Trace(err)

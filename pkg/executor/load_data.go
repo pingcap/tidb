@@ -143,7 +143,7 @@ type LoadDataWorker struct {
 	controller *importer.LoadDataController
 	planInfo   planInfo
 
-	table table.Table
+	table table.Mutator
 }
 
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
@@ -160,7 +160,7 @@ func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 func NewLoadDataWorker(
 	userSctx sessionctx.Context,
 	plan *plannercore.LoadData,
-	tbl table.Table,
+	tbl table.Mutator,
 ) (w *LoadDataWorker, err error) {
 	importPlan, err := importer.NewPlanFromLoadDataPlan(userSctx, plan)
 	if err != nil {

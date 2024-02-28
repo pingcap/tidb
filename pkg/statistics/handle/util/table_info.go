@@ -15,17 +15,17 @@
 package util
 
 import (
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/table"
 )
 
 // TableInfoGetter is used to get table meta info.
 type TableInfoGetter interface {
 	// TableInfoByID returns the table info specified by the physicalID.
 	// If the physicalID is corresponding to a partition, return its parent table.
-	TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
+	TableInfoByID(is infoschema.InfoSchema, physicalID int64) (briefapi.Table, bool)
 }
 
 // tableInfoGetterImpl is used to get table meta info.
@@ -44,7 +44,7 @@ func NewTableInfoGetter() TableInfoGetter {
 
 // TableInfoByID returns the table info specified by the physicalID.
 // If the physicalID is corresponding to a partition, return its parent table.
-func (c *tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
+func (c *tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID int64) (briefapi.Table, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if is.SchemaMetaVersion() != c.schemaVersion {

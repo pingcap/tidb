@@ -992,7 +992,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl
 
 // ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 // according to the required algorithm.
-func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
+func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Mutator, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)

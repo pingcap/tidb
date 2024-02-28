@@ -25,12 +25,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
+
+var _ table.IndexMutator = &index{}
 
 // index is the data structure for index data in the KV store.
 type index struct {
@@ -56,7 +59,7 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.IndexMutator {
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
@@ -469,13 +472,13 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 }
 
 func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum,
-	h kv.Handle, handleRestoreData []types.Datum) table.IndexKVGenerator {
+	h kv.Handle, handleRestoreData []types.Datum) briefapi.IndexKVGenerator {
 	var mvIndexValues [][]types.Datum
 	if c.Meta().MVIndex {
 		mvIndexValues = c.getIndexedValue(indexedValue)
-		return table.NewMultiValueIndexKVGenerator(c, ec, loc, h, handleRestoreData, mvIndexValues)
+		return briefapi.NewMultiValueIndexKVGenerator(c, ec, loc, h, handleRestoreData, mvIndexValues)
 	}
-	return table.NewPlainIndexKVGenerator(c, ec, loc, h, handleRestoreData, indexedValue)
+	return briefapi.NewPlainIndexKVGenerator(c, ec, loc, h, handleRestoreData, indexedValue)
 }
 
 const (

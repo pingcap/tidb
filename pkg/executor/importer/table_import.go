@@ -261,7 +261,7 @@ type TableImporter struct {
 	backend   *local.Backend
 	tableInfo *checkpoints.TidbTableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
-	encTable table.Table
+	encTable table.Mutator
 	dbID     int64
 
 	// the kv store we get is a cached store, so we can't close it.

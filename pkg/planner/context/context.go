@@ -33,7 +33,7 @@ type PlanContext interface {
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// GetInfoSchema returns the current infoschema
-	GetInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetInfoSchema() infoschema.InfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 	// GetClient gets a kv.Client.

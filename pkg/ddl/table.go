@@ -645,7 +645,7 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
-func getTable(r autoid.Requirement, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+func getTable(r autoid.Requirement, schemaID int64, tblInfo *model.TableInfo) (table.Mutator, error) {
 	allocs := autoid.NewAllocatorsFromTblInfo(r, schemaID, tblInfo)
 	tbl, err := table.TableFromMeta(allocs, tblInfo)
 	return tbl, errors.Trace(err)

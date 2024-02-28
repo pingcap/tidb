@@ -104,7 +104,7 @@ type FKCascadeRuntimeStats struct {
 	Keys  int
 }
 
-func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
+func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Mutator, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
 	fkChecksMap := make(map[int64][]*FKCheckExec)
 	for tid, tbl := range tblID2Table {
 		fkChecks, err := buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
@@ -616,7 +616,7 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 	return nil
 }
 
-func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*plannercore.FKCascade) (map[int64][]*FKCascadeExec, error) {
+func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Mutator, tblID2FKCascades map[int64][]*plannercore.FKCascade) (map[int64][]*FKCascadeExec, error) {
 	fkCascadesMap := make(map[int64][]*FKCascadeExec)
 	for tid, tbl := range tblID2Table {
 		fkCascades, err := b.buildFKCascadeExecs(tbl, tblID2FKCascades[tid])

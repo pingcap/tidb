@@ -16,6 +16,7 @@ package context
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -45,15 +46,11 @@ type MutateContext interface {
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetDomainInfoSchema() infoschema.InfoSchema
 	// TxnRecordTempTable record the temporary table to the current transaction.
 	// This method will be called when the temporary table is modified or should allocate id in the transaction.
 	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
 }
 
-// AllocatorContext is used to provide context for method `table.Allocators`.
-type AllocatorContext interface {
-	// TxnRecordTempTable record the temporary table to the current transaction.
-	// This method will be called when the temporary table is modified or should allocate id in the transaction.
-	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
-}
+// AllocatorContext is an alias of briefapi.AllocatorContext.
+type AllocatorContext = briefapi.AllocatorContext

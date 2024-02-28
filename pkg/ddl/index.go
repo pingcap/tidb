@@ -869,7 +869,7 @@ func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	tbl table.Mutator, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, allIndexInfos)
 		if done {
@@ -885,7 +885,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 }
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	tbl table.Mutator, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
 	reorgTp, err = pickBackfillType(w.ctx, job)
 	if err != nil {
@@ -945,7 +945,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 }
 
 func runIngestReorgJobDist(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	tbl table.Mutator, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -959,7 +959,7 @@ func runIngestReorgJobDist(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 }
 
 func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	tbl table.Mutator, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
 	if ok && bc.Done() {
 		return true, 0, nil
@@ -1040,7 +1040,7 @@ func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *m
 }
 
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
-	tbl table.Table, allIndexInfos []*model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
+	tbl table.Mutator, allIndexInfos []*model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := make([]*meta.Element, 0, len(allIndexInfos))
 	for _, indexInfo := range allIndexInfos {
 		elements = append(elements, &meta.Element{ID: indexInfo.ID, TypeKey: meta.IndexElementKey})
@@ -1371,7 +1371,7 @@ type indexRecord struct {
 
 type baseIndexWorker struct {
 	*backfillCtx
-	indexes []table.Index
+	indexes []table.IndexMutator
 
 	tp backfillerType
 	// The following attributes are used to reduce memory allocation.
@@ -1406,7 +1406,7 @@ func newAddIndexTxnWorker(
 		return nil, errors.Errorf("element type is not index, typeKey: %v", eleTypeKey)
 	}
 
-	allIndexes := make([]table.Index, 0, len(elements))
+	allIndexes := make([]table.IndexMutator, 0, len(elements))
 	for _, elem := range elements {
 		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
 			continue
@@ -1965,7 +1965,7 @@ var MockDMLExecutionStateMerging func()
 // MockDMLExecutionStateBeforeImport is only used for test.
 var MockDMLExecutionStateBeforeImport func()
 
-func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTableMutator, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		logutil.BgLogger().Info("start to merge temp index", zap.String("category", "ddl"), zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 		return w.writePhysicalTableRecord(w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
@@ -1975,7 +1975,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 }
 
 // addTableIndex handles the add index reorganization state for a table.
-func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) addTableIndex(t table.Mutator, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -1990,10 +1990,10 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	}
 
 	var err error
-	if tbl, ok := t.(table.PartitionedTable); ok {
+	if tbl, ok := t.(table.PartitionedTableMutator); ok {
 		var finish bool
 		for !finish {
-			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
+			p := tbl.GetPartitionForMutate(reorgInfo.PhysicalTableID)
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
@@ -2016,7 +2016,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		}
 	} else {
 		//nolint:forcetypeassert
-		phyTbl := t.(table.PhysicalTable)
+		phyTbl := t.(table.PhysicalTableMutator)
 		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
 	}
 	return errors.Trace(err)
@@ -2358,10 +2358,10 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
-	indexes := make([]table.Index, 0, len(t.Indices()))
+func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTableMutator, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
+	indexes := make([]table.IndexMutator, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	for _, index := range t.Indices() {
+	for _, index := range t.IndexMutators() {
 		if index.Meta().Global {
 			indexes = append(indexes, index)
 		}
@@ -2426,17 +2426,17 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 }
 
 // cleanupPhysicalTableIndex handles the drop partition reorganization state for a non-partitioned table or a partition.
-func (w *worker) cleanupPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
+func (w *worker) cleanupPhysicalTableIndex(t table.PhysicalTableMutator, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("start to clean up index", zap.String("category", "ddl"), zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	return w.writePhysicalTableRecord(w.sessPool, t, typeCleanUpIndexWorker, reorgInfo)
 }
 
 // cleanupGlobalIndex handles the drop partition reorganization state to clean up index entries of partitions.
-func (w *worker) cleanupGlobalIndexes(tbl table.PartitionedTable, partitionIDs []int64, reorgInfo *reorgInfo) error {
+func (w *worker) cleanupGlobalIndexes(tbl table.PartitionedTableMutator, partitionIDs []int64, reorgInfo *reorgInfo) error {
 	var err error
 	var finish bool
 	for !finish {
-		p := tbl.GetPartition(reorgInfo.PhysicalTableID)
+		p := tbl.GetPartitionForMutate(reorgInfo.PhysicalTableID)
 		if p == nil {
 			return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, tbl.Meta().ID)
 		}

@@ -28,7 +28,7 @@ import (
 type EncodingConfig struct {
 	SessionOptions
 	Path   string // path of data file
-	Table  table.Table
+	Table  table.Mutator
 	Logger log.Logger
 }
 

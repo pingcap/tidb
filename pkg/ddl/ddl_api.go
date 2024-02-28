@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"math"
 	"slices"
 	"strconv"
@@ -5554,7 +5555,7 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
 			// Only used by checkModifyGeneratedColumn, there is no need to set a ctor for it.
-			col.GeneratedExpr = table.NewClonableExprNode(nil, opt.Expr)
+			col.GeneratedExpr = briefapi.NewClonableExprNode(nil, opt.Expr)
 			for _, colName := range FindColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}

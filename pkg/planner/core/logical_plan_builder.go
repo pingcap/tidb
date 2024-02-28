@@ -4824,7 +4824,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 			pt = tables.NewPartitionTableWithGivenSets(pt, pids)
 		}
-		b.partitionedTable = append(b.partitionedTable, pt)
+		b.partitionedTable = append(b.partitionedTable, pt.(table.PartitionedTableMutator))
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
@@ -5862,7 +5862,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 }
 
 // GetUpdateColumnsInfo get the update columns info.
-func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
+func GetUpdateColumnsInfo[T table.Table](tblID2Table map[int64]T, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
 	colsInfo := make([]*table.Column, size)
 	for _, content := range tblColPosInfos {
 		tbl := tblID2Table[content.TblID]
@@ -5880,7 +5880,7 @@ type tblUpdateInfo struct {
 }
 
 // CheckUpdateList checks all related columns in updatable state.
-func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]table.Table) error {
+func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]table.Mutator) error {
 	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
 		tbl := newTblID2Table[content.TblID]

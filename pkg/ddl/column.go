@@ -806,7 +806,7 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
+func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Mutator,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		done, ver, err = doReorgWorkForModifyColumn(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
@@ -821,7 +821,7 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, j
 	return true, ver, err
 }
 
-func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
+func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Mutator,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
@@ -1071,12 +1071,12 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 	return elements
 }
 
-func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) updatePhysicalTableRow(t table.Mutator, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("start to update table row", zap.String("category", "ddl"), zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	if tbl, ok := t.(table.PartitionedTable); ok {
+	if tbl, ok := t.(table.PartitionedTableMutator); ok {
 		done := false
 		for !done {
-			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
+			p := tbl.GetPartitionForMutate(reorgInfo.PhysicalTableID)
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
@@ -1103,7 +1103,7 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 		}
 		return nil
 	}
-	if tbl, ok := t.(table.PhysicalTable); ok {
+	if tbl, ok := t.(table.PhysicalTableMutator); ok {
 		return w.writePhysicalTableRecord(w.sessPool, tbl, typeUpdateColumnWorker, reorgInfo)
 	}
 	return dbterror.ErrCancelledDDLJob.GenWithStack("internal error for phys tbl id: %d tbl id: %d", reorgInfo.PhysicalTableID, t.Meta().ID)
@@ -1113,7 +1113,7 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 var TestReorgGoroutineRunning = make(chan any)
 
 // updateCurrentElement update the current element for reorgInfo.
-func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) updateCurrentElement(t table.Mutator, reorgInfo *reorgInfo) error {
 	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
@@ -1131,7 +1131,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(t.(table.PhysicalTableMutator), reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

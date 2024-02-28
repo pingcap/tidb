@@ -40,7 +40,7 @@ type DeleteExec struct {
 	exec.BaseExecutor
 
 	IsMultiTable bool
-	tblID2Table  map[int64]table.Table
+	tblID2Table  map[int64]table.Mutator
 
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
@@ -61,7 +61,7 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Mutator, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
@@ -79,7 +79,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.Handle
 
 func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	var (
-		tbl           table.Table
+		tbl           table.Mutator
 		isExtrahandle bool
 		handleCols    plannercore.HandleCols
 		rowCount      int
@@ -242,7 +242,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Mutator, h kv.Handle, data []types.Datum) error {
 	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
 	if err != nil {
 		return err

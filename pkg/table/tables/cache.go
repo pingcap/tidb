@@ -118,7 +118,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 }
 
 // newCachedTable creates a new CachedTable Instance
-func newCachedTable(tbl *TableCommon) (table.Table, error) {
+func newCachedTable(tbl *TableCommon) (table.CachedTable, error) {
 	ret := &cachedTable{
 		TableCommon: *tbl,
 		tokenLimit:  make(chan StateRemote, 1),

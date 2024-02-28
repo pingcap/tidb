@@ -62,7 +62,7 @@ type InsertValues struct {
 
 	SelectExec exec.Executor
 
-	Table   table.Table
+	Table   table.Mutator
 	Columns []*ast.ColumnName
 	Lists   [][]expression.Expression
 
@@ -690,7 +690,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
-				if err = c.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &row[i], rowCntInLoadData); err != nil {
+				if err = table.HandleColumnBadNull(c, e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &row[i], rowCntInLoadData); err != nil {
 					return nil, err
 				}
 			}
@@ -730,7 +730,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			warnCnt += len(newWarnings)
 		}
 		// Handle the bad null error.
-		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
+		if err = table.HandleColumnBadNull(gCol, sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
 			return nil, err
 		}
 	}

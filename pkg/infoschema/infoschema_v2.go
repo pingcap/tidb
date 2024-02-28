@@ -16,6 +16,7 @@ package infoschema
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -241,7 +242,7 @@ func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, mat
 	return target, ok
 }
 
-func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
+func (is *infoschemaV2) TableByID(id int64) (val briefapi.Table, ok bool) {
 	if isTableVirtual(id) {
 		// Don't store the virtual table in the tableCache, because when cache missing
 		// we can't refill it from tikv.
@@ -278,7 +279,7 @@ func isSpecialDB(dbName string) bool {
 		dbName == util.MetricSchemaName.L
 }
 
-func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
+func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t briefapi.Table, err error) {
 	if isSpecialDB(schema.L) {
 		if tbNames, ok := is.specials[schema.L]; ok {
 			if t, ok = tbNames.tables[tbl.L]; ok {
@@ -355,7 +356,7 @@ func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 	return ok
 }
 
-func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
+func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (briefapi.Table, *model.DBInfo, *model.PartitionDefinition) {
 	panic("TODO")
 }
 
@@ -378,7 +379,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	return dbInfo, ok
 }
 
-func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
+func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []briefapi.Table) {
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
 		return
@@ -396,7 +397,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 		// TODO: error could happen, so do not panic!
 		panic(err)
 	}
-	tables = make([]table.Table, 0, len(tblInfos))
+	tables = make([]briefapi.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {
 		tbl, ok := is.TableByID(tblInfo.ID)
 		if !ok {

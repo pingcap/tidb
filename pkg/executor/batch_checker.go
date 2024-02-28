@@ -47,13 +47,13 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t       table.Table
+	t       table.Mutator
 	ignored bool
 }
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func getKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
+func getKeysNeedCheck(sctx sessionctx.Context, t table.Mutator, rows [][]types.Datum) ([]toBeCheckedRow, error) {
 	nUnique := 0
 	for _, v := range t.Indices() {
 		if !tables.IsIndexWritable(v) {
@@ -94,10 +94,10 @@ func getKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Dat
 	return toBeCheckRows, nil
 }
 
-func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column,
+func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Mutator, row []types.Datum, nUnique int, handleCols []*table.Column,
 	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
-	if p, ok := t.(table.PartitionedTable); ok {
+	if p, ok := t.(table.PartitionedTableMutator); ok {
 		t, err = p.GetPartitionByRow(ctx.GetExprCtx(), row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {

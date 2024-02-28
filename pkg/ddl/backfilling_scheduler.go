@@ -69,7 +69,7 @@ type txnBackfillScheduler struct {
 	reorgInfo    *reorgInfo
 	sessPool     *sess.Pool
 	tp           backfillerType
-	tbl          table.PhysicalTable
+	tbl          table.PhysicalTableMutator
 	decodeColMap map[int64]decoder.Column
 	jobCtx       *JobContext
 
@@ -82,7 +82,7 @@ type txnBackfillScheduler struct {
 }
 
 func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
-	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
+	tp backfillerType, tbl table.PhysicalTableMutator, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		ctx = logutil.WithCategory(ctx, "ddl-ingest")
@@ -92,7 +92,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 }
 
 func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
-	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
+	tp backfillerType, tbl table.PhysicalTableMutator, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
 	decColMap, err := makeupDecodeColMap(sessCtx, info.dbInfo.Name, tbl)
 	if err != nil {

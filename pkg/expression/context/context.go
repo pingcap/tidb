@@ -44,9 +44,9 @@ type EvalContext interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 	// GetInfoSchema returns the current infoschema
-	GetInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetInfoSchema() infoschema.InfoSchema
 	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetDomainInfoSchema() infoschema.InfoSchema
 }
 
 // BuildContext is used to build an expression

@@ -182,8 +182,8 @@ type RecoverIndexExec struct {
 
 	done bool
 
-	index      table.Index
-	table      table.Table
+	index      table.IndexMutator
+	table      table.Mutator
 	physicalID int64
 	batchSize  int
 
@@ -550,10 +550,10 @@ func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	var totalAddedCnt, totalScanCnt int64
 	var err error
-	if tbl, ok := e.table.(table.PartitionedTable); ok {
+	if tbl, ok := e.table.(table.PartitionedTableMutator); ok {
 		pi := e.table.Meta().GetPartitionInfo()
 		for _, p := range pi.Definitions {
-			e.table = tbl.GetPartition(p.ID)
+			e.table = tbl.GetPartitionForMutate(p.ID)
 			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
 			e.physicalID = p.ID
 			addedCnt, scanCnt, err := e.backfillIndex(ctx)
@@ -585,8 +585,8 @@ type CleanupIndexExec struct {
 	done      bool
 	removeCnt uint64
 
-	index      table.Index
-	table      table.Table
+	index      table.IndexMutator
+	table      table.Mutator
 	physicalID int64
 
 	columns          []*model.ColumnInfo
@@ -725,10 +725,10 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	var err error
-	if tbl, ok := e.table.(table.PartitionedTable); ok {
+	if tbl, ok := e.table.(table.PartitionedTableMutator); ok {
 		pi := e.table.Meta().GetPartitionInfo()
 		for _, p := range pi.Definitions {
-			e.table = tbl.GetPartition(p.ID)
+			e.table = tbl.GetPartitionForMutate(p.ID)
 			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
 			e.physicalID = p.ID
 			err = e.init()

@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"net"
 	"net/http"
 	"slices"
@@ -2261,9 +2262,9 @@ func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Ta
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
 	}
-	tp := table.VirtualTable
+	tp := briefapi.VirtualTable
 	if isClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
-		tp = table.ClusterTable
+		tp = briefapi.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil
 }
@@ -2444,7 +2445,7 @@ func (vt *VirtualTable) GetPhysicalID() int64 {
 
 // Type implements table.Table Type interface.
 func (vt *VirtualTable) Type() table.Type {
-	return table.VirtualTable
+	return briefapi.VirtualTable
 }
 
 // GetTiFlashServerInfo returns all TiFlash server infos

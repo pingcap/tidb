@@ -678,7 +678,7 @@ func SetBackfillTaskChanSizeForTest(n int) {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
+func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.PhysicalTableMutator, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 

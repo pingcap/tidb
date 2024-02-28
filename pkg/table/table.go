@@ -28,39 +28,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
-
-// Type is used to distinguish between different tables that store data in different ways.
-type Type int16
-
-const (
-	// NormalTable stores data in tikv, mocktikv and so on.
-	NormalTable Type = iota
-	// VirtualTable stores no data, just extract data from the memory struct.
-	VirtualTable
-	// ClusterTable contains the `VirtualTable` in the all cluster tidb nodes.
-	ClusterTable
-)
-
-// IsNormalTable checks whether the table is a normal table type.
-func (tp Type) IsNormalTable() bool {
-	return tp == NormalTable
-}
-
-// IsVirtualTable checks whether the table is a virtual table type.
-func (tp Type) IsVirtualTable() bool {
-	return tp == VirtualTable
-}
-
-// IsClusterTable checks whether the table is a cluster table type.
-func (tp Type) IsClusterTable() bool {
-	return tp == ClusterTable
-}
 
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
@@ -151,46 +125,21 @@ func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
 	opt.IsUpdate = true
 }
 
-type columnAPI interface {
-	// Cols returns the columns of the table which is used in select, including hidden columns.
-	Cols() []*Column
-
-	// VisibleCols returns the columns of the table which is used in select, excluding hidden columns.
-	VisibleCols() []*Column
-
-	// HiddenCols returns the hidden columns of the table.
-	HiddenCols() []*Column
-
-	// WritableCols returns columns of the table in writable states.
-	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
-	WritableCols() []*Column
-
-	// DeletableCols returns columns of the table in deletable states.
-	// Deletable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly, DeleteReorganization.
-	DeletableCols() []*Column
-
-	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
-	FullHiddenColsAndVisibleCols() []*Column
-}
-
 // MutateContext is used to when mutating a table.
 type MutateContext = tbctx.MutateContext
 
 // AllocatorContext is used to provide context for method `table.Allocators`.
 type AllocatorContext = tbctx.AllocatorContext
 
-// Table is used to retrieve and modify rows in table.
-type Table interface {
-	columnAPI
+// Type is an alias of briefapi.Type
+type Type = briefapi.Type
 
-	// Indices returns the indices of the table.
-	// The caller must be aware of that not all the returned indices are public.
-	Indices() []Index
+// Table is an alias of briefapi.Table
+type Table = briefapi.Table
 
-	// RecordPrefix returns the record key prefix.
-	RecordPrefix() kv.Key
-	// IndexPrefix returns the index key prefix.
-	IndexPrefix() kv.Key
+// Mutator is used to retrieve and modify rows in table.
+type Mutator interface {
+	Table
 
 	// AddRecord inserts a row which should contain only public columns
 	AddRecord(ctx MutateContext, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
@@ -201,21 +150,11 @@ type Table interface {
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
 
-	// Allocators returns all allocators.
-	Allocators(ctx AllocatorContext) autoid.Allocators
-
-	// Meta returns TableInfo.
-	Meta() *model.TableInfo
-
-	// Type returns the type of table
-	Type() Type
-
-	// GetPartitionedTable returns nil if not partitioned
-	GetPartitionedTable() PartitionedTable
+	IndexMutators() []IndexMutator
 }
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
-func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
+func AllocAutoIncrementValue(ctx context.Context, t Mutator, sctx sessionctx.Context) (int64, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
 	defer r.End()
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
@@ -230,7 +169,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
-func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
+func AllocBatchAutoIncrementValue(ctx context.Context, t Mutator, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
@@ -244,38 +183,38 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 	return nr, increment, nil
 }
 
-// PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
-// PhysicalID is a ID that can be used to construct a key ranges, all the data in the key range belongs to the corresponding PhysicalTable.
-// For a non-partitioned table, its PhysicalID equals to its TableID; For a partition of a partitioned table, its PhysicalID is the partition's ID.
-type PhysicalTable interface {
-	Table
-	GetPhysicalID() int64
+// PhysicalTable is an alias of briefapi.PhysicalTable
+type PhysicalTable = briefapi.PhysicalTable
+
+type PhysicalTableMutator interface {
+	Mutator
+	PhysicalTable
 }
 
-// PartitionedTable is a Table, and it has a GetPartition() method.
-// GetPartition() gets the partition from a partition table by a physical table ID,
-type PartitionedTable interface {
-	Table
-	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(expression.BuildContext, []types.Datum) (PhysicalTable, error)
-	GetAllPartitionIDs() []int64
-	GetPartitionColumnIDs() []int64
-	GetPartitionColumnNames() []model.CIStr
+// PartitionedTable is an alias of briefapi.PartitionedTable
+type PartitionedTable = briefapi.PartitionedTable
+
+// PartitionedTableMutator is used to mutate a partitioned table.
+type PartitionedTableMutator interface {
+	Mutator
+	PartitionedTable
+	GetPartitionForMutate(pid int64) PhysicalTableMutator
+	GetPartitionByRow(expression.BuildContext, []types.Datum) (PhysicalTableMutator, error)
 	CheckForExchangePartition(ctx expression.BuildContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
-var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (Table, error)
+var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (Mutator, error)
 
 // MockTableFromMeta only serves for test.
-var MockTableFromMeta func(tableInfo *model.TableInfo) Table
+var MockTableFromMeta func(tableInfo *model.TableInfo) Mutator
 
 // CachedTable is a Table, and it has a UpdateLockForRead() method
 // UpdateLockForRead() according to the reasons for not meeting the read conditions, update the lock information,
 // And at the same time reload data from the original table.
 type CachedTable interface {
-	Table
+	Mutator
 
 	Init(exec sqlexec.SQLExecutor) error
 

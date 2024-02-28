@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"net/http"
 	"slices"
 	"strings"
@@ -115,10 +116,11 @@ var tableIDMap = map[string]int64{
 // perfSchemaTable stands for the fake table all its data is in the memory.
 type perfSchemaTable struct {
 	infoschema.VirtualTable
-	meta    *model.TableInfo
-	cols    []*table.Column
-	tp      table.Type
-	indices []table.Index
+	meta          *model.TableInfo
+	cols          []*table.Column
+	tp            table.Type
+	indices       []table.Index
+	indexMutators []table.IndexMutator
 }
 
 var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (table.Table, error))
@@ -144,7 +146,7 @@ func createPerfSchemaTable(meta *model.TableInfo) (*perfSchemaTable, error) {
 		col := table.ToColumn(colInfo)
 		columns = append(columns, col)
 	}
-	tp := table.VirtualTable
+	tp := briefapi.VirtualTable
 	t := &perfSchemaTable{
 		meta: meta,
 		cols: columns,
@@ -206,6 +208,11 @@ func (vt *perfSchemaTable) Indices() []table.Index {
 	return vt.indices
 }
 
+// IndexMutators implements table.Mutator IndexMutators interface.
+func (vt *perfSchemaTable) IndexMutators() []table.IndexMutator {
+	return vt.indexMutators
+}
+
 // GetPartitionedTable implements table.Table GetPartitionedTable interface.
 func (vt *perfSchemaTable) GetPartitionedTable() table.PartitionedTable {
 	return nil
@@ -220,6 +227,7 @@ func initTableIndices(t *perfSchemaTable) error {
 		}
 		idx := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
+		t.indexMutators = append(t.indexMutators, idx)
 	}
 	return nil
 }

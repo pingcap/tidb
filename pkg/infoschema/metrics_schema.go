@@ -17,6 +17,7 @@ package infoschema
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"slices"
 	"strconv"
 	"strings"
@@ -156,7 +157,7 @@ func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table,
 		infoschemaTable: infoschemaTable{
 			meta: meta,
 			cols: columns,
-			tp:   table.VirtualTable,
+			tp:   briefapi.VirtualTable,
 		},
 	}
 	return t, nil

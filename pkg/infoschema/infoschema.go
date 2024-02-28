@@ -17,6 +17,7 @@ package infoschema
 import (
 	"cmp"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"slices"
 	"sort"
 	"sync"
@@ -32,40 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-// InfoSchema is the interface used to retrieve the schema information.
-// It works as a in memory cache and doesn't handle any schema change.
-// InfoSchema is read-only, and the returned value is a copy.
-type InfoSchema interface {
-	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
-	SchemaExists(schema model.CIStr) bool
-	TableByName(schema, table model.CIStr) (table.Table, error)
-	TableExists(schema, table model.CIStr) bool
-	SchemaByID(id int64) (*model.DBInfo, bool)
-	TableByID(id int64) (table.Table, bool)
-	AllSchemas() []*model.DBInfo
-	SchemaTables(schema model.CIStr) []table.Table
-	SchemaMetaVersion() int64
-	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
-	Misc
-}
+// InfoSchema is an alias for context.InfoSchema
+type InfoSchema = context.InfoSchema
 
-// Misc contains the methods that are not closely related to InfoSchema.
-type Misc interface {
-	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
-	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
-	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
-	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
-	// AllPlacementBundles is used to get all placement bundles
-	AllPlacementBundles() []*placement.Bundle
-	// AllPlacementPolicies returns all placement policies
-	AllPlacementPolicies() []*model.PolicyInfo
-	// AllResourceGroups returns all resource groups
-	AllResourceGroups() []*model.ResourceGroupInfo
-	// HasTemporaryTable returns whether information schema has temporary table
-	HasTemporaryTable() bool
-	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
-}
+// Misc is an alias for context.Misc
+type Misc = context.Misc
 
 var _ Misc = &infoSchemaMisc{}
 
@@ -203,7 +175,7 @@ func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 	return ok
 }
 
-func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
+func (is *infoSchema) TableByName(schema, table model.CIStr) (t briefapi.Table, err error) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok = tbNames.tables[table.L]; ok {
 			return
@@ -277,7 +249,15 @@ func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo
 	return is.SchemaByID(tableInfo.DBID)
 }
 
-func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
+func (is *infoSchema) TableByID(id int64) (val briefapi.Table, ok bool) {
+	val, ok = is.tableByID(id)
+	if !ok {
+		return nil, false
+	}
+	return
+}
+
+func (is *infoSchema) tableByID(id int64) (val table.Table, ok bool) {
 	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
 	idx := slice.searchTable(id)
 	if idx == -1 {
@@ -288,7 +268,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 
 // allocByID returns the Allocators of a table.
 func allocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
-	tbl, ok := is.TableByID(id)
+	tbl, ok := is.tableByID(id)
 	if !ok {
 		return autoid.Allocators{}, false
 	}
@@ -311,7 +291,7 @@ func (is *infoSchema) AllSchemas() (schemas []*model.DBInfo) {
 	return
 }
 
-func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
+func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []briefapi.Table) {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
 		return
@@ -324,7 +304,7 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
 // FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
-func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (briefapi.Table, *model.DBInfo, *model.PartitionDefinition) {
 	for _, v := range is.schemaMap {
 		for _, tbl := range v.tables {
 			pi := tbl.Meta().GetPartitionInfo()
@@ -388,7 +368,7 @@ func init() {
 	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
-	mock.MockInfoschema = func(tbList []*model.TableInfo) context.InfoSchemaMetaVersion {
+	mock.MockInfoschema = func(tbList []*model.TableInfo) context.InfoSchema {
 		return MockInfoSchema(tbList)
 	}
 }
@@ -672,7 +652,7 @@ type SessionExtendedInfoSchema struct {
 }
 
 // TableByName implements InfoSchema.TableByName
-func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (briefapi.Table, error) {
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
 			return tbl, nil
@@ -689,7 +669,7 @@ func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (tab
 }
 
 // TableByID implements InfoSchema.TableByID
-func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
+func (ts *SessionExtendedInfoSchema) TableByID(id int64) (briefapi.Table, bool) {
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
 			return tbl, true
@@ -753,7 +733,7 @@ func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionEx
 // If the id is a table id, the corresponding table.Table will be returned, and the second return value is nil.
 // If the id is a partition id, the corresponding table.Table and PartitionDefinition will be returned.
 // If the id is not found in the InfoSchema, nil will be returned for both return values.
-func FindTableByTblOrPartID(is InfoSchema, id int64) (table.Table, *model.PartitionDefinition) {
+func FindTableByTblOrPartID(is InfoSchema, id int64) (briefapi.Table, *model.PartitionDefinition) {
 	tbl, ok := is.TableByID(id)
 	if ok {
 		return tbl, nil

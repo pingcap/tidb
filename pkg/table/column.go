@@ -36,70 +36,17 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
-// Column provides meta data describing a table column.
-type Column struct {
-	*model.ColumnInfo
-	// If this column is a generated column, the expression will be stored here.
-	GeneratedExpr *ClonableExprNode
-	// If this column has default expr value, this expression will be stored here.
-	DefaultExpr ast.ExprNode
-}
-
-// ClonableExprNode is a wrapper for ast.ExprNode.
-type ClonableExprNode struct {
-	ctor     func() ast.ExprNode
-	internal ast.ExprNode
-}
-
-// NewClonableExprNode creates a ClonableExprNode.
-func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *ClonableExprNode {
-	return &ClonableExprNode{
-		ctor:     ctor,
-		internal: internal,
-	}
-}
-
-// Clone makes a "copy" of internal ast.ExprNode by reconstructing it.
-func (n *ClonableExprNode) Clone() ast.ExprNode {
-	intest.AssertNotNil(n.ctor)
-	if n.ctor == nil {
-		return n.internal
-	}
-	return n.ctor()
-}
-
-// Internal returns the reference of the internal ast.ExprNode.
-// Note: only use this method when you are sure that the internal ast.ExprNode is not modified concurrently.
-func (n *ClonableExprNode) Internal() ast.ExprNode {
-	return n.internal
-}
-
-// String implements fmt.Stringer interface.
-func (c *Column) String() string {
-	ans := []string{c.Name.O, types.TypeToStr(c.GetType(), c.GetCharset())}
-	if mysql.HasAutoIncrementFlag(c.GetFlag()) {
-		ans = append(ans, "AUTO_INCREMENT")
-	}
-	if mysql.HasNotNullFlag(c.GetFlag()) {
-		ans = append(ans, "NOT NULL")
-	}
-	return strings.Join(ans, " ")
-}
-
-// ToInfo casts Column to model.ColumnInfo
-// NOTE: DONT modify return value.
-func (c *Column) ToInfo() *model.ColumnInfo {
-	return c.ColumnInfo
-}
+// Column is an alias for briefapi.Column.
+type Column = briefapi.Column
 
 // FindCol finds column in cols by name.
 func FindCol(cols []*Column, name string) *Column {
@@ -481,11 +428,11 @@ func CheckOnce(cols []*Column) error {
 	return nil
 }
 
-// CheckNotNull checks if nil value set to a column with NotNull flag is set.
+// CheckColumnNotNull checks if nil value set to a column with NotNull flag is set.
 // When caller is LOAD DATA, `rowCntInLoadData` should be greater than 0 and it
 // will return a ErrWarnNullToNotnull when error.
 // Otherwise, it will return a ErrColumnCantNull when error.
-func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error {
+func CheckColumnNotNull(c *Column, data *types.Datum, rowCntInLoadData uint64) error {
 	if (mysql.HasNotNullFlag(c.GetFlag()) || mysql.HasPreventNullInsertFlag(c.GetFlag())) && data.IsNull() {
 		if rowCntInLoadData > 0 {
 			return ErrWarnNullToNotnull.GenWithStackByArgs(c.Name, rowCntInLoadData)
@@ -495,13 +442,13 @@ func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error 
 	return nil
 }
 
-// HandleBadNull handles the bad null error.
+// HandleColumnBadNull handles the bad null error.
 // When caller is LOAD DATA, `rowCntInLoadData` should be greater than 0 the
 // error is ErrWarnNullToNotnull.
 // Otherwise, the error is ErrColumnCantNull.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
-func (c *Column) HandleBadNull(ec errctx.Context, d *types.Datum, rowCntInLoadData uint64) error {
-	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
+func HandleColumnBadNull(c *Column, ec errctx.Context, d *types.Datum, rowCntInLoadData uint64) error {
+	if err := CheckColumnNotNull(c, d, rowCntInLoadData); err != nil {
 		if ec.HandleError(err) == nil {
 			*d = GetZeroValue(c.ToInfo())
 			return nil
@@ -509,16 +456,6 @@ func (c *Column) HandleBadNull(ec errctx.Context, d *types.Datum, rowCntInLoadDa
 		return err
 	}
 	return nil
-}
-
-// IsPKHandleColumn checks if the column is primary key handle column.
-func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
-	return mysql.HasPriKeyFlag(c.GetFlag()) && tbInfo.PKIsHandle
-}
-
-// IsCommonHandleColumn checks if the column is common handle column.
-func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
-	return mysql.HasPriKeyFlag(c.GetFlag()) && tbInfo.IsCommonHandle
 }
 
 type getColOriginDefaultValue struct {

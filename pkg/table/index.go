@@ -16,11 +16,8 @@ package table
 
 import (
 	"context"
-	"time"
-
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table/briefapi"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -69,113 +66,14 @@ func WithCtx(ctx context.Context) CreateIdxOptFunc {
 	}
 }
 
-// Index is the interface for index data on KV store.
-type Index interface {
-	// Meta returns IndexInfo.
-	Meta() *model.IndexInfo
-	// TableMeta returns TableInfo
-	TableMeta() *model.TableInfo
+// Index is the alias of briefapi.Index
+type Index = briefapi.Index
+
+// IndexMutator is the interface for index mutating
+type IndexMutator interface {
+	briefapi.Index
 	// Create supports insert into statement.
 	Create(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
 	Delete(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
-	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
-	GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexKVGenerator
-	// Exist supports check index exists or not.
-	Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
-	// GenIndexKey generates an index key. If the index is a multi-valued index, use GenIndexKVIter instead.
-	GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
-	// GenIndexValue generates an index value.
-	GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error)
-	// FetchValues fetched index column values in a row.
-	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
-	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
-	FetchValues(row []types.Datum, columns []types.Datum) ([]types.Datum, error)
-}
-
-// IndexKVGenerator generates kv for an index.
-// It could be also used for generating multi-value indexes.
-type IndexKVGenerator struct {
-	index             Index
-	ec                errctx.Context
-	loc               *time.Location
-	handle            kv.Handle
-	handleRestoreData []types.Datum
-
-	isMultiValue bool
-	// Only used by multi-value index.
-	allIdxVals [][]types.Datum
-	i          int
-	// Only used by non multi-value index.
-	idxVals []types.Datum
-}
-
-// NewMultiValueIndexKVGenerator creates a new IndexKVGenerator for multi-value indexes.
-func NewMultiValueIndexKVGenerator(
-	index Index,
-	ec errctx.Context,
-	loc *time.Location,
-	handle kv.Handle,
-	handleRestoredData []types.Datum,
-	mvIndexData [][]types.Datum,
-) IndexKVGenerator {
-	return IndexKVGenerator{
-		index:             index,
-		ec:                ec,
-		loc:               loc,
-		handle:            handle,
-		handleRestoreData: handleRestoredData,
-		isMultiValue:      true,
-		allIdxVals:        mvIndexData,
-		i:                 0,
-	}
-}
-
-// NewPlainIndexKVGenerator creates a new IndexKVGenerator for non multi-value indexes.
-func NewPlainIndexKVGenerator(
-	index Index,
-	ec errctx.Context,
-	loc *time.Location,
-	handle kv.Handle,
-	handleRestoredData []types.Datum,
-	idxData []types.Datum,
-) IndexKVGenerator {
-	return IndexKVGenerator{
-		index:             index,
-		ec:                ec,
-		loc:               loc,
-		handle:            handle,
-		handleRestoreData: handleRestoredData,
-		isMultiValue:      false,
-		idxVals:           idxData,
-	}
-}
-
-// Next returns the next index key and value.
-// For non multi-value indexes, there is only one index kv.
-func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool, error) {
-	var val []types.Datum
-	if iter.isMultiValue {
-		val = iter.allIdxVals[iter.i]
-	} else {
-		val = iter.idxVals
-	}
-	key, distinct, err := iter.index.GenIndexKey(iter.ec, iter.loc, val, iter.handle, keyBuf)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	idxVal, err := iter.index.GenIndexValue(iter.ec, iter.loc, distinct, val, iter.handle, iter.handleRestoreData, valBuf)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	iter.i++
-	return key, idxVal, distinct, err
-}
-
-// Valid returns true if the generator is not exhausted.
-func (iter *IndexKVGenerator) Valid() bool {
-	if iter.isMultiValue {
-		return iter.i < len(iter.allIdxVals)
-	}
-	return iter.i == 0
 }

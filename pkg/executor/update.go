@@ -44,7 +44,7 @@ type UpdateExec struct {
 	// updatedRowKeys is a map for unique (TableAlias, handle) pair.
 	// The value is true if the row is changed, or false otherwise
 	updatedRowKeys map[int]*kv.MemAwareHandleMap[bool]
-	tblID2table    map[int64]table.Table
+	tblID2table    map[int64]table.Mutator
 	// mergedRowData is a map for unique (Table, handle) pair.
 	// The value is cached table row
 	mergedRowData          map[int64]*kv.MemAwareHandleMap[[]types.Datum]
@@ -251,7 +251,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := exec.RetTypes(e.Children(0))
-	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
+	colsInfo := plannercore.GetUpdateColumnsInfo[table.Mutator](e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
 	chk := exec.TryNewCacheChunk(e.Children(0))
 	if !e.allAssignmentsAreConstant {

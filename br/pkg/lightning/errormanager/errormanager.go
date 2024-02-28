@@ -473,7 +473,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 // by replacing the necessary rows and reserving the others.
 func (em *ErrorManager) ReplaceConflictKeys(
 	ctx context.Context,
-	tbl tidbtbl.Table,
+	tbl tidbtbl.Mutator,
 	tableName string,
 	pool *utils.WorkerPool,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),

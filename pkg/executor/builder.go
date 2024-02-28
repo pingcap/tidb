@@ -581,8 +581,9 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		b.err = err
 		return nil
 	}
+	mutator := t.(table.Mutator)
 	idxName := strings.ToLower(v.IndexName)
-	index := tables.GetWritableIndexByName(idxName, t)
+	index := tables.GetWritableIndexByName(idxName, mutator)
 	if index == nil {
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
@@ -599,7 +600,7 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		columns:          cols,
 		containsGenedCol: hasGenedCol,
 		index:            index,
-		table:            t,
+		table:            mutator,
 		physicalID:       t.Meta().ID,
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
@@ -643,9 +644,10 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		b.err = err
 		return nil
 	}
+	mu := t.(table.Mutator)
 	idxName := strings.ToLower(v.IndexName)
-	var index table.Index
-	for _, idx := range t.Indices() {
+	var index table.IndexMutator
+	for _, idx := range mu.IndexMutators() {
 		if idx.Meta().State != model.StatePublic {
 			continue
 		}
@@ -663,7 +665,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta(), false),
 		index:        index,
-		table:        t,
+		table:        mu,
 		physicalID:   t.Meta().ID,
 		batchSize:    20000,
 	}
@@ -950,7 +952,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 
 	ivs := &InsertValues{
 		BaseExecutor:              baseExec,
-		Table:                     v.Table,
+		Table:                     v.Table.(table.Mutator),
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
 		GenExprs:                  v.GenCols.Exprs,
@@ -1030,7 +1032,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 	}
 
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
-	worker, err := NewLoadDataWorker(b.ctx, v, tbl)
+	worker, err := NewLoadDataWorker(b.ctx, v, tbl.(table.Mutator))
 	if err != nil {
 		b.err = err
 		return nil
@@ -2331,14 +2333,14 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) exec.Exec
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 	b.inUpdateStmt = true
-	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
+	tblID2table := make(map[int64]table.Mutator, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {
 			multiUpdateOnSameTable[info.TblID] = true
 		}
-		tblID2table[info.TblID] = tbl
+		tblID2table[info.TblID] = tbl.(table.Mutator)
 		if len(v.PartitionedTable) > 0 {
 			// The v.PartitionedTable collects the partitioned table.
 			// Replace the original table with the partitioned table to support partition selection.
@@ -2346,7 +2348,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 			// Using the table in v.PartitionedTable returns a proper error, while using the original table can't.
 			for _, p := range v.PartitionedTable {
 				if info.TblID == p.Meta().ID {
-					tblID2table[info.TblID] = p
+					tblID2table[info.TblID] = p.(table.Mutator)
 				}
 			}
 		}
@@ -2412,9 +2414,10 @@ func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int)
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 	b.inDeleteStmt = true
-	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
+	tblID2table := make(map[int64]table.Mutator, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
-		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
+		tbl, _ := b.is.TableByID(info.TblID)
+		tblID2table[info.TblID], _ = tbl.(table.Mutator)
 	}
 
 	if b.err = b.updateForUpdateTS(); b.err != nil {
@@ -3467,7 +3470,7 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 
 func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *plannercore.PhysPlanPartInfo,
 	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
-	partitionTbl := tbl.(table.PartitionedTable)
+	partitionTbl := tbl.(table.PartitionedTableMutator)
 
 	// In index join, this is called by multiple goroutines simultaneously, but partitionPruning is not thread-safe.
 	// Use once.Do to avoid DATA RACE here.
@@ -4102,7 +4105,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
-	pt := tbl.(table.PartitionedTable)
+	pt := tbl.(table.PartitionedTableMutator)
 	usedPartitionList, err := builder.partitionPruning(pt, &v.PlanPartInfo)
 	if err != nil {
 		return nil, err

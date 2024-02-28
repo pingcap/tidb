@@ -2075,7 +2075,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Trace(err)
 		}
 		// If table has global indexes, we need reorg to clean up them.
-		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
+		if pt, ok := tbl.(table.PartitionedTableMutator); ok && hasGlobalIndex(tblInfo) {
 			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
 			elements := make([]*meta.Element, 0, len(tblInfo.Indices))
 			for _, idxInfo := range tblInfo.Indices {
@@ -2271,7 +2271,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 		// If table has global indexes, we need reorg to clean up them.
-		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
+		if pt, ok := tbl.(table.PartitionedTableMutator); ok && hasGlobalIndex(tblInfo) {
 			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
 			elements := make([]*meta.Element, 0, len(tblInfo.Indices))
 			for _, idxInfo := range tblInfo.Indices {
@@ -3145,7 +3145,7 @@ func newStatsDDLEventForJob(
 	return event, nil
 }
 
-func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
+func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Mutator, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
@@ -3201,10 +3201,10 @@ type reorgPartitionWorker struct {
 	rowMap            map[int64]types.Datum
 	writeColOffsetMap map[int64]int
 	maxOffset         int
-	reorgedTbl        table.PartitionedTable
+	reorgedTbl        table.PartitionedTableMutator
 }
 
-func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
+func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.PhysicalTableMutator, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
 	reorgedTbl, err := tables.GetReorganizedPartitionedTable(t)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -3378,7 +3378,7 @@ func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
-func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) reorgPartitionDataAndIndex(t table.Mutator, reorgInfo *reorgInfo) error {
 	// First copy all table data to the new partitions
 	// from each of the DroppingDefinitions partitions.
 	// Then create all indexes on the AddingDefinitions partitions
