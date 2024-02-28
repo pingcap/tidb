@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -126,58 +127,6 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 // UnspecifiedLimit means no limit.
 const UnspecifiedLimit = -1
 
-// SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
-func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges, limit int) ([]*LocationKeyRanges, error) {
-	res := make([]*LocationKeyRanges, 0)
-	for ranges.Len() > 0 {
-		if limit != UnspecifiedLimit && len(res) >= limit {
-			break
-		}
-		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
-		if err != nil {
-			return res, derr.ToTiDBErr(err)
-		}
-
-		// Iterate to the first range that is not complete in the region.
-		var r kv.KeyRange
-		var i int
-		for ; i < ranges.Len(); i++ {
-			r = ranges.At(i)
-			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
-				break
-			}
-		}
-		// All rest ranges belong to the same region.
-		if i == ranges.Len() {
-			res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
-			break
-		}
-
-		if loc.Contains(r.StartKey) {
-			// Part of r is not in the region. We need to split it.
-			taskRanges := ranges.Slice(0, i)
-			taskRanges.last = &kv.KeyRange{
-				StartKey: r.StartKey,
-				EndKey:   loc.EndKey,
-			}
-			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
-
-			ranges = ranges.Slice(i+1, ranges.Len())
-			ranges.first = &kv.KeyRange{
-				StartKey: loc.EndKey,
-				EndKey:   r.EndKey,
-			}
-		} else {
-			// rs[i] is not in the region.
-			taskRanges := ranges.Slice(0, i)
-			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
-			ranges = ranges.Slice(i, ranges.Len())
-		}
-	}
-
-	return res, nil
-}
-
 // todo move to client.go
 func (c *RegionCache) locateKeyRange(bo *Backoffer, startKey, endKey []byte) ([]*tikv.KeyLocation, error) {
 	regions, err := c.LoadRegionsInKeyRange(bo.TiKVBackoffer(), startKey, endKey)
@@ -196,24 +145,37 @@ func (c *RegionCache) locateKeyRange(bo *Backoffer, startKey, endKey []byte) ([]
 	return res, nil
 }
 
-// SplitKeyRangesByLocationsNew splits the KeyRanges by logical info in the cache.
-func (c *RegionCache) SplitKeyRangesByLocationsNew(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
+// SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
+func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges, limit int) ([]*LocationKeyRanges, error) {
+	if limit == 0 {
+		return nil, nil
+	}
 	locs, err := c.locateKeyRange(bo, ranges.RefAt(0).StartKey, ranges.RefAt(ranges.Len()-1).EndKey)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
 
-	res := make([]*LocationKeyRanges, 0, len(locs))
+	res := make([]*LocationKeyRanges, 0, min(len(locs), limit))
 	// All ranges belong to the same region.
 	if len(locs) == 1 {
 		res = append(res, &LocationKeyRanges{Location: locs[0], Ranges: ranges})
 		return res, nil
 	}
 
-	curLocIndex := 0
 	for ranges.Len() > 0 {
-		loc := locs[curLocIndex]
-		if curLocIndex == (len(locs) - 1) {
+		if limit != UnspecifiedLimit && len(res) >= limit {
+			break
+		}
+
+		nextLocIndex := len(res)
+		if nextLocIndex >= len(locs) {
+			err = errors.Errorf("Unexpected loc index %d, which should less than %d", nextLocIndex, len(locs))
+			return nil, err
+		}
+
+		loc := locs[nextLocIndex]
+		// For the last loc.
+		if nextLocIndex == (len(locs) - 1) {
 			res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
 			break
 		}
@@ -241,7 +203,6 @@ func (c *RegionCache) SplitKeyRangesByLocationsNew(bo *Backoffer, ranges *KeyRan
 				EndKey:   loc.EndKey,
 			}
 			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
-			curLocIndex++
 
 			ranges = ranges.Slice(i+1, ranges.Len())
 			ranges.first = &kv.KeyRange{
@@ -252,7 +213,6 @@ func (c *RegionCache) SplitKeyRangesByLocationsNew(bo *Backoffer, ranges *KeyRan
 			// rs[i] is not in the region.
 			taskRanges := ranges.Slice(0, i)
 			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
-			curLocIndex++
 			ranges = ranges.Slice(i, ranges.Len())
 		}
 	}
