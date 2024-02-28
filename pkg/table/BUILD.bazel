@@ -23,6 +23,11 @@ go_library(
         "//pkg/parser/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+<<<<<<< HEAD
+=======
+        "//pkg/sessionctx/variable",
+        "//pkg/table/context",
+>>>>>>> e586960027b (table: fix issue of get default value from column when column doesn't have default value (#51309))
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/dbterror",
