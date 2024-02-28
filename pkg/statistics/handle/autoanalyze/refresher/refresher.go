@@ -34,7 +34,15 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// unanalyzedTableDefaultChangePercentage is the default change percentage of unanalyzed table.
+	unanalyzedTableDefaultChangePercentage = 1
+	// unanalyzedTableDefaultLastUpdateDuration is the default last update duration of unanalyzed table.
+	unanalyzedTableDefaultLastUpdateDuration = -30 * time.Minute
+)
+
 // Refresher provides methods to refresh stats info.
+// NOTE: Refresher is not thread-safe.
 type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sessionctx.SysProcTracker
@@ -110,6 +118,7 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 			parameters := exec.GetAutoAnalyzeParameters(sctx)
 			autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 			calculator := priorityqueue.NewPriorityCalculator(autoAnalyzeRatio)
+			pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 			// Query locked tables once to minimize overhead.
 			// Outdated lock info is acceptable as we verify table lock status pre-analysis.
@@ -155,13 +164,51 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 						// Push the job onto the queue.
 						r.jobs.Push(job)
 					}
-					// No partitions or prune mode is static, analyze the whole table.
+					// No partitions, analyze the whole table.
 					if pi == nil {
 						job := createTableAnalysisJob(
 							sctx,
 							db,
 							tblInfo,
+							// TODO: use GetPartitionStatsForAutoAnalyze to save memory.
 							r.statsHandle.GetPartitionStats(tblInfo, tblInfo.ID),
+							autoAnalyzeRatio,
+							currentTs,
+						)
+						pushJobFunc(job)
+						// Skip the rest of the loop.
+						continue
+					}
+
+					// Only analyze the partition that has not been locked.
+					partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
+					for _, def := range pi.Definitions {
+						if _, ok := lockedTables[def.ID]; !ok {
+							partitionDefs = append(partitionDefs, def)
+						}
+					}
+					partitionStats := getPartitionStats(r.statsHandle, tblInfo, partitionDefs)
+					// If the prune mode is static, we need to analyze every partition as a separate table.
+					if pruneMode == variable.Static {
+						for _, def := range pi.Definitions {
+							job := createTableAnalysisJob(
+								sctx,
+								db,
+								tblInfo,
+								partitionStats[def.ID],
+								autoAnalyzeRatio,
+								currentTs,
+							)
+							pushJobFunc(job)
+						}
+					} else {
+						job := createTableAnalysisJobForPartitions(
+							sctx,
+							db,
+							tblInfo,
+							r.statsHandle.GetPartitionStats(tblInfo, tblInfo.ID),
+							partitionDefs,
+							partitionStats,
 							autoAnalyzeRatio,
 							currentTs,
 						)
@@ -196,6 +243,11 @@ func createTableAnalysisJob(
 	lastAnalysisDuration := getTableLastAnalyzeDuration(tblStats, currentTs)
 	indexes := checkIndexesNeedAnalyze(tblInfo, tblStats)
 
+	// No need to analyze.
+	if changePercentage == 0 && len(indexes) == 0 {
+		return nil
+	}
+
 	job := &priorityqueue.TableAnalysisJob{
 		TableID:              tblInfo.ID,
 		TableSchema:          tableSchema,
@@ -222,7 +274,7 @@ func calculateChangePercentage(
 	}
 
 	if !exec.TableAnalyzed(tblStats) {
-		return 1
+		return unanalyzedTableDefaultChangePercentage
 	}
 
 	tblCnt := float64(tblStats.RealtimeCount)
@@ -252,12 +304,38 @@ func getTableLastAnalyzeDuration(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Duration {
-	// Calculate the duration since last analyze.
-	versionTs := tblStats.Version
+	lastTime := findLastAnalyzeTime(tblStats, currentTs)
 	currentTime := oracle.GetTimeFromTS(currentTs)
-	versionTime := oracle.GetTimeFromTS(versionTs)
 
-	return time.Duration(currentTime.Sub(versionTime).Seconds())
+	// Calculate the duration since last analyze.
+	return currentTime.Sub(lastTime)
+}
+
+// findLastAnalyzeTime finds the last analyze time of the table.
+// It uses `LastUpdateVersion` to find the last analyze time.
+// The `LastUpdateVersion` is the version of the transaction that updates the statistics.
+// It always not null(default 0), so we can use it to find the last analyze time.
+func findLastAnalyzeTime(
+	tblStats *statistics.Table,
+	currentTs uint64,
+) time.Time {
+	maxVersion := uint64(0)
+	for _, idx := range tblStats.Indices {
+		if idx.IsAnalyzed() {
+			maxVersion = max(maxVersion, idx.LastUpdateVersion)
+		}
+	}
+	for _, col := range tblStats.Columns {
+		if col.IsAnalyzed() {
+			maxVersion = max(maxVersion, col.LastUpdateVersion)
+		}
+	}
+	// Table is not analyzed, compose a fake version.
+	if maxVersion == 0 {
+		phy := oracle.GetTimeFromTS(currentTs)
+		return phy.Add(unanalyzedTableDefaultLastUpdateDuration)
+	}
+	return oracle.GetTimeFromTS(maxVersion)
 }
 
 func checkIndexesNeedAnalyze(
@@ -281,10 +359,155 @@ func checkIndexesNeedAnalyze(
 	return indexes
 }
 
+func createTableAnalysisJobForPartitions(
+	sctx sessionctx.Context,
+	tableSchema string,
+	tblInfo *model.TableInfo,
+	tblStats *statistics.Table,
+	defs []model.PartitionDefinition,
+	partitionStats map[int64]*statistics.Table,
+	autoAnalyzeRatio float64,
+	currentTs uint64,
+) *priorityqueue.TableAnalysisJob {
+	// TODO: figure out how to check the table stats version correctly for partitioned tables.
+	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
+	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
+
+	averageChangePercentage, avgSize, minLastAnalyzeDuration, partitionNames := calculateIndicatorsForPartitions(
+		tblInfo,
+		partitionStats,
+		defs,
+		autoAnalyzeRatio,
+		currentTs,
+	)
+	partitionIndexes := checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
+		tblInfo,
+		defs,
+		partitionStats,
+	)
+	// No need to analyze.
+	if len(partitionNames) == 0 && len(partitionIndexes) == 0 {
+		return nil
+	}
+
+	job := &priorityqueue.TableAnalysisJob{
+		TableID:              tblInfo.ID,
+		TableSchema:          tableSchema,
+		TableName:            tblInfo.Name.O,
+		TableStatsVer:        tableStatsVer,
+		ChangePercentage:     averageChangePercentage,
+		TableSize:            avgSize,
+		LastAnalysisDuration: minLastAnalyzeDuration,
+		Partitions:           partitionNames,
+		PartitionIndexes:     partitionIndexes,
+	}
+
+	return job
+}
+
+// calculateIndicatorsForPartitions calculates the average change percentage,
+// average size and average last analyze duration for the partitions that meet the threshold.
+// Change percentage is the ratio of the number of modified rows to the total number of rows.
+// Size is the product of the number of rows and the number of columns.
+// Last analyze duration is the duration since the last analyze.
+func calculateIndicatorsForPartitions(
+	tblInfo *model.TableInfo,
+	partitionStats map[int64]*statistics.Table,
+	defs []model.PartitionDefinition,
+	autoAnalyzeRatio float64,
+	currentTs uint64,
+) (
+	avgChange float64,
+	avgSize float64,
+	avgLastAnalyzeDuration time.Duration,
+	partitionNames []string,
+) {
+	totalChangePercent := 0.0
+	totalSize := 0.0
+	count := 0.0
+	partitionNames = make([]string, 0, len(defs))
+	cols := float64(len(tblInfo.Columns))
+	totalLastAnalyzeDuration := time.Duration(0)
+
+	for _, def := range defs {
+		tblStats := partitionStats[def.ID]
+		changePercent := calculateChangePercentage(tblStats, autoAnalyzeRatio)
+		// No need to analyze the partition because it doesn't meet the threshold or stats are not loaded yet.
+		if changePercent == 0 {
+			continue
+		}
+
+		totalChangePercent += changePercent
+		// size = count * cols
+		totalSize += float64(tblStats.RealtimeCount) * cols
+		lastAnalyzeDuration := getTableLastAnalyzeDuration(tblStats, currentTs)
+		totalLastAnalyzeDuration += lastAnalyzeDuration
+		partitionNames = append(partitionNames, def.Name.O)
+		count++
+	}
+	if len(partitionNames) == 0 {
+		return 0, 0, 0, partitionNames
+	}
+
+	avgChange = totalChangePercent / count
+	avgSize = totalSize / count
+	avgLastAnalyzeDuration = totalLastAnalyzeDuration / time.Duration(count)
+
+	return avgChange, avgSize, avgLastAnalyzeDuration, partitionNames
+}
+
+// checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable checks if the indexes of the partitioned table need to be analyzed.
+// It returns a map from index name to the names of the partitions that need to be analyzed.
+// NOTE: This is only for newly added indexes.
+func checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
+	tblInfo *model.TableInfo,
+	defs []model.PartitionDefinition,
+	partitionStats map[int64]*statistics.Table,
+) map[string][]string {
+	partitionIndexes := make(map[string][]string, len(tblInfo.Indices))
+
+	for _, idx := range tblInfo.Indices {
+		// No need to analyze the index if it's not public.
+		if idx.State != model.StatePublic {
+			continue
+		}
+
+		// Find all the partitions that need to analyze this index.
+		names := make([]string, 0, len(defs))
+		for _, def := range defs {
+			tblStats := partitionStats[def.ID]
+			if _, ok := tblStats.Indices[idx.ID]; !ok {
+				names = append(names, def.Name.O)
+			}
+		}
+
+		if len(names) > 0 {
+			partitionIndexes[idx.Name.O] = names
+		}
+	}
+
+	return partitionIndexes
+}
+
 func getStartTs(sctx sessionctx.Context) (uint64, error) {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return 0, err
 	}
 	return txn.StartTS(), nil
+}
+
+func getPartitionStats(
+	statsHandle statstypes.StatsHandle,
+	tblInfo *model.TableInfo,
+	defs []model.PartitionDefinition,
+) map[int64]*statistics.Table {
+	partitionStats := make(map[int64]*statistics.Table, len(defs))
+
+	for _, def := range defs {
+		// TODO: use GetPartitionStatsForAutoAnalyze to save memory.
+		partitionStats[def.ID] = statsHandle.GetPartitionStats(tblInfo, def.ID)
+	}
+
+	return partitionStats
 }

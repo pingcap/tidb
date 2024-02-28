@@ -86,6 +86,8 @@ const (
 	TopologyTiProxy = "/topology/tiproxy"
 	// infoSuffix is the suffix of TiDB/TiProxy topology info.
 	infoSuffix = "/info"
+	// TopologyTiCDC means address of TiCDC.
+	TopologyTiCDC = "/topology/ticdc"
 	// TablePrometheusCacheExpiry is the expiry time for prometheus address cache.
 	TablePrometheusCacheExpiry = 10 * time.Second
 	// RequestRetryInterval is the sleep time before next retry for http request
@@ -139,7 +141,7 @@ type ServerInfo struct {
 	StartTimestamp int64             `json:"start_timestamp"`
 	Labels         map[string]string `json:"labels"`
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
-	//   which will be changed on occasions such as connection to PD is restored after broken.
+	// which will be changed on occasions such as connection to PD is restored after broken.
 	ServerIDGetter func() uint64 `json:"-"`
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
@@ -1330,6 +1332,72 @@ func (is *InfoSyncer) getTiProxyServerInfo(ctx context.Context) (map[string]*TiP
 				return nil, errors.Trace(err)
 			}
 			allInfo[addr] = &info
+		}
+		return allInfo, nil
+	}
+	return nil, errors.Trace(err)
+}
+
+// TiCDCInfo is the server info for TiCDC.
+type TiCDCInfo struct {
+	ID             string `json:"id"`
+	Address        string `json:"address"`
+	Version        string `json:"version"`
+	GitHash        string `json:"git-hash"`
+	DeployPath     string `json:"deploy-path"`
+	StartTimestamp int64  `json:"start-timestamp"`
+	ClusterID      string `json:"cluster-id"`
+}
+
+// GetTiCDCServerInfo gets all TiCDC servers information from etcd.
+func GetTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.getTiCDCServerInfo(ctx)
+}
+
+func (is *InfoSyncer) getTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, error) {
+	// In test.
+	if is.etcdCli == nil {
+		return nil, nil
+	}
+
+	var err error
+	var resp *clientv3.GetResponse
+	allInfo := make([]*TiCDCInfo, 0)
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
+		}
+		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+		resp, err = is.etcdCli.Get(childCtx, TopologyTiCDC, clientv3.WithPrefix())
+		cancel()
+		if err != nil {
+			logutil.BgLogger().Info("get key failed", zap.String("key", TopologyTiCDC), zap.Error(err))
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		for _, kv := range resp.Kvs {
+			key := string(kv.Key)
+			keyParts := strings.Split(key, "/")
+			if len(keyParts) < 3 {
+				logutil.BgLogger().Info("invalid ticdc key", zap.String("key", key))
+				continue
+			}
+			clusterID := keyParts[1]
+
+			var info TiCDCInfo
+			err := json.Unmarshal(kv.Value, &info)
+			if err != nil {
+				logutil.BgLogger().Info("unmarshal key failed", zap.String("key", key), zap.ByteString("value", kv.Value),
+					zap.Error(err))
+				return nil, errors.Trace(err)
+			}
+			info.Version = strings.TrimPrefix(info.Version, "v")
+			info.ClusterID = clusterID
+			allInfo = append(allInfo, &info)
 		}
 		return allInfo, nil
 	}

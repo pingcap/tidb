@@ -88,7 +88,6 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
-        "//pkg/session",
         "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/testkit",
