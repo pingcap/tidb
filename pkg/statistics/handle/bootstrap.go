@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -230,8 +231,68 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 
 func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+
+	rc, err := util.Exec(h.initStatsCtx, "select min(table_id), max(table_id) from  mysql.stats_histograms")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(ctx, rc, h.initStatsCtx.GetSessionVars().MaxChunkSize)
+	if err != nil {
+		return err
+	}
+	err = rc.Close()
+	if err != nil {
+		return err
+	}
+	var minTableID, maxTableID int64
+	if len(rows) > 0 {
+		minTableID = rows[0].GetInt64(0)
+		maxTableID = rows[0].GetInt64(0)
+		// A newer version analyze result has been written, so skip this writing.
+		// For multi-valued index analyze, this check is not needed because we expect there's another normal v2 analyze
+		// table task that may update the snapshot in stats_meta table (that task may finish before or after this task).
+	}
+	if maxTableID-minTableID <= 10000 {
+		return h.initStatsHistogramsLiteAll(ctx, is, cache)
+	}
+	if err := h.initStatsHistogramsLiteRange(ctx, is, cache, minTableID, maxTableID); err != nil {
+		return err
+	}
+	for start := minTableID; start < maxTableID; start += 10001 {
+		end := start + 10000
+		if end > maxTableID {
+			end = maxTableID
+		}
+		h.initStatsHistogramsLiteRange(ctx, is, cache, start, end)
+	}
+}
+
+func (h *Handle) initStatsHistogramsLiteAll(ctx context.Context, is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	rc, err := util.Exec(h.initStatsCtx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(ctx, req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		h.initStatsHistograms4ChunkLite(is, cache, iter)
+	}
+	return nil
+}
+
+func (h *Handle) initStatsHistogramsLiteRange(ctx context.Context, is infoschema.InfoSchema, cache statstypes.StatsCache, minTableID, maxTableID int64) error {
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id between ? and ?"
+	rc, err := util.Exec(h.initStatsCtx, sql, minTableID, maxTableID)
 	if err != nil {
 		return errors.Trace(err)
 	}
