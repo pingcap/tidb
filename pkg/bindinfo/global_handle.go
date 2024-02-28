@@ -103,9 +103,6 @@ type GlobalBindingHandle interface {
 	// CaptureBaselines is used to automatically capture plan baselines.
 	CaptureBaselines()
 
-	// LoadBindingsFromStorageToCache loads bindings from the storage into the cache.
-	LoadBindingsFromStorageToCache(digest string)
-
 	variable.Statistics
 }
 
@@ -170,7 +167,7 @@ func (h *globalBindingHandle) setCache(c FuzzyBindingCache) {
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindings = newInvalidBindingCache()
-	h.setCache(newFuzzyBindingCache())
+	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
 	variable.RegisterStatistics(h)
 }
 
@@ -190,7 +187,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
-		newCache = newFuzzyBindingCache()
+		newCache = newFuzzyBindingCache(h.LoadBindingsFromStorage)
 	} else {
 		lastUpdateTime = h.getLastUpdateTime()
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
@@ -633,7 +630,7 @@ func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 
 // Clear resets the bind handle. It is only used for test.
 func (h *globalBindingHandle) Clear() {
-	h.setCache(newFuzzyBindingCache())
+	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
 	h.setLastUpdateTime(types.ZeroTimestamp)
 	h.invalidBindings.reset()
 }
@@ -654,7 +651,6 @@ func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.
 			h.sPool.Put(resource)
 		}
 	}()
-
 	sctx := resource.(sessionctx.Context)
 	if wrapTxn {
 		if _, err = exec(sctx, "BEGIN PESSIMISTIC"); err != nil {
@@ -691,58 +687,45 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 }
 
 // LoadBindingsFromStorageToCache loads global bindings from storage to the memory cache.
-func (h *globalBindingHandle) LoadBindingsFromStorageToCache(digest string) {
-	h.syncBindingSingleflight.Do(digest, func() (any, error) {
-		return h.loadBindingsFromStorageToCache(digest)
+func (h *globalBindingHandle) LoadBindingsFromStorage(sqlDigest string) (Bindings, error) {
+	if sqlDigest == "" {
+		return nil, nil
+	}
+	bindings, err, _ := h.syncBindingSingleflight.Do(sqlDigest, func() (any, error) {
+		return h.loadBindingsFromStorageInternal(sqlDigest)
 	})
-}
-
-func (h *globalBindingHandle) loadBindingsFromStorageToCache(digest string) (any, error) {
-	newCache, err := h.getCache().Copy()
 	if err != nil {
+		logutil.BgLogger().Warn("fail to LoadBindingsFromStorageToCache", zap.Error(err))
 		return nil, err
 	}
-	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
-       update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
-       where sql_digest = %s`, digest)
-	return nil, h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+	if bindings == nil {
+		return nil, nil
+	}
+	return bindings.(Bindings), err
+}
+
+func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
+	var bindings Bindings
+	selectStmt := fmt.Sprintf("SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = '%s'", sqlDigest)
+	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err := execRows(sctx, selectStmt)
 		if err != nil {
 			return err
 		}
-
-		defer func() {
-			h.setCache(newCache) // TODO: update it in place
-			h.setFuzzyDigestMap(buildFuzzyDigestMap(newCache.GetAllBindings()))
-		}()
-
+		bindings = make([]Binding, 0, len(rows))
 		for _, row := range rows {
 			// Skip the builtin record which is designed for binding synchronization.
 			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
 				continue
 			}
-			sqlDigest, binding, err := newBinding(sctx, row)
-
+			_, binding, err := newBinding(sctx, row)
 			if err != nil {
 				logutil.BgLogger().Warn("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
 				continue
 			}
-
-			oldBinding := newCache.GetBinding(sqlDigest)
-			newBinding := removeDeletedBindings(merge(oldBinding, []Binding{binding}))
-			if len(newBinding) > 0 {
-				err = newCache.SetBinding(sqlDigest, newBinding)
-				if err != nil {
-					// When the memory capacity of bing_cache is not enough,
-					// there will be some memory-related errors in multiple places.
-					// Only needs to be handled once.
-					logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(err))
-				}
-			} else {
-				newCache.RemoveBinding(sqlDigest)
-			}
-			updateMetrics(metrics.ScopeGlobal, oldBinding, newCache.GetBinding(sqlDigest), true)
+			bindings = append(bindings, binding)
 		}
 		return nil
 	})
+	return bindings, err
 }
