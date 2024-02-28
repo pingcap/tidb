@@ -522,11 +522,6 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 			return predicates, child
 		}
 	}
-	if len(p.children) == 1 {
-		if _, isDual := p.children[0].(*LogicalTableDual); isDual {
-			return predicates, p
-		}
-	}
 	exprCtx := p.SCtx().GetExprCtx()
 	for _, cond := range predicates {
 		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)
