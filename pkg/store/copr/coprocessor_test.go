@@ -419,13 +419,13 @@ func TestSplitKeyRangesByLocations(t *testing.T) {
 	rangeEqual(t, loc_ranges[2].Ranges.ToRanges(), "n", "t")
 
 	// many range
-	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "s", "y", "z")), UnspecifiedLimit)
+	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z")), UnspecifiedLimit)
 	require.NoError(t, err)
 	require.Len(t, loc_ranges, 4)
 	rangeEqual(t, loc_ranges[0].Ranges.ToRanges(), "a", "b", "c", "d", "e", "f", "f", "g")
 	rangeEqual(t, loc_ranges[1].Ranges.ToRanges(), "g", "h", "i", "j", "k", "l", "m", "n")
 	rangeEqual(t, loc_ranges[2].Ranges.ToRanges(), "o", "p", "q", "r", "s", "t")
-	rangeEqual(t, loc_ranges[3].Ranges.ToRanges(), "u", "v", "w", "s", "y", "z")
+	rangeEqual(t, loc_ranges[3].Ranges.ToRanges(), "u", "v", "w", "x", "y", "z")
 
 	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "b", "b", "h", "h", "m", "n", "t", "v", "w")), UnspecifiedLimit)
 	require.NoError(t, err)
