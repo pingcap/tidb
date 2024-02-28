@@ -24,52 +24,76 @@ const (
 	sysUserTableName = "user"
 )
 
-var statsTables = map[string]struct{}{
-	"stats_buckets":      {},
-	"stats_extended":     {},
-	"stats_feedback":     {},
-	"stats_fm_sketch":    {},
-	"stats_histograms":   {},
-	"stats_history":      {},
-	"stats_meta":         {},
-	"stats_meta_history": {},
-	"stats_table_locked": {},
-	"stats_top_n":        {},
+var statsTables = map[string]map[string]struct{}{
+	"mysql": {
+		"stats_buckets":      {},
+		"stats_extended":     {},
+		"stats_feedback":     {},
+		"stats_fm_sketch":    {},
+		"stats_histograms":   {},
+		"stats_history":      {},
+		"stats_meta":         {},
+		"stats_meta_history": {},
+		"stats_table_locked": {},
+		"stats_top_n":        {},
+	},
 }
 
-var unRecoverableTable = map[string]struct{}{
-	// some variables in tidb (e.g. gc_safe_point) cannot be recovered.
-	"tidb":             {},
-	"global_variables": {},
+var unRecoverableTable = map[string]map[string]struct{}{
+	"mysql": {
+		// some variables in tidb (e.g. gc_safe_point) cannot be recovered.
+		"tidb":             {},
+		"global_variables": {},
 
-	"column_stats_usage":               {},
-	"capture_plan_baselines_blacklist": {},
-	// gc info don't need to recover.
-	"gc_delete_range":      {},
-	"gc_delete_range_done": {},
+		"column_stats_usage":               {},
+		"capture_plan_baselines_blacklist": {},
+		// gc info don't need to recover.
+		"gc_delete_range":      {},
+		"gc_delete_range_done": {},
 
-	// schema_index_usage has table id need to be rewrite.
-	"schema_index_usage": {},
-
-	// replace into view is not supported now
-	"tidb_mdl_view": {},
+		// replace into view is not supported now
+		"tidb_mdl_view": {},
+	},
+	"sys": {
+		// replace into view is not supported now
+		"schema_unused_indexes": {},
+	},
 }
 
-func isUnrecoverableTable(tableName string) bool {
-	_, ok := unRecoverableTable[tableName]
+func isUnrecoverableTable(schemaName string, tableName string) bool {
+	tableMap, ok := unRecoverableTable[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
 	return ok
 }
 
-func isStatsTable(tableName string) bool {
-	_, ok := statsTables[tableName]
+func isStatsTable(schemaName string, tableName string) bool {
+	tableMap, ok := statsTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
 	return ok
 }
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
-	sysDB := mysql.SystemDB
+	sysDBs := []string{mysql.SystemDB, mysql.SysDB}
+	for _, sysDB := range sysDBs {
+		err := rc.restoreSystemSchema(ctx, f, sysDB)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
+// restoreSystemSchema restores a system schema(i.e. the `mysql` or `sys` schema).
+// Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
+func (rc *Client) restoreSystemSchema(ctx context.Context, f filter.Filter, sysDB string) (rerr error) {
 	temporaryDB := utils.TemporaryDBName(sysDB)
 	defer func() {
 		// Don't clean the temporary database for next restore with checkpoint.
@@ -108,7 +132,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (re
 			tablesRestored = append(tablesRestored, tableName.L)
 		}
 	}
-	if err := rc.afterSystemTablesReplaced(ctx, tablesRestored); err != nil {
+	if err := rc.afterSystemTablesReplaced(ctx, sysDB, tablesRestored); err != nil {
 		return errors.Annotate(err, "error during extra works after system tables replaced")
 	}
 	return nil
@@ -142,7 +166,11 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 
 // afterSystemTablesReplaced do some extra work for special system tables.
 // e.g. after inserting to the table mysql.user, we must execute `FLUSH PRIVILEGES` to allow it take effect.
-func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string) error {
+func (rc *Client) afterSystemTablesReplaced(ctx context.Context, db string, tables []string) error {
+	if db != mysql.SystemDB {
+		return nil
+	}
+
 	var err error
 	for _, table := range tables {
 		if table == "user" {
@@ -167,6 +195,7 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
 func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+	dbName := db.Name.L
 	tableName := ti.Name.L
 	execSQL := func(sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
@@ -195,11 +224,11 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	//		BEFORE replacing into and then execute `rc.statsHandler.Update(rc.dom.InfoSchema())`.
 	//  1.5 ) (Optional) The UPDATE statement sometimes costs, the whole system tables restore step can be place into the restore pipeline.
 	//  2   ) Deprecate the origin interface for backing up statistics.
-	if isStatsTable(tableName) {
+	if isStatsTable(dbName, tableName) {
 		return nil
 	}
 
-	if isUnrecoverableTable(tableName) {
+	if isUnrecoverableTable(dbName, tableName) {
 		return nil
 	}
 
@@ -207,7 +236,7 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	// remove the resource group related metadata in mysql.user.
 	// TODO: this function should be removed when we support backup and restore
 	// resource group.
-	if tableName == sysUserTableName {
+	if dbName == mysql.SystemDB && tableName == sysUserTableName {
 		sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
 			utils.EncloseDBAndTable(db.TemporaryName.L, sysUserTableName))
 		if err := execSQL(sql); err != nil {

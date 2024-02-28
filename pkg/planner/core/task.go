@@ -2432,14 +2432,10 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
-	final := p
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0 {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
-			if finalAgg != nil {
-				final = finalAgg.(*PhysicalHashAgg)
-			}
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -2470,7 +2466,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		}
 	} else if _, ok := t.(*mppTask); ok {
-		return final.attach2TaskForMpp(tasks...)
+		return p.attach2TaskForMpp(tasks...)
 	} else {
 		attachPlan2Task(p, t)
 	}

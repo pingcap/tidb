@@ -116,7 +116,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
 			expr, err := expression.BuildSimpleExpr(
-				se,
+				se.GetExprCtx(),
 				col.GeneratedExpr.Internal(),
 				expression.WithInputSchemaAndNames(schema, names, meta),
 				expression.WithAllowCastArray(true),
@@ -261,7 +261,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 			return nil, kvcodec.LogKVConvertFailed(row, j, ExtraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		alloc := kvcodec.Table.Allocators(kvcodec.SessionCtx.GetSessionVars()).Get(autoid.RowIDAllocType)
+		alloc := kvcodec.Table.Allocators(kvcodec.SessionCtx.GetTableCtx()).Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}

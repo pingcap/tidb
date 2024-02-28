@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -154,7 +153,7 @@ func (*PointGetPlan) attach2Task(...task) task {
 }
 
 // ToPB converts physical plan to tipb executor.
-func (*PointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (*PointGetPlan) ToPB(_ PlanContext, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -410,7 +409,7 @@ func (*BatchPointGetPlan) attach2Task(...task) task {
 }
 
 // ToPB converts physical plan to tipb executor.
-func (*BatchPointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (*BatchPointGetPlan) ToPB(_ PlanContext, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -555,7 +554,7 @@ type PointPlanVal struct {
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
-func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
+func TryFastPlan(ctx PlanContext, node ast.Node) (p Plan) {
 	if checkStableResultMode(ctx) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		return nil
@@ -651,7 +650,7 @@ func getLockWaitTime(ctx PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, 
 }
 
 func newBatchPointGetPlan(
-	ctx sessionctx.Context, patternInExpr *ast.PatternInExpr,
+	ctx PlanContext, patternInExpr *ast.PatternInExpr,
 	handleCol *model.ColumnInfo, tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string, indexHints []*ast.IndexHint,
 ) *BatchPointGetPlan {
@@ -937,7 +936,7 @@ func newBatchPointGetPlan(
 	return p.Init(ctx, statsInfo, schema, names, 0)
 }
 
-func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {
+func tryWhereIn2BatchPointGet(ctx PlanContext, selStmt *ast.SelectStmt) *BatchPointGetPlan {
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
 		selStmt.Limit != nil || selStmt.Having != nil || selStmt.Distinct ||
 		len(selStmt.WindowSpecs) > 0 {
@@ -1037,7 +1036,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // 2. It must be a single table select.
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
-func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
+func tryPointGetPlan(ctx PlanContext, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
 	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
@@ -1125,7 +1124,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, partitionDef, pairIdx, false, isTableDual, check)
 }
 
-func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, schema *expression.Schema,
+func checkTblIndexForPointPlan(ctx PlanContext, tblName *ast.TableName, schema *expression.Schema,
 	names []*types.FieldName, pairs []nameValuePair, partitionDef *model.PartitionDefinition,
 	pos int, globalIndexCheck, isTableDual, check bool) *PointGetPlan {
 	if globalIndexCheck {
@@ -1256,7 +1255,7 @@ func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
 	return false
 }
 
-func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
+func newPointGetPlan(ctx PlanContext, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
 		Plan:         base.NewBasePlan(ctx, plancodec.TypePointGet, 0),
 		dbName:       dbName,
@@ -1269,7 +1268,7 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 	return p
 }
 
-func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
+func checkFastPlanPrivilege(ctx PlanContext, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
 	visitInfos := make([]visitInfo, 0, len(checkTypes))
 	for _, checkType := range checkTypes {
@@ -1420,7 +1419,7 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 }
 
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
-func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
+func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
 	pairs []nameValuePair, isTableDual bool) {
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
@@ -1662,7 +1661,7 @@ func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
 	return false
 }
 
-func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
+func tryUpdatePointPlan(ctx PlanContext, updateStmt *ast.UpdateStmt) Plan {
 	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
 	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
 		return nil
@@ -1697,7 +1696,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	return nil
 }
 
-func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt) Plan {
+func buildPointUpdatePlan(ctx PlanContext, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt) Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.UpdatePriv) != nil {
 		return nil
 	}
@@ -1721,7 +1720,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(tbl.ID)
 	updatePlan.tblID2Table = map[int64]table.Table{
 		tbl.ID: t,
@@ -1753,7 +1752,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	return updatePlan
 }
 
-func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
+func buildOrderedList(ctx PlanContext, plan Plan, list []*ast.Assignment,
 ) (orderedList []*expression.Assignment, allAssignmentsAreConstant bool) {
 	orderedList = make([]*expression.Assignment, 0, len(list))
 	allAssignmentsAreConstant = true
@@ -1790,7 +1789,7 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 	return orderedList, allAssignmentsAreConstant
 }
 
-func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
+func tryDeletePointPlan(ctx PlanContext, delStmt *ast.DeleteStmt) Plan {
 	if delStmt.IsMultiTable {
 		return nil
 	}
@@ -1821,7 +1820,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	return nil
 }
 
-func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo) Plan {
+func buildPointDeletePlan(ctx PlanContext, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo) Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
@@ -1838,7 +1837,7 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		},
 	}.Init(ctx)
 	var err error
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(tbl.ID)
 	if t != nil {
 		tblID2Table := map[int64]table.Table{tbl.ID: t}
@@ -1874,7 +1873,7 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
+func buildHandleCols(ctx PlanContext, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
@@ -1894,7 +1893,7 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	return &IntHandleCols{col: handleCol}
 }
 
-func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
+func getPartitionDef(ctx PlanContext, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
 	partitionExpr := getPartitionExpr(ctx, tbl)
 	if partitionExpr == nil {
 		return nil, 0, 0, false

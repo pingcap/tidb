@@ -656,6 +656,7 @@ const (
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
+	// Deprecated: it is 'off' always since Telemetry has been removed from TiDB.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
@@ -1145,6 +1146,8 @@ const (
 	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
 	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
 	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
+	// TiDBEnableParallelSort indicates if parallel sort is enabled.
+	TiDBEnableParallelSort = "enable_parallel_sort"
 )
 
 // TiDB intentional limits
@@ -1465,6 +1468,7 @@ const (
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
+	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
 )
 
@@ -1579,7 +1583,7 @@ var (
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Pointer[func(int64)]
 	// SetPDClientDynamicOption is the func registered by domain
-	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
+	SetPDClientDynamicOption atomic.Pointer[func(string, string) error]
 	// SwitchMDL is the func registered by DDL to switch MDL.
 	SwitchMDL func(bool2 bool) error = nil
 	// EnableDDL is the func registered by ddl to enable running ddl in this instance.

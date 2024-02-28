@@ -110,7 +110,7 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool SessionPool
 
-	bindingCache atomic.Pointer[bindingCache]
+	bindingCache atomic.Value
 
 	// fuzzyDigestMap is used to support fuzzy matching.
 	// fuzzyDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> fuzzyDigest.
@@ -156,11 +156,11 @@ func NewGlobalBindingHandle(sPool SessionPool) GlobalBindingHandle {
 	return handle
 }
 
-func (h *globalBindingHandle) getCache() *bindingCache {
-	return h.bindingCache.Load()
+func (h *globalBindingHandle) getCache() BindingCache {
+	return h.bindingCache.Load().(BindingCache)
 }
 
-func (h *globalBindingHandle) setCache(c *bindingCache) {
+func (h *globalBindingHandle) setCache(c BindingCache) {
 	// TODO: update the global cache in-place instead of replacing it and remove this function.
 	h.bindingCache.Store(c)
 }
@@ -209,7 +209,7 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
 	var timeCondition string
-	var newCache *bindingCache
+	var newCache BindingCache
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""

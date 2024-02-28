@@ -35,7 +35,7 @@ func RegisterTaskMetaWithDXFCtx(c *TestDXFContext, schedulerExt scheduler.Extens
 }
 
 // RegisterTaskMeta initialize mock components for dist task.
-func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
+func RegisterTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
 	executorExt := mock.NewMockExtension(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -61,7 +61,7 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerExt schedu
 	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
 }
 
-func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, schedulerExt scheduler.Extension, executorExt taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine) {
+func registerTaskMetaInner(t testing.TB, taskType proto.TaskType, schedulerExt scheduler.Extension, executorExt taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine) {
 	t.Cleanup(func() {
 		scheduler.ClearSchedulerFactory()
 		scheduler.ClearSchedulerCleanUpFactory()
@@ -89,7 +89,7 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, schedulerExt s
 }
 
 // RegisterRollbackTaskMeta register rollback task meta.
-func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext) {
+func RegisterRollbackTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext) {
 	executorExt := mock.NewMockExtension(ctrl)
 	stepExecutor := mockexecute.NewMockStepExecutor(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
@@ -111,19 +111,19 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerEx
 }
 
 // SubmitAndWaitTask schedule one task.
-func SubmitAndWaitTask(ctx context.Context, t *testing.T, taskKey string, concurrency int) *proto.Task {
+func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, concurrency int) *proto.TaskBase {
 	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, nil)
 	require.NoError(t, err)
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }
 
 // WaitTaskDoneOrPaused wait task done or paused.
-func WaitTaskDoneOrPaused(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
+func WaitTaskDoneOrPaused(ctx context.Context, t testing.TB, taskKey string) *proto.TaskBase {
 	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	gotTask, err := taskMgr.GetTaskByKeyWithHistory(ctx, taskKey)
+	gotTask, err := taskMgr.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	require.NoError(t, err)
-	task, err := handle.WaitTask(ctx, gotTask.ID, func(task *proto.Task) bool {
+	task, err := handle.WaitTask(ctx, gotTask.ID, func(task *proto.TaskBase) bool {
 		return task.IsDone() || task.State == proto.TaskStatePaused
 	})
 	require.NoError(t, err)

@@ -664,8 +664,6 @@ var Keywords = []KeywordsType{
 	{"STATS_LOCKED", false, "tidb"},
 	{"STATS_META", false, "tidb"},
 	{"STATS_TOPN", false, "tidb"},
-	{"TELEMETRY", false, "tidb"},
-	{"TELEMETRY_ID", false, "tidb"},
 	{"TIDB", false, "tidb"},
 	{"TIFLASH", false, "tidb"},
 	{"TOPN", false, "tidb"},

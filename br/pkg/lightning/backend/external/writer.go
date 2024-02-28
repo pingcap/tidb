@@ -80,8 +80,9 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID string
-	Seq      int
+	WriterID    string
+	GroupOffset int
+	Seq         int
 	// Min and Max are the min and max key written by this writer, both are
 	// inclusive, i.e. [Min, Max].
 	// will be empty if no key is written.
@@ -100,6 +101,7 @@ func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
+	groupOffset     int
 	memSizeLimit    uint64
 	blockSize       int
 	writeBatchCount uint64
@@ -169,6 +171,15 @@ func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	return b
 }
 
+// SetGroupOffset set the group offset of a writer.
+// This can be used to group the summaries from different writers.
+// For example, for adding multiple indexes with multi-schema-change,
+// we use to distinguish the summaries from different indexes.
+func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
+	b.groupOffset = offset
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -199,6 +210,7 @@ func (b *WriterBuilder) Build(
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
 		writerID:       writerID,
+		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 1),
@@ -314,6 +326,7 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 type Writer struct {
 	store          storage.ExternalStorage
 	writerID       string
+	groupOffset    int
 	currentSeq     int
 	filenamePrefix string
 	keyAdapter     common.KeyAdapter
@@ -407,6 +420,7 @@ func (w *Writer) Close(ctx context.Context) error {
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
+		GroupOffset:        w.groupOffset,
 		Seq:                w.currentSeq,
 		Min:                w.minKey,
 		Max:                w.maxKey,

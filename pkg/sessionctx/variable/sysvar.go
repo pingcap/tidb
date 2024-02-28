@@ -699,20 +699,17 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatFloat(MaxTSOBatchWaitInterval.Load(), 'f', -1, 64), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			(*SetPDClientDynamicOption.Load())(TiDBTSOClientBatchMaxWaitTime, val)
-			return nil
+			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientBatchMaxWaitTime, val)
 		}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTSOFollowerProxy, Value: BoolToOnOff(DefTiDBEnableTSOFollowerProxy), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTSOFollowerProxy.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		(*SetPDClientDynamicOption.Load())(TiDBEnableTSOFollowerProxy, val)
-		return nil
+		return (*SetPDClientDynamicOption.Load())(TiDBEnableTSOFollowerProxy, val)
 	}},
 	{Scope: ScopeGlobal, Name: PDEnableFollowerHandleRegion, Value: BoolToOnOff(DefPDEnableFollowerHandleRegion), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnablePDFollowerHandleRegion.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		(*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
-		return nil
+		return (*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLocalTxn.Load()), nil
@@ -872,7 +869,12 @@ var defaultSysVars = []*SysVar{
 			}
 			return origin, nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return "OFF", nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.GenWithStack("tidb_enable_telemetry is deprecated since Telemetry has been removed, this variable is 'OFF' always."))
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: On, Type: TypeBool, Depended: true},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -1034,6 +1036,8 @@ var defaultSysVars = []*SysVar{
 			}
 			memory.ServerMemoryLimitOriginText.Store(str)
 			memory.ServerMemoryLimit.Store(bt)
+			threshold := float64(bt) * GOGCTunerThreshold.Load()
+			gctuner.Tuning(uint64(threshold))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 			return nil
 		},
@@ -1125,6 +1129,14 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
+				// On tidbcloud dedicated cluster with the default configuration, if an user modify
+				// @@global.require_secure_transport=on, he can not login the cluster anymore!
+				// A workaround for this is making require_secure_transport read-only for that case.
+				// SEM(security enhanced mode) is enabled by default with only that settings.
+				cfg := config.GetGlobalConfig()
+				if cfg.Security.EnableSEM {
+					return "", errors.New("require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
+				}
 				// Refuse to set RequireSecureTransport to ON if the connection
 				// issuing the change is not secure. This helps reduce the chance of users being locked out.
 				if vars.TLSConnectionState == nil {
@@ -3020,6 +3032,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIdleTransactionTimeout, Value: strconv.Itoa(DefTiDBIdleTransactionTimeout), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear,
 		SetSession: func(s *SessionVars, val string) error {
 			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
+			return nil
+		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableParallelSort, Value: BoolToOnOff(DefEnableParallelSort), Type: TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.EnableParallelSort = TiDBOptOn(s)
 			return nil
 		}},
 }

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -386,7 +385,7 @@ func extractStringFromBoolSlice(slice []bool) string {
 	return strings.Join(l, ",")
 }
 
-func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {
+func tableHasDirtyContent(ctx PlanContext, tableInfo *model.TableInfo) bool {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ctx.HasDirtyContent(tableInfo.ID)
