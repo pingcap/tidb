@@ -764,7 +764,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 				startKey = point
 			}
 
-			return regionSplitter.ExecuteSplit(ctx, ranges, nil, 0, "", false, func([][]byte) {})
+			return regionSplitter.ExecuteSplit(ctx, ranges, nil, 3, "", false, func([][]byte) {})
 		}
 		select {
 		case <-ctx.Done():
