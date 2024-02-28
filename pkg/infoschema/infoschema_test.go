@@ -910,6 +910,27 @@ func (tc *infoschemaTestContext) createSchema() {
 	tc.dbInfo = dbInfo
 }
 
+func (tc *infoschemaTestContext) runCreateSchema() infoschema.InfoSchema {
+	// create schema
+	tc.createSchema()
+
+	// apply diff
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(tc.t, err)
+	txn, err := tc.re.Store().Begin()
+	require.NoError(tc.t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn),
+		&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID})
+	require.NoError(tc.t, err)
+	is := builder.Build()
+
+	// check infoschema
+	dbInfo, ok := is.SchemaByID(tc.dbInfo.ID)
+	require.True(tc.t, ok)
+	require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
+	return is
+}
+
 func (tc *infoschemaTestContext) dropSchema() {
 	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).DropDatabase(tc.dbInfo.ID, tc.dbInfo.Name.O)
@@ -938,27 +959,6 @@ func (tc *infoschemaTestContext) runDropSchema() infoschema.InfoSchema {
 	// check infoschema
 	_, ok := is.SchemaByID(tc.dbInfo.ID)
 	require.False(tc.t, ok)
-	return is
-}
-
-func (tc *infoschemaTestContext) runCreateSchema() infoschema.InfoSchema {
-	// create schema
-	tc.createSchema()
-
-	// apply diff
-	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithDBInfos(nil, nil, nil, 1)
-	require.NoError(tc.t, err)
-	txn, err := tc.re.Store().Begin()
-	require.NoError(tc.t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn),
-		&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID})
-	require.NoError(tc.t, err)
-	is := builder.Build()
-
-	// check infoschema
-	dbInfo, ok := is.SchemaByID(tc.dbInfo.ID)
-	require.True(tc.t, ok)
-	require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
 	return is
 }
 
@@ -1029,6 +1029,7 @@ func (tc *infoschemaTestContext) dropTable(tblName string, tblID int64) {
 func (tc *infoschemaTestContext) runDropTable(tblName string) infoschema.InfoSchema {
 	// createTable
 	is, tblID := tc.runCreateTable(tblName)
+
 	// dropTable
 	tc.dropTable(tblName, tblID)
 	builder := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(is)
