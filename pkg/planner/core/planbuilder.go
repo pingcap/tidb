@@ -1481,7 +1481,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
 	tblInfo := tbl.Meta()
 	physicalID, isPartition := getPhysicalID(tbl)
-	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
+	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), dbName, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -1922,7 +1922,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 	if len(tblInfo.Indices) > 0 {
 		// Add indexed columns.
 		// Some indexed columns are generated columns so we also need to add the columns that make up those generated columns.
-		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx.GetExprCtx(), tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -3555,9 +3555,9 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 		err   error
 	)
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
-		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
+		value, err = table.EvalColDefaultExpr(b.ctx.GetExprCtx(), col.ToInfo(), col.DefaultExpr)
 	} else {
-		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
+		value, err = table.GetColDefaultValue(b.ctx.GetExprCtx(), col.ToInfo())
 	}
 	if err != nil {
 		return nil, err
@@ -3630,7 +3630,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, tn.Schema, tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4122,7 +4122,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), model.NewCIStr(""), tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4222,7 +4222,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), model.NewCIStr(""), tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4333,7 +4333,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 		return nil, plannererrors.ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4426,7 +4426,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if !ok {
 		return d, errors.New("Expect constant values")
 	}
-	value, err := constant.Eval(b.ctx, chunk.Row{})
+	value, err := constant.Eval(b.ctx.GetExprCtx(), chunk.Row{})
 	if err != nil {
 		return d, err
 	}
@@ -4448,7 +4448,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	tblInfo := node.Table.TableInfo
 	handleColInfos := buildHandleColumnInfos(tblInfo)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
 	}
