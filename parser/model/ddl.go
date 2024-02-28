@@ -432,10 +432,29 @@ type Job struct {
 	// Collate is the collation the DDL Job is created.
 	Collate string `json:"collate"`
 
+	// InvolvingSchemaInfo indicates the schema info involved in the job.
+	// nil means fallback to use job.SchemaName/TableName.
+	// Keep unchanged after initialization.
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info,omitempty"`
+
 	// AdminOperator indicates where the Admin command comes, by the TiDB
 	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
 }
+
+// InvolvingSchemaInfo returns the schema info involved in the job.
+// The value should be stored in lower case.
+type InvolvingSchemaInfo struct {
+	Database string `json:"database"`
+	Table    string `json:"table"`
+}
+
+const (
+	// InvolvingAll means all schemas/tables are affected.
+	InvolvingAll = "*"
+	// InvolvingNone means no schema/table is affected.
+	InvolvingNone = ""
+)
 
 // FinishTableJob is called when a job is finished.
 // It updates the job's state information and adds tblInfo to the binlog.
@@ -850,6 +869,16 @@ func (job *Job) IsRollbackable() bool {
 		}
 	}
 	return true
+}
+
+// GetInvolvingSchemaInfo returns the schema info involved in the job.
+func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
+	if len(job.InvolvingSchemaInfo) > 0 {
+		return job.InvolvingSchemaInfo
+	}
+	return []InvolvingSchemaInfo{
+		{Database: job.SchemaName, Table: job.TableName},
+	}
 }
 
 // JobState is for job state.

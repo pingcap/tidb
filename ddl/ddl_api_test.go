@@ -16,14 +16,19 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
@@ -145,4 +150,67 @@ func enQueueDDLJobs(t *testing.T, sess session.Session, txn kv.Transaction, jobT
 		err := addDDLJobs(sess, txn, job)
 		require.NoError(t, err)
 	}
+}
+
+func TestCreateDropCreateTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("create table t (a int);")
+
+	wg := sync.WaitGroup{}
+	var createErr error
+	var fpErr error
+	var createTable bool
+
+	originHook := dom.DDL().GetHook()
+	onJobUpdated := func(job *model.Job) {
+		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
+			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
+			wg.Add(1)
+			go func() {
+				_, createErr = tk1.Exec("create table t (b int);")
+				wg.Done()
+			}()
+			createTable = true
+		}
+	}
+	hook := &callback.TestDDLCallback{}
+	hook.OnJobUpdatedExported.Store(&onJobUpdated)
+	dom.DDL().SetHook(hook)
+	tk.MustExec("drop table t;")
+	dom.DDL().SetHook(originHook)
+
+	wg.Wait()
+	require.NoError(t, createErr)
+	require.NoError(t, fpErr)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow"))
+
+	rs := tk.MustQuery("admin show ddl jobs 3;").Rows()
+	create1JobID := rs[0][0].(string)
+	dropJobID := rs[1][0].(string)
+	create0JobID := rs[2][0].(string)
+	jobRecordSet, err := tk.Exec("select job_meta from mysql.tidb_ddl_history where job_id in (?, ?, ?);",
+		create1JobID, dropJobID, create0JobID)
+	require.NoError(t, err)
+
+	var finishTSs []uint64
+	req := jobRecordSet.NewChunk(nil)
+	err = jobRecordSet.Next(context.Background(), req)
+	require.Greater(t, req.NumRows(), 0)
+	require.NoError(t, err)
+	iter := chunk.NewIterator4Chunk(req.CopyConstruct())
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		jobMeta := row.GetBytes(0)
+		job := model.Job{}
+		err = job.Decode(jobMeta)
+		require.NoError(t, err)
+		finishTSs = append(finishTSs, job.BinlogInfo.FinishedTS)
+	}
+	create1TS, dropTS, create0TS := finishTSs[0], finishTSs[1], finishTSs[2]
+	require.Less(t, create0TS, dropTS, "first create should finish before drop")
+	require.Less(t, dropTS, create1TS, "second create should finish after drop")
 }
