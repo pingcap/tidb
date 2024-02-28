@@ -63,7 +63,7 @@ func newFuzzyBindingCache() FuzzyBindingCache {
 }
 
 func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	fbc.mu.RUnlock()
+	fbc.mu.RLock()
 	defer fbc.mu.RUnlock()
 	bindingCache := fbc.BindingCache
 	if bindingCache.Size() == 0 {
