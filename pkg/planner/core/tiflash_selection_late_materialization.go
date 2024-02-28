@@ -251,15 +251,6 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	if len(selectedConds) == 0 {
 		return
 	}
-<<<<<<< HEAD
-	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(selectedConds))))
-	// remove the pushed down conditions from selection
-	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
-	// add the pushed down conditions to table scan
-	physicalTableScan.LateMaterializationFilterCondition = selectedConds
-	// Update the row count of table scan after pushing down the conditions.
-	physicalTableScan.StatsInfo().RowCount *= selectedSelectivity
-=======
 	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx, selectedConds))))
 	PushedDown(physicalSelection, physicalTableScan, selectedConds, selectedSelectivity)
 }
@@ -273,5 +264,4 @@ func PushedDown(sel *PhysicalSelection, ts *PhysicalTableScan, selectedConds []e
 	ts.LateMaterializationFilterCondition = selectedConds
 	// Update the row count of table scan after pushing down the conditions.
 	ts.StatsInfo().RowCount *= selectedSelectivity
->>>>>>> 49fcf49283b (planner: fix flaky test TestPhysicalTableScanExtractCorrelatedCols (#51355))
 }
