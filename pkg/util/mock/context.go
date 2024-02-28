@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -33,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -53,6 +57,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
+	*exprctximpl.ExprCtxExtendedImpl
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -60,6 +65,7 @@ type Context struct {
 	is            infoschema.InfoSchemaMetaVersion
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
+	tblctx        *tbctximpl.TableContextImpl
 	cancel        context.CancelFunc
 	pcache        sessionctx.PlanCache
 	level         kvrpcpb.DiskFullOpt
@@ -197,6 +203,16 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 // GetPlanCtx returns the PlanContext.
 func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
+}
+
+// GetExprCtx returns the expression context of the session.
+func (c *Context) GetExprCtx() exprctx.BuildContext {
+	return c
+}
+
+// GetTableCtx returns the table.MutateContext
+func (c *Context) GetTableCtx() tbctx.MutateContext {
+	return c.tblctx
 }
 
 // Txn implements sessionctx.Context Txn interface.
@@ -506,6 +522,8 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
+	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
+	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC

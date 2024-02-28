@@ -701,9 +701,11 @@ const (
 			index_name
 		FROM information_schema.cluster_tidb_index_usage
 		WHERE
-			last_access_time is null and
 			table_schema not in ('sys', 'mysql', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA') and
-			index_name != 'PRIMARY';`
+			index_name != 'PRIMARY'
+		GROUP BY table_schema, table_name, index_name
+		HAVING
+			sum(last_access_time) is null;`
 )
 
 // CreateTimers is a table to store all timers for tidb

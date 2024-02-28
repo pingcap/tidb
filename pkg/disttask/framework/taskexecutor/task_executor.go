@@ -60,14 +60,16 @@ var (
 	// TestSyncChan is used to sync the test.
 	TestSyncChan = make(chan struct{})
 	// MockTiDBDown is used to mock TiDB node down, return true if it's chosen.
-	MockTiDBDown func(execID string, task *proto.Task) bool
+	MockTiDBDown func(execID string, task *proto.TaskBase) bool
 )
 
 // BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
 	// id, it's the same as server id now, i.e. host:port.
-	id        string
-	task      atomic.Pointer[proto.Task]
+	id string
+	// we only store task base here to reduce overhead of refreshing it.
+	// task meta is loaded when we do execute subtasks, see GetStepExecutor.
+	taskBase  atomic.Pointer[proto.TaskBase]
 	taskTable TaskTable
 	logger    *zap.Logger
 	ctx       context.Context
@@ -87,6 +89,9 @@ type BaseTaskExecutor struct {
 }
 
 // NewBaseTaskExecutor creates a new BaseTaskExecutor.
+// see TaskExecutor.Init for why we want to use task-base to create TaskExecutor.
+// TODO: we can refactor this part to pass task base only, but currently ADD-INDEX
+// depends on it to init, so we keep it for now.
 func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) *BaseTaskExecutor {
 	logger := log.L().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
 	if intest.InTest {
@@ -100,7 +105,7 @@ func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskT
 		cancel:    cancelFunc,
 		logger:    logger,
 	}
-	taskExecutorImpl.task.Store(task)
+	taskExecutorImpl.taskBase.Store(&task.TaskBase)
 	return taskExecutorImpl
 }
 
@@ -119,7 +124,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 		case <-ticker.C:
 		}
 
-		task := e.task.Load()
+		task := e.taskBase.Load()
 		subtasks, err := e.taskTable.GetSubtasksByExecIDAndStepAndStates(ctx, e.id, task.ID, task.Step,
 			proto.SubtaskStateRunning)
 		if err != nil {
@@ -219,7 +224,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			e.logger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
-		task := e.task.Load()
+		task := e.taskBase.Load()
 		if task.State != proto.TaskStateRunning {
 			return
 		}
@@ -287,7 +292,12 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		e.unregisterRunStepCancelFunc()
 	}()
 	e.resetError()
-	task := e.task.Load()
+	taskBase := e.taskBase.Load()
+	task, err := e.taskTable.GetTaskByID(e.ctx, taskBase.ID)
+	if err != nil {
+		e.onError(err)
+		return e.getError()
+	}
 	stepLogger := llog.BeginTask(e.logger.With(
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
@@ -357,7 +367,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 			if err != nil {
 				e.logger.Warn("startSubtask meets error", zap.Error(err))
 				// should ignore ErrSubtaskNotFound
-				// since the err only indicate that the subtask not owned by current task executor.
+				// since it only means that the subtask not owned by current task executor.
 				if err == storage.ErrSubtaskNotFound {
 					continue
 				}
@@ -423,7 +433,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 	}
 
 	failpoint.Inject("mockTiDBShutdown", func() {
-		if MockTiDBDown(e.id, e.GetTask()) {
+		if MockTiDBDown(e.id, e.GetTaskBase()) {
 			failpoint.Return()
 		}
 	})
@@ -479,9 +489,9 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 	})
 }
 
-// GetTask implements TaskExecutor.GetTask.
-func (e *BaseTaskExecutor) GetTask() *proto.Task {
-	return e.task.Load()
+// GetTaskBase implements TaskExecutor.GetTaskBase.
+func (e *BaseTaskExecutor) GetTaskBase() *proto.TaskBase {
+	return e.taskBase.Load()
 }
 
 // CancelRunningSubtask implements TaskExecutor.CancelRunningSubtask.
@@ -501,12 +511,12 @@ func (e *BaseTaskExecutor) Close() {
 
 // refreshTask fetch task state from tidb_global_task table.
 func (e *BaseTaskExecutor) refreshTask() error {
-	task := e.GetTask()
-	newTask, err := e.taskTable.GetTaskByID(e.ctx, task.ID)
+	task := e.GetTaskBase()
+	newTaskBase, err := e.taskTable.GetTaskBaseByID(e.ctx, task.ID)
 	if err != nil {
 		return err
 	}
-	e.task.Store(newTask)
+	e.taskBase.Store(newTaskBase)
 	return nil
 }
 
@@ -669,7 +679,7 @@ func (e *BaseTaskExecutor) cancelSubtaskWithRetry(ctx context.Context, taskID in
 // Handled errors should not happen during subtasks execution.
 // Only handle errors before subtasks execution and after subtasks execution.
 func (e *BaseTaskExecutor) updateSubtask(err error) error {
-	task := e.task.Load()
+	task := e.taskBase.Load()
 	err = errors.Cause(err)
 	// TODO this branch is unreachable now, remove it when we refactor error handling.
 	if e.ctx.Err() != nil && context.Cause(e.ctx) == ErrCancelSubtask {

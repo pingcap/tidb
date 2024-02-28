@@ -32,7 +32,7 @@ type EvalContext = context.EvalContext
 type BuildContext = context.BuildContext
 
 func sqlMode(ctx EvalContext) mysql.SQLMode {
-	return ctx.GetSessionVars().SQLMode
+	return ctx.SQLMode()
 }
 
 func typeCtx(ctx EvalContext) types.Context {
