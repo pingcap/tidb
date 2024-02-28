@@ -1176,14 +1176,7 @@ func isEndTxnStmt(stmt ast.StmtNode, vars *variable.SessionVars) (bool, error) {
 }
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
-<<<<<<< HEAD:session/session.go
-	var err error
-	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
-		err = kv.ErrLockExpire
-	} else {
-=======
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) == 0 {
->>>>>>> 37c7326c73e (session: allow end aborted txn via binary protocal (#49384)):pkg/session/session.go
 		return nil
 	}
 	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
