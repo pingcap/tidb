@@ -23,6 +23,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/types",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/table/context",
         "//pkg/types",
