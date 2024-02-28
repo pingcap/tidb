@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -2618,6 +2619,11 @@ func (s *session) GetExprCtx() exprctx.BuildContext {
 // GetTableCtx returns the table.MutateContext
 func (s *session) GetTableCtx() tbctx.MutateContext {
 	return s.tblctx
+}
+
+// GetDistSQLCtx returns the context used in DistSQL
+func (s *session) GetDistSQLCtx() distsqlctx.DistSQLContext {
+	return s
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
