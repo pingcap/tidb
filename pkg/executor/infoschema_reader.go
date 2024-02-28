@@ -373,7 +373,7 @@ func (e *memtableRetriever) setDataForStatistics(ctx sessionctx.Context, schemas
 		if ok && extractor.Filter("table_schema", schema.Name.L) {
 			continue
 		}
-		for _, table := range infoschema.Tables(schema) {
+		for _, table := range schema.Tables {
 			if ok && extractor.Filter("table_name", table.Name.L) {
 				continue
 			}
