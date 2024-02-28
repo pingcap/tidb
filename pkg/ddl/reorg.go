@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -412,7 +411,7 @@ func (dc *ddlCtx) isReorgPaused(jobID int64) bool {
 }
 
 func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
-	if util.IsContextDone(dc.ctx) {
+	if dc.ctx.Err() != nil {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}

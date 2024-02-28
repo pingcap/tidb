@@ -291,10 +291,9 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 	// updatedMap should be empty if all the servers get the metadata lock.
 	updatedMap := make(map[string]string)
 	for {
-		if util.IsContextDone(ctx) {
+		if err := ctx.Err(); err != nil {
 			// ctx is canceled or timeout.
-			err = errors.Trace(ctx.Err())
-			return err
+			return errors.Trace(err)
 		}
 
 		// Prepare path and updatedMap.

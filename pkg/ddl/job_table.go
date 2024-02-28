@@ -283,7 +283,7 @@ func (d *ddl) startDispatchLoop() {
 	defer ticker.Stop()
 	isOnce := false
 	for {
-		if util.IsContextDone(d.ctx) {
+		if d.ctx.Err() != nil {
 			return
 		}
 		if !d.isOwner() {
