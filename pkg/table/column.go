@@ -34,10 +34,6 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
->>>>>>> e586960027b (table: fix issue of get default value from column when column doesn't have default value (#51309))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -539,8 +535,7 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *m
 // But CheckNoDefaultValueForInsert logic should only check before insert.
 func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
-		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupBadNull) != errctx.LevelError
-		if !ignoreErr {
+		if !sc.BadNullAsWarning {
 			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 		}
 		if !mysql.HasNotNullFlag(col.GetFlag()) {
@@ -637,13 +632,8 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	return value, nil
 }
 
-<<<<<<< HEAD
 func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, args *getColOriginDefaultValue) (types.Datum, error) {
-	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
-=======
-func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInfo, args *getColOriginDefaultValue) (types.Datum, error) {
 	if !mysql.HasNotNullFlag(col.GetFlag()) {
->>>>>>> e586960027b (table: fix issue of get default value from column when column doesn't have default value (#51309))
 		return types.Datum{}, nil
 	}
 	if col.GetType() == mysql.TypeEnum {
@@ -671,19 +661,14 @@ func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInf
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-<<<<<<< HEAD
 	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
-=======
-	ec := sc.ErrCtx()
-	var err error
-	if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
-		err = ErrNoDefaultValue.FastGenByArgs(col.Name)
-	} else {
-		err = ErrColumnCantNull.FastGenByArgs(col.Name)
-	}
-	if ec.HandleError(err) == nil {
->>>>>>> e586960027b (table: fix issue of get default value from column when column doesn't have default value (#51309))
+		var err error
+		if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+			err = ErrNoDefaultValue.FastGenByArgs(col.Name)
+		} else {
+			err = ErrColumnCantNull.FastGenByArgs(col.Name)
+		}
+		sc.AppendWarning(err)
 		return GetZeroValue(col), nil
 	}
 	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)
