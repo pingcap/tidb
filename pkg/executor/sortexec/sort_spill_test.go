@@ -195,8 +195,10 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 		if i == 10 {
 			// Trigger the spill
 			tracker.Consume(hardLimit)
-			// Wait for spill
-			time.Sleep(10 * time.Millisecond)
+			tracker.Consume(-hardLimit)
+
+			// Wait for the finish of spill, or the spill may not be triggered even data in memory has been drained
+			time.Sleep(100 * time.Millisecond)
 		}
 
 		if chk.NumRows() == 0 {
@@ -281,9 +283,9 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	if enableFailPoint {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 	}
-	sortPartitionNum := exe.GetSortPartitionListLenForTest()
 	if enableFailPoint {
 		// If we disable the failpoint, there may be only one partition.
+		sortPartitionNum := exe.GetSortPartitionListLenForTest()
 		require.Greater(t, sortPartitionNum, 1)
 
 		// Ensure all partitions are spilled
@@ -328,7 +330,7 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-func TestSortSpillDiskUnparallel(t *testing.T) {
+func TestUnparallelSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}

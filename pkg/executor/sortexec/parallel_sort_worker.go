@@ -17,6 +17,7 @@ package sortexec
 import (
 	"math/rand"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -30,15 +31,18 @@ const SignalCheckpointForSort uint = 20000
 type parallelSortWorker struct {
 	workerIDForTest int
 
-	lessRowFunc func(chunk.Row, chunk.Row) int
+	chunkChannel           chan *chunkWithMemoryUsage
+	fetcherAndWorkerSyncer *sync.WaitGroup
+	errOutputChan          chan rowWithError
+	finishCh               chan struct{}
 
-	chunkChannel  <-chan *chunk.Chunk
-	errOutputChan chan<- rowWithError
-	finishCh      <-chan struct{}
-
+	lessRowFunc       func(chunk.Row, chunk.Row) int
 	timesOfRowCompare uint
 
-	memTracker *memory.Tracker
+	memTracker       *memory.Tracker
+	totalMemoryUsage int64
+
+	spillHelper *parallelSortSpillHelper
 
 	localSortedRows    []*chunk.Iterator4Slice
 	sortedRowsIter     *chunk.Iterator4Slice
@@ -50,35 +54,39 @@ type parallelSortWorker struct {
 func newParallelSortWorker(
 	workerIDForTest int,
 	lessRowFunc func(chunk.Row, chunk.Row) int,
-	chunkChannel chan *chunk.Chunk,
+	chunkChannel chan *chunkWithMemoryUsage,
+	fetcherAndWorkerSyncer *sync.WaitGroup,
 	errOutputChan chan rowWithError,
 	finishCh chan struct{},
 	memTracker *memory.Tracker,
 	sortedRowsIter *chunk.Iterator4Slice,
-	maxChunkSize int) *parallelSortWorker {
+	maxChunkSize int,
+	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
 	maxSortedRowsLimit := maxChunkSize * 30
 	return &parallelSortWorker{
-		workerIDForTest:    workerIDForTest,
-		lessRowFunc:        lessRowFunc,
-		chunkChannel:       chunkChannel,
-		errOutputChan:      errOutputChan,
-		finishCh:           finishCh,
-		timesOfRowCompare:  0,
-		memTracker:         memTracker,
-		sortedRowsIter:     sortedRowsIter,
-		maxSortedRowsLimit: maxSortedRowsLimit,
-		batchRows:          make([]chunk.Row, 0, maxSortedRowsLimit),
+		workerIDForTest:        workerIDForTest,
+		lessRowFunc:            lessRowFunc,
+		chunkChannel:           chunkChannel,
+		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
+		errOutputChan:          errOutputChan,
+		finishCh:               finishCh,
+		timesOfRowCompare:      0,
+		memTracker:             memTracker,
+		sortedRowsIter:         sortedRowsIter,
+		maxSortedRowsLimit:     maxSortedRowsLimit,
+		spillHelper:            spillHelper,
+		batchRows:              make([]chunk.Row, 0, maxSortedRowsLimit),
 	}
 }
 
-func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
-	injectParallelSortRandomFail()
+func (p *parallelSortWorker) injectFailPointForParallelSortWorker(triggerFactor int32) {
+	injectParallelSortRandomFail(triggerFactor)
 	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
 		if val.(bool) {
 			if p.workerIDForTest%2 == 0 {
 				randNum := rand.Int31n(10000)
-				if randNum < 100 {
-					time.Sleep(5 * time.Millisecond)
+				if randNum < 10 {
+					time.Sleep(1 * time.Millisecond)
 				}
 			}
 		}
@@ -101,59 +109,69 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() []chunk.Row {
 		}
 		resultSortedRows = append(resultSortedRows, row)
 	}
+	p.localSortedRows = nil
 	return resultSortedRows
 }
 
-func (p *parallelSortWorker) sortBatchRows(batchRows []chunk.Row) {
-	slices.SortFunc(batchRows, p.keyColumnsLess)
-	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(batchRows))
+func (p *parallelSortWorker) sortBatchRows() {
+	slices.SortFunc(p.batchRows, p.keyColumnsLess)
+	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(p.batchRows))
+	p.batchRows = make([]chunk.Row, 0, p.maxSortedRowsLimit)
 }
 
 func (p *parallelSortWorker) sortLocalRows() []chunk.Row {
 	// Handle Remaining batchRows whose row number is not over the `maxSortedRowsLimit`
 	if len(p.batchRows) > 0 {
-		p.sortBatchRows(p.batchRows)
+		p.sortBatchRows()
 	}
 
 	return p.multiWayMergeLocalSortedRows()
 }
 
+func (p *parallelSortWorker) addChunkToBatchRows(chk *chunk.Chunk) {
+	chkIter := chunk.NewIterator4Chunk(chk)
+	row := chkIter.Begin()
+	for !row.IsEmpty() {
+		p.batchRows = append(p.batchRows, row)
+		row = chkIter.Next()
+	}
+}
+
 // Fetching a bunch of chunks from chunkChannel and sort them.
 // After receiving all chunks, we will get several sorted rows slices and we use k-way merge to sort them.
 func (p *parallelSortWorker) fetchChunksAndSort() {
+	for p.fetchChunksAndSortImpl() {
+	}
+}
+
+func (p *parallelSortWorker) fetchChunksAndSortImpl() bool {
 	var (
-		chk *chunk.Chunk
+		chk *chunkWithMemoryUsage
 		ok  bool
 	)
-
-	for {
-		select {
-		case <-p.finishCh:
-			return
-		case chk, ok = <-p.chunkChannel:
-			// Memory usage of the chunk has been consumed at the chunk fetcher
-			if !ok {
-				rows := p.sortLocalRows()
-				p.sortedRowsIter.Reset(rows)
-				return
-			}
+	select {
+	case <-p.finishCh:
+		return false
+	case chk, ok = <-p.chunkChannel:
+		// Memory usage of the chunk has been consumed at the chunk fetcher
+		if !ok {
+			p.injectFailPointForParallelSortWorker(100)
+			// Put local sorted rows into this iter who will be read by sort executor
+			p.sortedRowsIter.Reset(p.sortLocalRows())
+			return false
 		}
-
-		chkIter := chunk.NewIterator4Chunk(chk)
-		row := chkIter.Begin()
-		for !row.IsEmpty() {
-			p.batchRows = append(p.batchRows, row)
-			row = chkIter.Next()
-		}
-
-		// Sort a bunch of chunks
-		if len(p.batchRows) >= p.maxSortedRowsLimit {
-			p.sortBatchRows(p.batchRows)
-			p.batchRows = make([]chunk.Row, 0, p.maxSortedRowsLimit)
-		}
-
-		p.injectFailPointForParallelSortWorker()
+		defer p.fetcherAndWorkerSyncer.Done()
+		p.totalMemoryUsage += chk.MemoryUsage
 	}
+
+	p.addChunkToBatchRows(chk.Chk)
+
+	if len(p.batchRows) >= p.maxSortedRowsLimit {
+		p.sortBatchRows()
+	}
+
+	p.injectFailPointForParallelSortWorker(3)
+	return true
 }
 
 func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
