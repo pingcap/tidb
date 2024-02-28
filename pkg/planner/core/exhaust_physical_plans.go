@@ -780,7 +780,7 @@ childLoop:
 		case *DataSource:
 			wrapper.ds = child
 			break childLoop
-		case *LogicalProjection, *LogicalSelection:
+		case *LogicalProjection, *LogicalSelection, *LogicalAggregation:
 			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 				return nil
 			}
@@ -1005,7 +1005,8 @@ type indexJoinBuildHelper struct {
 	curPossibleUsedKeys []*expression.Column
 	curNotUsedIndexCols []*expression.Column
 	curNotUsedColLens   []int
-	curIdxOff2KeyOff    []int
+	// Store the corresponding innerKeys offset of each column in the current path, reset by "resetContextForIndex()"
+	curIdxOff2KeyOff []int
 }
 
 func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
@@ -1520,6 +1521,16 @@ func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
 	return
 }
 
+// Reset the 'curIdxOff2KeyOff', 'curNotUsedIndexCols' and 'curNotUsedColLens' by innerKeys and idxCols
+/*
+For each idxCols,
+  If column can be found in innerKeys
+	save offset of innerKeys in 'curIdxOff2KeyOff'
+  Else,
+	save -1 in 'curIdxOff2KeyOff'
+*/
+// For example, innerKeys[t1.a, t1.sum_b, t1.c], idxCols [a, b, c]
+// 'curIdxOff2KeyOff' = [0, -1, 2]
 func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int, outerKeys []*expression.Column) {
 	tmpSchema := expression.NewSchema(innerKeys...)
 	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
