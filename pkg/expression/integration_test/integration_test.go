@@ -2976,3 +2976,14 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	tk.MustGetDBError("select tidb_row_checksum() from t", expression.ErrNotSupportedYet)
 	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
 }
+
+func TestIssue43527(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (a datetime, b bigint, c decimal(10, 2))")
+	tk.MustExec("insert into test values('2010-10-10 10:10:10', 100, 100)")
+	tk.MustQuery(
+		"SELECT @total := @total + c FROM (SELECT c FROM test) AS temp, (SELECT @total := 200) AS T1",
+	).Check(testkit.Rows("300.00"))
+}

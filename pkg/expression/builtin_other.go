@@ -1092,7 +1092,11 @@ func (b *builtinGetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
-		return v.GetMysqlDecimal(), false, nil
+		d, err := v.ToDecimal(typeCtx(ctx))
+		if err != nil {
+			return nil, false, err
+		}
+		return d, false, nil
 	}
 	return nil, true, nil
 }
