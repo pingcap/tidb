@@ -2130,7 +2130,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		}
 	default:
 		// for other columns, just use what it is
-		val, er.err = er.b.getDefaultValue(col)
+		val, er.err = er.b.getDefaultValue(col, false)
 	}
 	if er.err != nil {
 		return
