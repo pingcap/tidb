@@ -508,11 +508,15 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 			return predicates, child
 		}
 	}
+<<<<<<< HEAD:planner/core/rule_predicate_push_down.go
 	if len(p.children) == 1 {
 		if _, isDual := p.children[0].(*LogicalTableDual); isDual {
 			return predicates, p
 		}
 	}
+=======
+	exprCtx := p.SCtx().GetExprCtx()
+>>>>>>> 27ce02afd2e (planner: remove the limitation that predicates can't be pushed through `Projection` on `TableDual` (#51329)):pkg/planner/core/rule_predicate_push_down.go
 	for _, cond := range predicates {
 		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, p.Schema(), p.Exprs, true)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
