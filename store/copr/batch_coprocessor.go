@@ -1040,7 +1040,12 @@ func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopRe
 		case resp, ok = <-b.respChan:
 			return
 		case <-ticker.C:
-			if atomic.LoadUint32(b.vars.Killed) == 1 {
+			killed := atomic.LoadUint32(b.vars.Killed)
+			if killed != 0 {
+				logutil.Logger(ctx).Info(
+					"a killed signal is received",
+					zap.Uint32("signal", killed),
+				)
 				resp = &batchCopResponse{err: derr.ErrQueryInterrupted}
 				ok = true
 				return
