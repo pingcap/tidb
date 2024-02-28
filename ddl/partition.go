@@ -500,7 +500,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			return errors.Trace(err)
 		}
 		buf := new(bytes.Buffer)
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreBracketAroundBinaryOperation, buf)
+		restoreFlags := format.DefaultRestoreFlags | format.RestoreBracketAroundBinaryOperation |
+			format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
+		restoreCtx := format.NewRestoreCtx(restoreFlags, buf)
 		if err := s.Expr.Restore(restoreCtx); err != nil {
 			return err
 		}
@@ -1502,12 +1504,21 @@ func checkResultOK(ok bool) error {
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *model.TableInfo) error {
+func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, dbName model.CIStr, tblInfo *model.TableInfo) error {
 	if expr == nil {
 		return nil
 	}
 
-	e, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, expr, false)
+	if dbName.L == "" {
+		dbName = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
+	if err != nil {
+		return err
+	}
+
+	e, err := expression.RewriteAstExpr(ctx, expr, expression.NewSchema(columns...), names, false)
 	if err != nil {
 		return errors.Trace(err)
 	}

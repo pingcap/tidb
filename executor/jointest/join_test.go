@@ -2788,6 +2788,30 @@ func TestIssue37932(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIssue30244(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1,t2,t3,t4;")
+	tk.MustExec("create table t1 (c int, b int);")
+	tk.MustExec("create table t2 (a int, b int);")
+	tk.MustExec("create table t3 (b int, c int);")
+	tk.MustExec("create table t4 (y int, c int);")
+	err := tk.ExecToErr("select * from t1 natural join (t3 cross join t4);")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'c' in from clause is ambiguous")
+	err = tk.ExecToErr("select * from (t3 cross join t4) natural join t1;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'c' in from clause is ambiguous")
+	err = tk.ExecToErr("select * from (t1 join t2 on t1.b=t2.b) natural join (t3 natural join t4);")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'b' in from clause is ambiguous")
+	err = tk.ExecToErr("select * from (t3 natural join t4) natural join (t1 join t2 on t1.b=t2.b);")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1052]Column 'b' in from clause is ambiguous")
+}
+
 func TestOuterJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -896,7 +896,6 @@ func (tr *TableImporter) postProcess(
 
 	// alter table set auto_increment
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
-		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.ContainsAutoRandomBits() {
@@ -921,7 +920,6 @@ func (tr *TableImporter) postProcess(
 				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
 			}
 		}
-		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
 		if err = firstErr(err, saveCpErr); err != nil {
 			return false, err

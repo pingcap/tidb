@@ -707,7 +707,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if _, err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -878,11 +878,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return nil
 	}
 
-	for _, db := range dbs {
-		err = client.CreateDatabase(ctx, db.Info)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	if err = client.CreateDatabases(ctx, dbs); err != nil {
+		return errors.Trace(err)
 	}
 
 	// We make bigger errCh so we won't block on multi-part failed.

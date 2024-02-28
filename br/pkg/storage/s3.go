@@ -519,22 +519,41 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 
 // ReadFile reads the file from the storage and returns the contents.
 func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) {
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + file),
+	var (
+		data    []byte
+		readErr error
+	)
+	for retryCnt := 0; retryCnt < maxErrorRetries; retryCnt += 1 {
+		input := &s3.GetObjectInput{
+			Bucket: aws.String(rs.options.Bucket),
+			Key:    aws.String(rs.options.Prefix + file),
+		}
+		result, err := rs.svc.GetObjectWithContext(ctx, input)
+		if err != nil {
+			return nil, errors.Annotatef(err,
+				"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
+				*input.Bucket, *input.Key)
+		}
+		data, readErr = io.ReadAll(result.Body)
+		// close the body of response since data has been already read out
+		result.Body.Close()
+		// for unit test
+		failpoint.Inject("read-s3-body-failed", func(_ failpoint.Value) {
+			log.Info("original error", zap.Error(readErr))
+			readErr = errors.Errorf("read: connection reset by peer")
+		})
+		if readErr != nil {
+			if isDeadlineExceedError(readErr) || isCancelError(readErr) {
+				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
+					*input.Bucket, *input.Key, retryCnt)
+			}
+			continue
+		}
+		return data, nil
 	}
-	result, err := rs.svc.GetObjectWithContext(ctx, input)
-	if err != nil {
-		return nil, errors.Annotatef(err,
-			"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
-			*input.Bucket, *input.Key)
-	}
-	defer result.Body.Close()
-	data, err := io.ReadAll(result.Body)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return data, nil
+	// retry too much, should be failed
+	return nil, errors.Annotatef(readErr, "failed to read body from get object result (retry too much), file info: input.bucket='%s', input.key='%s'",
+		rs.options.Bucket, rs.options.Prefix+file)
 }
 
 // DeleteFile delete the file in s3 storage
@@ -991,6 +1010,10 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.
 type retryerWithLog struct {
 	client.DefaultRetryer
+}
+
+func isCancelError(err error) bool {
+	return strings.Contains(err.Error(), "context canceled")
 }
 
 func isDeadlineExceedError(err error) bool {

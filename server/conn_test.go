@@ -756,7 +756,6 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
 	require.NoError(t, err)
-
 	tk.MustExec("set @@max_execution_time = 500;")
 
 	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")

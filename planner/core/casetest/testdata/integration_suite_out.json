@@ -6134,7 +6134,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {
@@ -6155,7 +6155,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {

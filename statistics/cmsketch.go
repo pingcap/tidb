@@ -529,6 +529,13 @@ type TopN struct {
 	TopN []TopNMeta
 }
 
+// Scale scales the TopN by the given factor.
+func (c *TopN) Scale(scaleFactor float64) {
+	for i := range c.TopN {
+		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
+	}
+}
+
 // AppendTopN appends a topn into the TopN struct.
 func (c *TopN) AppendTopN(data []byte, count uint64) {
 	if c == nil {
@@ -796,7 +803,7 @@ func NewTopN(n int) *TopN {
 //  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
 func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram,
 	isIndex bool, kiiled *uint32) (*TopN, []TopNMeta, []*Histogram, error) {
-	if checkEmptyTopNs(topNs) {
+	if CheckEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
 	partNum := len(topNs)
@@ -884,7 +891,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 // The output parameters are the newly generated TopN structure and the remaining numbers.
 // Notice: The n can be 0. So n has no default value, we must explicitly specify this value.
 func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
-	if checkEmptyTopNs(topNs) {
+	if CheckEmptyTopNs(topNs) {
 		return nil, nil
 	}
 	// Different TopN structures may hold the same value, we have to merge them.
@@ -909,7 +916,8 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	return getMergedTopNFromSortedSlice(sorted, n)
 }
 
-func checkEmptyTopNs(topNs []*TopN) bool {
+// CheckEmptyTopNs checks whether all TopNs are empty.
+func CheckEmptyTopNs(topNs []*TopN) bool {
 	count := uint64(0)
 	for _, topN := range topNs {
 		count += topN.TotalCount()

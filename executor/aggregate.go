@@ -1509,12 +1509,12 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 			return false, err
 		}
 	}
-	e.firstGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.firstGroupKey, e.firstRowDatums...)
+	e.firstGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, e.firstGroupKey, e.firstRowDatums...)
 	if err != nil {
 		return false, err
 	}
 
-	e.lastGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.lastGroupKey, e.lastRowDatums...)
+	e.lastGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, e.lastGroupKey, e.lastRowDatums...)
 	if err != nil {
 		return false, err
 	}

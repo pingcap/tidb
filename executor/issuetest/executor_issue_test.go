@@ -1477,3 +1477,20 @@ func TestIssue49369(t *testing.T) {
 	tk.MustQuery("select * from issue49369").Check(testkit.Rows("999999999999999999000000000000"))
 	tk.MustExec("set @@sql_mode = default")
 }
+
+func TestIssue49902(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size = 32;")
+	tk.MustExec("drop table if exists t, s;")
+	tk.MustExec("CREATE TABLE `t` (`c` char(1)) COLLATE=utf8_general_ci ;")
+	tk.MustExec("insert into t values(\"V\"),(\"v\");")
+	tk.MustExec("insert into t values(\"V\"),(\"v\"),(\"v\");")
+	tk.MustExec("CREATE TABLE `s` (`col_61` int);")
+	tk.MustExec("insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);")
+	tk.MustExec("insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);")
+	tk.MustQuery("SELECT /*+ stream_agg()*/ count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;").Check(testkit.Rows("170"))
+	tk.MustQuery("SELECT count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;").Check(testkit.Rows("170"))
+	tk.MustExec("set @@tidb_max_chunk_size = default;")
+}
