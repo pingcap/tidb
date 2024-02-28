@@ -263,6 +263,8 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		return nil, false
 	}
 
+	// If itm is found by search is.byID, it means there is no change on that table during schema version [itm.schemaVersion, is.schemaVersion], so it is safe to use that table of an earlier version.
+	// Search the cache for the table of that schema version.
 	key = tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found = is.tableCache.Get(key)
 	if found && tbl != nil {
@@ -309,6 +311,8 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return res, nil
 	}
 
+	// If itm is found by search is.byID, it means there is no change on that table during schema version [itm.schemaVersion, is.schemaVersion], so it is safe to use that table of an earlier version.
+	// Search the cache for the table of that schema version.
 	key = tableCacheKey{itm.tableID, itm.schemaVersion}
 	res, found = is.tableCache.Get(key)
 	if found && res != nil {
