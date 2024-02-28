@@ -34,6 +34,13 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// unanalyzedTableDefaultChangePercentage is the default change percentage of unanalyzed table.
+	unanalyzedTableDefaultChangePercentage = 1
+	// unanalyzedTableDefaultLastUpdateDuration is the default last update duration of unanalyzed table.
+	unanalyzedTableDefaultLastUpdateDuration = -30 * time.Minute
+)
+
 // Refresher provides methods to refresh stats info.
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
@@ -163,6 +170,7 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 							sctx,
 							db,
 							tblInfo,
+							// TODO: use GetPartitionStatsForAutoAnalyze to save memory.
 							r.statsHandle.GetPartitionStats(tblInfo, tblInfo.ID),
 							autoAnalyzeRatio,
 							currentTs,
@@ -266,7 +274,7 @@ func calculateChangePercentage(
 	}
 
 	if !exec.TableAnalyzed(tblStats) {
-		return 1
+		return unanalyzedTableDefaultChangePercentage
 	}
 
 	tblCnt := float64(tblStats.RealtimeCount)
@@ -296,12 +304,38 @@ func getTableLastAnalyzeDuration(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Duration {
-	// Calculate the duration since last analyze.
-	versionTs := tblStats.Version
+	lastTime := findLastAnalyzeTime(tblStats, currentTs)
 	currentTime := oracle.GetTimeFromTS(currentTs)
-	versionTime := oracle.GetTimeFromTS(versionTs)
 
-	return time.Duration(currentTime.Sub(versionTime).Seconds())
+	// Calculate the duration since last analyze.
+	return currentTime.Sub(lastTime)
+}
+
+// findLastAnalyzeTime finds the last analyze time of the table.
+// It uses `LastUpdateVersion` to find the last analyze time.
+// The `LastUpdateVersion` is the version of the transaction that updates the statistics.
+// It always not null(default 0), so we can use it to find the last analyze time.
+func findLastAnalyzeTime(
+	tblStats *statistics.Table,
+	currentTs uint64,
+) time.Time {
+	maxVersion := uint64(0)
+	for _, idx := range tblStats.Indices {
+		if idx.IsAnalyzed() {
+			maxVersion = max(maxVersion, idx.LastUpdateVersion)
+		}
+	}
+	for _, col := range tblStats.Columns {
+		if col.IsAnalyzed() {
+			maxVersion = max(maxVersion, col.LastUpdateVersion)
+		}
+	}
+	// Table is not analyzed, compose a fake version.
+	if maxVersion == 0 {
+		phy := oracle.GetTimeFromTS(currentTs)
+		return phy.Add(unanalyzedTableDefaultLastUpdateDuration)
+	}
+	return oracle.GetTimeFromTS(maxVersion)
 }
 
 func checkIndexesNeedAnalyze(

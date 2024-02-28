@@ -134,11 +134,16 @@ func (s *BaseScheduler) GetTask() *proto.Task {
 // refreshTask fetch task state from tidb_global_task table.
 func (s *BaseScheduler) refreshTask() error {
 	task := s.GetTask()
-	newTask, err := s.taskMgr.GetTaskByID(s.ctx, task.ID)
+	// we only refresh the base fields of task to reduce memory usage, other fields
+	// must be maintained in memory by the scheduler itself.
+	// TODO it's possible we have a stale task meta on network partition, get task meta when needed??
+	newTaskBase, err := s.taskMgr.GetTaskBaseByID(s.ctx, task.ID)
 	if err != nil {
 		return err
 	}
-	s.task.Store(newTask)
+	newTask := *task
+	newTask.TaskBase = *newTaskBase
+	s.task.Store(&newTask)
 	return nil
 }
 
@@ -479,13 +484,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 	}
 	task.Error = err
 	s.task.Store(&task)
-
-	if err = s.OnDone(s.ctx, s, &task); err != nil {
-		return errors.Trace(err)
-	}
-
-	// TODO: to reverting state?
-	return s.taskMgr.FailTask(s.ctx, task.ID, task.State, task.Error)
+	return s.taskMgr.RevertTask(s.ctx, task.ID, task.State, task.Error)
 }
 
 // MockServerInfo exported for scheduler_test.go

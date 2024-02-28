@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
@@ -204,6 +205,9 @@ func (s *StatsCacheImpl) MemConsumed() (size int64) {
 
 // Get returns the specified table's stats.
 func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
+	failpoint.Inject("StatsCacheGetNil", func() {
+		failpoint.Return(nil, false)
+	})
 	return s.Load().Get(tableID)
 }
 

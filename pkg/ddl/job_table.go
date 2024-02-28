@@ -406,7 +406,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 
-		err := wk.HandleDDLJobV2(d.ddlCtx, job)
+		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
 		pool.put(wk)
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
