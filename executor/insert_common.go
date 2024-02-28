@@ -575,14 +575,10 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
 		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), col.DefaultExpr)
 	} else {
-<<<<<<< HEAD:executor/insert_common.go
-		defaultVal, err = table.GetColDefaultValue(e.ctx, col.ToInfo())
-=======
-		if err := table.CheckNoDefaultValueForInsert(e.Ctx().GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
+		if err := table.CheckNoDefaultValueForInsert(e.ctx.GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
 			return types.Datum{}, err
 		}
-		defaultVal, err = table.GetColDefaultValue(e.Ctx().GetExprCtx(), col.ToInfo())
->>>>>>> e586960027b (table: fix issue of get default value from column when column doesn't have default value (#51309)):pkg/executor/insert_common.go
+		defaultVal, err = table.GetColDefaultValue(e.ctx, col.ToInfo())
 	}
 	if err != nil {
 		return types.Datum{}, err
