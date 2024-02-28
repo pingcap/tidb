@@ -251,7 +251,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	if len(selectedConds) == 0 {
 		return
 	}
-	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx, selectedConds))))
+	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(selectedConds))))
 	PushedDown(physicalSelection, physicalTableScan, selectedConds, selectedSelectivity)
 }
 
