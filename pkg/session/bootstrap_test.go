@@ -151,7 +151,7 @@ func TestBootstrapWithError(t *testing.T) {
 			sessionVars: variable.NewSessionVars(nil),
 		}
 		se.exprctx = newExpressionContextImpl(se)
-		se.pctx = newPlanContextImpl(se, se.exprctx.ExprCtxExtendedImpl)
+		se.pctx = newPlanContextImpl(se)
 		se.tblctx = tbctximpl.NewTableContextImpl(se, se.exprctx)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor

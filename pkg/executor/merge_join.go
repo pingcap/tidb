@@ -401,7 +401,7 @@ func (e *MergeJoinExec) compare(outerRow, innerRow chunk.Row) (int, error) {
 	outerJoinKeys := e.outerTable.joinKeys
 	innerJoinKeys := e.innerTable.joinKeys
 	for i := range outerJoinKeys {
-		cmp, _, err := e.compareFuncs[i](e.Ctx().GetPlanCtx(), outerJoinKeys[i], innerJoinKeys[i], outerRow, innerRow)
+		cmp, _, err := e.compareFuncs[i](e.Ctx().GetExprCtx(), outerJoinKeys[i], innerJoinKeys[i], outerRow, innerRow)
 		if err != nil {
 			return 0, err
 		}

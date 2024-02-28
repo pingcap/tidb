@@ -3571,7 +3571,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s.sessionVars = variable.NewSessionVars(s)
 	s.exprctx = newExpressionContextImpl(s)
-	s.pctx = newPlanContextImpl(s, s.exprctx.ExprCtxExtendedImpl)
+	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 
 	if opt != nil && opt.PreparedPlanCache != nil {
@@ -3634,7 +3634,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.exprctx = newExpressionContextImpl(s)
-	s.pctx = newPlanContextImpl(s, s.exprctx.ExprCtxExtendedImpl)
+	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
