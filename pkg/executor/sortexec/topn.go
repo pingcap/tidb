@@ -33,6 +33,8 @@ type TopNExec struct {
 	Limit      *plannercore.PhysicalLimit
 	totalLimit uint64
 
+	resultChannel chan rowWithError
+
 	chkHeap *topNChunkHeap
 }
 
@@ -117,6 +119,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{TopNExec: e}
 	e.chkHeap.Idx = 0
 
+	e.resultChannel = make(chan rowWithError, e.MaxChunkSize())
 	return exec.Open(ctx, e.Children(0))
 }
 
@@ -124,29 +127,35 @@ func (e *TopNExec) Open(ctx context.Context) error {
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.fetched.CompareAndSwap(false, true) {
-		e.totalLimit = e.Limit.Offset + e.Limit.Count
-		e.chkHeap.Idx = int(e.Limit.Offset)
-		err := e.loadChunksUntilTotalLimit(ctx)
-		if err != nil {
-			return err
-		}
-		err = e.executeTopN(ctx)
+		err := e.fetchChunks(ctx)
 		if err != nil {
 			return err
 		}
 	}
-	if e.chkHeap.Idx >= len(e.chkHeap.rowPtrs) {
-		return nil
-	}
+
 	if !req.IsFull() {
-		numToAppend := min(len(e.chkHeap.rowPtrs)-e.chkHeap.Idx, req.RequiredRows()-req.NumRows())
-		rows := make([]chunk.Row, numToAppend)
-		for index := 0; index < numToAppend; index++ {
-			rows[index] = e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.Idx])
-			e.chkHeap.Idx++
+		numToAppend := req.RequiredRows() - req.NumRows()
+		for i := 0; i < numToAppend; i++ {
+			row, ok := <-e.resultChannel
+			if !ok || row.err != nil {
+				return row.err
+			}
+			req.AppendRow(row.row)
 		}
-		req.AppendRows(rows)
 	}
+	return nil
+}
+
+func (e *TopNExec) fetchChunks(ctx context.Context) error {
+	e.totalLimit = e.Limit.Offset + e.Limit.Count
+	e.chkHeap.Idx = int(e.Limit.Offset)
+
+	err := e.loadChunksUntilTotalLimit(ctx)
+	if err != nil {
+		close(e.resultChannel)
+		return err
+	}
+	go e.executeTopN(ctx)
 	return nil
 }
 
@@ -175,7 +184,9 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 
 const topNCompactionFactor = 4
 
-func (e *TopNExec) executeTopN(ctx context.Context) error {
+func (e *TopNExec) executeTopN(ctx context.Context) {
+	defer close(e.resultChannel)
+
 	heap.Init(e.chkHeap)
 	for uint64(len(e.chkHeap.rowPtrs)) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
@@ -185,24 +196,33 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	for {
 		err := exec.Next(ctx, e.Children(0), childRowChk)
 		if err != nil {
-			return err
+			e.resultChannel <- rowWithError{err: err}
+			return
 		}
 		if childRowChk.NumRows() == 0 {
 			break
 		}
 		err = e.processChildChk(childRowChk)
 		if err != nil {
-			return err
+			e.resultChannel <- rowWithError{err: err}
+			return
 		}
 		if e.chkHeap.rowChunks.Len() > len(e.chkHeap.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction(e.chkHeap)
 			if err != nil {
-				return err
+				e.resultChannel <- rowWithError{err: err}
+				return
 			}
 		}
 	}
+
 	slices.SortFunc(e.chkHeap.rowPtrs, e.keyColumnsCompare)
-	return nil
+
+	// Send result rows
+	rowPtrNum := len(e.chkHeap.rowPtrs)
+	for ; e.chkHeap.Idx < rowPtrNum; e.chkHeap.Idx++ {
+		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.Idx])}
+	}
 }
 
 func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
