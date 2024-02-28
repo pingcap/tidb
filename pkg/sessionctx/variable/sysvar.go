@@ -517,13 +517,7 @@ var defaultSysVars = []*SysVar{
 		return strconv.FormatUint(atomic.LoadUint64(&ExpensiveTxnTimeThreshold), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		oldConfig := config.GetGlobalConfig()
-		newValue := TiDBOptOn(val)
-		if oldConfig.Instance.EnableCollectExecutionInfo.Load() != newValue {
-			newConfig := *oldConfig
-			newConfig.Instance.EnableCollectExecutionInfo.Store(newValue)
-			config.StoreGlobalConfig(&newConfig)
-		}
+		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(TiDBOptOn(val))
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()), nil

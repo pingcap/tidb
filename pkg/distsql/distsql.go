@@ -53,7 +53,7 @@ func GenSelectResultFromMPPResponse(sctx sessionctx.Context, fieldTypes []*types
 
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+func Select(ctx context.Context, sctx sessionctx.Context, enableCollectExecInfo bool, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "distsql.Select")
 	defer r.End()
 
@@ -79,7 +79,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		SessionMemTracker:          sctx.GetSessionVars().MemTracker,
 		EnabledRateLimitAction:     enabledRateLimitAction,
 		EventCb:                    eventCb,
-		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
+		EnableCollectExecutionInfo: enableCollectExecInfo,
 	}
 
 	if kvReq.StoreType == kv.TiFlash {
@@ -143,7 +143,7 @@ func SetTiFlashConfVarsInContext(ctx context.Context, sctx sessionctx.Context) c
 // which can help selectResult to collect runtime stats.
 func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
-	sr, err := Select(ctx, sctx, kvReq, fieldTypes)
+	sr, err := Select(ctx, sctx, config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(), kvReq, fieldTypes)
 	if err != nil {
 		return nil, err
 	}
