@@ -295,3 +295,9 @@ explain format='brief' SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UT
 select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
 explain format='brief' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
 select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
+
+# TestFix51188
+drop table if exists t;
+create table t(a int, b int, c int, index(b, a), index(c, a));
+## Will not OOM.
+select * from t use index(b, c) where b=2 or c=3 order by a limit 10000000000000000;

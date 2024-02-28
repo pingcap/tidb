@@ -372,6 +372,15 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 }
 
+func (s *mockGCSSuite) getTaskByJobID(ctx context.Context, jobID int64) *proto.Task {
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	taskKey := importinto.TaskKey(jobID)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	s.NoError(err)
+	return task
+}
+
 func (s *mockGCSSuite) TestCancelJob() {
 	s.prepareAndUseDB("test_cancel_job")
 	s.tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
@@ -399,15 +408,6 @@ func (s *mockGCSSuite) TestCancelJob() {
 	// cancel non-exists job
 	err = s.tk.ExecToErr("cancel import job 9999999999")
 	s.ErrorIs(err, exeerrors.ErrLoadDataJobNotFound)
-
-	getTask := func(jobID int64) *proto.Task {
-		taskManager, err := storage.GetTaskManager()
-		s.NoError(err)
-		taskKey := importinto.TaskKey(jobID)
-		task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
-		s.NoError(err)
-		return task
-	}
 
 	// cancel a running job created by self
 	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
@@ -440,7 +440,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	s.Require().Eventually(func() bool {
-		task := getTask(int64(jobID1))
+		task := s.getTaskByJobID(ctx, int64(jobID1))
 		return task.State == proto.TaskStateReverted
 	}, maxWaitTime, 500*time.Millisecond)
 
@@ -474,14 +474,14 @@ func (s *mockGCSSuite) TestCancelJob() {
 		s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID2))
 	}()
 	s.Require().Eventually(func() bool {
-		task := getTask(int64(jobID2))
+		task := s.getTaskByJobID(ctx, int64(jobID2))
 		return task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning
 	}, 10*time.Second, 500*time.Millisecond)
 	// resume the job
 	importinto.TestSyncChan <- struct{}{}
 	wg.Wait()
 	// cancel import job will wait dist task done
-	task := getTask(int64(jobID2))
+	task := s.getTaskByJobID(ctx, int64(jobID2))
 	s.Equal(proto.TaskStateReverted, task.State)
 	rows2 := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 	s.Len(rows2, 1)
@@ -544,13 +544,13 @@ func (s *mockGCSSuite) TestCancelJob() {
 		s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID2))
 	}()
 	s.Require().Eventually(func() bool {
-		task := getTask(int64(jobID2))
+		task := s.getTaskByJobID(ctx, int64(jobID2))
 		return task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning
 	}, 10*time.Second, 500*time.Millisecond)
 	// resume the job
 	importinto.TestSyncChan <- struct{}{}
 	wg.Wait()
-	task = getTask(int64(jobID2))
+	task = s.getTaskByJobID(ctx, int64(jobID2))
 	s.Equal(proto.TaskStateReverted, task.State)
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 	s.Len(rows, 1)

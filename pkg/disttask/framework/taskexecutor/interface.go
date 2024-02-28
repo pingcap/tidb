@@ -29,6 +29,7 @@ type TaskTable interface {
 	GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*storage.TaskExecInfo, error)
 	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	// GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states and execID.
 	GetSubtasksByExecIDAndStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)
 	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error)
@@ -78,6 +79,10 @@ type TaskExecutor interface {
 	// the task directly, so be careful what to put into it.
 	// The context passing in is Manager.ctx, don't use it to init long-running routines,
 	// as it will NOT be cancelled when the task is finished.
+	// NOTE: do NOT depend on task meta to do initialization, as we plan to pass
+	// task-base to the TaskExecutor in the future, if you need to do some initialization
+	// based on task meta, do it in GetStepExecutor, as execute.StepExecutor is
+	// where subtasks are actually executed.
 	Init(context.Context) error
 	// Run runs the task with given resource, it will try to run each step one by
 	// one, if it cannot find any subtask to run for a while(10s now), it will exit,
@@ -85,8 +90,8 @@ type TaskExecutor interface {
 	// we assume that all steps will have same resource usage now, will change it
 	// when we support different resource usage for different steps.
 	Run(resource *proto.StepResource)
-	// GetTask returns the task, returned value is for read only, don't change it.
-	GetTask() *proto.Task
+	// GetTaskBase returns the task, returned value is for read only, don't change it.
+	GetTaskBase() *proto.TaskBase
 	// CancelRunningSubtask cancels the running subtask and change its state to `cancelled`,
 	// the task executor will keep running, so we can have a context to update the
 	// subtask state or keep handling revert logic.

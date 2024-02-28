@@ -111,19 +111,19 @@ func RegisterRollbackTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerEx
 }
 
 // SubmitAndWaitTask schedule one task.
-func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, concurrency int) *proto.Task {
+func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, concurrency int) *proto.TaskBase {
 	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, nil)
 	require.NoError(t, err)
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }
 
 // WaitTaskDoneOrPaused wait task done or paused.
-func WaitTaskDoneOrPaused(ctx context.Context, t testing.TB, taskKey string) *proto.Task {
+func WaitTaskDoneOrPaused(ctx context.Context, t testing.TB, taskKey string) *proto.TaskBase {
 	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	gotTask, err := taskMgr.GetTaskByKeyWithHistory(ctx, taskKey)
+	gotTask, err := taskMgr.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	require.NoError(t, err)
-	task, err := handle.WaitTask(ctx, gotTask.ID, func(task *proto.Task) bool {
+	task, err := handle.WaitTask(ctx, gotTask.ID, func(task *proto.TaskBase) bool {
 		return task.IsDone() || task.State == proto.TaskStatePaused
 	})
 	require.NoError(t, err)
