@@ -121,13 +121,6 @@ var tlsCiphers = []uint16{
 
 var tlsSupportedCiphers string
 
-// Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141 .
-// Update: remove tlsv1.0 and v1.1 support
-var tlsVersionString = map[uint16]string{
-	tls.VersionTLS12: "TLSv1.2",
-	tls.VersionTLS13: "TLSv1.3",
-}
-
 var defaultStatus = map[string]*StatusVal{
 	"Ssl_cipher":      {ScopeGlobal | ScopeSession, ""},
 	"Ssl_cipher_list": {ScopeGlobal | ScopeSession, ""},
@@ -155,11 +148,7 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
 		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
 		statusVars["Ssl_verify_mode"] = 0x01 | 0x04
-		if tlsVersion, tlsVersionKnown := tlsVersionString[vars.TLSConnectionState.Version]; tlsVersionKnown {
-			statusVars["Ssl_version"] = tlsVersion
-		} else {
-			statusVars["Ssl_version"] = "unknown_tls_version"
-		}
+		statusVars["Ssl_version"] = tls.VersionName(vars.TLSConnectionState.Version)
 	}
 
 	return statusVars, nil
