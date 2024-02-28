@@ -216,13 +216,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	enableUseBinding := sessVars.UsePlanBaselines
+	bindHandle := domain.GetDomain(sctx).BindHandle()
 	stmtNode, isStmtNode := node.(ast.StmtNode)
-	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode)
-	var bindings bindinfo.Bindings
-	if match {
-		bindings = []bindinfo.Binding{binding}
-	}
-
+	bindings, match, scope := matchSQLBinding(sctx, stmtNode, bindHandle.LoadBindingsFromStorageToCache)
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
@@ -367,6 +363,24 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	return bestPlan, names, nil
+}
+
+func tryMatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, syncFunc func(string)) (bindings bindinfo.Bindings, matched bool, scope string) {
+	bindings, match, scope := matchSQLBinding(sctx, stmtNode, syncFunc)
+	if match {
+		return
+	}
+	// try again.
+	bindings, match, scope = matchSQLBinding(sctx, stmtNode, syncFunc)
+	return
+}
+
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, syncFunc func(string)) (bindings bindinfo.Bindings, matched bool, scope string) {
+	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode, syncFunc)
+	if match {
+		bindings = []bindinfo.Binding{binding}
+	}
+	return
 }
 
 // OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // GlobalBindingHandle is used to handle all global sql bind operations.
@@ -102,6 +103,9 @@ type GlobalBindingHandle interface {
 	// CaptureBaselines is used to automatically capture plan baselines.
 	CaptureBaselines()
 
+	// LoadBindingsFromStorageToCache loads bindings from the storage into the cache.
+	LoadBindingsFromStorageToCache(digest string)
+
 	variable.Statistics
 }
 
@@ -118,6 +122,9 @@ type globalBindingHandle struct {
 	// invalidBindings indicates the invalid bindings found during querying.
 	// A binding will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
 	invalidBindings *invalidBindingCache
+
+	// syncBindingSingleflight is used to synchronize the execution of `LoadFromStorageToCache` method.
+	syncBindingSingleflight singleflight.Group
 }
 
 // Lease influences the duration of loading bind info and handling invalid bind.
@@ -681,4 +688,61 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 	m := make(map[string]any)
 	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
 	return m, nil
+}
+
+// LoadBindingsFromStorageToCache loads global bindings from storage to the memory cache.
+func (h *globalBindingHandle) LoadBindingsFromStorageToCache(digest string) {
+	h.syncBindingSingleflight.Do(digest, func() (any, error) {
+		return h.loadBindingsFromStorageToCache(digest)
+	})
+}
+
+func (h *globalBindingHandle) loadBindingsFromStorageToCache(digest string) (any, error) {
+	newCache, err := h.getCache().Copy()
+	if err != nil {
+		return nil, err
+	}
+	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
+       update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
+       where sql_digest = %s`, digest)
+	return nil, h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, selectStmt)
+		if err != nil {
+			return err
+		}
+
+		defer func() {
+			h.setCache(newCache) // TODO: update it in place
+			h.setFuzzyDigestMap(buildFuzzyDigestMap(newCache.GetAllBindings()))
+		}()
+
+		for _, row := range rows {
+			// Skip the builtin record which is designed for binding synchronization.
+			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
+				continue
+			}
+			sqlDigest, binding, err := newBinding(sctx, row)
+
+			if err != nil {
+				logutil.BgLogger().Warn("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+				continue
+			}
+
+			oldBinding := newCache.GetBinding(sqlDigest)
+			newBinding := removeDeletedBindings(merge(oldBinding, []Binding{binding}))
+			if len(newBinding) > 0 {
+				err = newCache.SetBinding(sqlDigest, newBinding)
+				if err != nil {
+					// When the memory capacity of bing_cache is not enough,
+					// there will be some memory-related errors in multiple places.
+					// Only needs to be handled once.
+					logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(err))
+				}
+			} else {
+				newCache.RemoveBinding(sqlDigest)
+			}
+			updateMetrics(metrics.ScopeGlobal, oldBinding, newCache.GetBinding(sqlDigest), true)
+		}
+		return nil
+	})
 }
