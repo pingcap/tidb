@@ -1052,7 +1052,11 @@ func (b *builtinGetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
-		return v.GetFloat64(), false, nil
+		d, err := v.ToFloat64(typeCtx(ctx))
+		if err != nil {
+			return 0, false, err
+		}
+		return d, false, nil
 	}
 	return 0, true, nil
 }

@@ -2981,9 +2981,14 @@ func TestIssue43527(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table test (a datetime, b bigint, c decimal(10, 2))")
-	tk.MustExec("insert into test values('2010-10-10 10:10:10', 100, 100)")
+	tk.MustExec("create table test (a datetime, b bigint, c decimal(10, 2), d float)")
+	tk.MustExec("insert into test values('2010-10-10 10:10:10', 100, 100.01, 100)")
+	// Decimal.
 	tk.MustQuery(
 		"SELECT @total := @total + c FROM (SELECT c FROM test) AS temp, (SELECT @total := 200) AS T1",
-	).Check(testkit.Rows("300.00"))
+	).Check(testkit.Rows("300.01"))
+	// Float.
+	tk.MustQuery(
+		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := 200) AS T1",
+	).Check(testkit.Rows("300"))
 }
