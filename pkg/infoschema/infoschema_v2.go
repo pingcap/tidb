@@ -263,9 +263,16 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		return nil, false
 	}
 
+	key = tableCacheKey{itm.tableID, itm.schemaVersion}
+	tbl, found = is.tableCache.Get(key)
+	if found && tbl != nil {
+		return tbl, true
+	}
+
 	// Maybe the table is evicted? need to reload.
 	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.schemaVersion)
 	if err == nil {
+		// TODO: update schema version in BTree and Cache?
 		is.tableCache.Set(key, ret)
 		return ret, true
 	}
@@ -302,11 +309,18 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return res, nil
 	}
 
+	key = tableCacheKey{itm.tableID, itm.schemaVersion}
+	res, found = is.tableCache.Get(key)
+	if found && res != nil {
+		return res, nil
+	}
+
 	// Maybe the table is evicted? need to reload.
 	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.schemaVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// TODO: update schema version in BTree and Cache?
 	is.tableCache.Set(key, ret)
 	return ret, nil
 }
