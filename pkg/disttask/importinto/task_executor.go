@@ -80,11 +80,7 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 		return nil, err
 	}
 
-	return importer.NewTableImporter(&importer.JobImportParam{
-		GroupCtx: ctx,
-		Progress: importer.NewProgress(),
-		Job:      &importer.Job{},
-	}, controller, strconv.FormatInt(taskID, 10))
+	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10))
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {

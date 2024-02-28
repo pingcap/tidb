@@ -3578,6 +3578,14 @@ func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, p
 			buf.WriteString(pi.Expr)
 			buf.WriteString(", %?) != %?")
 			paramList = append(paramList, pi.Num, index)
+			if index != 0 {
+				// TODO: if hash result can't be NULL, we can remove the check part.
+				// For example hash(id), but id is defined not NULL.
+				buf.WriteString(" or mod(")
+				buf.WriteString(pi.Expr)
+				buf.WriteString(", %?) is null")
+				paramList = append(paramList, pi.Num, index)
+			}
 		}
 	case model.PartitionTypeRange:
 		// Table has only one partition and has the maximum value
@@ -3691,13 +3699,17 @@ func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index 
 		paramList = append(paramList, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 		buf.WriteString(pi.Expr)
-		buf.WriteString(" < %?")
+		buf.WriteString(" < %? or ")
+		buf.WriteString(pi.Expr)
+		buf.WriteString(" is null")
 		paramList = append(paramList, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 	} else {
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" < %? or ")
 		buf.WriteString(pi.Expr)
-		buf.WriteString(" >= %?")
+		buf.WriteString(" >= %? or ")
+		buf.WriteString(pi.Expr)
+		buf.WriteString(" is null")
 		paramList = append(paramList, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 	}
 	return buf.String(), paramList

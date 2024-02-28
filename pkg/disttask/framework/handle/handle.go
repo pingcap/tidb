@@ -77,7 +77,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	if err != nil {
 		return nil, err
 	}
-	metrics.UpdateMetricsForAddTask(task)
+	metrics.UpdateMetricsForAddTask(&task.TaskBase)
 
 	NotifyTaskChange()
 	return task, nil
