@@ -137,7 +137,7 @@ func (r *KeyRanges) Split(key []byte) (*KeyRanges, *KeyRanges) {
 	return r.Slice(0, n), r.Slice(n, r.Len())
 }
 
-// ToPBRanges converts ranges to []kv.KeyRange.
+// ToRanges converts ranges to []kv.KeyRange.
 func (r *KeyRanges) ToRanges() []kv.KeyRange {
 	ranges := make([]kv.KeyRange, 0, r.Len())
 	r.Do(func(ran *kv.KeyRange) {
