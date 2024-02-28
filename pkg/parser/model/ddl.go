@@ -572,7 +572,7 @@ type Job struct {
 	// Only happens when tidb_ddl_version = 2.
 	LocalMode bool `json:"local_mode"`
 
-	// SQLMode for parse ddl query
+	// SQLMode for execute ddl query
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 }
 
