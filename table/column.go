@@ -494,6 +494,22 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue())
 }
 
+// CheckNoDefaultValueForInsert checks if the column has no default value before insert data.
+// CheckNoDefaultValueForInsert extracts the check logic from getColDefaultValueFromNil,
+// since getColDefaultValueFromNil function is public path and both read/write and other places use it.
+// But CheckNoDefaultValueForInsert logic should only check before insert.
+func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
+	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
+		if !sc.BadNullAsWarning {
+			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
+		}
+		if !mysql.HasNotNullFlag(col.GetFlag()) {
+			sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
+		}
+	}
+	return nil
+}
+
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	defaultValue := col.GetDefaultValue()
@@ -579,23 +595,25 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	return value, nil
 }
 
+<<<<<<< HEAD
 func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+=======
+func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, args *getColOriginDefaultValue) (types.Datum, error) {
+	if !mysql.HasNotNullFlag(col.GetFlag()) {
+>>>>>>> 7b2d727c0e9 (table: fix issue of get default value from column when column doesn't have default value (#51309) (#51386))
 		return types.Datum{}, nil
 	}
 	if col.GetType() == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		if mysql.HasNotNullFlag(col.GetFlag()) {
-			defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
-			if err != nil {
-				return types.Datum{}, err
-			}
-			return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
+		defEnum, err := types.ParseEnumValue(col.FieldType.GetElems(), 1)
+		if err != nil {
+			return types.Datum{}, err
 		}
-		return types.Datum{}, nil
+		return types.NewCollateMysqlEnumDatum(defEnum, col.GetCollate()), nil
 	}
-	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+	if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 		// Auto increment column doesn't have default value and we should not return error.
 		return GetZeroValue(col), nil
 	}
@@ -603,15 +621,16 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	sc := vars.StmtCtx
 	if !vars.StrictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
-		if mysql.HasNotNullFlag(col.GetFlag()) {
-			return GetZeroValue(col), nil
-		}
-		if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
-			return types.Datum{}, nil
-		}
+		return GetZeroValue(col), nil
 	}
 	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
+		var err error
+		if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
+			err = ErrNoDefaultValue.FastGenByArgs(col.Name)
+		} else {
+			err = ErrColumnCantNull.FastGenByArgs(col.Name)
+		}
+		sc.AppendWarning(err)
 		return GetZeroValue(col), nil
 	}
 	return types.Datum{}, ErrNoDefaultValue.FastGenByArgs(col.Name)
