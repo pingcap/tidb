@@ -1617,7 +1617,10 @@ func TestAlterColumn(t *testing.T) {
 	// tk.MustExec( "alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
-	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
+	tk.MustGetErrCode("insert into test_alter_column set a = DEFAULT, b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
+	tk.MustGetErrCode("insert into test_alter_column values (DEFAULT, 'd', 'dd', DEFAULT)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into test_alter_column set a = NULL, b = 'd', c = 'dd'")
+	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
