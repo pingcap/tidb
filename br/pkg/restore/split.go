@@ -124,10 +124,10 @@ func (rs *RegionSplitter) ExecuteSplit(
 		onSplit:     onSplit,
 		storeCount:  storeCount,
 	}
-	return rs.executeSplitByRangesV2(ctx, sctx, scanStartKey, sortedKeys, granularity)
+	return rs.executeSplitByRanges(ctx, sctx, scanStartKey, sortedKeys, granularity)
 }
 
-func (rs *RegionSplitter) executeSplitByRangesV2(
+func (rs *RegionSplitter) executeSplitByRanges(
 	ctx context.Context,
 	splitContext SplitContext,
 	scanStartKey []byte,
@@ -160,9 +160,6 @@ func (rs *RegionSplitter) executeSplitByRangesV2(
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
 	// Then send split requests to each TiKV.
-	if granularity == string(CoarseGrained) {
-		splitContext.needScatter = false
-	}
 	if err := rs.executeSplitByKeys(ctx, splitContext, scanStartKey, sortedKeys); err != nil {
 		return errors.Trace(err)
 	}
@@ -557,6 +554,9 @@ func mapRegionInfoSlice(regionInfos []*split.RegionInfo) map[uint64]*split.Regio
 	}
 	return regionInfoMap
 }
+
+// TestGetSplitSortedKeysFromSortedRegionsTest is used only in unit test
+var TestGetSplitSortedKeysFromSortedRegionsTest = getSplitSortedKeysFromSortedRegions
 
 // getSplitSortedKeysFromSortedRegions checks if the sorted regions should be split by the end key of
 // the sorted ranges, and groups the split keys by region id.
