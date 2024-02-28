@@ -1400,7 +1400,6 @@ type UsedStatsInfoForTable struct {
 	ModifyCount           int64
 	ColumnStatsLoadStatus map[int64]string
 	IndexStatsLoadStatus  map[int64]string
-	StatsTbl              any
 	ColAndIdxStatus       any
 }
 

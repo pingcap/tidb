@@ -160,7 +160,6 @@ func ColumnStatsIsInvalid(colStats *Column, sctx context.PlanContext, histColl *
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
-			histColl.PhysicalID > 0 &&
 			!histColl.CanNotTriggerLoad {
 			HistogramNeededItems.insert(model.TableItemID{TableID: histColl.PhysicalID, ID: cid, IsIndex: false})
 		}
@@ -232,17 +231,6 @@ func (s StatsLoadedStatus) StatusToString() string {
 		return "unInitialized"
 	}
 	switch s.evictedStatus {
-	case AllLoaded:
-		return "allLoaded"
-	case AllEvicted:
-		return "allEvicted"
-	}
-	return "unknown"
-}
-
-// EvictedStatusToString converts the int type evictedStatus to string value.
-func EvictedStatusToString(evictedStatus int) string {
-	switch evictedStatus {
 	case AllLoaded:
 		return "allLoaded"
 	case AllEvicted:

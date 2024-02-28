@@ -143,7 +143,7 @@ func IndexStatsIsInvalid(idxStats *Index, sctx context.PlanContext, coll *HistCo
 	}
 	// If the given index statistics is nil or we found that the index's statistics hasn't been fully loaded, we add this index to NeededItems.
 	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
-	if (idxStats == nil || !idxStats.IsFullLoad()) && coll.PhysicalID > 0 && !coll.CanNotTriggerLoad {
+	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad {
 		HistogramNeededItems.insert(model.TableItemID{TableID: coll.PhysicalID, ID: cid, IsIndex: true})
 		// TODO: we can return true here. But need to fix some tests first.
 	}
