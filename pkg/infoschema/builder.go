@@ -1206,7 +1206,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 // NewBuilder creates a new Builder with a Handle.
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
 	return &Builder{
-		enableV2:    variable.EnableInfoSchemaV2.Load(),
+		enableV2:    variable.InfoSchemaCacheSize.Load() > 0,
 		Requirement: r,
 		infoschemaV2: infoschemaV2{
 			infoSchema: &infoSchema{

@@ -2960,12 +2960,13 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableInfoSchemaV2, Value: BoolToOnOff(DefTiDBEnableInfoSchemaV2), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+	{Scope: ScopeGlobal, Name: TiDBInfoSchemaCacheSize, Value: strconv.Itoa(DefTiDBInfoSchemaCacheSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
 		// It does not take effect immediately, but within a ddl lease, infoschema reload would cause the v2 to be used.
-		EnableInfoSchemaV2.Store(TiDBOptOn(s))
+		InfoSchemaCacheSize.Store(TidbOptInt64(val, DefTiDBInfoSchemaCacheSize))
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return BoolToOnOff(EnableInfoSchemaV2.Load()), nil
+		val := InfoSchemaCacheSize.Load()
+		return strconv.FormatInt(val, 10), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
@@ -3031,7 +3032,7 @@ var defaultSysVars = []*SysVar{
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return ServiceScope.Load(), nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBSchemaVersionCacheLimit, Value: strconv.Itoa(DefTiDBSchemaVersionCacheLimit), Type: TypeInt, MinValue: 2, MaxValue: math.MaxUint8, AllowEmpty: true,
+	{Scope: ScopeGlobal, Name: TiDBSchemaVersionCacheLimit, Value: strconv.Itoa(DefTiDBSchemaVersionCacheLimit), Type: TypeUnsigned, MinValue: 2, MaxValue: math.MaxUint64, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
 			return nil
