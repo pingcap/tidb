@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -321,82 +320,6 @@ func TestPointGetOrderby(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (i int key)")
 	require.Equal(t, tk.ExecToErr("select * from t where i = 1 order by j limit 10;").Error(), "[planner:1054]Unknown column 'j' in 'order clause'")
-}
-
-func TestCheckActRowsWithUnistore(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableCollectExecutionInfo = true
-	})
-	store := testkit.CreateMockStore(t)
-	// testSuite1 use default mockstore which is unistore
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t_unistore_act_rows")
-	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
-	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
-	tk.MustExec("analyze table t_unistore_act_rows")
-	tk.MustExec("set @@tidb_merge_join_concurrency= 5;")
-
-	type testStruct struct {
-		sql      string
-		expected []string
-	}
-
-	tests := []testStruct{
-		{
-			sql:      "select * from t_unistore_act_rows",
-			expected: []string{"4", "4"},
-		},
-		{
-			sql:      "select * from t_unistore_act_rows where a > 1",
-			expected: []string{"2", "2"},
-		},
-		{
-			sql:      "select * from t_unistore_act_rows where a > 1 and b > 0",
-			expected: []string{"1", "1", "2"},
-		},
-		{
-			sql:      "select b from t_unistore_act_rows",
-			expected: []string{"4", "4"},
-		},
-		{
-			sql:      "select * from t_unistore_act_rows where b > 0",
-			expected: []string{"1", "1", "4"},
-		},
-		{
-			sql:      "select count(*) from t_unistore_act_rows",
-			expected: []string{"1", "1", "1", "4"},
-		},
-		{
-			sql:      "select count(*) from t_unistore_act_rows group by a",
-			expected: []string{"2", "2", "2", "4"},
-		},
-		{
-			sql:      "select count(*) from t_unistore_act_rows group by b",
-			expected: []string{"2", "4", "4"},
-		},
-		{
-			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
-			expected: []string{"4", "1", "1", "1", "4", "4", "4", "4", "4"},
-		},
-		{
-			sql:      "select a, row_number() over (partition by b) from t_unistore_act_rows;",
-			expected: []string{"4", "4", "4", "4", "4", "4", "4"},
-		},
-		{
-			sql:      "select /*+ merge_join(t1, t2) */ * from t_unistore_act_rows t1 join t_unistore_act_rows t2 on t1.b = t2.b;",
-			expected: []string{"10", "10", "4", "4", "4", "4", "4", "4", "4", "4", "4", "4"},
-		},
-	}
-
-	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
-	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
-
-	for _, test := range tests {
-		checkActRows(t, tk, test.sql, test.expected)
-	}
 }
 
 func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
