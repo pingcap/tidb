@@ -528,6 +528,10 @@ func (rc *Client) Close() {
 		rc.rawKVClient.Close()
 	}
 
+	if err := rc.fileImporter.Close(); err != nil {
+		log.Warn("failed to close file improter")
+	}
+
 	log.Info("Restore client closed")
 }
 

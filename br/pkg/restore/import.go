@@ -113,6 +113,8 @@ type ImporterClient interface {
 		storeID uint64,
 	) (import_sstpb.ImportSSTClient, error)
 
+	CloseGrpcClient() error
+
 	SupportMultiIngest(ctx context.Context, stores []uint64) (bool, error)
 }
 
@@ -120,9 +122,9 @@ type importClient struct {
 	metaClient split.SplitClient
 	mu         sync.Mutex
 	// used for any request except the ingest reqeust
-	clients map[uint64]import_sstpb.ImportSSTClient
+	conns map[uint64]*grpc.ClientConn
 	// used for ingest request
-	ingestClients map[uint64]import_sstpb.ImportSSTClient
+	ingestConns map[uint64]*grpc.ClientConn
 
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
@@ -132,8 +134,8 @@ type importClient struct {
 func NewImportClient(metaClient split.SplitClient, tlsConf *tls.Config, keepaliveConf keepalive.ClientParameters) ImporterClient {
 	return &importClient{
 		metaClient:    metaClient,
-		clients:       make(map[uint64]import_sstpb.ImportSSTClient),
-		ingestClients: make(map[uint64]import_sstpb.ImportSSTClient),
+		conns:         make(map[uint64]*grpc.ClientConn),
+		ingestConns:   make(map[uint64]*grpc.ClientConn),
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 	}
@@ -214,7 +216,7 @@ func (ic *importClient) MultiIngest(
 func (ic *importClient) createGrpcConn(
 	ctx context.Context,
 	storeID uint64,
-) (import_sstpb.ImportSSTClient, error) {
+) (*grpc.ClientConn, error) {
 	store, err := ic.metaClient.GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -238,7 +240,7 @@ func (ic *importClient) createGrpcConn(
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(ic.keepaliveConf),
 	)
-	return import_sstpb.NewImportSSTClient(conn), errors.Trace(err)
+	return conn, errors.Trace(err)
 }
 
 func (ic *importClient) GetImportClient(
@@ -247,13 +249,13 @@ func (ic *importClient) GetImportClient(
 ) (import_sstpb.ImportSSTClient, error) {
 	ic.mu.Lock()
 	defer ic.mu.Unlock()
-	client, ok := ic.clients[storeID]
+	conn, ok := ic.conns[storeID]
 	if ok {
-		return client, nil
+		return import_sstpb.NewImportSSTClient(conn), nil
 	}
-	client, err := ic.createGrpcConn(ctx, storeID)
-	ic.clients[storeID] = client
-	return client, errors.Trace(err)
+	conn, err := ic.createGrpcConn(ctx, storeID)
+	ic.conns[storeID] = conn
+	return import_sstpb.NewImportSSTClient(conn), errors.Trace(err)
 }
 
 func (ic *importClient) GetIngestClient(
@@ -262,13 +264,29 @@ func (ic *importClient) GetIngestClient(
 ) (import_sstpb.ImportSSTClient, error) {
 	ic.mu.Lock()
 	defer ic.mu.Unlock()
-	client, ok := ic.ingestClients[storeID]
+	conn, ok := ic.ingestConns[storeID]
 	if ok {
-		return client, nil
+		return import_sstpb.NewImportSSTClient(conn), nil
 	}
-	client, err := ic.createGrpcConn(ctx, storeID)
-	ic.ingestClients[storeID] = client
-	return client, errors.Trace(err)
+	conn, err := ic.createGrpcConn(ctx, storeID)
+	ic.ingestConns[storeID] = conn
+	return import_sstpb.NewImportSSTClient(conn), errors.Trace(err)
+}
+
+func (ic *importClient) CloseGrpcClient() error {
+	for id, conn := range ic.conns {
+		if err := conn.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		delete(ic.conns, id)
+	}
+	for id, conn := range ic.ingestConns {
+		if err := conn.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		delete(ic.ingestConns, id)
+	}
+	return nil
 }
 
 func (ic *importClient) SupportMultiIngest(ctx context.Context, stores []uint64) (bool, error) {
@@ -336,6 +354,13 @@ func NewFileImporter(
 		concurrencyPerStore: concurrencyPerStore,
 		useTokenBucket:      useTokenBucket,
 	}
+}
+
+func (importer *FileImporter) Close() error {
+	if importer != nil && importer.importClient != nil {
+		return importer.importClient.CloseGrpcClient()
+	}
+	return nil
 }
 
 // CheckMultiIngestSupport checks whether all stores support multi-ingest
