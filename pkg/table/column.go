@@ -538,7 +538,7 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx expression.BuildContext, c
 }
 
 // CheckNoDefaultValueForInsert checks if the column has no default value before insert data.
-// CheckNoDefaultValueForInsert extrats the check logic from getColDefaultValueFromNil,
+// CheckNoDefaultValueForInsert extracts the check logic from getColDefaultValueFromNil,
 // since getColDefaultValueFromNil function is public path and both read/write and other places use it.
 // But CheckNoDefaultValueForInsert logic should only check before insert.
 func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
