@@ -361,7 +361,82 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	}
 }
 
-func TestSplitRegionRanges(t *testing.T) {
+func TestSplitKeyRangesByLocations(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	loc_ranges, err := cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "c")), UnspecifiedLimit)
+	require.NoError(t, err)
+	require.Len(t, loc_ranges, 1)
+	rangeEqual(t, loc_ranges[0].Ranges.ToRanges(), "a", "c")
+
+	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "c")), 0)
+	require.NoError(t, err)
+	require.Len(t, loc_ranges, 0)
+
+	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("h", "y")), UnspecifiedLimit)
+	require.NoError(t, err)
+	require.Len(t, loc_ranges, 3)
+	rangeEqual(t, loc_ranges[0].Ranges.ToRanges(), "h", "n")
+	rangeEqual(t, loc_ranges[1].Ranges.ToRanges(), "n", "t")
+	rangeEqual(t, loc_ranges[2].Ranges.ToRanges(), "t", "y")
+
+	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("s", "s")), UnspecifiedLimit)
+	require.NoError(t, err)
+	require.Len(t, loc_ranges, 1)
+	rangeEqual(t, loc_ranges[0].Ranges.ToRanges(), "s", "s")
+
+	// min --> max
+	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "z")), UnspecifiedLimit)
+	require.NoError(t, err)
+	require.Len(t, loc_ranges, 4)
+	rangeEqual(t, loc_ranges[0].Ranges.ToRanges(), "a", "g")
+	rangeEqual(t, loc_ranges[1].Ranges.ToRanges(), "g", "n")
+	rangeEqual(t, loc_ranges[2].Ranges.ToRanges(), "n", "t")
+	rangeEqual(t, loc_ranges[3].Ranges.ToRanges(), "t", "z")
+
+	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "z")), 3)
+	require.NoError(t, err)
+	require.Len(t, loc_ranges, 3)
+	rangeEqual(t, loc_ranges[0].Ranges.ToRanges(), "a", "g")
+	rangeEqual(t, loc_ranges[1].Ranges.ToRanges(), "g", "n")
+	rangeEqual(t, loc_ranges[2].Ranges.ToRanges(), "n", "t")
+
+	// many range
+	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "s", "y", "z")), UnspecifiedLimit)
+	require.NoError(t, err)
+	require.Len(t, loc_ranges, 4)
+	rangeEqual(t, loc_ranges[0].Ranges.ToRanges(), "a", "b", "c", "d", "e", "f", "f", "g")
+	rangeEqual(t, loc_ranges[1].Ranges.ToRanges(), "g", "h", "i", "j", "k", "l", "m", "n")
+	rangeEqual(t, loc_ranges[2].Ranges.ToRanges(), "o", "p", "q", "r", "s", "t")
+	rangeEqual(t, loc_ranges[3].Ranges.ToRanges(), "u", "v", "w", "s", "y", "z")
+
+	loc_ranges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "b", "b", "h", "h", "m", "n", "t", "v", "w")), UnspecifiedLimit)
+	require.NoError(t, err)
+	require.Len(t, loc_ranges, 4)
+	rangeEqual(t, loc_ranges[0].Ranges.ToRanges(), "a", "b", "b", "g")
+	rangeEqual(t, loc_ranges[1].Ranges.ToRanges(), "g", "h", "h", "m", "n")
+	rangeEqual(t, loc_ranges[2].Ranges.ToRanges(), "n", "t")
+	rangeEqual(t, loc_ranges[3].Ranges.ToRanges(), "v", "w")
+}
+
+func TestSplitKeyRanges(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -385,6 +460,10 @@ func TestSplitRegionRanges(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "a", "c")
+
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("a", "c"), 0)
+	require.NoError(t, err)
+	require.Len(t, ranges, 0)
 
 	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("h", "y"), UnspecifiedLimit)
 	require.NoError(t, err)
