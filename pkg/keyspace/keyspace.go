@@ -94,7 +94,6 @@ func GetKeyspaceTxnPrefix(keyspaceID uint32) []byte {
 
 // GetKeyspaceTxnRange return the keyspace range prefix
 func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
-
 	// Get keyspace range
 	txnLeftBound := GetKeyspaceTxnPrefix(keyspaceID)
 

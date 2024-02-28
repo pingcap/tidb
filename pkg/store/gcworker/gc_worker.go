@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
@@ -77,16 +78,11 @@ type GCWorker struct {
 }
 
 func getTsFromPD(store kv.Storage, tikvStore tikv.Storage) (uint64, error) {
-	enableSafePointV2 := config.GetGlobalConfig().EnableSafePointV2
-	var ts uint64
-	var err error
-	if enableSafePointV2 {
-		ts, err = tikvStore.CurrentTimestamp(kv.GlobalTxnScope)
-	} else {
-		// For safe point v1.
-		ts, err = store.CurrentMinTimestamp()
+	if config.GetGlobalConfig().EnableSafePointV2 {
+		return tikvStore.CurrentTimestamp(kv.GlobalTxnScope)
 	}
-	return ts, err
+	// For safe point v1.
+	return store.CurrentMinTimestamp()
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -186,6 +182,9 @@ const (
 	tidbGCLeaderLease = "tidb_gc_leader_lease"
 	tidbGCLeaderUUID  = "tidb_gc_leader_uuid"
 	tidbGCSafePoint   = "tidb_gc_safe_point"
+
+	// Get all keyspace page size.
+	getAllKeyspaceLimit = 50
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -1209,25 +1208,10 @@ func (w *GCWorker) resolveLocks(
 		txnLeftBound, txnRightBound = keyspace.GetKeyspaceTxnRange(uint32(keyspaceID))
 		err = w.legacyResolveKeyspaceLocks(ctx, txnLeftBound, txnRightBound, runner, safePoint)
 		errMsg = "[gc worker] keyspace resolve locks err."
-	} else if w.isNullKeyspaceInGCSafePointV2() {
-		// only do resolve locks in api v1 range.
-		// 1. resolve locks in ["","x")
-		txnLeftBound = []byte("")
-		txnRightBound = []byte("x")
-		err = w.legacyResolveKeyspaceLocks(ctx, txnLeftBound, txnRightBound, runner, safePoint)
-
-		// 2. resolve locks in ["y","").
-		if err == nil {
-			txnLeftBound = []byte("y")
-			txnRightBound = []byte("")
-			err = w.legacyResolveKeyspaceLocks(ctx, txnLeftBound, txnRightBound, runner, safePoint)
-			errMsg = "[gc worker] null keyspace resolve locks err."
-		}
 	} else {
-		logutil.Logger(ctx).Info("[gc worker] start resolve locks in ['','') ranges when use safe point v1")
-		// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
-		err = runner.RunOnRange(ctx, []byte(""), []byte(""))
-		errMsg = "[gc worker] resolve locks failed"
+		logutil.Logger(ctx).Info("[gc worker] start all keyspaces resolve locks when use safe point v1")
+		err = w.resolveKeyspacesLocks(ctx, runner, safePoint)
+		errMsg = "[gc worker] resolve locks all keyspace failed"
 	}
 
 	if err != nil {
@@ -1246,8 +1230,97 @@ func (w *GCWorker) resolveLocks(
 	return nil
 }
 
+func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMeta, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var allkeyspaces []*keyspacepb.KeyspaceMeta
+	startID := uint32(0)
+	for {
+		keyspacesList, err := w.pdClient.GetAllKeyspaces(ctx, startID, getAllKeyspaceLimit)
+		if err != nil {
+			logutil.Logger(ctx).Error("get all keyspaces error", zap.Error(err))
+			return nil, err
+		}
+
+		if len(keyspacesList) == 0 {
+			break
+		}
+
+		allkeyspaces = append(allkeyspaces, keyspacesList...)
+		latestKeyspace := keyspacesList[len(keyspacesList)-1]
+		startID = latestKeyspace.Id + 1
+		logutil.Logger(ctx).Info("get all keyspace startID", zap.Uint32("startID", startID))
+	}
+	return allkeyspaces, nil
+}
+
+func isKeyspaceEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+	if val, ok := keyspaceMeta.Config["safe_point_version"]; ok {
+		if val == "v2" {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// Do resolve locks by keyspace.
+func (w *GCWorker) resolveKeyspacesLocks(ctx context.Context, runner *rangetask.Runner, safePoint uint64) error {
+	keyspaces, err := w.getAllKeyspace(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Warn("[gc worker] get all keyspace err.", zap.Error(errors.Trace(err)))
+		return err
+	}
+	logutil.Logger(ctx).Info("[gc worker] start keyspaces resolve locks.")
+
+	// Start api v1 resolve locks, the range is [ unbounded, keyspace 0 left bound )
+	txnLeftBound := []byte("")
+	txnRightBound := keyspace.GetKeyspaceTxnPrefix(0)
+	err = w.legacyResolveKeyspaceLocks(ctx, txnLeftBound, txnRightBound, runner, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Warn("[gc worker] api v1 legacyResolveKeyspaceLocks err.", zap.Error(errors.Trace(err)))
+		return err
+	}
+
+	// maxRightBound is the max right bound of all keyspaces,
+	// is used to find the range right of the last keyspace's range.
+	var maxRightBound []byte
+	// Start keyspaces resolve locks
+	for i := range keyspaces {
+		keyspaceMeta := keyspaces[i]
+		// Skip the keyspace which is not enabled or not enable safe point v2.
+		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || isKeyspaceEnableSafePointV2(keyspaceMeta) {
+			logutil.BgLogger().Debug("[gc worker] skip keyspace resolve locks", zap.Bool("is-not-enabled", keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED))
+			continue
+		}
+
+		logutil.Logger(ctx).Info("[gc worker] start keyspace resolve locks", zap.Uint32("KeyspaceID", keyspaceMeta.Id))
+		txnLeftBound, txnRightBound = keyspace.GetKeyspaceTxnRange(keyspaceMeta.Id)
+		// Update maxRightBound if needed.
+		if bytes.Compare(txnRightBound, maxRightBound) > 0 {
+			maxRightBound = txnRightBound
+		}
+		err := w.legacyResolveKeyspaceLocks(ctx, txnLeftBound, txnRightBound, runner, safePoint)
+		if err != nil {
+			logutil.Logger(ctx).Warn("[gc worker] legacy resolve keyspace locks err.", zap.Uint32("ErrKeyspaceID", keyspaceMeta.Id), zap.Error(errors.Trace(err)))
+			continue
+		}
+	}
+
+	// Do range:[ last keyspace right bound, unbounded ) resolve locks.
+	endKey := []byte("")
+	err = w.legacyResolveKeyspaceLocks(ctx, maxRightBound, endKey, runner, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Warn("[gc worker] legacy resolve keyspace locks err.", zap.String("txnLeftBound", hex.EncodeToString(maxRightBound)), zap.String("txnRightBound", hex.EncodeToString(endKey)), zap.Error(errors.Trace(err)))
+		return err
+	}
+
+	return nil
+}
+
 func (w *GCWorker) legacyResolveKeyspaceLocks(ctx context.Context, txnLeftBound []byte, txnRightBound []byte, runner *rangetask.Runner, safePoint uint64) error {
-	logutil.Logger(ctx).Debug("[gc worker] resolve locks by keyspace range",
+	logutil.Logger(ctx).Info("[gc worker] resolve locks by keyspace range",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
 		zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),

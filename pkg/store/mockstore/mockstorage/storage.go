@@ -36,7 +36,7 @@ type mockStorage struct {
 
 // CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
 func (s *mockStorage) CurrentMinTimestamp() (uint64, error) {
-	return s.KVStore.CurrentTimestamp(kv.GlobalTxnScope) // TODO( ystaticy ) add CurrentMinTimestamp in client-go
+	return s.KVStore.CurrentMinTimestamp()
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
