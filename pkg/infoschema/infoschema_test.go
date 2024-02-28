@@ -36,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestBasic(t *testing.T) {
@@ -847,4 +849,121 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
 	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
+}
+
+// ywq todo
+func TestApplyDiff(t *testing.T) {
+	re := createAutoIDRequirement(t)
+	defer func() {
+		err := re.Store().Close()
+		require.NoError(t, err)
+	}()
+
+	dbName := model.NewCIStr("test")
+	tbName := model.NewCIStr("test")
+	colName := model.NewCIStr("a")
+	idxName := model.NewCIStr("idx")
+
+	colID, err := genGlobalID(re.Store())
+	require.NoError(t, err)
+	colInfo := &model.ColumnInfo{
+		ID:        colID,
+		Name:      colName,
+		Offset:    0,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
+	}
+
+	idxInfo := &model.IndexInfo{
+		Name:  idxName,
+		Table: tbName,
+		Columns: []*model.IndexColumn{
+			{
+				Name:   colName,
+				Offset: 0,
+				Length: 10,
+			},
+		},
+		Unique:  true,
+		Primary: true,
+		State:   model.StatePublic,
+	}
+
+	tbID, err := genGlobalID(re.Store())
+	require.NoError(t, err)
+	tblInfo := &model.TableInfo{
+		ID:      tbID,
+		Name:    tbName,
+		Columns: []*model.ColumnInfo{colInfo},
+		Indices: []*model.IndexInfo{idxInfo},
+		State:   model.StatePublic,
+	}
+
+	dbID, err := genGlobalID(re.Store())
+	require.NoError(t, err)
+	dbInfo := &model.DBInfo{
+		ID:     dbID,
+		Name:   dbName,
+		Tables: []*model.TableInfo{tblInfo},
+		State:  model.StatePublic,
+	}
+	tblInfo.DBID = dbInfo.ID
+
+	dbInfos := []*model.DBInfo{dbInfo}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateTableOrView(dbID, dbName.L, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	require.NoError(t, err)
+
+	// ywq todo start tests and check...
+	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		tblInfo.Name = model.NewCIStr("test1")
+		err := meta.NewMeta(txn).UpdateTable(dbID, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		tblInfo, err := meta.NewMeta(txn).GetTable(dbID, tblInfo.ID)
+		require.NoError(t, err)
+		logutil.BgLogger().Info("ywq test", zap.Any("tblInfo", tblInfo))
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	txn, err := re.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn),
+		&model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID, OldTableID: tbID})
+	require.NoError(t, err)
+
+	tbl, _ := builder.Build().TableByID(tbID)
+	require.Equal(t, tbl.Meta().Name.O, "test1")
+
+	// 3,2
+
+	// TODO check all actions....
+}
+
+func TestRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("rename table t to t1")
 }
