@@ -155,7 +155,12 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 		return nil, derr.ToTiDBErr(err)
 	}
 
-	res := make([]*LocationKeyRanges, 0, min(len(locs), limit))
+	cap := len(locs)
+	if limit != UnspecifiedLimit {
+		cap = min(cap, limit)
+	}
+	res := make([]*LocationKeyRanges, 0, cap)
+
 	// All ranges belong to the same region.
 	if len(locs) == 1 {
 		res = append(res, &LocationKeyRanges{Location: locs[0], Ranges: ranges})
