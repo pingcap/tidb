@@ -131,34 +131,30 @@ func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()
 }
 
-// refreshTask fetch task state from tidb_global_task table.
-func (s *BaseScheduler) refreshTask() error {
+// refreshTaskIfNeeded fetch task state from tidb_global_task table.
+func (s *BaseScheduler) refreshTaskIfNeeded() error {
 	task := s.GetTask()
-	// we only refresh the base fields of task to reduce memory usage, other fields
-	// must be maintained in memory by the scheduler itself.
-	// in case of network partition, we check whether task info is stale by checking
-	// state/step of the task, if changed we refresh the whole task object.
+	// we only query the base fields of task to reduce memory usage, other fields
+	// are refreshed when needed.
 	newTaskBase, err := s.taskMgr.GetTaskBaseByID(s.ctx, task.ID)
 	if err != nil {
 		return err
 	}
-	var newTask proto.Task
+	// state might be changed by user to pausing/resuming/cancelling, or
+	// in case of network partition, state/step/meta might be changed by other scheduler,
+	// in both cases we refresh the whole task object.
 	if newTaskBase.State != task.State || newTaskBase.Step != task.Step {
 		s.logger.Info("task state/step changed by user or other scheduler",
 			zap.Stringer("old-state", task.State),
 			zap.Stringer("new-state", newTaskBase.State),
 			zap.String("old-step", proto.Step2Str(task.Type, task.Step)),
 			zap.String("new-step", proto.Step2Str(task.Type, newTaskBase.Step)))
-		gotNewTask, err := s.taskMgr.GetTaskByID(s.ctx, task.ID)
+		newTask, err := s.taskMgr.GetTaskByID(s.ctx, task.ID)
 		if err != nil {
 			return err
 		}
-		newTask = *gotNewTask
-	} else {
-		newTask = *task
-		newTask.TaskBase = *newTaskBase
+		s.task.Store(newTask)
 	}
-	s.task.Store(&newTask)
 	return nil
 }
 
@@ -172,7 +168,7 @@ func (s *BaseScheduler) scheduleTask() {
 			s.logger.Info("schedule task exits")
 			return
 		case <-ticker.C:
-			err := s.refreshTask()
+			err := s.refreshTaskIfNeeded()
 			if err != nil {
 				if errors.Cause(err) == storage.ErrTaskNotFound {
 					// this can happen when task is reverted/succeed, but before
