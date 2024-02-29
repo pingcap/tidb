@@ -19,6 +19,7 @@ import (
 	"hash/fnv"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -26,17 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
-
-type probeProcessInfo struct {
-	chunk              *chunk.Chunk
-	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
-	currentRowsPos     []unsafe.Pointer // the current address of each matched rows
-	serializedKeys     [][]byte         // used for save serialized keys
-	filterVector       []bool           // if there is filter before probe, filterVector saves the filter result
-	nullKeyVector      []bool           // nullKeyVector[i] = true if any of the key is null
-	currentProbeRow    int
-	init               bool
-}
 
 type keyMode int
 
@@ -63,72 +53,12 @@ func (pCtx *probeCtx) hasOtherCondition() bool {
 	return pCtx.otherCondition != nil
 }
 
-func (ppi *probeProcessInfo) initForCurrentChunk(ctx *probeCtx) (err error) {
-	if ppi.init {
-		return
-	}
-	ppi.init = true
-	rows := ppi.chunk.NumRows()
-	ppi.currentProbeRow = 0
-	if cap(ppi.matchedRowsHeaders) >= rows {
-		ppi.matchedRowsHeaders = ppi.matchedRowsHeaders[:rows]
-	} else {
-		ppi.matchedRowsHeaders = make([]unsafe.Pointer, rows)
-	}
-	if ctx.filter != nil {
-		if cap(ppi.filterVector) >= rows {
-			ppi.filterVector = ppi.filterVector[:rows]
-		} else {
-			ppi.filterVector = make([]bool, rows)
-		}
-	}
-	if ctx.keyIsNullable {
-		if cap(ppi.nullKeyVector) >= rows {
-			ppi.nullKeyVector = ppi.nullKeyVector[:rows]
-		} else {
-			ppi.nullKeyVector = make([]bool, rows)
-		}
-		for i := 0; i < rows; i++ {
-			ppi.nullKeyVector = append(ppi.nullKeyVector, false)
-		}
-	}
-	if cap(ppi.serializedKeys) >= rows {
-		ppi.serializedKeys = ppi.serializedKeys[:rows]
-	} else {
-		ppi.serializedKeys = make([][]byte, rows)
-	}
-	if ctx.filter != nil {
-		ppi.filterVector, err = expression.VectorizedFilter(ctx.sessCtx, ctx.filter, chunk.NewIterator4Chunk(ppi.chunk), ppi.filterVector)
-		if err != nil {
-			return err
-		}
-	}
-
-	// generate serialized key
-	for index, keyIndex := range ctx.keyIndex {
-		err = codec.SerializeKeys(ctx.typeCtx, ppi.chunk, ctx.columnTypes[keyIndex], keyIndex, ppi.filterVector, ppi.nullKeyVector, ctx.hashTableMeta.ignoreIntegerKeySignFlag[index], ppi.serializedKeys)
-		if err != nil {
-			return err
-		}
-	}
-	// generate hash value
-	hash := fnv.New64()
-	for i := 0; i < rows; i++ {
-		if (ppi.filterVector != nil && !ppi.filterVector[i]) || (ppi.nullKeyVector != nil && ppi.nullKeyVector[i]) {
-			continue
-		}
-		hash.Reset()
-		// As the golang doc described, `Hash.Write` never returns an error.
-		// See https://golang.org/pkg/hash/#Hash
-		_, _ = hash.Write(ppi.serializedKeys[i])
-		ppi.matchedRowsHeaders[i] = ctx.joinHashTable.lookup(hash.Sum64())
-	}
-	return
-}
-
 type joinProbe interface {
-	probe(chk *chunk.Chunk, info *probeProcessInfo) (err error)
-	scanHT(chk *chunk.Chunk) (err error)
+	setChunkForProbe(chunk *chunk.Chunk) error
+	probe(joinResult *hashjoinWorkerResult) (ok bool, result *hashjoinWorkerResult)
+	isCurrentChunkProbeDone() bool
+	scanHT(joinResult *hashjoinWorkerResult) (result *hashjoinWorkerResult)
+	isScanHTDone() bool
 	needScanHT() bool
 }
 
@@ -150,9 +80,17 @@ type rowIndexInfo struct {
 }
 
 type baseJoinProbe struct {
-	ctx              *probeCtx
-	maxChunkSize     int
-	rightAsBuildSide bool
+	ctx                *probeCtx
+	currentChunk       *chunk.Chunk
+	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
+	currentRowsPos     []unsafe.Pointer // the current address of each matched rows
+	serializedKeys     [][]byte         // used for save serialized keys
+	filterVector       []bool           // if there is filter before probe, filterVector saves the filter result
+	nullKeyVector      []bool           // nullKeyVector[i] = true if any of the key is null
+	currentProbeRow    int
+	chunkRows          int
+	maxChunkSize       int
+	rightAsBuildSide   bool
 	// lUsed/rUsed show which columns are used by father for left child and right child.
 	// NOTE:
 	// 1. lUsed/rUsed should never be nil.
@@ -167,20 +105,85 @@ type baseJoinProbe struct {
 	selected      []bool
 }
 
+func (j *baseJoinProbe) isCurrentChunkProbeDone() bool {
+	return j.currentChunk == nil || j.currentProbeRow >= j.chunkRows
+}
+
+func (j *baseJoinProbe) setChunkForProbe(chk *chunk.Chunk) (err error) {
+	if j.currentChunk != nil {
+		if j.currentProbeRow < j.chunkRows {
+			return errors.New("Previous chunk is not probed yet")
+		}
+	}
+	j.currentChunk = chk
+	j.currentProbeRow = 0
+	rows := chk.NumRows()
+	j.chunkRows = rows
+	if cap(j.matchedRowsHeaders) >= rows {
+		j.matchedRowsHeaders = j.matchedRowsHeaders[:rows]
+	} else {
+		j.matchedRowsHeaders = make([]unsafe.Pointer, rows)
+	}
+	if j.ctx.filter != nil {
+		if cap(j.filterVector) >= rows {
+			j.filterVector = j.filterVector[:rows]
+		} else {
+			j.filterVector = make([]bool, rows)
+		}
+	}
+	if j.ctx.keyIsNullable {
+		if cap(j.nullKeyVector) >= rows {
+			j.nullKeyVector = j.nullKeyVector[:rows]
+		} else {
+			j.nullKeyVector = make([]bool, rows)
+		}
+		for i := 0; i < rows; i++ {
+			j.nullKeyVector = append(j.nullKeyVector, false)
+		}
+	}
+	if cap(j.serializedKeys) >= rows {
+		j.serializedKeys = j.serializedKeys[:rows]
+	} else {
+		j.serializedKeys = make([][]byte, rows)
+	}
+	if j.ctx.filter != nil {
+		j.filterVector, err = expression.VectorizedFilter(j.ctx.sessCtx, j.ctx.filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
+		if err != nil {
+			return err
+		}
+	}
+
+	// generate serialized key
+	for index, keyIndex := range j.ctx.keyIndex {
+		err = codec.SerializeKeys(j.ctx.typeCtx, j.currentChunk, j.ctx.columnTypes[keyIndex], keyIndex, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.ignoreIntegerKeySignFlag[index], j.serializedKeys)
+		if err != nil {
+			return err
+		}
+	}
+	// generate hash value
+	hash := fnv.New64()
+	for i := 0; i < rows; i++ {
+		if (j.filterVector != nil && !j.filterVector[i]) || (j.nullKeyVector != nil && j.nullKeyVector[i]) {
+			continue
+		}
+		hash.Reset()
+		// As the golang doc described, `Hash.Write` never returns an error.
+		// See https://golang.org/pkg/hash/#Hash
+		_, _ = hash.Write(j.serializedKeys[i])
+		j.matchedRowsHeaders[i] = j.ctx.joinHashTable.lookup(hash.Sum64())
+	}
+	return
+}
+
 func (j *baseJoinProbe) appendOffsetAndLength(offset int, length int) {
 	if length > 0 {
 		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: offset, length: length})
 	}
 }
 
-func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk, info *probeProcessInfo) (joinedChk *chunk.Chunk, remainCap int, err error) {
-	if !info.init {
-		err = info.initForCurrentChunk(j.ctx)
-		if err != nil {
-			return nil, 0, err
-		}
-	}
+func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chunk, remainCap int, err error) {
 	j.offsetAndLengthArray = j.offsetAndLengthArray[:0]
+	joinedChk = chk
 	if j.ctx.otherCondition != nil {
 		j.tmpChk.Reset()
 		j.rowIndexInfos = j.rowIndexInfos[:0]
@@ -189,11 +192,11 @@ func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk, info *probeProcessInfo
 	return joinedChk, chk.RequiredRows() - chk.NumRows(), nil
 }
 
-func (j *baseJoinProbe) appendBuildRowToChunk(chk *chunk.Chunk, rowInfo *rowInfo, info *probeProcessInfo) (currentRowData unsafe.Pointer) {
+func (j *baseJoinProbe) appendBuildRowToChunk(chk *chunk.Chunk, rowInfo *rowInfo) (currentRowData unsafe.Pointer) {
 	meta := j.ctx.hashTableMeta
 	if j.rightAsBuildSide {
 		if j.ctx.hasOtherCondition() {
-			return j.appendBuildRowToChunkInternal(chk, j.rUsedInOtherCondition, rowInfo, meta.columnCountNeededForOtherCondition, info.chunk.NumCols())
+			return j.appendBuildRowToChunkInternal(chk, j.rUsedInOtherCondition, rowInfo, meta.columnCountNeededForOtherCondition, j.currentChunk.NumCols())
 		} else {
 			return j.appendBuildRowToChunkInternal(chk, j.rUsed, rowInfo, -1, len(j.lUsed))
 		}
