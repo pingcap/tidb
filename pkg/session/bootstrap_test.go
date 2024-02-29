@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,7 +150,9 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
+		se.exprctx = newExpressionContextImpl(se)
 		se.pctx = newPlanContextImpl(se)
+		se.tblctx = tbctximpl.NewTableContextImpl(se, se.exprctx)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.txn.init()

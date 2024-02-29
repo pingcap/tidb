@@ -638,6 +638,12 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, &importer.JobImportResult{
+					Affected:   taskMeta.Result.LoadedRowCnt,
+					ColSizeMap: taskMeta.Result.ColSizeMap,
+				}); err != nil {
+					logger.Warn("flush table stats failed", zap.Error(err))
+				}
 				exec := se.(sqlexec.SQLExecutor)
 				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
 			})

@@ -50,7 +50,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := model.Job{}
-	require.Equal(t, 392, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 400, int(unsafe.Sizeof(job)), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {

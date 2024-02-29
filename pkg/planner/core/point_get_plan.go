@@ -153,7 +153,7 @@ func (*PointGetPlan) attach2Task(...task) task {
 }
 
 // ToPB converts physical plan to tipb executor.
-func (*PointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (*PointGetPlan) ToPB(_ PlanContext, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -409,7 +409,7 @@ func (*BatchPointGetPlan) attach2Task(...task) task {
 }
 
 // ToPB converts physical plan to tipb executor.
-func (*BatchPointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (*BatchPointGetPlan) ToPB(_ PlanContext, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -693,7 +693,7 @@ func newBatchPointGetPlan(
 				if err != nil {
 					return nil
 				}
-				d, err = con.Eval(ctx, chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
 				if err != nil {
 					return nil
 				}
@@ -839,7 +839,7 @@ func newBatchPointGetPlan(
 					if err != nil {
 						return nil
 					}
-					d, err := con.Eval(ctx, chunk.Row{})
+					d, err := con.Eval(ctx.GetExprCtx(), chunk.Row{})
 					if err != nil {
 						return nil
 					}
@@ -878,7 +878,7 @@ func newBatchPointGetPlan(
 			if err != nil {
 				return nil
 			}
-			d, err := con.Eval(ctx, chunk.Row{})
+			d, err := con.Eval(ctx.GetExprCtx(), chunk.Row{})
 			if err != nil {
 				return nil
 			}
@@ -1453,7 +1453,7 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx, chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1467,7 +1467,7 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx, chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1774,7 +1774,7 @@ func buildOrderedList(ctx PlanContext, plan Plan, list []*ast.Assignment,
 		if err != nil {
 			return nil, true
 		}
-		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
+		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, col.GetType())
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst

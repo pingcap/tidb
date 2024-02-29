@@ -186,10 +186,10 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode
 	joinNode := testCtx.joinNode
-	pushed, err := rewriteSimpleExpr(ctx, testCase.pushedDownConds, dataSourceNode.schema, testCtx.dsNames)
+	pushed, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.pushedDownConds, dataSourceNode.schema, testCtx.dsNames)
 	require.NoError(t, err)
 	dataSourceNode.pushedDownConds = pushed
-	others, err := rewriteSimpleExpr(ctx, testCase.otherConds, joinNode.schema, testCtx.joinColNames)
+	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.schema, testCtx.joinColNames)
 	require.NoError(t, err)
 	joinNode.OtherConditions = others
 	helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}

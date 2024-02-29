@@ -26,7 +26,7 @@ import (
 
 func TestBindCache(t *testing.T) {
 	variable.MemQuotaBindingCache.Store(250)
-	bindCache := newBindCache()
+	bindCache := newBindCache().(*bindingCache)
 
 	value := make([]Bindings, 3)
 	key := make([]bindingCacheKey, 3)
