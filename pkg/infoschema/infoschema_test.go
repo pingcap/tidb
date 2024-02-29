@@ -127,7 +127,7 @@ func TestBasic(t *testing.T) {
 	require.Len(t, schemaNames, 4)
 	require.True(t, testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test"}))
 
-	schemas := is.AllSchemas()
+	schemas := is.AllSchemaNames()
 	require.Len(t, schemas, 4)
 
 	require.True(t, is.SchemaExists(dbName))

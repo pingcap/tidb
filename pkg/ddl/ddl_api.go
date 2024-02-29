@@ -298,18 +298,18 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
 func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := d.GetInfoSchemaWithInterceptor(sctx)
-	dbInfos := is.AllSchemas()
+	dbNames := is.AllSchemaNames()
 	// If there are no schema change since last time(can be weird).
 	if is.SchemaMetaVersion() == originVersion {
 		return originVersion, pendingCount
 	}
 	cnt := uint32(0)
-	for _, dbInfo := range dbInfos {
-		if util.IsMemOrSysDB(dbInfo.Name.L) {
+	for _, dbName := range dbNames {
+		if util.IsMemOrSysDB(dbName.L) {
 			continue
 		}
-		for _, tbl := range dbInfo.Tables {
-			if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
+		for _, tbl := range is.SchemaTables(dbName) {
+			if tbl.Meta().TiFlashReplica != nil && !tbl.Meta().TiFlashReplica.Available {
 				cnt++
 			}
 		}
@@ -371,7 +371,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	total := len(dbInfo.Tables)
+	tbls := is.SchemaTables(dbInfo.Name)
+	total := len(tbls)
 	succ := 0
 	skip := 0
 	fail := 0
@@ -392,7 +393,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
 
-	for _, tbl := range dbInfo.Tables {
+	for _, tbl := range tbls {
+		tbl := tbl.Meta()
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))

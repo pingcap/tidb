@@ -338,6 +338,15 @@ func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
 	return
 }
 
+func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
+	rs := make([]model.CIStr, 0, is.schemaMap.Len())
+	is.schemaMap.Scan(func(item schemaItem) bool {
+		rs = append(rs, item.dbInfo.Name)
+		return true
+	})
+	return rs
+}
+
 func (is *infoschemaV2) SchemaMetaVersion() int64 {
 	return is.schemaVersion
 }

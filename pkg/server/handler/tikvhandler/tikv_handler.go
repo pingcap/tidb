@@ -662,9 +662,9 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	allDBs := schema.AllSchemas()
+	allDBs := schema.AllSchemaNames()
 	for _, db := range allDBs {
-		tbls := schema.SchemaTables(db.Name)
+		tbls := schema.SchemaTables(db)
 		for _, tbl := range tbls {
 			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
 		}
@@ -1496,12 +1496,13 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// get from table's ID directly. Above all, here do dot process like
 	// 		`for id in [frameRange.firstTableID,frameRange.endTableID]`
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
-	for _, db := range schema.AllSchemas() {
-		if util.IsMemDB(db.Name.L) {
+	for _, dbName := range schema.AllSchemaNames() {
+		if util.IsMemDB(dbName.L) {
 			continue
 		}
-		for _, tableVal := range db.Tables {
-			regionDetail.addTableInRange(db.Name.String(), tableVal, frameRange)
+		tables := schema.SchemaTables(dbName)
+		for _, tableVal := range tables {
+			regionDetail.addTableInRange(dbName.String(), tableVal.Meta(), frameRange)
 		}
 	}
 	writeData(w, regionDetail)
