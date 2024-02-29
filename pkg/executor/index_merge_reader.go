@@ -474,7 +474,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				failpoint.Inject("testIndexMergePanicPartialTableWorker", nil)
 				var err error
 				partialTableReader := &TableReaderExecutor{
-					tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx(), ts.Schema(), e.getPartitalPlanID(workID)),
+					BaseExecutorV2:             exec.NewBaseExecutorV2(e.Ctx().GetSessionVars(), ts.Schema(), e.getPartitalPlanID(workID)),
+					tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx()),
 					dagPB:                      e.dagPBs[workID],
 					startTS:                    e.startTS,
 					txnScope:                   e.txnScope,
@@ -785,7 +786,8 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ exec.Executor, err error) {
 	tableReaderExec := &TableReaderExecutor{
-		tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx(), e.Schema(), e.getTablePlanRootID()),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(e.Ctx().GetSessionVars(), e.Schema(), e.getTablePlanRootID()),
+		tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx()),
 		table:                      tbl,
 		dagPB:                      e.tableRequest,
 		startTS:                    e.startTS,

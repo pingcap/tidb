@@ -77,8 +77,6 @@ type kvRangeBuilder interface {
 
 // tableReaderExecutorContext is the execution context for the `TableReaderExecutor`
 type tableReaderExecutorContext struct {
-	exec.BaseExecutorV2
-
 	dctx distsqlctx.DistSQLContext
 	pctx planctx.PlanContext
 	ectx exprctx.BuildContext
@@ -102,7 +100,7 @@ func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*inf
 	return nil, errors.New("GetDDLOwner in a context without DDL")
 }
 
-func newTableReaderExecutorContext(sctx sessionctx.Context, schema *expression.Schema, id int) tableReaderExecutorContext {
+func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorContext {
 	// Explicitly get `ownerManager` out of the closure to show that the `tableReaderExecutorContext` itself doesn't
 	// depend on `sctx` directly.
 	// The context of some tests don't have `DDL`, so make it optional
@@ -120,17 +118,17 @@ func newTableReaderExecutorContext(sctx sessionctx.Context, schema *expression.S
 	}
 
 	return tableReaderExecutorContext{
-		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), schema, id),
-		dctx:           sctx.GetDistSQLCtx(),
-		pctx:           sctx.GetPlanCtx(),
-		ectx:           sctx.GetExprCtx(),
-		getDDLOwner:    getDDLOwner,
+		dctx:        sctx.GetDistSQLCtx(),
+		pctx:        sctx.GetPlanCtx(),
+		ectx:        sctx.GetExprCtx(),
+		getDDLOwner: getDDLOwner,
 	}
 }
 
 // TableReaderExecutor sends DAG request and reads table data from kv layer.
 type TableReaderExecutor struct {
 	tableReaderExecutorContext
+	exec.BaseExecutorV2
 
 	table table.Table
 

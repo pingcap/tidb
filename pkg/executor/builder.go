@@ -3209,7 +3209,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	paging := b.ctx.GetSessionVars().EnablePaging
 
 	e := &TableReaderExecutor{
-		tableReaderExecutorContext: newTableReaderExecutorContext(b.ctx, v.Schema(), v.ID()),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
+		tableReaderExecutorContext: newTableReaderExecutorContext(b.ctx),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
 		txnScope:                   b.txnScope,

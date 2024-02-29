@@ -804,7 +804,8 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx(), e.Schema(), e.getTableRootPlanID()),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(e.Ctx().GetSessionVars(), e.Schema(), e.getTableRootPlanID()),
+		tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx()),
 		table:                      table,
 		dagPB:                      e.tableRequest,
 		startTS:                    e.startTS,

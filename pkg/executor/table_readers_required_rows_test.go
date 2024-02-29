@@ -131,7 +131,8 @@ func buildTableReader(sctx sessionctx.Context) exec.Executor {
 	schema := expression.NewSchema(cols...)
 
 	e := &TableReaderExecutor{
-		tableReaderExecutorContext: newTableReaderExecutorContext(sctx, schema, 0),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), schema, 0),
+		tableReaderExecutorContext: newTableReaderExecutorContext(sctx),
 		table:                      &tables.TableCommon{},
 		dagPB:                      buildMockDAGRequest(sctx),
 		selectResultHook:           selectResultHook{mockSelectResult},
