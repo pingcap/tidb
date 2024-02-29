@@ -51,6 +51,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/parser/terror",
         "//pkg/sessionctx/variable",
         "//pkg/table",
         "//pkg/table/tables",
