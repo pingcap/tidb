@@ -199,7 +199,7 @@ func StartExitSingleListener(ctx context.Context) (context.Context, context.Canc
 		fmt.Println()
 		printDelimate(fmt.Sprintf("Got signal %v to exit.", sig))
 		printDelimate(fmt.Sprintf("Required Goroutine Dump = %v", dumpGoroutine))
-		if DumpGoroutineWhenExit.Load() {
+		if dumpGoroutine {
 			printDelimate("Start Dumping Goroutine")
 			os.Stdout.Write(AllStackInfo())
 			printDelimate("End of Dumping Goroutine")
