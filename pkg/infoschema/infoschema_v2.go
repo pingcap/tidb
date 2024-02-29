@@ -446,7 +446,3 @@ func isTableVirtual(id int64) bool {
 	// See meta/autoid/autoid.go for those definitions.
 	return (id & autoid.SystemSchemaIDFlag) > 0
 }
-
-func init() {
-	enableV2.Store(true)
-}
