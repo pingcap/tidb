@@ -215,7 +215,7 @@ func RuntimeFilterListToPB(ctx PlanContext, runtimeFilterList []*RuntimeFilter, 
 
 // ToPB convert runtime filter to PB
 func (rf *RuntimeFilter) ToPB(ctx PlanContext, client kv.Client) (*tipb.RuntimeFilter, error) {
-	pc := expression.NewPBConverter(client, ctx)
+	pc := expression.NewPBConverter(client, ctx.GetExprCtx())
 	srcExprListPB := make([]*tipb.Expr, 0, len(rf.srcExprList))
 	for _, srcExpr := range rf.srcExprList {
 		srcExprPB := pc.ExprToPB(srcExpr)

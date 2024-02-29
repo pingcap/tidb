@@ -84,14 +84,14 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20231212100244-799fae176cfb
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20240206021635-05a3758a1d24
+	github.com/pingcap/kvproto v0.0.0-20240208102409-a554af8ee11f
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20240116032918-9bb28c43bbfc
-	github.com/prometheus/client_golang v1.18.0
+	github.com/prometheus/client_golang v1.19.0
 	github.com/prometheus/client_model v0.6.0
-	github.com/prometheus/common v0.46.0
+	github.com/prometheus/common v0.48.0
 	github.com/prometheus/prometheus v0.49.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.1
@@ -107,7 +107,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240223022444-8d28d3cd3a10
+	github.com/tikv/client-go/v2 v2.0.8-0.20240229045805-09ecb550d383
 	github.com/tikv/pd/client v0.0.0-20240221051526-d6d9feab3e2a
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -166,6 +166,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.22.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.22.0 // indirect
 	go.opentelemetry.io/otel/metric v1.22.0 // indirect
+	gonum.org/v1/gonum v0.8.2 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240205150955-31a09d347014 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240221002015-b0ce06bbee7c // indirect
 	k8s.io/utils v0.0.0-20230711102312-30195339c3c7 // indirect
@@ -187,7 +188,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.2.2 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
-	github.com/apache/thrift v0.13.1-0.20201008052519-daf620915714 // indirect
+	github.com/apache/thrift v0.16.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar/v2 v2.0.4 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
@@ -297,7 +298,6 @@ require (
 	golang.org/x/exp/typeparams v0.0.0-20231219180239-dc181d75b848 // indirect
 	golang.org/x/mod v0.15.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
-	gonum.org/v1/gonum v0.8.2 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto v0.0.0-20240213162025-012b6fc9bca9 // indirect
 	google.golang.org/protobuf v1.32.0 // indirect

@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	"math"
 	"sort"
 	"testing"
 	"time"
@@ -213,7 +214,7 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, r.jobs.Len())
 	job1 := r.jobs.Pop()
-	require.Equal(t, float64(1), job1.Weight)
+	require.Equal(t, 1.2, math.Round(job1.Weight*10)/10)
 	require.Equal(t, float64(1), job1.ChangePercentage)
 	require.Equal(t, float64(6*2), job1.TableSize)
 	require.GreaterOrEqual(t, job1.LastAnalysisDuration, time.Duration(0))

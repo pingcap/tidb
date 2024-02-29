@@ -59,7 +59,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 
 	tbInfo.State = model.StateNone
 	var err error
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+	if variable.EnableFastCreateTable.Load() {
 		err = checkTableNotExistsByName(d, t, schemaID, job.SchemaName, tbInfo.Name.L)
 	} else {
 		err = checkTableNotExists(d, t, schemaID, tbInfo.Name.L)

@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -946,6 +945,9 @@ const (
 
 	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
 	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
+
+	// TiDBSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	TiDBSchemaCacheSize = "tidb_schema_cache_size"
 )
 
 // TiDB vars that have only global scope
@@ -1003,8 +1005,8 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
 	TiDBEnableDistTask = "tidb_enable_dist_task"
-	// TiDBDDLVersion is used to store tidb ddl version.
-	TiDBDDLVersion = "tidb_ddl_version"
+	// TiDBEnableFastCreateTable indicates whether to enable the fast create table feature.
+	TiDBEnableFastCreateTable = "tidb_enable_fast_create_table"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -1363,6 +1365,7 @@ const (
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableDistTask                          = disttask.TiDBEnableDistTask
+	DefTiDBEnableFastCreateTable                   = false
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1470,6 +1473,7 @@ const (
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
+	DefTiDBSchemaCacheSize                            = 0
 )
 
 // Process global variables.
@@ -1514,7 +1518,7 @@ var (
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
-	DDLVersion                        = atomic.NewInt64(model.TiDBDDLV1)
+	EnableFastCreateTable             = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
@@ -1573,6 +1577,8 @@ var (
 	CloudStorageURI           = atomic.NewString("")
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
+
+	SchemaCacheSize = atomic.NewInt64(DefTiDBSchemaCacheSize)
 )
 
 var (
@@ -1590,8 +1596,8 @@ var (
 	EnableDDL func() error = nil
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
-	// SwitchDDLVersion is the func registered by DDL to switch DDL version.
-	SwitchDDLVersion func(version int64) error
+	// SwitchFastCreateTable is the func registered by DDL to switch fast create table.
+	SwitchFastCreateTable func(val bool) error
 	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd

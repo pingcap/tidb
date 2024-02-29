@@ -95,7 +95,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 		p.RightJoinKeys[i] = rArg.(*expression.Column)
-		p.EqualConditions[i] = expression.NewFunctionInternal(ctx, fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+		p.EqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, fun := range p.NAEqualConditions {
 		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
@@ -108,7 +108,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
-		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx, fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
 		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
@@ -412,7 +412,7 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
 			sctx := p.SCtx()
-			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx, p.indexPlan.Schema())
+			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx(), p.indexPlan.Schema())
 			if isOK {
 				p.OutputColumns[i] = newExprCol.(*expression.Column)
 				continue
@@ -492,7 +492,7 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 		p.Conditions[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
-			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx(), p.children[0].Schema())
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx(), p.children[0].Schema())
 			if isOk {
 				p.Conditions[i] = newCond
 				continue
