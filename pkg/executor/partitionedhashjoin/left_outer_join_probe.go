@@ -212,7 +212,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 	if j.ctx.hasOtherCondition() {
 		if joinedChk.NumRows() > 0 {
 			j.selected = j.selected[:0]
-			j.selected, err = expression.VectorizedFilter(j.ctx.sessCtx.GetExprCtx(), j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+			j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
 			if err != nil {
 				return err
 			}
@@ -261,7 +261,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		j.selected = j.selected[:0]
-		j.selected, err = expression.VectorizedFilter(j.ctx.sessCtx.GetExprCtx(), j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
 		if err != nil {
 			return err
 		}
