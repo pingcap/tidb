@@ -234,9 +234,9 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 
 	// We don't construct jobs for every table, but only tableInfo
 	// The following loop creates a stub job for every table
-	//
-	// &*job clones a stub job from the ActionCreateTables job
-	stubJob := &*job
+	// it clones a stub job from the ActionCreateTables job
+	stubJobT := *job
+	stubJob := &stubJobT
 	stubJob.Args = make([]any, 1)
 	for i := range args {
 		stubJob.TableID = args[i].ID
