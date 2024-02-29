@@ -18,12 +18,146 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
+
+// FuzzyBindingCache is based on BindingCache, and provide some more advanced features, like
+// fuzzy matching, loading binding if cache miss automatically (TODO).
+type FuzzyBindingCache interface {
+	// FuzzyMatchingBinding supports fuzzy matching on bindings.
+	FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (bindings Binding, isMatched bool)
+
+	// Copy copies this cache.
+	Copy() (c FuzzyBindingCache, err error)
+
+	BindingCache
+}
+
+type fuzzyBindingCache struct {
+	BindingCache
+
+	mu sync.RWMutex
+
+	// fuzzy2SQLDigests is used to support fuzzy matching.
+	// fuzzyDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> fuzzyDigest.
+	// sqlDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
+	fuzzy2SQLDigests map[string][]string // fuzzyDigest --> sqlDigests
+
+	sql2FuzzyDigest map[string]string // sqlDigest --> fuzzyDigest
+}
+
+func newFuzzyBindingCache() FuzzyBindingCache {
+	return &fuzzyBindingCache{
+		BindingCache:     newBindCache(),
+		fuzzy2SQLDigests: make(map[string][]string),
+		sql2FuzzyDigest:  make(map[string]string),
+	}
+}
+
+func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+	fbc.mu.RLock()
+	defer fbc.mu.RUnlock()
+	bindingCache := fbc.BindingCache
+	if bindingCache.Size() == 0 {
+		return
+	}
+
+	leastWildcards := len(tableNames) + 1
+	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
+	for _, sqlDigest := range fbc.fuzzy2SQLDigests[fuzzyDigest] {
+		if bindings := bindingCache.GetBinding(sqlDigest); bindings != nil {
+			for _, binding := range bindings {
+				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
+					continue // fuzzy binding is disabled, skip this binding
+				}
+				if matched && numWildcards < leastWildcards {
+					matchedBinding = binding
+					isMatched = true
+					leastWildcards = numWildcards
+					break
+				}
+			}
+		}
+	}
+	return
+}
+
+func (fbc *fuzzyBindingCache) SetBinding(sqlDigest string, bindings Bindings) (err error) {
+	fbc.mu.Lock()
+	defer fbc.mu.Unlock()
+
+	// prepare fuzzy digests for all bindings
+	fuzzyDigests := make([]string, 0, len(bindings))
+	p := parser.New()
+	for _, binding := range bindings {
+		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+		if err != nil {
+			return err
+		}
+		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		fuzzyDigests = append(fuzzyDigests, fuzzyDigest)
+	}
+
+	for i, binding := range bindings {
+		fbc.fuzzy2SQLDigests[fuzzyDigests[i]] = append(fbc.fuzzy2SQLDigests[fuzzyDigests[i]], binding.SQLDigest)
+		fbc.sql2FuzzyDigest[binding.SQLDigest] = fuzzyDigests[i]
+	}
+	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with fuzzy2SQLDigests and
+	// sql2FuzzyDigest, but it's acceptable, just return cache-miss in that case.
+	return fbc.BindingCache.SetBinding(sqlDigest, bindings)
+}
+
+func (fbc *fuzzyBindingCache) RemoveBinding(sqlDigest string) {
+	fbc.mu.Lock()
+	defer fbc.mu.Unlock()
+	fuzzyDigest, ok := fbc.sql2FuzzyDigest[sqlDigest]
+	if !ok {
+		return
+	}
+	digestList := fbc.fuzzy2SQLDigests[fuzzyDigest]
+	for i := range digestList { // remove sqlDigest from this list
+		if digestList[i] == sqlDigest {
+			digestList = append(digestList[:i], digestList[i+1:]...)
+			break
+		}
+	}
+	fbc.fuzzy2SQLDigests[fuzzyDigest] = digestList
+	delete(fbc.sql2FuzzyDigest, sqlDigest)
+	fbc.BindingCache.RemoveBinding(sqlDigest)
+}
+
+func (fbc *fuzzyBindingCache) Copy() (c FuzzyBindingCache, err error) {
+	fbc.mu.RLock()
+	defer fbc.mu.RUnlock()
+	bc, err := fbc.BindingCache.CopyBindingCache()
+	if err != nil {
+		return nil, err
+	}
+	sql2FuzzyDigest := make(map[string]string, len(fbc.sql2FuzzyDigest))
+	for k, v := range fbc.sql2FuzzyDigest {
+		sql2FuzzyDigest[k] = v
+	}
+	fuzzy2SQLDigests := make(map[string][]string, len(fbc.fuzzy2SQLDigests))
+	for k, list := range fbc.fuzzy2SQLDigests {
+		newList := make([]string, len(list))
+		copy(newList, list)
+		fuzzy2SQLDigests[k] = newList
+	}
+	return &fuzzyBindingCache{
+		BindingCache:     bc,
+		fuzzy2SQLDigests: fuzzy2SQLDigests,
+		sql2FuzzyDigest:  sql2FuzzyDigest,
+	}, nil
+}
 
 // BindingCache is the interface for the cache of the SQL plan bindings.
 type BindingCache interface {
@@ -41,8 +175,8 @@ type BindingCache interface {
 	GetMemUsage() int64
 	// GetMemCapacity gets the memory capacity of the cache.
 	GetMemCapacity() int64
-	// Copy copies the cache.
-	Copy() (newCache BindingCache, err error)
+	// CopyBindingCache copies the cache.
+	CopyBindingCache() (newCache BindingCache, err error)
 	// Size returns the number of items in the cache.
 	Size() int
 }
@@ -201,9 +335,9 @@ func (c *bindingCache) GetMemCapacity() int64 {
 	return c.memCapacity
 }
 
-// Copy copies a new bindingCache from the origin cache.
+// CopyBindingCache copies a new bindingCache from the origin cache.
 // The function is thread-safe.
-func (c *bindingCache) Copy() (BindingCache, error) {
+func (c *bindingCache) CopyBindingCache() (BindingCache, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	var err error
