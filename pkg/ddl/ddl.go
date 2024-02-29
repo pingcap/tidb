@@ -458,17 +458,17 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 	if ownerID != jobID {
 		sv.schemaVersionMu.Lock()
 		sv.lockOwner.Store(jobID)
-		if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
-			se, err := concurrency.NewSession(sv.etcdClient)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
-			if err := mu.Lock(sv.ctx); err != nil {
-				return errors.Trace(err)
-			}
-			sv.lockInfoMaps[jobID] = &etcdLockInfo{se: se, mu: mu}
-		}
+		//if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
+		//	se, err := concurrency.NewSession(sv.etcdClient)
+		//	if err != nil {
+		//		return errors.Trace(err)
+		//	}
+		//	mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
+		//	if err := mu.Lock(sv.ctx); err != nil {
+		//		return errors.Trace(err)
+		//	}
+		//	sv.lockInfoMaps[jobID] = &etcdLockInfo{se: se, mu: mu}
+		//}
 	}
 	return nil
 }
@@ -477,24 +477,24 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
-		if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
-			delete(sv.lockInfoMaps, jobID)
-			err := lockInfo.mu.Unlock(sv.ctx)
-		outer:
-			for err != nil {
-				logutil.BgLogger().Error("unlock schema version", zap.Error(err))
-				select {
-				case <-sv.ctx.Done():
-					break outer
-				case <-time.After(time.Second):
-				}
-				// retry unlock
-				err = lockInfo.mu.Unlock(sv.ctx)
-			}
-			if err := lockInfo.se.Close(); err != nil {
-				logutil.BgLogger().Error("close etcd session", zap.Error(err))
-			}
-		}
+		//if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
+		//	delete(sv.lockInfoMaps, jobID)
+		//	err := lockInfo.mu.Unlock(sv.ctx)
+		//outer:
+		//	for err != nil {
+		//		logutil.BgLogger().Error("unlock schema version", zap.Error(err))
+		//		select {
+		//		case <-sv.ctx.Done():
+		//			break outer
+		//		case <-time.After(time.Second):
+		//		}
+		//		// retry unlock
+		//		err = lockInfo.mu.Unlock(sv.ctx)
+		//	}
+		//	if err := lockInfo.se.Close(); err != nil {
+		//		logutil.BgLogger().Error("close etcd session", zap.Error(err))
+		//	}
+		//}
 		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
 	}
