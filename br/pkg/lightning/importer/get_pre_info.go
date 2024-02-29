@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -134,6 +135,12 @@ func NewTargetInfoGetterImpl(
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if pdHTTPCli != nil {
+		// The timeout of `http.Client`` in PD HTTP client is 30s.
+		// When using GetEmptyRegions, the duration may be more than 30s,
+		// so creates `http.Client`` with a longer timeout.
+		pdHTTPCli = pdHTTPCli.WithTimeout(3 * time.Minute)
 	}
 	var backendTargetInfoGetter backend.TargetInfoGetter
 	switch cfg.TikvImporter.Backend {

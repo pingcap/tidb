@@ -33,6 +33,7 @@ const (
 	pauseTimeout = 5 * time.Minute
 	// pd request retry time when connection fail
 	PDRequestRetryTime = 120
+	pdCustomTimeout    = time.Minute
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
@@ -132,7 +133,9 @@ func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 
 // PdController manage get/update config from pd.
 type PdController struct {
-	pdClient  pd.Client
+	pdClient pd.Client
+	// The default timeout of `http.Client` is 30s in PD HTTP client
+	// which is same with `br/pkg/httputil/http.go/NewClient`.
 	pdHTTPCli pdhttp.Client
 	version   *semver.Version
 
@@ -158,7 +161,7 @@ func NewPdController(
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		pd.WithCustomTimeoutOption(pdCustomTimeout),
 		pd.WithMaxErrorRetry(3),
 	)
 	if err != nil {

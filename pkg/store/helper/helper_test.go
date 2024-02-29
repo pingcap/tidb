@@ -43,10 +43,7 @@ import (
 func TestHotRegion(t *testing.T) {
 	store := createMockStore(t)
 
-	h := helper.Helper{
-		Store:       store,
-		RegionCache: store.GetRegionCache(),
-	}
+	h := helper.NewHelper(store)
 	regionMetric, err := h.FetchHotRegion(context.Background(), "read")
 	require.NoError(t, err)
 
@@ -87,10 +84,7 @@ func TestGetRegionsTableInfo(t *testing.T) {
 func TestTiKVRegionsInfo(t *testing.T) {
 	store := createMockStore(t)
 
-	h := helper.Helper{
-		Store:       store,
-		RegionCache: store.GetRegionCache(),
-	}
+	h := helper.NewHelper(store)
 	pdCli, err := h.TryGetPDHTTPClient()
 	require.NoError(t, err)
 	regionsInfo, err := pdCli.GetRegions(context.Background())
@@ -101,10 +95,7 @@ func TestTiKVRegionsInfo(t *testing.T) {
 func TestTiKVStoresStat(t *testing.T) {
 	store := createMockStore(t)
 
-	h := helper.Helper{
-		Store:       store,
-		RegionCache: store.GetRegionCache(),
-	}
+	h := helper.NewHelper(store)
 
 	pdCli, err := h.TryGetPDHTTPClient()
 	require.NoError(t, err)

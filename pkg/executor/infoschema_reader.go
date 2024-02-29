@@ -1277,10 +1277,7 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx context.Context, sctx ses
 	if !ok {
 		return errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(tikvStore)
 	pdCli, err := tikvHelper.TryGetPDHTTPClient()
 	if err != nil {
 		return err
@@ -1701,10 +1698,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(tikvStore)
 	requestByTableRange := false
 	var allRegionsInfo *pd.RegionsInfo
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
@@ -1726,7 +1720,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	if !requestByTableRange {
-		pdCli, err := tikvHelper.TryGetPDHTTPClient()
+		pdCli, err := tikvHelper.TryGetLongRequestPDHTTPClient()
 		if err != nil {
 			return err
 		}
@@ -1859,10 +1853,7 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx context.Context, sctx s
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
 	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(tikvStore)
 	metrics, err := tikvHelper.ScrapeHotInfo(ctx, helper.HotRead, allSchemas)
 	if err != nil {
 		return err
