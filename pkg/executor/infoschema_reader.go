@@ -1879,6 +1879,9 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx context.Context, sctx s
 func (e *memtableRetriever) setDataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) {
 	rows := make([][]types.Datum, 0, len(metrics))
 	for _, tblIndex := range metrics {
+		if infoschema.IsMemtable(tblIndex.TableName) {
+			continue
+		}
 		row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsCols))
 		if tblIndex.IndexName != "" {
 			row[1].SetInt64(tblIndex.IndexID)

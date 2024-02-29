@@ -29,7 +29,6 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/variable",
-        "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",
@@ -63,7 +62,7 @@ go_test(
     srcs = ["info_test.go"],
     embed = [":infosync"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/ddl/util",

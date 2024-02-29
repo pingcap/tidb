@@ -15,6 +15,7 @@
 package infosync
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/hex"
@@ -31,8 +32,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -94,7 +95,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspac
 	var flashPeerCount int
 	for _, store := range tiFlashStores {
 		regionReplica := make(map[int64]int)
-		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, keyspaceID, tableID, &regionReplica)
+		err := CollectTiFlashStatus(store.Store.StatusAddress, keyspaceID, tableID, &regionReplica)
 		failpoint.Inject("OneTiFlashStoreDown", func() {
 			if store.Store.StateName == "Down" {
 				err = errors.New("mock TiFlasah down")
@@ -548,7 +549,7 @@ func (tiflash *MockTiFlash) HandleGetGroupRules(_ string) ([]*pd.Rule, error) {
 func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	tiflash.Lock()
 	defer tiflash.Unlock()
-	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
+	tableID := GetTiFlashTableIDFromEndKey(endKey)
 
 	table, ok := tiflash.SyncStatus[int(tableID)]
 	if ok {
@@ -890,4 +891,88 @@ type MockTiFlashError struct {
 
 func (me *MockTiFlashError) Error() string {
 	return me.Message
+}
+
+// GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
+func GetTiFlashTableIDFromEndKey(endKey string) int64 {
+	e, _ := hex.DecodeString(endKey)
+	_, decodedEndKey, _ := codec.DecodeBytes(e, []byte{})
+	tableID := tablecodec.DecodeTableID(decodedEndKey)
+	tableID--
+	return tableID
+}
+
+// CollectTiFlashStatus query sync status of one table from TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
+func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+	// The new query schema is like: http://<host>/tiflash/sync-status/keyspace/<keyspaceID>/table/<tableID>.
+	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
+	// The query URL is like: http://<host>/sync-status/keyspace/<NullspaceID>/table/<tableID>
+	// The old query schema is like: http://<host>/sync-status/<tableID>
+	// This API is preserved in TiFlash for compatibility with old versions of TiDB.
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/keyspace/%d/table/%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+
+	reader := bufio.NewReader(resp.Body)
+	if err = ComputeTiFlashStatus(reader, regionReplica); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ComputeTiFlashStatus is helper function for CollectTiFlashStatus.
+func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) error {
+	ns, err := reader.ReadString('\n')
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The count
+	ns = strings.Trim(ns, "\r\n\t")
+	n, err := strconv.ParseInt(ns, 10, 64)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The regions
+	regions, err := reader.ReadString('\n')
+	if err != nil {
+		return errors.Trace(err)
+	}
+	regions = strings.Trim(regions, "\r\n\t")
+	splits := strings.Split(regions, " ")
+	realN := int64(0)
+	for _, s := range splits {
+		// For (`table`, `store`), has region `r`
+		if s == "" {
+			continue
+		}
+		realN++
+		r, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if c, ok := (*regionReplica)[r]; ok {
+			(*regionReplica)[r] = c + 1
+		} else {
+			(*regionReplica)[r] = 1
+		}
+	}
+	if n != realN {
+		logutil.BgLogger().Warn("ComputeTiFlashStatus count check failed", zap.Int64("claim", n), zap.Int64("real", realN))
+	}
+	return nil
 }

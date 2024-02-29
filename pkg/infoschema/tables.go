@@ -232,6 +232,12 @@ const (
 	DataLockWaitsColumnSQLDigestText = "SQL_DIGEST_TEXT"
 )
 
+// IsMemtable check if the table is stored in memory.
+func IsMemtable(tableName string) bool {
+	_, ok := tableNameToColumns[tableName]
+	return ok
+}
+
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
 	TableTables:                             autoid.InformationSchemaDBID + 2,
