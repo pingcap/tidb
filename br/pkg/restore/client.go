@@ -3097,15 +3097,15 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
 	restoreBatch func(
-	ctx context.Context,
-	files []*backuppb.DataFileInfo,
-	schemasReplace *stream.SchemasReplace,
-	kvEntries []*KvEntryWithTS,
-	filterTS uint64,
-	updateStats func(kvCount uint64, size uint64),
-	progressInc func(),
-	cf string,
-) ([]*KvEntryWithTS, error),
+		ctx context.Context,
+		files []*backuppb.DataFileInfo,
+		schemasReplace *stream.SchemasReplace,
+		kvEntries []*KvEntryWithTS,
+		filterTS uint64,
+		updateStats func(kvCount uint64, size uint64),
+		progressInc func(),
+		cf string,
+	) ([]*KvEntryWithTS, error),
 ) error {
 	// the average size of each KV is 2560 Bytes
 	// kvEntries is kvs left by the previous batch
