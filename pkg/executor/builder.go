@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
+	"github.com/pingcap/tidb/pkg/executor/partitionedhashjoin"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1470,7 +1471,37 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 	return e
 }
 
+func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
+	leftExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+
+	rightExec := b.build(v.Children()[1])
+	if b.err != nil {
+		return nil
+	}
+
+	e := &partitionedhashjoin.PartitionedHashJoinExec{
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
+		PartitionedHashJoinCtx: &partitionedhashjoin.PartitionedHashJoinCtx{
+			SessCtx:         b.ctx,
+			UseOuterToBuild: v.JoinType.IsOuterJoin(),
+			JoinType:        v.JoinType,
+			Concurrency:     v.Concurrency,
+		},
+	}
+	err := e.Init()
+	if err != nil {
+		return nil
+	}
+	return e
+}
+
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
+	if partitionedhashjoin.IsSupportedJoin(v) {
+		return b.buildPartitionedHashJoin(v)
+	}
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
