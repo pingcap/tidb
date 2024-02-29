@@ -1068,10 +1068,8 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 	return b.is.schemaMap[dbName].dbInfo
 }
 
-// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
+func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo) {
 	info := b.is
-	info.schemaMetaVersion = schemaVersion
 	// build the policies.
 	for _, policy := range policies {
 		info.setPolicy(policy)
@@ -1088,33 +1086,64 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 			b.is.addReferredForeignKeys(di.Name, t)
 		}
 	}
+}
 
+func (b *Builder) initForV1(dbInfos []*model.DBInfo, schemaVersion int64) error {
 	for _, di := range dbInfos {
 		schTbls, err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		b.is.schemaMap[di.Name.L] = schTbls
 	}
+	return nil
+}
 
+func (b *Builder) initVirtualTables(schemaVersion int64) error {
 	// Initialize virtual tables.
 	for _, driver := range drivers {
 		schTbls, err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		b.is.schemaMap[driver.DBInfo.Name.L] = schTbls
 		if enableV2.Load() {
 			b.infoData.addSpecialDB(driver.DBInfo, schTbls)
 		}
 	}
+	return nil
+}
 
+func (b *Builder) sortAllTablesByID() {
 	// Sort all tables by `ID`
-	for _, v := range info.sortedTablesBuckets {
+	for _, v := range b.is.sortedTablesBuckets {
 		slices.SortFunc(v, func(a, b table.Table) int {
 			return cmp.Compare(a.Meta().ID, b.Meta().ID)
 		})
 	}
+}
+
+// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
+	info := b.is
+	info.schemaMetaVersion = schemaVersion
+
+	b.initMisc(dbInfos, policies, resourceGroups)
+
+	if !enableV2.Load() {
+		err := b.initForV1(dbInfos, schemaVersion)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err := b.initVirtualTables(schemaVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	b.sortAllTablesByID()
+
 	return b, nil
 }
 
