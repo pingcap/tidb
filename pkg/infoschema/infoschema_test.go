@@ -889,15 +889,15 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Test the @@tidb_enable_infoschema_v2 variable.
-	tk.MustQuery("select @@tidb_infoschema_cache_size").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@global.tidb_infoschema_cache_size").Check(testkit.Rows("0"))
-	require.Equal(t, variable.InfoSchemaCacheSize.Load(), int64(0))
+	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(0))
 
 	// Modify it.
-	tk.MustExec("set @@global.tidb_infoschema_cache_size = 1024")
-	tk.MustQuery("select @@global.tidb_infoschema_cache_size").Check(testkit.Rows("1024"))
-	tk.MustQuery("select @@tidb_infoschema_cache_size").Check(testkit.Rows("1024"))
-	require.Equal(t, variable.InfoSchemaCacheSize.Load(), int64(1024))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("1024"))
+	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("1024"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(1024))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table v2 (id int)")
@@ -912,9 +912,9 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 	tk.MustExec("create table v1 (id int)")
 
 	// Change infoschema back to v1 and check again.
-	tk.MustExec("set @@global.tidb_infoschema_cache_size = 0")
-	tk.MustQuery("select @@global.tidb_infoschema_cache_size").Check(testkit.Rows("0"))
-	require.Equal(t, variable.InfoSchemaCacheSize.Load(), int64(0))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(0))
 
 	tk.MustExec("drop table v1")
 	is = domain.GetDomain(tk.Session()).InfoSchema()

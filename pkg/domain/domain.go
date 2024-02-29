@@ -250,7 +250,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, uint64(schemaTs))
 
-		enableV2 := variable.InfoSchemaCacheSize.Load() > 0
+		enableV2 := variable.SchemaCacheSize.Load() > 0
 		isV2 := infoschema.IsV2(is)
 		if enableV2 == isV2 {
 			return is, true, 0, nil, nil

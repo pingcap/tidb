@@ -947,8 +947,8 @@ const (
 	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
 	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
 
-	// TiDBInfoSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
-	TiDBInfoSchemaCacheSize = "tidb_infoschema_cache_size"
+	// TiDBSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	TiDBSchemaCacheSize = "tidb_schema_cache_size"
 )
 
 // TiDB vars that have only global scope
@@ -1473,7 +1473,7 @@ const (
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
-	DefTiDBInfoSchemaCacheSize                        = 0
+	DefTiDBSchemaCacheSize                            = 0
 )
 
 // Process global variables.
@@ -1578,7 +1578,7 @@ var (
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	InfoSchemaCacheSize = atomic.NewInt64(DefTiDBInfoSchemaCacheSize)
+	SchemaCacheSize = atomic.NewInt64(DefTiDBSchemaCacheSize)
 )
 
 var (
