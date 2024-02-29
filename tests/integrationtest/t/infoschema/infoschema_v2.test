@@ -1,0 +1,24 @@
+select @@tidb_schema_cache_size;
+select @@global.tidb_schema_cache_size;
+
+set @@global.tidb_schema_cache_size = 1024;
+
+use infoschema__infoschema_v2;
+create table t (id int);
+select @@global.tidb_schema_cache_size;
+
+show databases;
+use information_schema;
+show tables;
+show create table tables;
+-- error 1044
+drop database information_schema;
+
+-- error 1142
+drop table views;
+
+use metrics_schema;
+show tables;
+show create table uptime;
+
+set @@global.tidb_schema_cache_size = default;
