@@ -78,7 +78,7 @@ func GetMockSchedulerExt(ctrl *gomock.Controller, schedulerInfo SchedulerInfo) s
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(schedulerInfo.AllErrorRetryable).AnyTimes()
 	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(task *proto.TaskBase) proto.Step {
 			return stepTransition[task.Step]
 		},
 	).AnyTimes()
@@ -147,7 +147,7 @@ func GetPlanErrSchedulerExt(ctrl *gomock.Controller, testContext *TestContext) s
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
 	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(task *proto.TaskBase) proto.Step {
 			switch task.Step {
 			case proto.StepInit:
 				return proto.StepOne

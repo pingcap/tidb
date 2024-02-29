@@ -62,8 +62,7 @@ func TestDispatcherOnNextStage(t *testing.T) {
 	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("done err"))
 	require.ErrorContains(t, sch.Switch2NextStep(), "done err")
 	require.True(t, ctrl.Satisfied())
-	// we update task step before OnDone
-	require.Equal(t, proto.StepDone, sch.GetTask().Step)
+	require.Equal(t, proto.StepInit, sch.GetTask().Step)
 	taskClone2 := task
 	sch.task.Store(&taskClone2)
 	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
