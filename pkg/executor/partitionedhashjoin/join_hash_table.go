@@ -15,7 +15,10 @@
 package partitionedhashjoin
 
 import (
+	"fmt"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
@@ -25,6 +28,16 @@ type subTable struct {
 	rowData   *rowTable
 	hashTable []unsafe.Pointer
 	posMask   uint64
+}
+
+type hashStatistic struct {
+	// NOTE: probeCollision may be accessed from multiple goroutines concurrently.
+	probeCollision   int64
+	buildTableElapse time.Duration
+}
+
+func (s *hashStatistic) String() string {
+	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
 func (st *subTable) lookup(hashValue uint64) unsafe.Pointer {
@@ -48,29 +61,40 @@ func newSubTable(table *rowTable) *subTable {
 	return ret
 }
 
-func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep int) {
-	updateHashValue := func(pos uint64, rowAddress unsafe.Pointer) {
-		prev := st.hashTable[pos]
-		st.hashTable[pos] = rowAddress
-		setNextRowAddress(rowAddress, prev)
-	}
-	if !threadSafe {
-		updateHashValue = func(pos uint64, rowAddress unsafe.Pointer) {
-			for {
-				prev := atomic.LoadPointer(&st.hashTable[pos])
-				if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
-					setNextRowAddress(rowAddress, prev)
-					break
-				}
-			}
+func (st *subTable) updateHashValue(pos uint64, rowAddress unsafe.Pointer) {
+	prev := st.hashTable[pos]
+	st.hashTable[pos] = rowAddress
+	setNextRowAddress(rowAddress, prev)
+}
+
+func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress unsafe.Pointer) {
+	for {
+		prev := atomic.LoadPointer(&st.hashTable[pos])
+		if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
+			setNextRowAddress(rowAddress, prev)
+			break
 		}
 	}
-	for i := startSegmentIndex; i < len(st.rowData.segments); i += segmentStep {
-		for index := range st.rowData.segments[i].validJoinKeyPos {
-			rowAddress := st.rowData.segments[i].rowLocations[index]
-			hashValue := st.rowData.segments[i].hashValues[index]
-			pos := hashValue & st.posMask
-			updateHashValue(pos, rowAddress)
+}
+
+func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep int) {
+	if threadSafe {
+		for i := startSegmentIndex; i < len(st.rowData.segments); i += segmentStep {
+			for index := range st.rowData.segments[i].validJoinKeyPos {
+				rowAddress := st.rowData.segments[i].rowLocations[index]
+				hashValue := st.rowData.segments[i].hashValues[index]
+				pos := hashValue & st.posMask
+				st.updateHashValue(pos, rowAddress)
+			}
+		}
+	} else {
+		for i := startSegmentIndex; i < len(st.rowData.segments); i += segmentStep {
+			for index := range st.rowData.segments[i].validJoinKeyPos {
+				rowAddress := st.rowData.segments[i].rowLocations[index]
+				hashValue := st.rowData.segments[i].hashValues[index]
+				pos := hashValue & st.posMask
+				st.atomicUpdateHashValue(pos, rowAddress)
+			}
 		}
 	}
 }
