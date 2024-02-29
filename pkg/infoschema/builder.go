@@ -61,7 +61,7 @@ type bundleInfoBuilder struct {
 	updatePartitions map[int64]any
 }
 
-func (b *bundleInfoBuilder) ensureMap() {
+func (b *bundleInfoBuilder) initBundleInfoBuilder() {
 	if b.updateTables == nil {
 		b.updateTables = make(map[int64]any)
 	}
@@ -82,17 +82,14 @@ func (b *bundleInfoBuilder) deleteBundle(is *infoSchema, tblID int64) {
 }
 
 func (b *bundleInfoBuilder) markTableBundleShouldUpdate(tblID int64) {
-	b.ensureMap()
 	b.updateTables[tblID] = struct{}{}
 }
 
 func (b *bundleInfoBuilder) markPartitionBundleShouldUpdate(partID int64) {
-	b.ensureMap()
 	b.updatePartitions[partID] = struct{}{}
 }
 
 func (b *bundleInfoBuilder) markBundlesReferPolicyShouldUpdate(policyID int64) {
-	b.ensureMap()
 	b.updatePolicies[policyID] = struct{}{}
 }
 
@@ -465,15 +462,7 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	return tblIDs, nil
 }
 
-func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
-	if !ok {
-		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
-		)
-	}
-	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
-	var oldTableID, newTableID int64
+func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID int64) {
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
@@ -500,6 +489,10 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
 	}
+	return
+}
+
+func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
 	case model.ActionCreateTable:
@@ -514,11 +507,11 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	case model.ActionAlterTablePlacement:
 		b.markTableBundleShouldUpdate(newTableID)
 	}
-	b.copySortedTables(oldTableID, newTableID)
+}
 
+func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff, allocs *autoid.Allocators) ([]int64, error) {
 	tblIDs := make([]int64, 0, 2)
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
-	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID &&
 			// For rename table, keep the old alloc.
@@ -534,7 +527,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
 			oldAllocs, _ := allocByID(b.is, oldTableID)
-			allocs = filterAllocators(diff, oldAllocs)
+			newAllocs := filterAllocators(diff, oldAllocs)
+			allocs = &newAllocs
 		}
 
 		tmpIDs := tblIDs
@@ -556,6 +550,27 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			tblIDs = tmpIDs
 		}
 	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
+	newTableID, oldTableID := b.getTableIDs(diff)
+	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+	b.copySortedTables(oldTableID, newTableID)
+
+	var allocs autoid.Allocators
+	tblIDs, err := b.dropTableForUpdate(newTableID, oldTableID, dbInfo, diff, &allocs)
+	if err != nil {
+		return nil, err
+	}
+
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
@@ -784,20 +799,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
-	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if tblInfo == nil {
-		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
-		// full load.
-		return nil, ErrTableNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
-			fmt.Sprintf("(Table ID %d)", tableID),
-		)
-	}
-
+func (b *Builder) updateBundleForCreateTable(tblInfo *model.TableInfo, tp model.ActionType) {
 	switch tp {
 	case model.ActionDropTablePartition:
 	case model.ActionTruncateTablePartition:
@@ -812,24 +814,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
+}
 
-	if tp != model.ActionTruncateTablePartition {
-		affected = appendAffectedIDs(affected, tblInfo)
-	}
-
-	// Failpoint check whether tableInfo should be added to repairInfo.
-	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
-	failpoint.Inject("repairFetchCreateTable", func(val failpoint.Value) {
-		if val.(bool) {
-			if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
-				failpoint.Return(nil, nil)
-			}
-		}
-	})
-
-	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
-	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
-
+func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) {
 	if len(allocs.Allocs) == 0 {
 		allocs = autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
 	} else {
@@ -859,6 +846,44 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
+}
+
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
+
+	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tblInfo == nil {
+		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
+		// full load.
+		return nil, ErrTableNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
+			fmt.Sprintf("(Table ID %d)", tableID),
+		)
+	}
+
+	b.updateBundleForCreateTable(tblInfo, tp)
+
+	if tp != model.ActionTruncateTablePartition {
+		affected = appendAffectedIDs(affected, tblInfo)
+	}
+
+	// Failpoint check whether tableInfo should be added to repairInfo.
+	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
+	failpoint.Inject("repairFetchCreateTable", func(val failpoint.Value) {
+		if val.(bool) {
+			if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
+				failpoint.Return(nil, nil)
+			}
+		}
+	})
+
+	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
+	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
+
+	b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
+
 	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -989,6 +1014,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 		oldSchema = proxy.v1
 	}
 	oldIS := oldSchema.(*infoSchema)
+	b.initBundleInfoBuilder()
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
@@ -1127,6 +1153,8 @@ func (b *Builder) sortAllTablesByID() {
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
+
+	b.initBundleInfoBuilder()
 
 	b.initMisc(dbInfos, policies, resourceGroups)
 
