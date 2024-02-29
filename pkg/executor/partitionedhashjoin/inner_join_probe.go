@@ -63,7 +63,7 @@ func (j *innerJoinProbe) probe(joinResult *hashjoinWorkerResult) (ok bool, _ *ha
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		// eval other condition, and construct final chunk
 		j.selected = j.selected[:0]
-		j.selected, joinResult.err = expression.VectorizedFilter(j.ctx.sessCtx, j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		j.selected, joinResult.err = expression.VectorizedFilter(j.ctx.sessCtx.GetExprCtx(), j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
 		if joinResult.err != nil {
 			return false, joinResult
 		}

@@ -57,9 +57,14 @@ type hashJoinCtx struct {
 	stats           *hashJoinRuntimeStats
 	probeTypes      []*types.FieldType
 	buildTypes      []*types.FieldType
-	outerFilter     expression.CNFExprs
 	memTracker      *memory.Tracker // track memory usage.
 	diskTracker     *disk.Tracker   // track disk usage.
+
+	filter         expression.CNFExprs
+	otherCondition expression.CNFExprs
+	joinHashTable  *joinHashTable
+	hashTableMeta  *tableMeta
+	keyMode        keyMode
 }
 
 // probeSideTupleFetcher reads tuples from probeSideExec and send them to probeWorkers.
