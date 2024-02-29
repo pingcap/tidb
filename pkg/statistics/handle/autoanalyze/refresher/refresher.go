@@ -158,6 +158,8 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 						}
 						// Calculate the weight of the job.
 						job.Weight = calculator.CalculateWeight(job)
+						// We apply a penalty to larger tables, which can potentially result in a negative weight.
+						// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
 						if job.Weight <= 0 {
 							statslogutil.StatsLogger().Info(
 								"Table is not ready to analyze",

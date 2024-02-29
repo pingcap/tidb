@@ -52,6 +52,8 @@ func NewPriorityCalculator() *PriorityCalculator {
 //	                  0.3 * math.Log10(1 + math.Sqrt(AnalysisInterval)) +
 //	                  special_event[event])
 func (pc *PriorityCalculator) CalculateWeight(job *TableAnalysisJob) float64 {
+	// We multiply the priority_score by 100 to increase its magnitude. This ensures that
+	// when we apply the log10 function, the resulting value is more meaningful and reasonable.
 	changeRatio := 100 * job.ChangePercentage
 	return changeRatioWeight*math.Log10(1+changeRatio) +
 		sizeWeight*(1-math.Log10(1+job.TableSize)) +
