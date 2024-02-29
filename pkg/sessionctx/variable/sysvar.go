@@ -577,15 +577,6 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeInstance, Name: TiDBStmtSummaryFileMaxBackups, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return strconv.Itoa(config.GetGlobalConfig().Instance.StmtSummaryFileMaxBackups), nil
 	}},
-	{Scope: ScopeInstance, Name: TiDBLowResolutionTSOUpdateInterval, Value: strconv.FormatUint(uint64(DefTiDBLowResolutionTSOUpdateInterval), 10), Type: TypeUnsigned, MinValue: 50, MaxValue: 5000, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		LowResTSOUpdateInterval.Store(uint32(TidbOptInt64(val, DefTiDBLowResolutionTSOUpdateInterval)))
-		if SetLowResTSOUpdateInterval != nil {
-			return SetLowResTSOUpdateInterval()
-		}
-		return nil
-	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return strconv.FormatUint(uint64(LowResTSOUpdateInterval.Load()), 10), nil
-	}},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576,
@@ -1384,6 +1375,17 @@ var defaultSysVars = []*SysVar{
 			HistoricalStatsDuration.Store(d)
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(DefTiDBLowResolutionTSOUpdateInterval), Type: TypeInt, MinValue: 10, MaxValue: 60000,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			LowResTSOUpdateInterval.Store(uint32(TidbOptInt64(val, DefTiDBLowResolutionTSOUpdateInterval)))
+			if SetLowResTSOUpdateInterval != nil {
+				return SetLowResTSOUpdateInterval()
+			}
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return fmt.Sprint(LowResTSOUpdateInterval.Load()), nil
+		},
+	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,

@@ -551,8 +551,7 @@ type Instance struct {
 	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 	// TiDBServiceScope indicates the role for tidb for distributed task framework.
-	TiDBServiceScope        string `toml:"tidb_service_scope" json:"tidb_service_scope"`
-	LowResTSOUpdateInterval uint32 `toml:"tidb_low_resolution_tso_update_interval" json:"tidb_low_resolution_tso_update_interval"`
+	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -971,7 +970,6 @@ var defaultConf = Config{
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
 		TiDBServiceScope:            "",
-		LowResTSOUpdateInterval:     2000,
 	},
 	Status: Status{
 		ReportStatus:          true,
