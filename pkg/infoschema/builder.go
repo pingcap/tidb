@@ -202,7 +202,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
 	case model.ActionDropSchema:
-		return b.applyDropSchema(diff.SchemaID), nil
+		return b.applyDropSchema(diff), nil
 	case model.ActionRecoverSchema:
 		return b.applyRecoverSchema(m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
@@ -467,7 +467,110 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	return tblIDs, nil
 }
 
+// ywq todo check the correctness.
+func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	var oldTableID, newTableID int64
+	switch diff.Type {
+	case model.ActionCreateSequence, model.ActionRecoverTable:
+		newTableID = diff.TableID
+	case model.ActionCreateTable:
+		// WARN: when support create table with foreign key in https://github.com/pingcap/tidb/pull/37148,
+		// create table with foreign key requires a multi-step state change(none -> write-only -> public),
+		// when the table's state changes from write-only to public, infoSchema need to drop the old table
+		// which state is write-only, otherwise, infoSchema.sortedTablesBuckets will contain 2 table both
+		// have the same ID, but one state is write-only, another table's state is public, it's unexpected.
+		//
+		// WARN: this change will break the compatibility if execute create table with foreign key DDL when upgrading TiDB,
+		// since old-version TiDB doesn't know to delete the old table.
+		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
+		oldTableID = diff.OldTableID
+		newTableID = diff.TableID
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+		oldTableID = diff.TableID
+	case model.ActionTruncateTable, model.ActionCreateView,
+		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
+		model.ActionRemovePartitioning:
+		oldTableID = diff.OldTableID
+		newTableID = diff.TableID
+	default:
+		oldTableID = diff.TableID
+		newTableID = diff.TableID
+	}
+	// handle placement rule cache
+	switch diff.Type {
+	case model.ActionCreateTable:
+		b.markTableBundleShouldUpdate(newTableID)
+	case model.ActionDropTable:
+		b.deleteBundle(b.infoSchema, oldTableID)
+	case model.ActionTruncateTable:
+		b.deleteBundle(b.infoSchema, oldTableID)
+		b.markTableBundleShouldUpdate(newTableID)
+	case model.ActionRecoverTable:
+		b.markTableBundleShouldUpdate(newTableID)
+	case model.ActionAlterTablePlacement:
+		b.markTableBundleShouldUpdate(newTableID)
+	}
+
+	tblIDs := make([]int64, 0, 2)
+	// We try to reuse the old allocator, so the cached auto ID can be reused.
+	var allocs autoid.Allocators
+	if tableIDIsValid(oldTableID) {
+		if oldTableID == newTableID &&
+			// For rename table, keep the old alloc.
+
+			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
+			// For normal node's information schema, repaired table is existed.
+			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
+			// So here skip to reserve the allocators when repairing table.
+			diff.Type != model.ActionRepairTable &&
+			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
+			diff.Type != model.ActionAlterSequence {
+			// TODO: Check how this would work with ADD/REMOVE Partitioning,
+			// which may have AutoID not connected to tableID
+			// TODO: can there be _tidb_rowid AutoID per partition?
+			oldAllocs, _ := allocByID(b.infoSchema, oldTableID)
+			allocs = filterAllocators(diff, oldAllocs)
+		}
+
+		tmpIDs := tblIDs
+		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
+			oldRoDBInfo, ok := b.infoschemaV2.SchemaByID(diff.OldSchemaID)
+			if !ok {
+				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
+				)
+			}
+			tmpIDs = b.applyDropTableV2(diff, oldRoDBInfo, oldTableID, tmpIDs)
+		} else {
+			tmpIDs = b.applyDropTableV2(diff, oldDBInfo, oldTableID, tmpIDs)
+		}
+
+		if oldTableID != newTableID {
+			// Update tblIDs only when oldTableID != newTableID because applyCreateTable() also updates tblIDs.
+			tblIDs = tmpIDs
+		}
+	}
+	if tableIDIsValid(newTableID) {
+		// All types except DropTableOrView.
+		var err error
+		tblIDs, err = b.applyCreateTable(m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return tblIDs, nil
+}
+
 func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyTableUpdateV2(m, diff)
+	}
 	roDBInfo, ok := b.infoSchema.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -732,8 +835,11 @@ func (b *Builder) applyDropPolicy(PolicyID int64) []int64 {
 	return []int64{}
 }
 
-func (b *Builder) applyDropSchema(schemaID int64) []int64 {
-	di, ok := b.infoSchema.SchemaByID(schemaID)
+func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
+	if b.enableV2 {
+		return b.applyDropSchemaV2(diff)
+	}
+	di, ok := b.infoSchema.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil
 	}
@@ -757,6 +863,61 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 		b.applyDropTable(di, id, nil)
 	}
 	return tableIDs
+}
+
+func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
+	di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil
+	}
+
+	b.infoData.deleteDB(diff.Version, di)
+	tableIDs := make([]int64, 0, len(di.Tables))
+	for _, tbl := range di.Tables {
+		tableIDs = appendAffectedIDs(tableIDs, tbl)
+	}
+
+	di = di.Clone()
+	for _, id := range tableIDs {
+		b.deleteBundle(b.infoSchema, id)
+		b.applyDropTableV2(diff, di, id, nil)
+	}
+	return tableIDs
+}
+
+func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+	// Remove the table in temporaryTables
+	if b.infoSchemaMisc.temporaryTableIDs != nil {
+		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
+	}
+
+	table, ok := b.infoschemaV2.TableByID(tableID)
+
+	if !ok {
+		return nil
+	}
+
+	b.infoData.delete(tableItem{
+		dbName:        dbInfo.Name.L,
+		dbID:          dbInfo.ID,
+		tableName:     table.Meta().Name.L,
+		tableID:       table.Meta().ID,
+		schemaVersion: diff.Version,
+	})
+
+	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	for i, tblInfo := range dbInfo.Tables {
+		if tblInfo.ID == tableID {
+			if i == len(dbInfo.Tables)-1 {
+				dbInfo.Tables = dbInfo.Tables[:i]
+			} else {
+				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
+			}
+			// TODO: deleteReferredForeignKeys
+			break
+		}
+	}
+	return affected
 }
 
 func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -1219,6 +1380,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 				schemaMap:           map[string]*schemaTables{},
 				sortedTablesBuckets: make([]sortedTables, bucketCount),
 			},
+			Data: infoData,
 		},
 		dirtyDB:  make(map[string]bool),
 		factory:  factory,

@@ -927,6 +927,7 @@ type infoschemaTestContext struct {
 	t      *testing.T
 	re     autoid.Requirement
 	ctx    context.Context
+	data   *infoschema.Data
 }
 
 func (tc *infoschemaTestContext) createSchema() {
@@ -953,7 +954,7 @@ func (tc *infoschemaTestContext) runCreateSchema() infoschema.InfoSchema {
 	tc.createSchema()
 
 	// apply diff
-	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithDBInfos(nil, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(tc.t, err)
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
@@ -981,12 +982,11 @@ func (tc *infoschemaTestContext) dropSchema() {
 func (tc *infoschemaTestContext) runDropSchema() infoschema.InfoSchema {
 	// create schema
 	oldIs := tc.runCreateSchema()
-
 	// drop schema
 	tc.dropSchema()
 
 	// apply diff
-	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(oldIs)
+	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithOldInfoSchema(oldIs)
 	require.NoError(tc.t, err)
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
@@ -1038,7 +1038,7 @@ func (tc *infoschemaTestContext) runCreateTable(tblName string) (infoschema.Info
 	}
 	// create table
 	tblID := tc.createTable(tblName)
-	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithDBInfos([]*model.DBInfo{tc.dbInfo}, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithDBInfos([]*model.DBInfo{tc.dbInfo}, nil, nil, 1)
 	require.NoError(tc.t, err)
 
 	// apply diff
@@ -1071,7 +1071,7 @@ func (tc *infoschemaTestContext) runDropTable(tblName string) infoschema.InfoSch
 
 	// dropTable
 	tc.dropTable(tblName, tblID)
-	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(is)
+	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithOldInfoSchema(is)
 	require.NoError(tc.t, err)
 
 	txn, err := tc.re.Store().Begin()
@@ -1099,19 +1099,24 @@ func TestApplyDiff(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	tc := &infoschemaTestContext{
-		t:   t,
-		re:  re,
-		ctx: kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+	for i := 0; i < 2; i++ {
+		if i == 1 {
+			variable.SchemaCacheSize.Store(1000000)
+		}
+		tc := &infoschemaTestContext{
+			t:    t,
+			re:   re,
+			ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+			data: infoschema.NewData(),
+		}
+		tc.runCreateSchema()
+		tc.clear()
+		tc.runDropSchema()
+		tc.clear()
+		tc.runCreateTable("test")
+		tc.clear()
+		tc.runDropTable("test")
+		tc.clear()
 	}
-
-	tc.runCreateSchema()
-	tc.clear()
-	tc.runDropSchema()
-	tc.clear()
-	tc.runCreateTable("test")
-	tc.clear()
-	tc.runDropTable("test")
-	tc.clear()
 	// TODO check all actions..
 }

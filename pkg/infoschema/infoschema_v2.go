@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/scalalang2/golang-fifo"
+	fifo "github.com/scalalang2/golang-fifo"
 	"github.com/scalalang2/golang-fifo/sieve"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
@@ -160,6 +160,16 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+}
+
+func (isd *Data) delete(item tableItem) {
+	isd.byID.Delete(item)
+	isd.byName.Delete(item)
+	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
+}
+
+func (isd *Data) deleteDB(schemaVersion int64, dbInfo *model.DBInfo) {
+	isd.schemaMap.Delete(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
 func compareByID(a, b tableItem) bool {
