@@ -80,8 +80,6 @@ github.com/Masterminds/semver/v3 v3.1.1 h1:hLg3sBzpNErnxhQtUy/mmLR2I9foDujNK030I
 github.com/Masterminds/semver/v3 v3.1.1/go.mod h1:VPu/7SZ7ePZ3QOrcuXROw5FAcLl4a0cBrbBpGY/8hQs=
 github.com/Masterminds/sprig/v3 v3.2.2 h1:17jRggJu518dr3QaafizSXOjKYp94wKfABxUmyxvxX8=
 github.com/Masterminds/sprig/v3 v3.2.2/go.mod h1:UoaO7Yp8KlPnJIYWTFkMaqPUYKTfGFPhxNuwnnxkKlk=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20240227060657-0be8fd65d490 h1:bFmGz7AiB5EF93Nw7cgcQOwmEqmPR9DmqM9teYpfoCQ=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20240227060657-0be8fd65d490/go.mod h1:krldO06uQxuu5z30nmG465Q99gDJAzaCW3v259nN+ps=
 github.com/Shopify/goreferrer v0.0.0-20181106222321-ec9c9a553398/go.mod h1:a1uqRtAwp2Xwc6WNPJEufxJ7fx3npB4UV/JOLmbu5I0=
 github.com/Shopify/sarama v1.29.0 h1:ARid8o8oieau9XrHI55f/L3EoRAhm9px6sonbD7yuUE=
 github.com/Shopify/sarama v1.29.0/go.mod h1:2QpgD79wpdAESqNQMxNc0KYMkycd4slxGdV3TWSVqrU=
@@ -868,6 +866,8 @@ github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
 github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
+github.com/tikv/client-go/v2 v2.0.8-0.20240229045805-09ecb550d383 h1:WGO0XZ138JABHm+jGGgzDrmnE9T1+VpZ9MkFecdgQd8=
+github.com/tikv/client-go/v2 v2.0.8-0.20240229045805-09ecb550d383/go.mod h1:krldO06uQxuu5z30nmG465Q99gDJAzaCW3v259nN+ps=
 github.com/tikv/pd/client v0.0.0-20240221051526-d6d9feab3e2a h1:V2lmRIYeGGIr28YoSvqXVkrvCFqqNfUNhbZqMCFa+tQ=
 github.com/tikv/pd/client v0.0.0-20240221051526-d6d9feab3e2a/go.mod h1:Z/QAgOt29zvwBTd0H6pdx45VO6KRNc/O/DzGkVmSyZg=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
