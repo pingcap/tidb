@@ -23,64 +23,72 @@ type innerJoinProbe struct {
 	baseJoinProbe
 }
 
-func (j *innerJoinProbe) probe(chk *chunk.Chunk, info *probeProcessInfo) (err error) {
-	if chk.IsFull() {
-		return nil
+func (j *innerJoinProbe) probe(joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
+	if joinResult.chk.IsFull() {
+		return true, joinResult
 	}
-	joinedChk, remainCap, err1 := j.prepareForProbe(chk, info)
-	if err1 != nil {
-		return err1
+	joinedChk, remainCap, err := j.prepareForProbe(joinResult.chk)
+	if err != nil {
+		joinResult.err = err
+		return false, joinResult
 	}
 	length := 0
 	meta := j.ctx.hashTableMeta
 
-	for remainCap > 0 && info.currentProbeRow < info.chunk.NumRows() {
-		if info.matchedRowsHeaders[info.currentProbeRow] != nil {
-			candidateRow := info.matchedRowsHeaders[info.currentProbeRow]
-			if isKeyMatched(j.ctx.keyMode, info.serializedKeys[info.currentProbeRow], candidateRow, meta) {
+	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
+		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
+			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
+			if isKeyMatched(j.ctx.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// key matched, convert row to column for build side
 				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
-				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo, info)
+				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)
 				if j.ctx.hasOtherCondition() {
-					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: info.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
+					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
 				}
 				length++
 				remainCap--
 				joinedChk.IncNumVirtualRows()
 			}
-			info.matchedRowsHeaders[info.currentProbeRow] = getNextRowAddress(candidateRow)
+			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
-			j.appendOffsetAndLength(info.currentProbeRow, length)
+			j.appendOffsetAndLength(j.currentProbeRow, length)
 			length = 0
-			info.currentProbeRow++
+			j.currentProbeRow++
 		}
 	}
 
-	j.appendOffsetAndLength(info.currentProbeRow, length)
-	j.appendProbeRowToChunk(joinedChk, info.chunk)
+	j.appendOffsetAndLength(j.currentProbeRow, length)
+	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		// eval other condition, and construct final chunk
 		j.selected = j.selected[:0]
-		j.selected, err = expression.VectorizedFilter(j.ctx.sessCtx, j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
-		if err != nil {
-			return err
+		j.selected, joinResult.err = expression.VectorizedFilter(j.ctx.sessCtx, j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		if joinResult.err != nil {
+			return false, joinResult
 		}
-		err = j.buildResultAfterOtherCondition(chk, joinedChk, info)
+		joinResult.err = j.buildResultAfterOtherCondition(joinResult.chk, joinedChk)
 	}
 	// if there is no other condition, the joinedChk is the final result
-	return err
+	if joinResult.err != nil {
+		return false, joinResult
+	}
+	return true, joinResult
 }
 
 func (j *innerJoinProbe) needScanHT() bool {
 	return false
 }
 
-func (j *innerJoinProbe) scanHT(*chunk.Chunk) (err error) {
+func (j *innerJoinProbe) scanHT(*hashjoinWorkerResult) *hashjoinWorkerResult {
 	panic("should not reach here")
 }
 
-func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedChk *chunk.Chunk, info *probeProcessInfo) (err error) {
+func (j *innerJoinProbe) isScanHTDone() bool {
+	panic("should not reach here")
+}
+
+func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedChk *chunk.Chunk) (err error) {
 	// construct the return chunk based on joinedChk and selected, there are 3 kinds of columns
 	// 1. columns already in joinedChk
 	// 2. columns from build side, but not in joinedChk
@@ -98,13 +106,13 @@ func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joined
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
 		} else {
 			// probe column that is not in joinedChk
-			srcCol := info.chunk.Column(colIndex)
+			srcCol := j.currentChunk.Column(colIndex)
 			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
 				return j.rowIndexInfos[i].probeRowIndex
 			})
 		}
 	}
-	buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk := j.rUsed, len(j.lUsed), info.chunk.NumCols()
+	buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk := j.rUsed, len(j.lUsed), j.currentChunk.NumCols()
 	if !j.rightAsBuildSide {
 		buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk = j.lUsed, 0, 0
 	}
@@ -127,7 +135,7 @@ func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joined
 					rowStart:           j.rowIndexInfos[index].buildRowStart,
 					rowData:            j.rowIndexInfos[index].buildRowData,
 					currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
-				}, info)
+				})
 			}
 		}
 	}
