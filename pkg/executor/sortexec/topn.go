@@ -18,10 +18,13 @@ import (
 	"container/heap"
 	"context"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
@@ -33,21 +36,62 @@ type TopNExec struct {
 	Limit      *plannercore.PhysicalLimit
 	totalLimit uint64
 
-	resultChannel chan rowWithError
+	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
+	fetcherAndWorkerSyncer *sync.WaitGroup
+	resultChannel          chan rowWithError
+	chunkChannel           chan *chunk.Chunk
 
 	chkHeap *topNChunkHeap
+
+	spillHelper *topNSpillHelper // TODO initialize it
+	spillAction *topNSpillAction // TODO initialize it
 }
 
 // topNChunkHeap implements heap.Interface.
 type topNChunkHeap struct {
-	*TopNExec
+	byItems []*plannerutil.ByItems
+
+	// keyColumns is the column index of the by items.
+	keyColumns []int
+	// keyCmpFuncs is used to compare each ByItem.
+	keyCmpFuncs []chunk.CompareFunc
 
 	// rowChunks is the chunks to store row values.
 	rowChunks *chunk.List
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
 
-	Idx int
+	memTracker *memory.Tracker
+
+	idx int
+}
+
+func (h *topNChunkHeap) init(e *TopNExec, byItems []*plannerutil.ByItems, keyColumns []int, keyCmpFuncs []chunk.CompareFunc) {
+	h.rowChunks = chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
+	h.rowChunks.GetMemTracker().AttachTo(h.memTracker)
+	h.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
+
+	h.byItems = byItems
+	h.keyColumns = keyColumns
+	h.keyCmpFuncs = keyCmpFuncs
+}
+
+func (h *topNChunkHeap) initPtrs() {
+	h.rowPtrs = make([]chunk.RowPtr, 0, h.rowChunks.Len())
+	h.memTracker.Consume(int64(chunk.RowPtrSize * h.rowChunks.Len()))
+	for chkIdx := 0; chkIdx < h.rowChunks.NumChunks(); chkIdx++ {
+		rowChk := h.rowChunks.GetChunk(chkIdx)
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+			h.rowPtrs = append(h.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
+}
+
+func (h *topNChunkHeap) clear() {
+	h.rowChunks.Clear()
+	h.memTracker.Consume(int64(-chunk.RowPtrSize * len(h.rowPtrs)))
+	h.rowPtrs = nil
+	h.idx = 0
 }
 
 // Less implement heap.Interface, but since we mantains a max heap,
@@ -62,7 +106,7 @@ func (h *topNChunkHeap) greaterRow(rowI, rowJ chunk.Row) bool {
 	for i, colIdx := range h.keyColumns {
 		cmpFunc := h.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if h.ByItems[i].Desc {
+		if h.byItems[i].Desc {
 			cmp = -cmp
 		}
 		if cmp > 0 {
@@ -98,17 +142,6 @@ func (e *TopNExec) keyColumnsCompare(i, j chunk.RowPtr) int {
 	return e.compareRow(rowI, rowJ)
 }
 
-func (e *TopNExec) initPointers() {
-	e.chkHeap.rowPtrs = make([]chunk.RowPtr, 0, e.chkHeap.rowChunks.Len())
-	e.memTracker.Consume(int64(8 * e.chkHeap.rowChunks.Len()))
-	for chkIdx := 0; chkIdx < e.chkHeap.rowChunks.NumChunks(); chkIdx++ {
-		rowChk := e.chkHeap.rowChunks.GetChunk(chkIdx)
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			e.chkHeap.rowPtrs = append(e.chkHeap.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-		}
-	}
-}
-
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
@@ -116,8 +149,8 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
-	e.chkHeap = &topNChunkHeap{TopNExec: e}
-	e.chkHeap.Idx = 0
+	e.chkHeap = &topNChunkHeap{memTracker: e.memTracker}
+	e.chkHeap.idx = 0
 
 	e.resultChannel = make(chan rowWithError, e.MaxChunkSize())
 	return exec.Open(ctx, e.Children(0))
@@ -148,7 +181,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TopNExec) fetchChunks(ctx context.Context) error {
 	e.totalLimit = e.Limit.Offset + e.Limit.Count
-	e.chkHeap.Idx = int(e.Limit.Offset)
+	e.chkHeap.idx = int(e.Limit.Offset)
 
 	err := e.loadChunksUntilTotalLimit(ctx)
 	if err != nil {
@@ -160,9 +193,9 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 }
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
-	e.chkHeap.rowChunks = chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
-	e.chkHeap.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.chkHeap.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
+	e.initCompareFuncs()
+	e.buildKeyColumns()
+	e.chkHeap.init(e, e.ByItems, e.keyColumns, e.keyCmpFuncs)
 	for uint64(e.chkHeap.rowChunks.Len()) < e.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// adjust required rows by total limit
@@ -175,14 +208,136 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 			break
 		}
 		e.chkHeap.rowChunks.Add(srcChk)
+		if e.spillHelper.isSpillNeeded() {
+			break
+		}
 	}
-	e.initPointers()
-	e.initCompareFuncs()
-	e.buildKeyColumns()
+
+	e.chkHeap.initPtrs()
 	return nil
 }
 
 const topNCompactionFactor = 4
+
+func (e *TopNExec) executeTopNNoSpill(ctx context.Context) error {
+	childRowChk := exec.TryNewCacheChunk(e.Children(0))
+	for {
+		if e.spillHelper.isSpillNeeded() {
+			return nil
+		}
+
+		err := exec.Next(ctx, e.Children(0), childRowChk)
+		if err != nil {
+			return err
+		}
+
+		if childRowChk.NumRows() == 0 {
+			break
+		}
+
+		err = e.processChildChk(childRowChk)
+		if err != nil {
+			return err
+		}
+
+		if e.chkHeap.rowChunks.Len() > len(e.chkHeap.rowPtrs)*topNCompactionFactor {
+			err = e.doCompaction(e.chkHeap)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	slices.SortFunc(e.chkHeap.rowPtrs, e.keyColumnsCompare)
+	return nil
+}
+
+func (e *TopNExec) spillRemainingRowsWhenNeeded() error {
+	if e.spillHelper.isSpillTriggered() {
+		return e.spillHelper.spill()
+	}
+	return nil
+}
+
+func (e *TopNExec) checkSpillAndExecute() error {
+	if e.spillHelper.isSpillNeeded() {
+		// Wait for the stop of all workers
+		e.fetcherAndWorkerSyncer.Wait()
+		return e.spillHelper.spill()
+	}
+	return nil
+}
+
+func (e *TopNExec) fetchChunksFromChild(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			processPanicAndLog(e.resultChannel, r)
+
+			e.fetcherAndWorkerSyncer.Wait()
+			err := e.spillRemainingRowsWhenNeeded()
+			if err != nil {
+				e.resultChannel <- rowWithError{err: err}
+			}
+
+			close(e.chunkChannel)
+		}
+	}()
+
+	for {
+		chk := exec.TryNewCacheChunk(e.Children(0))
+		err := exec.Next(ctx, e.Children(0), chk)
+		if err != nil {
+			e.resultChannel <- rowWithError{err: err}
+			return
+		}
+
+		rowCount := chk.NumRows()
+		if rowCount == 0 {
+			break
+		}
+
+		e.fetcherAndWorkerSyncer.Add(1)
+		select {
+		case <-e.finishCh:
+			e.Parallel.fetcherAndWorkerSyncer.Done()
+			return
+		case e.chunkChannel <- chk:
+		}
+
+		err = e.checkSpillAndExecute()
+		if err != nil {
+			e.resultChannel <- rowWithError{err: err}
+			return
+		}
+	}
+}
+
+func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
+	err := e.spillHelper.spillHeap(e.chkHeap)
+	if err != nil {
+		return err
+	}
+
+	// Wait for the finish of chunk fetcher
+	fetcherWaiter := util.WaitGroupWrapper{}
+	// Wait for the finish of all workers
+	workersWaiter := util.WaitGroupWrapper{}
+
+	// Fetch chunks from child and put chunks into chunkChannel
+	fetcherWaiter.Run(func() {
+		e.fetchChunksFromChild(ctx)
+	})
+
+	for i := range e.spillHelper.workers {
+		e.spillHelper.workers[i] = newTopNWorker()
+		worker := e.spillHelper.workers[i]
+		workersWaiter.Run(func() {
+			worker.run()
+		})
+	}
+
+	return nil
+}
 
 func (e *TopNExec) executeTopN(ctx context.Context) {
 	defer close(e.resultChannel)
@@ -192,36 +347,24 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
-	childRowChk := exec.TryNewCacheChunk(e.Children(0))
-	for {
-		err := exec.Next(ctx, e.Children(0), childRowChk)
-		if err != nil {
+
+	if err := e.executeTopNNoSpill(ctx); err != nil {
+		e.resultChannel <- rowWithError{err: err}
+		return
+	}
+
+	if e.spillHelper.isSpillNeeded() {
+		if err := e.executeTopNWithSpill(ctx); err != nil {
 			e.resultChannel <- rowWithError{err: err}
 			return
-		}
-		if childRowChk.NumRows() == 0 {
-			break
-		}
-		err = e.processChildChk(childRowChk)
-		if err != nil {
-			e.resultChannel <- rowWithError{err: err}
-			return
-		}
-		if e.chkHeap.rowChunks.Len() > len(e.chkHeap.rowPtrs)*topNCompactionFactor {
-			err = e.doCompaction(e.chkHeap)
-			if err != nil {
-				e.resultChannel <- rowWithError{err: err}
-				return
-			}
 		}
 	}
 
-	slices.SortFunc(e.chkHeap.rowPtrs, e.keyColumnsCompare)
-
+	// TODO we may send result rows in spill mode
 	// Send result rows
 	rowPtrNum := len(e.chkHeap.rowPtrs)
-	for ; e.chkHeap.Idx < rowPtrNum; e.chkHeap.Idx++ {
-		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.Idx])}
+	for ; e.chkHeap.idx < rowPtrNum; e.chkHeap.idx++ {
+		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
 	}
 }
 
