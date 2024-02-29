@@ -249,7 +249,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, uint64(schemaTs))
-		return is, true, 0, nil, nil
+
+		enableV2 := variable.SchemaCacheSize.Load() > 0
+		isV2 := infoschema.IsV2(is)
+		if enableV2 == isV2 {
+			return is, true, 0, nil, nil
+		}
 	}
 
 	currentSchemaVersion := int64(0)
@@ -448,7 +453,10 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
 	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))

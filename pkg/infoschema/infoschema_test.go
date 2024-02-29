@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -361,7 +362,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder := infoschema.NewBuilder(re, nil, nil).InitWithOldInfoSchema(curIs)
+				builder, err := infoschema.NewBuilder(re, nil, nil).InitWithOldInfoSchema(curIs)
+				require.NoError(t, err)
 				change(m, builder)
 				curIs = builder.Build()
 			}
@@ -883,6 +885,42 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
 }
 
+func TestEnableInfoSchemaV2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Test the @@tidb_enable_infoschema_v2 variable.
+	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(0))
+
+	// Modify it.
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("1024"))
+	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("1024"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(1024))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table v2 (id int)")
+
+	// Check the InfoSchema used is V2.
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	require.True(t, infoschema.IsV2(is))
+
+	// Execute some basic operations under infoschema v2.
+	tk.MustQuery("show tables").Check(testkit.Rows("v2"))
+	tk.MustExec("drop table v2")
+	tk.MustExec("create table v1 (id int)")
+
+	// Change infoschema back to v1 and check again.
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(0))
+
+	tk.MustExec("drop table v1")
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	require.False(t, infoschema.IsV2(is))
+}
+
 type infoschemaTestContext struct {
 	// only test one db.
 	dbInfo *model.DBInfo
@@ -948,7 +986,8 @@ func (tc *infoschemaTestContext) runDropSchema() infoschema.InfoSchema {
 	tc.dropSchema()
 
 	// apply diff
-	builder := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(oldIs)
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(oldIs)
+	require.NoError(tc.t, err)
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn),
@@ -1032,7 +1071,8 @@ func (tc *infoschemaTestContext) runDropTable(tblName string) infoschema.InfoSch
 
 	// dropTable
 	tc.dropTable(tblName, tblID)
-	builder := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(is)
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(is)
+	require.NoError(tc.t, err)
 
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -33,8 +32,6 @@ import (
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
-
-var enableV2 atomic.Bool
 
 // tableItem is the btree item sorted by name or by id.
 type tableItem struct {
@@ -207,7 +204,7 @@ func compareSchemaItem(a, b schemaItem) bool {
 var _ InfoSchema = &infoschemaV2{}
 
 type infoschemaV2 struct {
-	infoSchemaMisc
+	*infoSchema   // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
 	r             autoid.Requirement
 	ts            uint64
 	schemaVersion int64
@@ -314,7 +311,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
 	var dbInfo model.DBInfo
 	dbInfo.Name = schema
-	is.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
+	is.Data.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
 		if item.Name() != schema.L {
 			ok = false
 			return false
@@ -330,7 +327,7 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 }
 
 func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
-	is.schemaMap.Scan(func(item schemaItem) bool {
+	is.Data.schemaMap.Scan(func(item schemaItem) bool {
 		// TODO: version?
 		schemas = append(schemas, item.dbInfo)
 		return true
@@ -345,7 +342,7 @@ func (is *infoschemaV2) SchemaMetaVersion() int64 {
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 	var ok bool
 	// TODO: support different version
-	is.schemaMap.Scan(func(item schemaItem) bool {
+	is.Data.schemaMap.Scan(func(item schemaItem) bool {
 		if item.dbInfo.Name.L == schema.L {
 			ok = true
 			return false
@@ -367,7 +364,7 @@ func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	var ok bool
 	var dbInfo *model.DBInfo
-	is.schemaMap.Scan(func(item schemaItem) bool {
+	is.Data.schemaMap.Scan(func(item schemaItem) bool {
 		if item.dbInfo.ID == id {
 			ok = true
 			dbInfo = item.dbInfo
@@ -445,4 +442,10 @@ func isTableVirtual(id int64) bool {
 	// we use special ids for tables in INFORMATION_SCHEMA/PERFORMANCE_SCHEMA/METRICS_SCHEMA
 	// See meta/autoid/autoid.go for those definitions.
 	return (id & autoid.SystemSchemaIDFlag) > 0
+}
+
+// IsV2 tells whether an InfoSchema is v2 or not.
+func IsV2(is InfoSchema) bool {
+	_, ok := is.(*infoschemaV2)
+	return ok
 }
