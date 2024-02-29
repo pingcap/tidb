@@ -809,9 +809,9 @@ func (b *Builder) updateBundleForCreateTable(tblInfo *model.TableInfo, tp model.
 	}
 }
 
-func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) {
+func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) autoid.Allocators {
 	if len(allocs.Allocs) == 0 {
-		allocs = autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
+		return autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
 	} else {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
@@ -838,6 +838,7 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 				allocs = allocs.Append(newAlloc)
 			}
 		}
+		return allocs
 	}
 }
 
@@ -874,7 +875,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
-	b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
+	allocs = b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
 
 	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
