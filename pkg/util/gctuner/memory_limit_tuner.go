@@ -62,11 +62,13 @@ func WaitMemoryLimitTunerExitInTest() {
 // DisableAdjustMemoryLimit makes memoryLimitTuner directly return `initGOMemoryLimitValue` when function `calcMemoryLimit` is called.
 func (t *memoryLimitTuner) DisableAdjustMemoryLimit() {
 	t.adjustDisabled.Add(1)
+	debug.SetMemoryLimit(initGOMemoryLimitValue)
 }
 
 // EnableAdjustMemoryLimit makes memoryLimitTuner return an adjusted memory limit when function `calcMemoryLimit` is called.
 func (t *memoryLimitTuner) EnableAdjustMemoryLimit() {
 	t.adjustDisabled.Add(-1)
+	t.UpdateMemoryLimit()
 }
 
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
