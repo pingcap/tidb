@@ -128,30 +128,12 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 // UnspecifiedLimit means no limit.
 const UnspecifiedLimit = -1
 
-// todo move to client.go
-func (c *RegionCache) locateKeyRange(bo *Backoffer, startKey, endKey []byte) ([]*tikv.KeyLocation, error) {
-	regions, err := c.LoadRegionsInKeyRange(bo.TiKVBackoffer(), startKey, endKey)
-	if err != nil {
-		return nil, err
-	}
-	res := make([]*tikv.KeyLocation, 0, len(regions))
-	for _, r := range regions {
-		res = append(res, &tikv.KeyLocation{
-			Region:   r.VerID(),
-			StartKey: r.StartKey(),
-			EndKey:   r.EndKey(),
-			Buckets:  nil,
-		})
-	}
-	return res, nil
-}
-
 // SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
 func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges, limit int) ([]*LocationKeyRanges, error) {
 	if limit == 0 || ranges.Len() <= 0 {
 		return nil, nil
 	}
-	locs, err := c.locateKeyRange(bo, ranges.RefAt(0).StartKey, ranges.RefAt(ranges.Len()-1).EndKey)
+	locs, err := c.locateKeyRange(bo.TiKVBackoffer(), ranges.RefAt(0).StartKey, ranges.RefAt(ranges.Len()-1).EndKey)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
