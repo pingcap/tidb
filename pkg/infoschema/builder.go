@@ -810,9 +810,7 @@ func (b *Builder) updateBundleForCreateTable(tblInfo *model.TableInfo, tp model.
 }
 
 func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) autoid.Allocators {
-	if len(allocs.Allocs) == 0 {
-		return autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
-	} else {
+	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
@@ -840,6 +838,7 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 		}
 		return allocs
 	}
+	return autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
 }
 
 func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
@@ -1113,6 +1112,7 @@ func (b *Builder) initForV1(dbInfos []*model.DBInfo, schemaVersion int64) error 
 		if err != nil {
 			return errors.Trace(err)
 		}
+		// no need to update v1 for v2.
 		b.is.schemaMap[di.Name.L] = schTbls
 	}
 	return nil
@@ -1151,14 +1151,13 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.initMisc(dbInfos, policies, resourceGroups)
 
-	if !enableV2.Load() {
-		err := b.initForV1(dbInfos, schemaVersion)
-		if err != nil {
-			return nil, err
-		}
+	// TODO: only for v1
+	err := b.initForV1(dbInfos, schemaVersion)
+	if err != nil {
+		return nil, err
 	}
 
-	err := b.initVirtualTables(schemaVersion)
+	err = b.initVirtualTables(schemaVersion)
 	if err != nil {
 		return nil, err
 	}

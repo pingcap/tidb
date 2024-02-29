@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/scalalang2/golang-fifo"
+	fifo "github.com/scalalang2/golang-fifo"
 	"github.com/scalalang2/golang-fifo/sieve"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
@@ -445,4 +445,8 @@ func isTableVirtual(id int64) bool {
 	// we use special ids for tables in INFORMATION_SCHEMA/PERFORMANCE_SCHEMA/METRICS_SCHEMA
 	// See meta/autoid/autoid.go for those definitions.
 	return (id & autoid.SystemSchemaIDFlag) > 0
+}
+
+func init() {
+	enableV2.Store(true)
 }
