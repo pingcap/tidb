@@ -1385,8 +1385,7 @@ func (pe *PartitionExpr) locateListPartition(ctx expression.EvalContext, r []typ
 	if len(lp.ColPrunes) == 0 {
 		return lp.locateListPartitionByRow(ctx, r)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	tc, ec := sc.TypeCtx(), sc.ErrCtx()
+	tc, ec := ctx.TypeCtx(), ctx.ErrCtx()
 	return lp.locateListColumnsPartitionByRow(tc, ec, r)
 }
 
@@ -1458,7 +1457,7 @@ func (t *partitionedTable) locateHashPartition(ctx expression.EvalContext, partE
 			data = r[col.Index]
 		default:
 			var err error
-			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
+			data, err = r[col.Index].ConvertTo(ctx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
 			if err != nil {
 				return 0, err
 			}

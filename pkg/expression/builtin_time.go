@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -305,7 +304,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !datePattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, str)
 	}
-	tm, err := types.ParseDate(ctx.GetSessionVars().StmtCtx.TypeCtx(), str)
+	tm, err := types.ParseDate(ctx.TypeCtx(), str)
 	if err != nil {
 		return nil, err
 	}
@@ -1394,8 +1393,7 @@ func (b *builtinWeekWithoutModeSig) evalInt(ctx EvalContext, row chunk.Row) (int
 	}
 
 	mode := 0
-	modeStr, ok := ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
-	if ok && modeStr != "" {
+	if modeStr := ctx.GetDefaultWeekFormatMode(); modeStr != "" {
 		mode, err = strconv.Atoi(modeStr)
 		if err != nil {
 			return 0, true, handleInvalidTimeError(ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
@@ -2297,7 +2295,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !isDuration(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, str)
 	}
-	duration, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), str, types.GetFsp(str))
+	duration, _, err := types.ParseDuration(ctx.TypeCtx(), str, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
@@ -4482,7 +4480,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
 	}
-	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx.TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str))
+	tm, err := types.ParseTime(ctx.TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
