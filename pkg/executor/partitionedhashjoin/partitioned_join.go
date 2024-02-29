@@ -42,18 +42,42 @@ var (
 	_ exec.Executor = &PartitionedHashJoinExec{}
 )
 
-type hashJoinCtx struct {
-	sessCtx   sessionctx.Context
+// IsSupportedJoin returns true if current join is supported by partitioned hash join
+func IsSupportedJoin(v *plannercore.PhysicalHashJoin) bool {
+	switch v.JoinType {
+	case plannercore.LeftOuterJoin, plannercore.InnerJoin:
+		// null aware join is not supported yet
+		if len(v.LeftNAJoinKeys) > 0 {
+			return false
+		}
+		// cross join is not supported
+		if len(v.LeftJoinKeys) == 0 {
+			return false
+		}
+		// NullEQ is not supported yet
+		for _, value := range v.IsNullEQ {
+			if value {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+type PartitionedHashJoinCtx struct {
+	SessCtx   sessionctx.Context
 	allocPool chunk.Allocator
 	// concurrency is the number of partition, build and join workers.
-	concurrency  uint
+	Concurrency  uint
 	joinResultCh chan *hashjoinWorkerResult
 	// closeCh add a lock for closing executor.
 	closeCh         chan struct{}
 	finished        atomic.Bool
-	useOuterToBuild bool
+	UseOuterToBuild bool
 	buildFinished   chan error
-	joinType        plannercore.JoinType
+	JoinType        plannercore.JoinType
 	stats           *hashJoinRuntimeStats
 	probeTypes      []*types.FieldType
 	buildTypes      []*types.FieldType
@@ -69,7 +93,7 @@ type hashJoinCtx struct {
 
 // probeSideTupleFetcher reads tuples from probeSideExec and send them to probeWorkers.
 type probeSideTupleFetcher struct {
-	*hashJoinCtx
+	*PartitionedHashJoinCtx
 
 	probeSideExec      exec.Executor
 	probeChkResourceCh chan *probeChkResource
@@ -78,7 +102,7 @@ type probeSideTupleFetcher struct {
 }
 
 type probeWorker struct {
-	hashJoinCtx *hashJoinCtx
+	hashJoinCtx *PartitionedHashJoinCtx
 	workerID    uint
 
 	probeKeyColIdx []int
@@ -93,7 +117,7 @@ type probeWorker struct {
 }
 
 type buildWorker struct {
-	hashJoinCtx      *hashJoinCtx
+	hashJoinCtx      *PartitionedHashJoinCtx
 	buildSideExec    exec.Executor
 	buildKeyColIdx   []int
 	buildNAKeyColIdx []int
@@ -102,7 +126,7 @@ type buildWorker struct {
 // PartitionedHashJoinExec implements the hash join algorithm.
 type PartitionedHashJoinExec struct {
 	exec.BaseExecutor
-	*hashJoinCtx
+	*PartitionedHashJoinCtx
 
 	probeSideTupleFetcher *probeSideTupleFetcher
 	probeWorkers          []*probeWorker
@@ -130,6 +154,10 @@ type hashjoinWorkerResult struct {
 	chk *chunk.Chunk
 	err error
 	src chan<- *chunk.Chunk
+}
+
+func (e *PartitionedHashJoinExec) Init() error {
+	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -178,12 +206,12 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
-	if e.hashJoinCtx.memTracker != nil {
-		e.hashJoinCtx.memTracker.Reset()
+	if e.PartitionedHashJoinCtx.memTracker != nil {
+		e.PartitionedHashJoinCtx.memTracker.Reset()
 	} else {
-		e.hashJoinCtx.memTracker = memory.NewTracker(e.ID(), -1)
+		e.PartitionedHashJoinCtx.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.hashJoinCtx.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+	e.PartitionedHashJoinCtx.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	e.diskTracker = disk.NewTracker(e.ID(), -1)
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
@@ -195,7 +223,7 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 
 	if e.RuntimeStats() != nil {
 		e.stats = &hashJoinRuntimeStats{
-			concurrent: int(e.concurrency),
+			concurrent: int(e.Concurrency),
 		}
 	}
 	return nil
@@ -241,7 +269,7 @@ func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 					probeSideResult.Reset()
 				}
 			})
-			if probeSideResult.NumRows() == 0 && !fetcher.useOuterToBuild {
+			if probeSideResult.NumRows() == 0 && !fetcher.UseOuterToBuild {
 				fetcher.finished.Store(true)
 			}
 			emptyBuild, buildErr := fetcher.wait4BuildSide()
@@ -295,14 +323,14 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 	})
 	failpoint.Inject("issue42662_1", func(val failpoint.Value) {
 		if val.(bool) {
-			if w.hashJoinCtx.sessCtx.GetSessionVars().ConnectionID != 0 {
+			if w.hashJoinCtx.SessCtx.GetSessionVars().ConnectionID != 0 {
 				// consume 170MB memory, this sql should be tracked into MemoryTop1Tracker
 				w.hashJoinCtx.memTracker.Consume(170 * 1024 * 1024)
 			}
 			return
 		}
 	})
-	sessVars := w.hashJoinCtx.sessCtx.GetSessionVars()
+	sessVars := w.hashJoinCtx.SessCtx.GetSessionVars()
 	for {
 		if w.hashJoinCtx.finished.Load() {
 			return
@@ -331,22 +359,22 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 func (e *PartitionedHashJoinExec) initializeForProbe() {
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
-	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
+	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 
-	e.probeSideTupleFetcher.hashJoinCtx = e.hashJoinCtx
+	e.probeSideTupleFetcher.PartitionedHashJoinCtx = e.PartitionedHashJoinCtx
 	// e.probeSideTupleFetcher.probeResultChs is for transmitting the chunks which store the data of
 	// probeSideExec, it'll be written by probe side worker goroutine, and read by join
 	// workers.
-	e.probeSideTupleFetcher.probeResultChs = make([]chan *chunk.Chunk, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
+	e.probeSideTupleFetcher.probeResultChs = make([]chan *chunk.Chunk, e.Concurrency)
+	for i := uint(0); i < e.Concurrency; i++ {
 		e.probeSideTupleFetcher.probeResultChs[i] = make(chan *chunk.Chunk, 1)
 		e.probeWorkers[i].probeResultCh = e.probeSideTupleFetcher.probeResultChs[i]
 	}
 
 	// e.probeChkResourceCh is for transmitting the used probeSideExec chunks from
 	// join workers to probeSideExec worker.
-	e.probeSideTupleFetcher.probeChkResourceCh = make(chan *probeChkResource, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
+	e.probeSideTupleFetcher.probeChkResourceCh = make(chan *probeChkResource, e.Concurrency)
+	for i := uint(0); i < e.Concurrency; i++ {
 		e.probeSideTupleFetcher.probeChkResourceCh <- &probeChkResource{
 			chk:  exec.NewFirstChunk(e.probeSideTupleFetcher.probeSideExec),
 			dest: e.probeSideTupleFetcher.probeResultChs[i],
@@ -355,7 +383,7 @@ func (e *PartitionedHashJoinExec) initializeForProbe() {
 
 	// e.probeWorker.joinChkResourceCh is for transmitting the reused join result chunks
 	// from the main thread to probe worker goroutines.
-	for i := uint(0); i < e.concurrency; i++ {
+	for i := uint(0); i < e.Concurrency; i++ {
 		e.probeWorkers[i].joinChkResourceCh = make(chan *chunk.Chunk, 1)
 		e.probeWorkers[i].joinChkResourceCh <- exec.NewFirstChunk(e)
 		e.probeWorkers[i].probeChkResourceCh = e.probeSideTupleFetcher.probeChkResourceCh
@@ -369,7 +397,7 @@ func (e *PartitionedHashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 		e.probeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize())
 	}, e.probeSideTupleFetcher.handleProbeSideFetcherPanic)
 
-	for i := uint(0); i < e.concurrency; i++ {
+	for i := uint(0); i < e.Concurrency; i++ {
 		workerID := i
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
@@ -403,7 +431,7 @@ func (e *PartitionedHashJoinExec) handleJoinWorkerPanic(r any) {
 func (e *PartitionedHashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.workerWg.Wait()
 	if e.probeWorkers[0] != nil && e.probeWorkers[0].joinProbe.needScanHT() {
-		for i := uint(0); i < e.concurrency; i++ {
+		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
 			e.workerWg.RunWithRecover(func() {
 				e.probeWorkers[workerID].scanHashTableAfterProbeDone()
@@ -546,7 +574,7 @@ func (e *PartitionedHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 			}
 			e.rowContainer = newHashRowContainer(e.Ctx(), hCtx, exec.RetTypes(e.buildWorker.buildSideExec))
 			// we shallow copies rowContainer for each probe worker to avoid lock contention
-			for i := uint(0); i < e.concurrency; i++ {
+			for i := uint(0); i < e.Concurrency; i++ {
 				if i == 0 {
 					e.probeWorkers[i].rowContainerForProbe = e.rowContainer
 				} else {
