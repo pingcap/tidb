@@ -2991,4 +2991,12 @@ func TestIssue43527(t *testing.T) {
 	tk.MustQuery(
 		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := 200) AS T1",
 	).Check(testkit.Rows("300"))
+	tk.MustExec("insert into test values('2010-10-10 10:10:10', 100, 100.01, 100)")
+	// Vectorized.
+	// NOTE: Because https://github.com/pingcap/tidb/pull/8412 disabled the vectorized execution of get or set variable,
+	// the following test case will not be executed in vectorized mode.
+	// It will be executed in the normal mode.
+	tk.MustQuery(
+		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := b FROM test) AS T1 where @total >= 100",
+	).Check(testkit.Rows("200", "300", "400", "500"))
 }
