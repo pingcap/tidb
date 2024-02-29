@@ -62,15 +62,9 @@ type bundleInfoBuilder struct {
 }
 
 func (b *bundleInfoBuilder) initBundleInfoBuilder() {
-	if b.updateTables == nil {
-		b.updateTables = make(map[int64]any)
-	}
-	if b.updatePartitions == nil {
-		b.updatePartitions = make(map[int64]any)
-	}
-	if b.updatePolicies == nil {
-		b.updatePolicies = make(map[int64]any)
-	}
+	b.updateTables = make(map[int64]any)
+	b.updatePartitions = make(map[int64]any)
+	b.updatePolicies = make(map[int64]any)
 }
 
 func (b *bundleInfoBuilder) SetDeltaUpdateBundles() {
@@ -509,7 +503,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 	}
 }
 
-func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff) ([]int64, *autoid.Allocators, error) {
+func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff) ([]int64, autoid.Allocators, error) {
 	tblIDs := make([]int64, 0, 2)
 	var newAllocs autoid.Allocators
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
@@ -535,7 +529,7 @@ func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model
 		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
-				return nil, nil, ErrDatabaseNotExists.GenWithStackByArgs(
+				return nil, newAllocs, ErrDatabaseNotExists.GenWithStackByArgs(
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
@@ -550,7 +544,7 @@ func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model
 			tblIDs = tmpIDs
 		}
 	}
-	return tblIDs, &newAllocs, nil
+	return tblIDs, newAllocs, nil
 }
 
 func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -561,7 +555,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		)
 	}
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
-	newTableID, oldTableID := b.getTableIDs(diff)
+	oldTableID, newTableID := b.getTableIDs(diff)
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
 
@@ -573,7 +567,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, *allocs, diff.Type, tblIDs, diff.Version)
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
