@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 type collectPredicateColumnsPoint struct{}
@@ -38,7 +39,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	predicateNeeded := variable.EnableColumnTracking.Load()
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
 	histNeeded := syncWait > 0
-	predicateColumns, histNeededColumns := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
+	predicateColumns, histNeededColumnsMap := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
@@ -46,15 +47,69 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		return plan, planChanged, nil
 	}
 
-	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below.
+	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and collect columns that needs
+	// trigger sync load.
 	is := plan.SCtx().GetInfoSchema().(infoschema.InfoSchema)
 	tblID2Tbl := make(map[int64]table.Table)
-	for _, neededCol := range histNeededColumns {
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, neededCol.TableID)
+	var histNeededColumns []model.TableItemID
+	for physicalTblID, histNeededColsForTbl := range histNeededColumnsMap {
+		// collect table metadata
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, physicalTblID)
 		if tbl == nil {
 			continue
 		}
-		tblID2Tbl[neededCol.TableID] = tbl
+		tblID2Tbl[physicalTblID] = tbl
+
+		// collect needed columns
+		if len(histNeededColsForTbl) != 0 {
+			// If we collected some columns that need stats on this table, we just normally trigger sync load on them.
+			histNeededColumns = append(histNeededColumns, maps.Keys(histNeededColsForTbl)...)
+		} else if plan.SCtx().GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+			// If we visited a table without getting any columns need stats (likely because there are no pushed down
+			// predicates), and we are in determinate mode, we need to make sure we are able to get the "analyze row
+			// count" in getStatsTable(), which means any column/index stats are available.
+			statsHandle := domain.GetDomain(plan.SCtx()).StatsHandle()
+			if statsHandle == nil {
+				continue
+			}
+			tblStats := statsHandle.GetTableStats(tbl.Meta())
+			if tblStats == nil || tblStats.Pseudo {
+				continue
+			}
+			var colToTrigger *model.TableItemID
+			for _, col := range tbl.Cols() {
+				if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) {
+					continue
+				}
+				if colStats := tblStats.Columns[col.ID]; colStats != nil {
+					// Choose the first column we meet to trigger stats loading.
+					if colToTrigger == nil && colStats.IsStatsInitialized() {
+						colToTrigger = &model.TableItemID{TableID: physicalTblID, ID: col.ID, IsIndex: false}
+					}
+					// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+					if colStats.IsFullLoad() {
+						colToTrigger = nil
+						break
+					}
+				}
+			}
+			if colToTrigger == nil {
+				continue
+			}
+			for _, idx := range tbl.Indices() {
+				if idx.Meta().State != model.StatePublic || idx.Meta().MVIndex {
+					continue
+				}
+				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+				if idxStats := tblStats.Indices[idx.Meta().ID]; idxStats != nil && idxStats.IsFullLoad() {
+					colToTrigger = nil
+					break
+				}
+			}
+			if colToTrigger != nil {
+				histNeededColumns = append(histNeededColumns, *colToTrigger)
+			}
+		}
 	}
 
 	// collect needed virtual columns from already needed columns

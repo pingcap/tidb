@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -39,8 +40,10 @@ type columnStatsUsageCollector struct {
 	// we don't know `ndv(t.a, t.b)`(see (*LogicalAggregation).DeriveStats and getColsNDV for details). So when calculating the statistics
 	// of column `e`, we may use the statistics of column `t.a` and `t.b`.
 	colMap map[int64]map[model.TableItemID]struct{}
-	// histNeededCols records histogram-needed columns
-	histNeededCols map[model.TableItemID]struct{}
+	// histNeededCols records histogram-needed columns. It's a map of ds.physicalTableID -> needed columns in this table.
+	// A table will have an entry in the map as long as it appears in any DataSource, even if there are no needed columns
+	// in this table.
+	histNeededCols map[int64]map[model.TableItemID]struct{}
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
 
@@ -61,7 +64,7 @@ func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *
 		collector.colMap = make(map[int64]map[model.TableItemID]struct{})
 	}
 	if collectMode&collectHistNeededColumns != 0 {
-		collector.histNeededCols = make(map[model.TableItemID]struct{})
+		collector.histNeededCols = make(map[int64]map[model.TableItemID]struct{})
 	}
 	if enabledPlanCapture {
 		collector.collectVisitedTable = true
@@ -164,9 +167,12 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		c.visitedtbls[tblID] = struct{}{}
 	}
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
+	if _, ok := c.histNeededCols[ds.physicalTableID]; !ok {
+		c.histNeededCols[ds.physicalTableID] = make(map[model.TableItemID]struct{}, len(columns))
+	}
 	for _, col := range columns {
 		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
-		c.histNeededCols[tblColID] = struct{}{}
+		c.histNeededCols[ds.physicalTableID][tblColID] = struct{}{}
 	}
 }
 
@@ -291,7 +297,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 // CollectColumnStatsUsage collects column stats usage from logical plan.
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
 // The first return value is predicate columns(nil if predicate is false) and the second return value is histogram-needed columns(nil if histNeeded is false).
-func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableItemID, []model.TableItemID) {
+func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableItemID, map[int64]map[model.TableItemID]struct{}) {
 	var mode uint64
 	if predicate {
 		mode |= collectPredicateColumns
@@ -304,19 +310,13 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	set2slice := func(set map[model.TableItemID]struct{}) []model.TableItemID {
-		ret := make([]model.TableItemID, 0, len(set))
-		for tblColID := range set {
-			ret = append(ret, tblColID)
-		}
-		return ret
-	}
-	var predicateCols, histNeededCols []model.TableItemID
+	var predicateCols []model.TableItemID
+	var histNeededCols map[int64]map[model.TableItemID]struct{}
 	if predicate {
-		predicateCols = set2slice(collector.predicateCols)
+		predicateCols = maps.Keys(collector.predicateCols)
 	}
 	if histNeeded {
-		histNeededCols = set2slice(collector.histNeededCols)
+		histNeededCols = collector.histNeededCols
 	}
 	return predicateCols, histNeededCols
 }
