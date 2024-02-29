@@ -986,7 +986,8 @@ func (tc *infoschemaTestContext) runDropSchema() infoschema.InfoSchema {
 	tc.dropSchema()
 
 	// apply diff
-	builder := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(oldIs)
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(oldIs)
+	require.NoError(tc.t, err)
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn),
@@ -1070,7 +1071,8 @@ func (tc *infoschemaTestContext) runDropTable(tblName string) infoschema.InfoSch
 
 	// dropTable
 	tc.dropTable(tblName, tblID)
-	builder := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(is)
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(is)
+	require.NoError(tc.t, err)
 
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
