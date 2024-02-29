@@ -225,7 +225,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
 	kvBatchSize := local.KVWriteBatchSize
-	bufferPool := local.engineMgr.getBufferPool()
+	bufferPool := local.EngineMgr.getBufferPool()
 	writeLimiter := local.writeLimiter
 
 	begin := time.Now()

@@ -468,7 +468,7 @@ type Backend struct {
 	tikvCodec tikvclient.Codec
 
 	BackendConfig
-	engineMgr *engineManager
+	EngineMgr *engineManager
 
 	supportMultiIngest  bool
 	importClientFactory ImportClientFactory
@@ -576,7 +576,7 @@ func NewBackend(
 	if err != nil {
 		return nil, err
 	}
-	local.engineMgr = engineMgr
+	local.EngineMgr = engineMgr
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
 	}
@@ -600,7 +600,7 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 	local := &Backend{
 		BackendConfig: config,
 		logger:        logger,
-		engineMgr:     engineMgr,
+		EngineMgr:     engineMgr,
 	}
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
@@ -611,7 +611,7 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 
 // TotalMemoryConsume returns the total memory usage of the local backend.
 func (local *Backend) TotalMemoryConsume() int64 {
-	return local.engineMgr.totalMemoryConsume()
+	return local.EngineMgr.totalMemoryConsume()
 }
 
 func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
@@ -706,7 +706,7 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 
 // Close the local backend.
 func (local *Backend) Close() {
-	local.engineMgr.close()
+	local.EngineMgr.close()
 	local.importClientFactory.Close()
 
 	_ = local.tikvCli.Close()
@@ -716,12 +716,12 @@ func (local *Backend) Close() {
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
 func (local *Backend) FlushEngine(ctx context.Context, engineID uuid.UUID) error {
-	return local.engineMgr.flushEngine(ctx, engineID)
+	return local.EngineMgr.flushEngine(ctx, engineID)
 }
 
 // FlushAllEngines flush all engines.
 func (local *Backend) FlushAllEngines(parentCtx context.Context) (err error) {
-	return local.engineMgr.flushAllEngines(parentCtx)
+	return local.EngineMgr.flushAllEngines(parentCtx)
 }
 
 // RetryImportDelay returns the delay time before retrying to import a file.
@@ -736,12 +736,12 @@ func (*Backend) ShouldPostProcess() bool {
 
 // OpenEngine must be called with holding mutex of Engine.
 func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
-	return local.engineMgr.openEngine(ctx, cfg, engineUUID)
+	return local.EngineMgr.openEngine(ctx, cfg, engineUUID)
 }
 
 // CloseEngine closes backend engine by uuid.
 func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
-	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
+	return local.EngineMgr.closeEngine(ctx, cfg, engineUUID)
 }
 
 func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
@@ -1227,10 +1227,10 @@ func (local *Backend) ImportEngine(
 	regionSplitSize, regionSplitKeys int64,
 ) error {
 	var e common.Engine
-	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
+	if externalEngine, ok := local.EngineMgr.getExternalEngine(engineUUID); ok {
 		e = externalEngine
 	} else {
-		localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateImport)
+		localEngine := local.EngineMgr.lockEngine(engineUUID, importMutexStateImport)
 		if localEngine == nil {
 			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
 			return nil
@@ -1454,23 +1454,23 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 
 // GetImportedKVCount returns the number of imported KV pairs of some engine.
 func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
-	return local.engineMgr.getImportedKVCount(engineUUID)
+	return local.EngineMgr.getImportedKVCount(engineUUID)
 }
 
 // GetExternalEngineKVStatistics returns kv statistics of some engine.
 func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	totalKVSize int64, totalKVCount int64) {
-	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
+	return local.EngineMgr.getExternalEngineKVStatistics(engineUUID)
 }
 
 // ResetEngine reset the engine and reclaim the space.
 func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	return local.engineMgr.resetEngine(ctx, engineUUID)
+	return local.EngineMgr.resetEngine(ctx, engineUUID)
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.
 func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	return local.engineMgr.cleanupEngine(ctx, engineUUID)
+	return local.EngineMgr.cleanupEngine(ctx, engineUUID)
 }
 
 // GetDupeController returns a new dupe controller.
@@ -1481,8 +1481,8 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 		tikvCodec:           local.tikvCodec,
 		errorMgr:            errorMgr,
 		dupeConcurrency:     dupeConcurrency,
-		duplicateDB:         local.engineMgr.getDuplicateDB(),
-		keyAdapter:          local.engineMgr.getKeyAdapter(),
+		duplicateDB:         local.EngineMgr.getDuplicateDB(),
+		keyAdapter:          local.EngineMgr.getKeyAdapter(),
 		importClientFactory: local.importClientFactory,
 		resourceGroupName:   local.ResourceGroupName,
 		taskType:            local.TaskType,
@@ -1504,7 +1504,7 @@ func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.
 	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
 		return err
 	}
-	return local.engineMgr.resetEngine(ctx, engineUUID)
+	return local.EngineMgr.resetEngine(ctx, engineUUID)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
@@ -1513,7 +1513,7 @@ func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 
 // LocalWriter returns a new local writer.
 func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
-	return local.engineMgr.localWriter(ctx, cfg, engineUUID)
+	return local.EngineMgr.localWriter(ctx, cfg, engineUUID)
 }
 
 // SwitchModeByKeyRanges will switch tikv mode for regions in the specific key range for multirocksdb.
@@ -1608,7 +1608,7 @@ func nextKey(key []byte) []byte {
 
 // EngineFileSizes implements DiskUsage interface.
 func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
-	return local.engineMgr.engineFileSizes()
+	return local.EngineMgr.engineFileSizes()
 }
 
 // GetTS implements StoreHelper interface.
@@ -1624,7 +1624,7 @@ func (local *Backend) GetTiKVCodec() tikvclient.Codec {
 // CloseEngineMgr close the engine manager.
 // This function is used for test.
 func (local *Backend) CloseEngineMgr() {
-	local.engineMgr.close()
+	local.EngineMgr.close()
 }
 
 var getSplitConfFromStoreFunc = getSplitConfFromStore
