@@ -43,6 +43,10 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -2427,7 +2431,11 @@ func (rs *execStmtResult) Finish() error {
 			err1 = f.Finish()
 		}
 		err2 := finishStmt(context.Background(), rs.se, err, rs.sql)
-		err = stderrs.Join(err1, err2)
+		if err1 != nil {
+			err = err1
+		} else {
+			err = err2
+		}
 	})
 	return err
 }
@@ -2439,7 +2447,10 @@ func (rs *execStmtResult) Close() error {
 	err1 := rs.Finish()
 	err2 := rs.RecordSet.Close()
 	rs.closed = true
-	return stderrs.Join(err1, err2)
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -3307,6 +3318,20 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		}
 	}
 
+	// initiate disttask framework components which need a store
+	scheduler.RegisterSchedulerFactory(
+		proto.ImportInto,
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			return importinto.NewImportScheduler(ctx, task, param, store.(kv.StorageWithPD))
+		},
+	)
+	taskexecutor.RegisterTaskType(
+		proto.ImportInto,
+		func(ctx context.Context, id string, task *proto.Task, table taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+			return importinto.NewImportExecutor(ctx, id, task, table, store)
+		},
+	)
+
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
 	ses, err := createSessionsImpl(store, 10)
@@ -3571,7 +3596,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s.sessionVars = variable.NewSessionVars(s)
 	s.exprctx = newExpressionContextImpl(s)
-	s.pctx = newPlanContextImpl(s, s.exprctx.ExprCtxExtendedImpl)
+	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 
 	if opt != nil && opt.PreparedPlanCache != nil {
@@ -3634,7 +3659,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.exprctx = newExpressionContextImpl(s)
-	s.pctx = newPlanContextImpl(s, s.exprctx.ExprCtxExtendedImpl)
+	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)

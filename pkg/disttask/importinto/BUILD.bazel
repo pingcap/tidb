@@ -30,6 +30,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/storage",
         "//br/pkg/utils",
+        "//pkg/config",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/planner",
         "//pkg/disttask/framework/proto",

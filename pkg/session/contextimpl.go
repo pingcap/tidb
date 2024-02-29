@@ -31,10 +31,10 @@ type planContextImpl struct {
 }
 
 // NewPlanContextImpl creates a new PlanContextImpl.
-func newPlanContextImpl(s *session, exprExtended *exprctximpl.ExprCtxExtendedImpl) *planContextImpl {
+func newPlanContextImpl(s *session) *planContextImpl {
 	return &planContextImpl{
 		session:             s,
-		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s, exprExtended),
+		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
 	}
 }
 

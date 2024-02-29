@@ -511,7 +511,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
-				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
 				usedEdges = append(usedEdges, newSf)
 			}
 		}
