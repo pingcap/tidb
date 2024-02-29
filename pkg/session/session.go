@@ -2427,7 +2427,11 @@ func (rs *execStmtResult) Finish() error {
 			err1 = f.Finish()
 		}
 		err2 := finishStmt(context.Background(), rs.se, err, rs.sql)
-		err = stderrs.Join(err1, err2)
+		if err1 != nil {
+			err = err1
+		} else {
+			err = err2
+		}
 	})
 	return err
 }
@@ -2439,7 +2443,10 @@ func (rs *execStmtResult) Close() error {
 	err1 := rs.Finish()
 	err2 := rs.RecordSet.Close()
 	rs.closed = true
-	return stderrs.Join(err1, err2)
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
