@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -36,21 +35,8 @@ const (
 	VariableSerializedKey
 )
 
-type probeCtx struct {
-	sessCtx        sessionctx.Context
-	keyIndex       []int
-	columnTypes    []*types.FieldType
-	filter         expression.CNFExprs
-	otherCondition expression.CNFExprs
-	keyIsNullable  bool
-	joinHashTable  *joinHashTable
-	hashTableMeta  *tableMeta
-	typeCtx        types.Context
-	keyMode        keyMode
-}
-
-func (pCtx *probeCtx) hasOtherCondition() bool {
-	return pCtx.otherCondition != nil
+func (hCtx *hashJoinCtx) hasOtherCondition() bool {
+	return hCtx.otherCondition != nil
 }
 
 type joinProbe interface {
@@ -80,7 +66,7 @@ type rowIndexInfo struct {
 }
 
 type baseJoinProbe struct {
-	ctx                *probeCtx
+	ctx                *hashJoinCtx
 	currentChunk       *chunk.Chunk
 	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
 	currentRowsPos     []unsafe.Pointer // the current address of each matched rows
@@ -89,8 +75,12 @@ type baseJoinProbe struct {
 	nullKeyVector      []bool           // nullKeyVector[i] = true if any of the key is null
 	currentProbeRow    int
 	chunkRows          int
-	maxChunkSize       int
-	rightAsBuildSide   bool
+
+	keyIndex         []int
+	columnTypes      []*types.FieldType
+	hasNullableKey   bool
+	maxChunkSize     int
+	rightAsBuildSide bool
 	// lUsed/rUsed show which columns are used by father for left child and right child.
 	// NOTE:
 	// 1. lUsed/rUsed should never be nil.
@@ -131,7 +121,7 @@ func (j *baseJoinProbe) setChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.filterVector = make([]bool, rows)
 		}
 	}
-	if j.ctx.keyIsNullable {
+	if j.hasNullableKey {
 		if cap(j.nullKeyVector) >= rows {
 			j.nullKeyVector = j.nullKeyVector[:rows]
 		} else {
@@ -147,15 +137,15 @@ func (j *baseJoinProbe) setChunkForProbe(chk *chunk.Chunk) (err error) {
 		j.serializedKeys = make([][]byte, rows)
 	}
 	if j.ctx.filter != nil {
-		j.filterVector, err = expression.VectorizedFilter(j.ctx.sessCtx, j.ctx.filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
+		j.filterVector, err = expression.VectorizedFilter(j.ctx.sessCtx.GetExprCtx(), j.ctx.filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
 		if err != nil {
 			return err
 		}
 	}
 
 	// generate serialized key
-	for index, keyIndex := range j.ctx.keyIndex {
-		err = codec.SerializeKeys(j.ctx.typeCtx, j.currentChunk, j.ctx.columnTypes[keyIndex], keyIndex, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.ignoreIntegerKeySignFlag[index], j.serializedKeys)
+	for index, keyIndex := range j.keyIndex {
+		err = codec.SerializeKeys(j.ctx.sessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.ignoreIntegerKeySignFlag[index], j.serializedKeys)
 		if err != nil {
 			return err
 		}
