@@ -196,7 +196,7 @@ func (*aggregationPushDownSolver) addGbyCol(ctx PlanContext, gbyCols []*expressi
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
-			if c.Equal(ctx, gbyCol) {
+			if c.Equal(ctx.GetExprCtx(), gbyCol) {
 				duplicate = true
 				break
 			}
@@ -291,7 +291,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 func (*aggregationPushDownSolver) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.SCtx(), agg.children[0].Schema())
+		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.SCtx().GetExprCtx(), agg.children[0].Schema())
 		if !existsDefaultValue {
 			return nil, false
 		}
@@ -340,7 +340,7 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx PlanContext, aggFuncs []*aggr
 		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {
-		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -395,16 +395,16 @@ func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, uni
 		newAggFunc := aggFunc.Clone()
 		newArgs := make([]expression.Expression, 0, len(newAggFunc.Args))
 		for _, arg := range newAggFunc.Args {
-			newArgs = append(newArgs, expression.ColumnSubstitute(ctx, arg, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns)))
+			newArgs = append(newArgs, expression.ColumnSubstitute(ctx.GetExprCtx(), arg, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns)))
 		}
 		newAggFunc.Args = newArgs
 		newAgg.AggFuncs = append(newAgg.AggFuncs, newAggFunc)
 	}
 	for _, gbyExpr := range agg.GroupByItems {
-		newExpr := expression.ColumnSubstitute(ctx, gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
+		newExpr := expression.ColumnSubstitute(ctx.GetExprCtx(), gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
 		// TODO: if there is a duplicated first_row function, we can delete it.
-		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -557,7 +557,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 				noSideEffects := true
 				newGbyItems := make([]expression.Expression, 0, len(agg.GroupByItems))
 				for _, gbyItem := range agg.GroupByItems {
-					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx, gbyItem, proj.schema, proj.Exprs, true)
+					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), gbyItem, proj.schema, proj.Exprs, true)
 					if failed {
 						noSideEffects = false
 						break
@@ -577,7 +577,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
 						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 						for _, arg := range aggFunc.Args {
-							_, failed, newArg := expression.ColumnSubstituteImpl(ctx, arg, proj.schema, proj.Exprs, true)
+							_, failed, newArg := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), arg, proj.schema, proj.Exprs, true)
 							if failed {
 								noSideEffects = false
 								break
@@ -594,7 +594,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
 							newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
 							for _, oby := range aggFunc.OrderByItems {
-								_, failed, byItem := expression.ColumnSubstituteImpl(ctx, oby.Expr, proj.schema, proj.Exprs, true)
+								_, failed, byItem := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), oby.Expr, proj.schema, proj.Exprs, true)
 								if failed {
 									noSideEffects = false
 									break

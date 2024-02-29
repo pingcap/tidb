@@ -348,10 +348,11 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 
 	e.evalBuffer.SetDatums(row...)
 	sctx := e.Ctx()
+	exprCtx := sctx.GetExprCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
-		val, err := expr.Eval(sctx, e.evalBuffer.ToRow())
+		val, err := expr.Eval(exprCtx, e.evalBuffer.ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -388,11 +389,12 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 	row := make([]types.Datum, rowLen)
 	hasValue := make([]bool, rowLen)
 	sctx := e.Ctx()
+	exprCtx := sctx.GetExprCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		con := expr.(*expression.Constant)
-		val, err := con.Eval(sctx, emptyRow)
+		val, err := con.Eval(exprCtx, emptyRow)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -580,9 +582,12 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 
 	var defaultVal types.Datum
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
-		defaultVal, err = table.EvalColDefaultExpr(e.Ctx(), col.ToInfo(), col.DefaultExpr)
+		defaultVal, err = table.EvalColDefaultExpr(e.Ctx().GetExprCtx(), col.ToInfo(), col.DefaultExpr)
 	} else {
-		defaultVal, err = table.GetColDefaultValue(e.Ctx(), col.ToInfo())
+		if err := table.CheckNoDefaultValueForInsert(e.Ctx().GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
+			return types.Datum{}, err
+		}
+		defaultVal, err = table.GetColDefaultValue(e.Ctx().GetExprCtx(), col.ToInfo())
 	}
 	if err != nil {
 		return types.Datum{}, err
@@ -701,11 +706,12 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	}
 
 	sctx := e.Ctx()
+	exprCtx := sctx.GetExprCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(sctx, chunk.MutRowFromDatums(row).ToRow())
+		val, err := e.GenExprs[i].Eval(exprCtx, chunk.MutRowFromDatums(row).ToRow())
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}

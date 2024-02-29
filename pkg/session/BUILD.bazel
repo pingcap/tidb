@@ -5,9 +5,9 @@ go_library(
     srcs = [
         "advisory_locks.go",
         "bootstrap.go",
+        "contextimpl.go",
         "mock_bootstrap.go",
         "nontransactional.go",
-        "plancontext.go",
         "session.go",
         "sync_upgrade.go",
         "testutil.go",  #keep
@@ -34,6 +34,8 @@ go_library(
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/expression",
+        "//pkg/expression/context",
+        "//pkg/expression/contextimpl",
         "//pkg/extension",
         "//pkg/extension/extensionimpl",
         "//pkg/infoschema",

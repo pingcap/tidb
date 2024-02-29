@@ -87,11 +87,7 @@ func getTableImporter(
 		return nil, err
 	}
 
-	return importer.NewTableImporter(&importer.JobImportParam{
-		GroupCtx: ctx,
-		Progress: importer.NewProgress(),
-		Job:      &importer.Job{},
-	}, controller, strconv.FormatInt(taskID, 10), store)
+	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
@@ -562,7 +558,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource
 }
 
 func (e *importExecutor) Close() {
-	task := e.GetTask()
+	task := e.GetTaskBase()
 	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
 }

@@ -676,7 +676,9 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
-	require.Less(s.T(), duration+5, durationWithLimit)
+	// previous import might be slower depends on the environment, so we check using 4 seconds here.
+	// might be unstable.
+	require.Less(s.T(), duration+4, durationWithLimit)
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
@@ -783,7 +785,6 @@ func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
-	s.NoError(err)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)

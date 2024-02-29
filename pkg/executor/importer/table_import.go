@@ -51,6 +51,7 @@ import (
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -164,7 +165,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 
 // NewTableImporter creates a new table importer.
 func NewTableImporter(
-	param *JobImportParam,
+	ctx context.Context,
 	e *LoadDataController,
 	id string,
 	kvStore tidbkv.Storage,
@@ -196,13 +197,12 @@ func NewTableImporter(
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
 	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
-	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, d)
+	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
 		return nil, err
 	}
 
 	return &TableImporter{
-		JobImportParam:     param,
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
@@ -227,7 +227,6 @@ func NewTableImporter(
 
 // TableImporter is a table importer.
 type TableImporter struct {
-	*JobImportParam
 	*LoadDataController
 	// id is the unique id for this importer.
 	// it's the task id if we are running in distributed framework, else it's an
@@ -251,7 +250,7 @@ type TableImporter struct {
 }
 
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(param *JobImportParam, e *LoadDataController, id string, store tidbkv.Storage, helper local.StoreHelper) (*TableImporter, error) {
+func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, store tidbkv.Storage, helper local.StoreHelper) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -265,13 +264,12 @@ func NewTableImporterForTest(param *JobImportParam, e *LoadDataController, id st
 	}
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-	localBackend, err := local.NewBackendForTest(param.GroupCtx, backendConfig, helper)
+	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
 	if err != nil {
 		return nil, err
 	}
 
 	return &TableImporter{
-		JobImportParam:     param,
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
@@ -974,4 +972,17 @@ func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) err
 func GetImportRootDir(tidbCfg *tidb.Config) string {
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
 	return filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+}
+
+// FlushTableStats flushes the stats of the table.
+func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
+	if err := sessiontxn.NewTxn(ctx, se); err != nil {
+		return err
+	}
+	sessionVars := se.GetSessionVars()
+	sessionVars.TxnCtxMu.Lock()
+	defer sessionVars.TxnCtxMu.Unlock()
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
+	se.StmtCommit(ctx)
+	return se.CommitTxn(ctx)
 }

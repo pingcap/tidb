@@ -120,7 +120,7 @@ type HashAggExec struct {
 	IsUnparallelExec  bool
 	parallelExecValid bool
 	prepared          atomic.Bool
-	executed          bool
+	executed          atomic.Bool
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker
@@ -201,7 +201,7 @@ func (e *HashAggExec) Close() error {
 			channel.Clear(ch)
 		}
 		channel.Clear(e.finalOutputCh)
-		e.executed = false
+		e.executed.Store(false)
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
@@ -257,7 +257,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
-	e.executed, e.isChildDrained = false, false
+	e.executed.Store(false)
+	e.isChildDrained = false
 	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)))
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
@@ -398,6 +399,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
 	e.initFinalWorkers(finalConcurrency)
 	e.parallelExecValid = true
+	e.executed.Store(false)
 	return nil
 }
 
@@ -593,14 +595,14 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		}
 	})
 
-	if e.executed {
+	if e.executed.Load() {
 		return nil
 	}
 
 	for {
 		result, ok := <-e.finalOutputCh
 		if !ok {
-			e.executed = true
+			e.executed.Store(true)
 			if e.IsChildReturnEmpty && e.DefaultVal != nil {
 				chk.Append(e.DefaultVal, 0, 1)
 			}
@@ -625,6 +627,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
+		exprCtx := e.Ctx().GetExprCtx()
 		if e.prepared.Load() {
 			// Since we return e.MaxChunkSize() rows every time, so we should not traverse
 			// `groupSet` because of its randomness.
@@ -634,7 +637,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 					chk.SetNumVirtualRows(chk.NumRows() + 1)
 				}
 				for i, af := range e.PartialAggFuncs {
-					if err := af.AppendFinalResult2Chunk(e.Ctx(), partialResults[i], chk); err != nil {
+					if err := af.AppendFinalResult2Chunk(exprCtx, partialResults[i], chk); err != nil {
 						return err
 					}
 				}
@@ -645,7 +648,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			}
 			e.resetSpillMode()
 		}
-		if e.executed {
+		if e.executed.Load() {
 			return nil
 		}
 		if err := e.execute(ctx); err != nil {
@@ -670,7 +673,7 @@ func (e *HashAggExec) resetSpillMode() {
 	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
 	e.bInMap = 0
 	e.prepared.Store(false)
-	e.executed = e.numOfSpilledChks == e.dataInDisk.NumChunks() // No data is spilling again, all data have been processed.
+	e.executed.Store(e.numOfSpilledChks == e.dataInDisk.NumChunks()) // No data is spilling again, all data have been processed.
 	e.numOfSpilledChks = e.dataInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
 	atomic.StoreUint32(&e.inSpillMode, 0)
@@ -684,6 +687,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			e.tmpChkForSpill.Reset()
 		}
 	}()
+	exprCtx := e.Ctx().GetExprCtx()
 	for {
 		mSize := e.childResult.MemoryUsage()
 		if err := e.getNextChunk(ctx); err != nil {
@@ -726,7 +730,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
 				tmpBuf[0] = e.childResult.GetRow(j)
-				memDelta, err := af.UpdatePartialResult(e.Ctx(), tmpBuf[:], partialResults[i])
+				memDelta, err := af.UpdatePartialResult(exprCtx, tmpBuf[:], partialResults[i])
 				if err != nil {
 					return err
 				}

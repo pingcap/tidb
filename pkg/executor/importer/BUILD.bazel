@@ -50,6 +50,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
+        "//pkg/sessiontxn",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",

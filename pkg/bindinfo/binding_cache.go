@@ -25,6 +25,28 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+// BindingCache is the interface for the cache of the SQL plan bindings.
+type BindingCache interface {
+	// GetBinding gets the binding for the specified sqlDigest.
+	GetBinding(sqlDigest string) Bindings
+	// GetAllBindings gets all the bindings in the cache.
+	GetAllBindings() Bindings
+	// SetBinding sets the binding for the specified sqlDigest.
+	SetBinding(sqlDigest string, meta Bindings) (err error)
+	// RemoveBinding removes the binding for the specified sqlDigest.
+	RemoveBinding(sqlDigest string)
+	// SetMemCapacity sets the memory capacity for the cache.
+	SetMemCapacity(capacity int64)
+	// GetMemUsage gets the memory usage of the cache.
+	GetMemUsage() int64
+	// GetMemCapacity gets the memory capacity of the cache.
+	GetMemCapacity() int64
+	// Copy copies the cache.
+	Copy() (newCache BindingCache, err error)
+	// Size returns the number of items in the cache.
+	Size() int
+}
+
 // bindingCache uses the LRU cache to store the bindings.
 // The key of the LRU cache is original sql, the value is a slice of Bindings.
 // Note: The bindingCache should be accessed with lock.
@@ -47,7 +69,7 @@ func calcBindCacheKVMem(key bindingCacheKey, value Bindings) int64 {
 	return int64(len(key.Hash())) + valMem
 }
 
-func newBindCache() *bindingCache {
+func newBindCache() BindingCache {
 	// since bindingCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0, 0)
@@ -181,10 +203,11 @@ func (c *bindingCache) GetMemCapacity() int64 {
 
 // Copy copies a new bindingCache from the origin cache.
 // The function is thread-safe.
-func (c *bindingCache) Copy() (newCache *bindingCache, err error) {
+func (c *bindingCache) Copy() (BindingCache, error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	newCache = newBindCache()
+	var err error
+	newCache := newBindCache().(*bindingCache)
 	if c.memTracker.BytesConsumed() > newCache.GetMemCapacity() {
 		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
 	}
