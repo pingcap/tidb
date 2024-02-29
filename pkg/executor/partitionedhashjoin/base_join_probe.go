@@ -35,7 +35,7 @@ const (
 	VariableSerializedKey
 )
 
-func (hCtx *hashJoinCtx) hasOtherCondition() bool {
+func (hCtx *PartitionedHashJoinCtx) hasOtherCondition() bool {
 	return hCtx.otherCondition != nil
 }
 
@@ -66,7 +66,7 @@ type rowIndexInfo struct {
 }
 
 type baseJoinProbe struct {
-	ctx                *hashJoinCtx
+	ctx                *PartitionedHashJoinCtx
 	currentChunk       *chunk.Chunk
 	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
 	currentRowsPos     []unsafe.Pointer // the current address of each matched rows
@@ -137,7 +137,7 @@ func (j *baseJoinProbe) setChunkForProbe(chk *chunk.Chunk) (err error) {
 		j.serializedKeys = make([][]byte, rows)
 	}
 	if j.ctx.filter != nil {
-		j.filterVector, err = expression.VectorizedFilter(j.ctx.sessCtx.GetExprCtx(), j.ctx.filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
+		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
 		if err != nil {
 			return err
 		}
@@ -145,7 +145,7 @@ func (j *baseJoinProbe) setChunkForProbe(chk *chunk.Chunk) (err error) {
 
 	// generate serialized key
 	for index, keyIndex := range j.keyIndex {
-		err = codec.SerializeKeys(j.ctx.sessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.ignoreIntegerKeySignFlag[index], j.serializedKeys)
+		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.ignoreIntegerKeySignFlag[index], j.serializedKeys)
 		if err != nil {
 			return err
 		}
