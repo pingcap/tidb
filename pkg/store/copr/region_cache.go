@@ -193,7 +193,7 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 	if limit == 0 || ranges.Len() <= 0 {
 		return nil, nil
 	}
-	// Currently, LocationKeyRanges returned by `LocateKeyRange`` doesn't contains buckets,
+	// Currently, LocationKeyRanges returned by `LocateKeyRange` doesn't contains buckets,
 	// because of https://github.com/tikv/client-go/blob/09ecb550d383c1b048119b586fb5cda658312262/internal/locate/region_cache.go#L1550-L1551.
 	locs, err := c.LocateKeyRange(bo.TiKVBackoffer(), ranges.RefAt(0).StartKey, ranges.RefAt(ranges.Len()-1).EndKey)
 	if err != nil {
