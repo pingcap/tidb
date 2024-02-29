@@ -202,33 +202,6 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	return err
 }
 
-func getWriteMaxSize(j *regionJob) int64 {
-	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
-	// because the range-properties is not 100% accurate
-	maxSize := j.regionSplitSize
-	if j.regionSplitSize <= int64(config.SplitRegionSize) {
-		maxSize = j.regionSplitSize * 4 / 3
-	}
-	return maxSize
-}
-
-const defaultWriteTimeout = 15 * time.Minute
-
-func getWriteMaxTimeout(j *regionJob, limiter StoreWriteLimiter) time.Duration {
-	switch v := limiter.(type) {
-	case noopStoreWriteLimiter:
-		return defaultWriteTimeout
-	case *storeWriteLimiter:
-		maxSize := getWriteMaxSize(j)
-		// limit is not 0, otherwise local backend will use noopStoreWriteLimiter
-		durationSec := maxSize / int64(v.limit)
-		return max(defaultWriteTimeout, 2*time.Duration(durationSec)*time.Second)
-	default:
-		log.L().Warn("unknown store write limiter type", zap.String("type", fmt.Sprintf("%T", v)))
-		return defaultWriteTimeout
-	}
-}
-
 func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if j.stage != regionScanned {
 		return nil
@@ -246,8 +219,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	})
 
 	var cancel context.CancelFunc
-	timeout := getWriteMaxTimeout(j, local.writeLimiter)
-	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
+	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
 	defer cancel()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
@@ -358,7 +330,12 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	size := int64(0)
 	totalSize := int64(0)
 	totalCount := int64(0)
-	writeMaxSize := getWriteMaxSize(j)
+	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
+	// because the range-properties is not 100% accurate
+	regionMaxSize := j.regionSplitSize
+	if j.regionSplitSize <= int64(config.SplitRegionSize) {
+		regionMaxSize = j.regionSplitSize * 4 / 3
+	}
 
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
@@ -420,7 +397,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			size = 0
 			iter.ReleaseBuf()
 		}
-		if totalSize >= writeMaxSize || totalCount >= j.regionSplitKeys {
+		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
 			if iter.Next() {
 				remainingStartKey = append([]byte{}, iter.Key()...)
