@@ -637,6 +637,7 @@ func TestApplyGoroutinePanic(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD:executor/parallel_apply_test.go
 func TestIssue24930(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -649,4 +650,20 @@ func TestIssue24930(t *testing.T) {
 	tk.MustQuery(`select case when t1.a is null
     then (select t2.a from t2 where t2.a = t1.a limit 1) else t1.a end a
 	from t1 where t1.a=1 order by a limit 1`).Check(testkit.Rows()) // can return an empty result instead of hanging forever
+=======
+func TestParallelApplyCorrectness(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c1 bigint, c2 int, c3 int, c4 int, primary key(c1, c2), index (c3));")
+	tk.MustExec("insert into t1 values(1, 1, 1, 1), (1, 2, 3, 3), (2, 1, 4, 4), (2, 2, 2, 2);")
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	sql := "select (select /*+ NO_DECORRELATE() */ sum(c4) from t1 where t1.c3 = alias.c3) from t1 alias where alias.c1 = 1;"
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
+
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
+>>>>>>> ac7dad34563 (*: fix parallel apply wrong result (#51414)):pkg/executor/parallel_apply_test.go
 }
