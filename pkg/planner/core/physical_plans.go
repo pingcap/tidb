@@ -477,6 +477,12 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	if p.PushedLimit != nil {
 		cloned.PushedLimit = p.PushedLimit.Clone()
 	}
+	if len(p.CommonHandleCols) != 0 {
+		cloned.CommonHandleCols = make([]*expression.Column, 0, len(p.CommonHandleCols))
+		for _, col := range p.CommonHandleCols {
+			cloned.CommonHandleCols = append(cloned.CommonHandleCols, col.Clone().(*expression.Column))
+		}
+	}
 	return cloned, nil
 }
 
