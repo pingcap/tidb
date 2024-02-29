@@ -103,7 +103,9 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 		s.spillHelper.cond.Wait()
 	}
 
-	if t.CheckExceed() && s.spillHelper.isNotSpilledNoLock() {
+	hasEnoughData := hasEnoughDataToSpill(s.spillHelper.sortExec.memTracker, t)
+
+	if t.CheckExceed() && s.spillHelper.isNotSpilledNoLock() && hasEnoughData {
 		// Ideally, all goroutines entering this action should wait for the finish of spill once
 		// spill is triggered(we consider spill is triggered when the `needSpill` has been set).
 		// However, out of some reasons, we have to directly return before the finish of
@@ -112,4 +114,12 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 		s.spillHelper.bytesConsumed.Store(t.BytesConsumed())
 		s.spillHelper.bytesLimit.Store(t.GetBytesLimit())
 	}
+
+	if t.CheckExceed() && !hasEnoughData {
+		s.GetFallback().Action(t)
+	}
+}
+
+func hasEnoughDataToSpill(sortTracker *memory.Tracker, passedInTracker *memory.Tracker) bool {
+	return sortTracker.BytesConsumed() >= passedInTracker.GetBytesLimit()/10
 }
