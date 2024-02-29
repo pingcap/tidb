@@ -125,7 +125,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	return res
 }
 
-func (c *RegionCache) splitKeyRangesByLocation(loc *tikv.KeyLocation, ranges *KeyRanges, res []*LocationKeyRanges) ([]*LocationKeyRanges, bool) {
+func (c *RegionCache) splitKeyRangesByLocation(loc *tikv.KeyLocation, ranges *KeyRanges, res []*LocationKeyRanges) ([]*LocationKeyRanges, *KeyRanges, bool) {
 	// Iterate to the first range that is not complete in the region.
 	var r kv.KeyRange
 	var i int
@@ -138,7 +138,7 @@ func (c *RegionCache) splitKeyRangesByLocation(loc *tikv.KeyLocation, ranges *Ke
 	// All rest ranges belong to the same region.
 	if i == ranges.Len() {
 		res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
-		return res, true
+		return res, ranges, true
 	}
 	if loc.Contains(r.StartKey) {
 		// Part of r is not in the region. We need to split it.
@@ -148,7 +148,7 @@ func (c *RegionCache) splitKeyRangesByLocation(loc *tikv.KeyLocation, ranges *Ke
 			EndKey:   loc.EndKey,
 		}
 		res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
-		*ranges = *ranges.Slice(i+1, ranges.Len())
+		ranges = ranges.Slice(i+1, ranges.Len())
 		ranges.first = &kv.KeyRange{
 			StartKey: loc.EndKey,
 			EndKey:   r.EndKey,
@@ -157,9 +157,9 @@ func (c *RegionCache) splitKeyRangesByLocation(loc *tikv.KeyLocation, ranges *Ke
 		// rs[i] is not in the region.
 		taskRanges := ranges.Slice(0, i)
 		res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
-		*ranges = *ranges.Slice(i, ranges.Len())
+		ranges = ranges.Slice(i, ranges.Len())
 	}
-	return res, false
+	return res, ranges, false
 }
 
 // UnspecifiedLimit means no limit.
@@ -179,7 +179,7 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges
 		}
 
 		isBreak := false
-		res, isBreak = c.splitKeyRangesByLocation(loc, ranges, res)
+		res, ranges, isBreak = c.splitKeyRangesByLocation(loc, ranges, res)
 		if isBreak {
 			break
 		}
@@ -226,7 +226,7 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 		}
 
 		isBreak := false
-		res, isBreak = c.splitKeyRangesByLocation(loc, ranges, res)
+		res, ranges, isBreak = c.splitKeyRangesByLocation(loc, ranges, res)
 		if isBreak {
 			break
 		}
