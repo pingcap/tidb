@@ -15,12 +15,12 @@
 package bindinfo
 
 import (
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
-	"github.com/pingcap/tidb/pkg/parser"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
