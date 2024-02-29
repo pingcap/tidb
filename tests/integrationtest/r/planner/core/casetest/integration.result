@@ -1418,6 +1418,8 @@ set tidb_partition_prune_mode='dynamic';
 drop table if exists t1, t2_part;
 create table t1 (a int, b int);
 create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
+set @@tidb_skip_missing_partition_stats = off;
+set @@tidb_opt_fix_control = "";
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
 HashJoin_19	2658.67	root		anti semi join, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
@@ -1455,6 +1457,19 @@ IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, outer key:plann
   ├─IndexRangeScan_9(Build)	12500.00	cop[tikv]	table:t2_part, index:a(a)	range: decided by [eq(planner__core__casetest__integration.t2_part.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
   └─Selection_11(Probe)	4154.17	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
     └─TableRowIDScan_10	12500.00	cop[tikv]	table:t2_part	keep order:false, stats:pseudo
+set @@tidb_opt_fix_control = "";
+set @@tidb_skip_missing_partition_stats = on;
+explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+id	estRows	task	access object	operator info
+IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
+├─TableReader_18(Build)	3323.33	root		data:Selection_17
+│ └─Selection_17	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
+│   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp_12(Probe)	4154.17	root	partition:all	
+  ├─IndexRangeScan_9(Build)	12500.00	cop[tikv]	table:t2_part, index:a(a)	range: decided by [eq(planner__core__casetest__integration.t2_part.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
+  └─Selection_11(Probe)	4154.17	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+    └─TableRowIDScan_10	12500.00	cop[tikv]	table:t2_part	keep order:false, stats:pseudo
+set @@tidb_skip_missing_partition_stats = default;
 drop table if exists t;
 create table t(a int(11) not null, b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);
 insert into t values (1, 1),(10, 10),(11, 11);
