@@ -112,7 +112,7 @@ func run() error {
 		return errors.Trace(fetchMode(ctx, cli, tls))
 	}
 	if len(*mode) != 0 {
-		return errors.Trace(lightning.SwitchMode(ctx, cli, tls, *mode))
+		return errors.Trace(lightning.SwitchMode(ctx, cli, tls.TLSConfig(), *mode))
 	}
 
 	if len(*cpRemove) != 0 {

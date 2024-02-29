@@ -43,7 +43,18 @@ SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'infosch
 SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'infoschema__infoschema' AND TABLE_NAME != 't4';
 analyze table infoschema__infoschema.t4;
 analyze table infoschema__infoschema.t5;
+select * from information_schema.STATISTICS where table_schema = 'infoschema__infoschema' and lower(table_name) != 't4';
 select table_type from information_schema.tables where (table_name='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
 select table_type, table_rows from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
 select table_type, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
 select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where upper(table_name) = 'T5' and table_schema = 'infoschema__infoschema';
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+explain select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
+

@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/internal/session"
-	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -473,7 +472,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for !done {
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
-			if err != nil || util2.IsContextDone(w.ctx) {
+			if err != nil || w.ctx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err

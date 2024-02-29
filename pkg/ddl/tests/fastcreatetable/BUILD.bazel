@@ -1,10 +1,10 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "ddlv2_test",
+    name = "fastcreatetable_test",
     timeout = "short",
     srcs = [
-        "ddlv2_test.go",
+        "fastcreatetable_test.go",
         "main_test.go",
     ],
     flaky = True,
