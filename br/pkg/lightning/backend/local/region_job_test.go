@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -257,4 +258,19 @@ func TestRegionJobRetryer(t *testing.T) {
 	require.True(t, ok)
 	cancel()
 	jobWg.Wait()
+}
+
+func TestGetWriteMaxTimeout(t *testing.T) {
+	noopLimiter := noopStoreWriteLimiter{}
+	job := &regionJob{regionSplitSize: 100 * units.MiB}
+	require.Equal(t, defaultWriteTimeout, getWriteMaxTimeout(job, noopLimiter))
+
+	limiter := newStoreWriteLimiter(50 * units.MiB)
+	require.Equal(t, defaultWriteTimeout, getWriteMaxTimeout(job, limiter))
+
+	// when we only allow 10KiB/s, it will take 10000s to write 100MiB, which is
+	// larger than defaultWriteTimeout(900s). Currently the result is 5h41m20s, but
+	// we only check it's larger than 15min due to internal implementation
+	limiter = newStoreWriteLimiter(10 * units.KiB)
+	require.Greater(t, getWriteMaxTimeout(job, limiter), 15*time.Minute)
 }
