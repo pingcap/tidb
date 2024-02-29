@@ -107,14 +107,13 @@ func (fbc *fuzzyBindingCache) SetBinding(sqlDigest string, bindings Bindings) (e
 		fuzzyDigests = append(fuzzyDigests, fuzzyDigest)
 	}
 
-	if err := fbc.BindingCache.SetBinding(sqlDigest, bindings); err != nil {
-		return err
-	}
 	for i, binding := range bindings {
 		fbc.fuzzy2SQLDigests[fuzzyDigests[i]] = append(fbc.fuzzy2SQLDigests[fuzzyDigests[i]], binding.SQLDigest)
 		fbc.sql2FuzzyDigest[binding.SQLDigest] = fuzzyDigests[i]
 	}
-	return nil
+	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with fuzzy2SQLDigests and
+	// sql2FuzzyDigest, but it's acceptable, just return cache-miss in that case.
+	return fbc.BindingCache.SetBinding(sqlDigest, bindings)
 }
 
 func (fbc *fuzzyBindingCache) RemoveBinding(sqlDigest string) {
