@@ -24,6 +24,7 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/syncer",
+        "//pkg/distsql/context",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",

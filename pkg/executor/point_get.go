@@ -352,7 +352,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
-		e.Schema().Columns, e.columns, e.Ctx(), req)
+		e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
