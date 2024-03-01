@@ -467,7 +467,7 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	return tblIDs, nil
 }
 
-// ywq todo check the correctness.
+// TODO: more UT to check the correctness, refine the code.
 func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	if !ok {
