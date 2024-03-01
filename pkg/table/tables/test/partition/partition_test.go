@@ -3131,7 +3131,10 @@ func TestTmpPart(t *testing.T) {
 
 	tk.MustExec(`create table t (a int) partition by range (a) (partition p values less than (10))`)
 	tk.MustExec(`insert into t values (1)`)
-	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
+		"TableReader 10.00 root partition:dual data:Selection",
+		"└─Selection 10.00 cop[tikv]  eq(test.t.a, 10)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
 		`TableReader 0.00 root partition:dual data:Selection`,
@@ -3143,12 +3146,7 @@ func TestTmpPart(t *testing.T) {
 	tk.MustExec(`set @p=1,@q=2,@u=3;`)
 	tk.MustExec(`create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2`)
 	tk.MustExec(`insert into t values(1,0),(2,0),(3,0),(4,0)`)
-	// TODO: Filter out the non-matching handle, instead of trying to read it!
-	// for static pruning mode
-	tk.MustQuery(`explain format = 'brief' select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Check(testkit.Rows(""+
-		`PartitionUnion 2.00 root  `,
-		`├─Point_Get 1.00 root table:t, partition:p0 handle:2`,
-		`└─Point_Get 1.00 root table:t, partition:p1 handle:2`))
+	tk.MustQuery(`explain format = 'brief' select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0 handle:2"))
 	tk.MustQuery(`select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Sort().Check(testkit.Rows("2 0"))
 	tk.MustExec(`prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and 1 = 1'`)
 	tk.MustQuery(`execute stmt using @p,@p`).Sort().Check(testkit.Rows("1 0", "2 0"))
@@ -3158,12 +3156,10 @@ func TestTmpPart(t *testing.T) {
 
 	tk.MustExec(`create table t19141 (c_int int, primary key (c_int)) partition by hash ( c_int ) partitions 4`)
 	tk.MustExec(`insert into t19141 values (1), (2), (3), (4)`)
-	/*
-		tk.MustQuery(`explain format = 'brief' select * from t19141 partition (p0)`).Check(testkit.Rows(""+
-			`TableReader 10000.00 root  data:TableFullScan`,
-			`└─TableFullScan 10000.00 cop[tikv] table:t19141, partition:p0 keep order:false, stats:pseudo`))
-		tk.MustQuery(`select * from t19141 partition (p0)`).Sort().Check(testkit.Rows("4"))
-	*/
+	tk.MustQuery(`explain format = 'brief' select * from t19141 partition (p0)`).Check(testkit.Rows(""+
+		"TableReader 10000.00 root partition:p0 data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t19141 keep order:false, stats:pseudo"))
+	tk.MustQuery(`select * from t19141 partition (p0)`).Sort().Check(testkit.Rows("4"))
 	tk.MustQuery(`select * from t19141 partition (p0) where c_int = 1`).Sort().Check(testkit.Rows())
 	tk.MustExec(`update t19141 partition (p0) set c_int = -c_int where c_int = 1`)
 	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
