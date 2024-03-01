@@ -61,6 +61,8 @@ func (pc *PriorityCalculator) CalculateWeight(job *TableAnalysisJob) float64 {
 		pc.GetSpecialEvent(job)
 }
 
+// GetSpecialEvent returns the special event weight.
+// Exported for testing purposes.
 func (*PriorityCalculator) GetSpecialEvent(job *TableAnalysisJob) float64 {
 	if job.HasNewlyAddedIndex() {
 		return EventNewIndex
