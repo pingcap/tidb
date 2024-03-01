@@ -46,6 +46,7 @@ func (apq *AnalysisPriorityQueue) Len() int {
 }
 
 // An AnalysisInnerQueue implements heap.Interface and holds TableAnalysisJobs.
+// Exported for testing purposes. You should not use this directly.
 type AnalysisInnerQueue []*TableAnalysisJob
 
 // Implement the sort.Interface methods for the priority queue.
