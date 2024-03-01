@@ -405,6 +405,7 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	return is.getAllServerInfo(ctx)
 }
 
+// UpdateServerLabel updates the server label for global info syncer.
 func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
