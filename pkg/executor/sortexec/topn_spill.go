@@ -37,7 +37,13 @@ type topNSpillHelper struct {
 	fieldTypes         []*types.FieldType
 	tmpSpillChunksChan chan *chunk.Chunk
 
-	workers []*topNWorker
+	// We record max value row in each spill, so that workers
+	// could filter some useless rows.
+	// Though the field type is chunk.Chunk, it contains only one row.
+	// If we set this type as chunk.Row, all rows in the chunk referred
+	// by this row will not release their memory.
+	maxValueRow chunk.Chunk // TODO initialize this chunk
+	workers     []*topNWorker
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
@@ -89,6 +95,8 @@ func (t *topNSpillHelper) spill() error {
 
 func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	slices.SortFunc(chkHeap.rowPtrs, t.topNExec.keyColumnsCompare)
+
+	// TODO update maxValueRow
 
 	tmpSpillChunk := <-t.tmpSpillChunksChan
 	tmpSpillChunk.Reset()
