@@ -64,7 +64,7 @@ func NewRefresher(
 	return r, nil
 }
 
-func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
+func (r *Refresher) PickOneTableAndAnalyzeByPriority() {
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
 		statslogutil.StatsLogger().Error(
@@ -108,7 +108,7 @@ func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
 	}
 }
 
-func (r *Refresher) rebuildTableAnalysisJobQueue() error {
+func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	// Reset the priority queue.
 	r.jobs = priorityqueue.NewAnalysisPriorityQueue()
 

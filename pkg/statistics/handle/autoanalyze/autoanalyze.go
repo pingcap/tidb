@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -290,6 +291,20 @@ func HandleAutoAnalyze(
 			)
 		}
 	}()
+	if variable.EnableAutoAnalyzePriorityQueue.Load() {
+		r, err := refresher.NewRefresher(statsHandle, sysProcTracker)
+		if err != nil {
+			statslogutil.StatsLogger().Error("new refresher failed", zap.Error(err))
+			return false
+		}
+		err = r.RebuildTableAnalysisJobQueue()
+		if err != nil {
+			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
+			return false
+		}
+		r.PickOneTableAndAnalyzeByPriority()
+		return true
+	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
