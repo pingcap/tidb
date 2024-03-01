@@ -1719,6 +1719,7 @@ func TestDefaultColumnWithReplace(t *testing.T) {
 
 	// insert records
 	tk.MustExec("insert into t(c) values (1),(2),(3)")
+	tk.MustExec("insert into t values (4, default)")
 	// Different UUID values will result in different error code.
 	_, err := tk.Exec("insert into t1(c) values (1)")
 	originErr := errors.Cause(err)
@@ -1801,13 +1802,17 @@ func TestDefaultColumnWithStrToDate(t *testing.T) {
 	// insert records
 	tk.MustExec("insert into t0(c) values (1),(2),(3)")
 	tk.MustExec("insert into t1(c) values (1),(2),(3)")
+	tk.MustExec("insert into t0 values (4, default, default)")
+	tk.MustExec("insert into t1 values (4, default, default)")
 	tk.MustGetErrCode("insert into t3(c) values (1)", errno.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("insert into t4(c) values (1)", errno.ErrTruncatedWrongValue)
 	// MySQL will return an error. Related issue: https://github.com/pingcap/tidb/issues/51275.
 	tk.MustExec("insert into t5(c) values (1)")
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into t2(c) values (1),(2),(3)")
+	tk.MustExec("insert into t2 values (4, default, default)")
 	tk.MustExec(fmt.Sprintf(`set session sql_mode="%s"`, sqlMode))
+	tk.MustGetErrCode("insert into t2(c) values (5)", errno.ErrTruncatedWrongValue)
 
 	for i := 0; i < 3; i++ {
 		rows := tk.MustQuery(fmt.Sprintf("SELECT c1, c2 from t%d", i)).Rows()
@@ -1890,6 +1895,7 @@ func TestDefaultColumnWithUpper(t *testing.T) {
 	tk.MustGetErrCode("insert into t1(c) values (1)", errno.ErrTruncatedWrongValue)
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "xyz", Hostname: "localhost"}
 	tk.MustExec("insert into t(c) values (4),(5),(6)")
+	tk.MustExec("insert into t values (7, default)")
 
 	rows := tk.MustQuery("SELECT c1 from t order by c").Rows()
 	for i, row := range rows {
