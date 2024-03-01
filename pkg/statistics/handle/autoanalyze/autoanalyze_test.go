@@ -41,6 +41,28 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+	// Enable auto analyze priority queue.
+	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=ON")
+	require.True(t, variable.EnableAutoAnalyzePriorityQueue.Load())
+	h := dom.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	exec.AutoAnalyzeMinCnt = 0
+	defer func() {
+		exec.AutoAnalyzeMinCnt = 1000
+	}()
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+}
+
 func TestAutoAnalyzeLockedTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

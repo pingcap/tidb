@@ -995,6 +995,8 @@ const (
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
+	// TiDBEnableAutoAnalyzePriorityQueue determines whether TiDB executes automatic analysis with priority queue.
+	TiDBEnableAutoAnalyzePriorityQueue = "tidb_enable_auto_analyze_priority_queue"
 	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
@@ -1357,6 +1359,7 @@ const (
 	DefTiDBBatchDMLIgnoreError                     = false
 	DefTiDBMemQuotaAnalyze                         = -1
 	DefTiDBEnableAutoAnalyze                       = true
+	DefTiDBEnableAutoAnalyzePriorityQueue          = false
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
@@ -1478,19 +1481,20 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog             = atomic.NewBool(false)
-	RunAutoAnalyze                = atomic.NewBool(DefTiDBEnableAutoAnalyze)
-	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU             = atomic.NewBool(false)
-	EnableBatchDML                = atomic.NewBool(false)
-	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
-	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
-	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
-	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog                    = atomic.NewBool(false)
+	RunAutoAnalyze                       = atomic.NewBool(DefTiDBEnableAutoAnalyze)
+	EnableAutoAnalyzePriorityQueue       = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
+	GlobalLogMaxDays                     = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                       = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU                    = atomic.NewBool(false)
+	EnableBatchDML                       = atomic.NewBool(false)
+	EnableTmpStorageOnOOM                = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	ddlReorgWorkerCounter          int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize              int32 = DefTiDBDDLReorgBatchSize
+	ddlFlashbackConcurrency        int32 = DefTiDBDDLFlashbackConcurrency
+	ddlErrorCountLimit             int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat              int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount            int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                        = int32(DefTiDBForcePriority)

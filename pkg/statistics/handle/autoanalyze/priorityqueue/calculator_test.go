@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package priorityqueue
+package priorityqueue_test
 
 import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,8 +30,8 @@ type testData struct {
 }
 
 func TestCalculateWeight(t *testing.T) {
-	// Note: all group are sorted by weight in ascending order.
-	pc := NewPriorityCalculator()
+	// Note: all groups are sorted by weight in ascending order.
+	pc := priorityqueue.NewPriorityCalculator()
 	// Only focus on change percentage. Bigger change percentage, higher weight.
 	changePercentageGroup := []testData{
 		{
@@ -106,10 +107,10 @@ func TestCalculateWeight(t *testing.T) {
 
 // testWeightCalculation is a helper function to test the weight calculation.
 // It will check if the weight is increasing for each test data group.
-func testWeightCalculation(t *testing.T, pc *PriorityCalculator, group []testData) {
+func testWeightCalculation(t *testing.T, pc *priorityqueue.PriorityCalculator, group []testData) {
 	prevWeight := -1.0
 	for _, tc := range group {
-		job := &TableAnalysisJob{
+		job := &priorityqueue.TableAnalysisJob{
 			ChangePercentage:     tc.ChangePercentage,
 			TableSize:            tc.TableSize,
 			LastAnalysisDuration: tc.LastAnalysisDuration,
@@ -122,23 +123,23 @@ func testWeightCalculation(t *testing.T, pc *PriorityCalculator, group []testDat
 }
 
 func TestGetSpecialEvent(t *testing.T) {
-	pc := NewPriorityCalculator()
+	pc := priorityqueue.NewPriorityCalculator()
 
-	jobWithIndex := &TableAnalysisJob{
+	jobWithIndex := &priorityqueue.TableAnalysisJob{
 		PartitionIndexes: map[string][]string{
 			"index1": {"p1", "p2"},
 		},
 	}
-	require.Equal(t, eventNewIndex, pc.getSpecialEvent(jobWithIndex))
+	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex))
 
-	jobWithIndex = &TableAnalysisJob{
+	jobWithIndex = &priorityqueue.TableAnalysisJob{
 		Indexes: []string{"index1"},
 	}
-	require.Equal(t, eventNewIndex, pc.getSpecialEvent(jobWithIndex))
+	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex))
 
-	jobWithoutIndex := &TableAnalysisJob{
+	jobWithoutIndex := &priorityqueue.TableAnalysisJob{
 		PartitionIndexes: map[string][]string{},
 		Indexes:          []string{},
 	}
-	require.Equal(t, eventNone, pc.getSpecialEvent(jobWithoutIndex))
+	require.Equal(t, priorityqueue.EventNone, pc.GetSpecialEvent(jobWithoutIndex))
 }
