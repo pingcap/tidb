@@ -121,6 +121,8 @@ type ImporterClient interface {
 type importClient struct {
 	metaClient split.SplitClient
 	mu         sync.Mutex
+	// Notice: In order to avoid leak for BRIE via SQL, it needs to close grpc client connection before br task exits.
+	// So it caches the grpc connection instead of import_sstpb.ImportSSTClient.
 	// used for any request except the ingest reqeust
 	conns map[uint64]*grpc.ClientConn
 	// used for ingest request
