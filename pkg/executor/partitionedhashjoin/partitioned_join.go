@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
+	"github.com/pingcap/tidb/pkg/expression"
 	"runtime/trace"
 	"strconv"
 	"sync/atomic"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -71,7 +72,7 @@ type PartitionedHashJoinCtx struct {
 	allocPool chunk.Allocator
 	// concurrency is the number of partition, build and join workers.
 	Concurrency  uint
-	joinResultCh chan *hashjoinWorkerResult
+	joinResultCh chan *internalutil.HashjoinWorkerResult
 	// closeCh add a lock for closing executor.
 	closeCh         chan struct{}
 	finished        atomic.Bool
@@ -86,8 +87,8 @@ type PartitionedHashJoinCtx struct {
 
 	filter         expression.CNFExprs
 	otherCondition expression.CNFExprs
-	joinHashTable  *joinHashTable
-	hashTableMeta  *tableMeta
+	joinHashTable  *JoinHashTable
+	hashTableMeta  *JoinTableMeta
 	keyMode        keyMode
 }
 
@@ -109,7 +110,7 @@ type probeWorker struct {
 
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
-	joinProbe          joinProbe
+	joinProbe          JoinProbe
 	rowIters           *chunk.Iterator4Slice
 	probeChkResourceCh chan *probeChkResource
 	joinChkResourceCh  chan *chunk.Chunk
@@ -144,16 +145,6 @@ type PartitionedHashJoinExec struct {
 type probeChkResource struct {
 	chk  *chunk.Chunk
 	dest chan<- *chunk.Chunk
-}
-
-// hashjoinWorkerResult stores the result of join workers,
-// `src` is for Chunk reuse: the main goroutine will get the join result chunk `chk`,
-// and push `chk` into `src` after processing, join worker goroutines get the empty chunk from `src`
-// and push new data into this chunk.
-type hashjoinWorkerResult struct {
-	chk *chunk.Chunk
-	err error
-	src chan<- *chunk.Chunk
 }
 
 func (e *PartitionedHashJoinExec) Init() error {
@@ -258,8 +249,8 @@ func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 		err := exec.Next(ctx, fetcher.probeSideExec, probeSideResult)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
-			fetcher.joinResultCh <- &hashjoinWorkerResult{
-				err: err,
+			fetcher.joinResultCh <- &internalutil.HashjoinWorkerResult{
+				Err: err,
 			}
 			return
 		}
@@ -274,8 +265,8 @@ func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 			}
 			emptyBuild, buildErr := fetcher.wait4BuildSide()
 			if buildErr != nil {
-				fetcher.joinResultCh <- &hashjoinWorkerResult{
-					err: buildErr,
+				fetcher.joinResultCh <- &internalutil.HashjoinWorkerResult{
+					Err: buildErr,
 				}
 				return
 			} else if emptyBuild {
@@ -359,7 +350,7 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 func (e *PartitionedHashJoinExec) initializeForProbe() {
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
-	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
+	e.joinResultCh = make(chan *internalutil.HashjoinWorkerResult, e.Concurrency+1)
 
 	e.probeSideTupleFetcher.PartitionedHashJoinCtx = e.PartitionedHashJoinCtx
 	// e.probeSideTupleFetcher.probeResultChs is for transmitting the chunks which store the data of
@@ -412,25 +403,25 @@ func (fetcher *probeSideTupleFetcher) handleProbeSideFetcherPanic(r any) {
 		close(fetcher.probeResultChs[i])
 	}
 	if r != nil {
-		fetcher.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+		fetcher.joinResultCh <- &internalutil.HashjoinWorkerResult{Err: util.GetRecoverError(r)}
 	}
 }
 
 func (w *probeWorker) handleProbeWorkerPanic(r any) {
 	if r != nil {
-		w.hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+		w.hashJoinCtx.joinResultCh <- &internalutil.HashjoinWorkerResult{Err: util.GetRecoverError(r)}
 	}
 }
 
 func (e *PartitionedHashJoinExec) handleJoinWorkerPanic(r any) {
 	if r != nil {
-		e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+		e.joinResultCh <- &internalutil.HashjoinWorkerResult{Err: util.GetRecoverError(r)}
 	}
 }
 
 func (e *PartitionedHashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.workerWg.Wait()
-	if e.probeWorkers[0] != nil && e.probeWorkers[0].joinProbe.needScanHT() {
+	if e.probeWorkers[0] != nil && e.probeWorkers[0].joinProbe.NeedScanHT() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
 			e.workerWg.RunWithRecover(func() {
@@ -446,13 +437,13 @@ func (w *probeWorker) scanHashTableAfterProbeDone() {
 	if !ok {
 		return
 	}
-	for !w.joinProbe.isScanHTDone() {
-		joinResult = w.joinProbe.scanHT(joinResult)
-		if joinResult.err != nil {
+	for !w.joinProbe.IsScanHTDone() {
+		joinResult = w.joinProbe.ScanHT(joinResult)
+		if joinResult.Err != nil {
 			w.hashJoinCtx.joinResultCh <- joinResult
 			return
 		}
-		if joinResult.chk.IsFull() {
+		if joinResult.Chk.IsFull() {
 			w.hashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			if !ok {
@@ -462,22 +453,22 @@ func (w *probeWorker) scanHashTableAfterProbeDone() {
 	}
 	if joinResult == nil {
 		return
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+	} else if joinResult.Err != nil || (joinResult.Chk != nil && joinResult.Chk.NumRows() > 0) {
 		w.hashJoinCtx.joinResultCh <- joinResult
 	}
 }
 
-func (w *probeWorker) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
-	joinResult.err = w.joinProbe.setChunkForProbe(probeChunk)
-	if joinResult.err != nil {
+func (w *probeWorker) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *internalutil.HashjoinWorkerResult) (ok bool, _ *internalutil.HashjoinWorkerResult) {
+	joinResult.Err = w.joinProbe.SetChunkForProbe(probeChunk)
+	if joinResult.Err != nil {
 		return false, joinResult
 	}
-	for !w.joinProbe.isCurrentChunkProbeDone() {
-		ok, joinResult = w.joinProbe.probe(joinResult)
-		if !ok || joinResult.err != nil {
+	for !w.joinProbe.IsCurrentChunkProbeDone() {
+		ok, joinResult = w.joinProbe.Probe(joinResult)
+		if !ok || joinResult.Err != nil {
 			return ok, joinResult
 		}
-		if joinResult.chk.IsFull() {
+		if joinResult.Chk.IsFull() {
 			w.hashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			if !ok {
@@ -539,22 +530,22 @@ func (w *probeWorker) runJoinWorker() {
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+	} else if joinResult.Err != nil || (joinResult.Chk != nil && joinResult.Chk.NumRows() > 0) {
 		w.hashJoinCtx.joinResultCh <- joinResult
-	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-		w.joinChkResourceCh <- joinResult.chk
+	} else if joinResult.Chk != nil && joinResult.Chk.NumRows() == 0 {
+		w.joinChkResourceCh <- joinResult.Chk
 	}
 }
 
-func (w *probeWorker) getNewJoinResult() (bool, *hashjoinWorkerResult) {
-	joinResult := &hashjoinWorkerResult{
-		src: w.joinChkResourceCh,
+func (w *probeWorker) getNewJoinResult() (bool, *internalutil.HashjoinWorkerResult) {
+	joinResult := &internalutil.HashjoinWorkerResult{
+		Src: w.joinChkResourceCh,
 	}
 	ok := true
 	select {
 	case <-w.hashJoinCtx.closeCh:
 		ok = false
-	case joinResult.chk, ok = <-w.joinChkResourceCh:
+	case joinResult.Chk, ok = <-w.joinChkResourceCh:
 	}
 	return ok, joinResult
 }

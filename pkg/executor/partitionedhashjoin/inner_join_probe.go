@@ -15,6 +15,7 @@
 package partitionedhashjoin
 
 import (
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -23,13 +24,13 @@ type innerJoinProbe struct {
 	baseJoinProbe
 }
 
-func (j *innerJoinProbe) probe(joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
-	if joinResult.chk.IsFull() {
+func (j *innerJoinProbe) probe(joinResult *util.HashjoinWorkerResult) (ok bool, _ *util.HashjoinWorkerResult) {
+	if joinResult.Chk.IsFull() {
 		return true, joinResult
 	}
-	joinedChk, remainCap, err := j.prepareForProbe(joinResult.chk)
+	joinedChk, remainCap, err := j.prepareForProbe(joinResult.Chk)
 	if err != nil {
-		joinResult.err = err
+		joinResult.Err = err
 		return false, joinResult
 	}
 	length := 0
@@ -63,14 +64,14 @@ func (j *innerJoinProbe) probe(joinResult *hashjoinWorkerResult) (ok bool, _ *ha
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		// eval other condition, and construct final chunk
 		j.selected = j.selected[:0]
-		j.selected, joinResult.err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
-		if joinResult.err != nil {
+		j.selected, joinResult.Err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		if joinResult.Err != nil {
 			return false, joinResult
 		}
-		joinResult.err = j.buildResultAfterOtherCondition(joinResult.chk, joinedChk)
+		joinResult.Err = j.buildResultAfterOtherCondition(joinResult.Chk, joinedChk)
 	}
 	// if there is no other condition, the joinedChk is the final result
-	if joinResult.err != nil {
+	if joinResult.Err != nil {
 		return false, joinResult
 	}
 	return true, joinResult
@@ -80,7 +81,7 @@ func (j *innerJoinProbe) needScanHT() bool {
 	return false
 }
 
-func (j *innerJoinProbe) scanHT(*hashjoinWorkerResult) *hashjoinWorkerResult {
+func (j *innerJoinProbe) scanHT(*util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
 	panic("should not reach here")
 }
 
