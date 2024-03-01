@@ -882,7 +882,7 @@ ForColumnsTag:
 			e.viewMu.RUnlock()
 		}
 		if !extractor.SkipRequest {
-			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
+			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.L) {
 				continue
 			}
 			if tableNameFilterEnable && !extractor.TableName.Exist(tbl.Name.L) {
@@ -892,7 +892,7 @@ ForColumnsTag:
 				continue
 			}
 			for _, re := range tableSchemaRegexp {
-				if !re.DoMatch(schema.Name.L) {
+				if !re.DoMatch(schema.L) {
 					continue ForColumnsTag
 				}
 			}
@@ -983,7 +983,7 @@ ForColumnsTag:
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
-			schema.Name.O,         // TABLE_SCHEMA
+			schema.O,              // TABLE_SCHEMA
 			tbl.Name.O,            // TABLE_NAME
 			col.Name.O,            // COLUMN_NAME
 			i,                     // ORDINAL_POSITION
