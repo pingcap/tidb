@@ -74,7 +74,7 @@ func getNextRowAddress(rowStart unsafe.Pointer) unsafe.Pointer {
 	return *(*unsafe.Pointer)(rowStart)
 }
 
-type tableMeta struct {
+type JoinTableMeta struct {
 	// if the row has fixed length
 	isFixedLength bool
 	// the row length if the row is fixed length
@@ -108,11 +108,11 @@ type tableMeta struct {
 	colOffsetInNullMap int
 }
 
-func (meta *tableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
+func (meta *JoinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
 	return *(*uint64)(unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength))
 }
 
-func (meta *tableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer {
+func (meta *JoinTableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer {
 	if meta.isJoinKeysInlined {
 		// join key is inlined
 		if meta.isJoinKeysFixedLength {
@@ -124,25 +124,25 @@ func (meta *tableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer 
 	return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfKeyLengthField+int(meta.getSerializedKeyLength(rowStart)))
 }
 
-func (meta *tableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
+func (meta *JoinTableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
 	byteIndex := (columnIndex + 1) / 8
 	bitIndex := (columnIndex + 1) % 8
 	return *(*uint8)(unsafe.Add(rowStart, SizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
 }
 
-func (meta *tableMeta) setUsedFlag(rowStart unsafe.Pointer) {
+func (meta *JoinTableMeta) setUsedFlag(rowStart unsafe.Pointer) {
 	addr := (*uint32)(unsafe.Add(rowStart, SizeOfNextPtr))
 	value := atomic.LoadUint32(addr)
 	value |= meta.setUsedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
-func (meta *tableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
+func (meta *JoinTableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
 	return (*(*uint32)(unsafe.Add(rowStart, SizeOfNextPtr)) | meta.setUsedFlagMask) == meta.setUsedFlagMask
 }
 
 type rowTable struct {
-	meta     *tableMeta
+	meta     *JoinTableMeta
 	segments []*rowTableSegment
 }
 
@@ -162,8 +162,8 @@ func canBeInlinedAsJoinKey(tp *types.FieldType) bool {
 // otherConditionColIndex is the column index that will be used in other condition, if no other condition, will be nil
 // columnsNeedConvertToRow is the column index that need to be converted to row, should not be nil
 // needUsedFlag is true for outer/semi join that use outer to build
-func newTableMeta(buildKeyIndex []int, buildSchema expression.Schema, probeKeyIndex []int, probeSchema expression.Schema, columnsUsedByPostJoinFilter []int, outputColumns []int, needUsedFlag bool) *tableMeta {
-	meta := &tableMeta{}
+func newTableMeta(buildKeyIndex []int, buildSchema expression.Schema, probeKeyIndex []int, probeSchema expression.Schema, columnsUsedByPostJoinFilter []int, outputColumns []int, needUsedFlag bool) *JoinTableMeta {
+	meta := &JoinTableMeta{}
 	meta.isFixedLength = true
 	meta.rowLength = 0
 	savedColumnCount := 0

@@ -99,14 +99,14 @@ func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep in
 	}
 }
 
-type joinHashTable struct {
+type JoinHashTable struct {
 	isThreadSafe    bool
 	tables          []*subTable
 	partitionNumber uint64
 }
 
-func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *joinHashTable {
-	jht := &joinHashTable{
+func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *JoinHashTable {
+	jht := &JoinHashTable{
 		isThreadSafe:    isThreadSafe,
 		tables:          make([]*subTable, len(partitionedRowTables)),
 		partitionNumber: uint64(len(partitionedRowTables)),
@@ -117,11 +117,11 @@ func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *join
 	return jht
 }
 
-func (jht *joinHashTable) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
+func (jht *JoinHashTable) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
 	jht.tables[partitionIndex].build(jht.isThreadSafe, startSegmentIndex, segmentStep)
 }
 
-func (jht *joinHashTable) lookup(hashValue uint64) unsafe.Pointer {
+func (jht *JoinHashTable) lookup(hashValue uint64) unsafe.Pointer {
 	partitionIndex := hashValue % jht.partitionNumber
 	return jht.tables[partitionIndex].lookup(hashValue)
 }
