@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/scalalang2/golang-fifo"
+	fifo "github.com/scalalang2/golang-fifo"
 	"github.com/scalalang2/golang-fifo/sieve"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"

@@ -117,7 +117,7 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 		func(sctx sessionctx.Context) error {
 			parameters := exec.GetAutoAnalyzeParameters(sctx)
 			autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-			calculator := priorityqueue.NewPriorityCalculator(autoAnalyzeRatio)
+			calculator := priorityqueue.NewPriorityCalculator()
 			pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 			// Query locked tables once to minimize overhead.
@@ -158,7 +158,14 @@ func (r *Refresher) rebuildTableAnalysisJobQueue() error {
 						}
 						// Calculate the weight of the job.
 						job.Weight = calculator.CalculateWeight(job)
-						if job.Weight == 0 {
+						// We apply a penalty to larger tables, which can potentially result in a negative weight.
+						// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
+						if job.Weight <= 0 {
+							statslogutil.StatsLogger().Info(
+								"Table is not ready to analyze",
+								zap.String("reason", "weight is not positive"),
+								zap.Stringer("job", job),
+							)
 							return
 						}
 						// Push the job onto the queue.

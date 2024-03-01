@@ -1506,7 +1506,7 @@ func init() {
 
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
-	exec.BaseExecutor
+	exec.BaseExecutorV2
 
 	// numDualRows can only be 0 or 1.
 	numDualRows int

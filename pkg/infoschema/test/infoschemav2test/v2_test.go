@@ -38,7 +38,7 @@ func TestSpecialSchemas(t *testing.T) {
 	require.True(t, infoschema.IsV2(is))
 
 	tk.MustQuery("show databases;").Check(testkit.Rows(
-		"INFORMATION_SCHEMA METRICS_SCHEMA PERFORMANCE_SCHEMA mysql sys test"))
+		"INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA", "mysql", "sys", "test"))
 	tk.MustExec("use information_schema;")
 	tk.MustQuery("show tables;").MultiCheckContain([]string{
 		"ANALYZE_STATUS",
