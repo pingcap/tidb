@@ -80,13 +80,13 @@ func (e *GroupExpr) Schema() *expression.Schema {
 }
 
 // AddAppliedRule adds a rule into the appliedRuleSet.
-func (e *GroupExpr) AddAppliedRule(rule interface{}) {
+func (e *GroupExpr) AddAppliedRule(rule any) {
 	ruleID := reflect.ValueOf(rule).Pointer()
 	e.appliedRuleSet[uint64(ruleID)] = struct{}{}
 }
 
 // HasAppliedRule returns if the rule has been applied.
-func (e *GroupExpr) HasAppliedRule(rule interface{}) bool {
+func (e *GroupExpr) HasAppliedRule(rule any) bool {
 	ruleID := reflect.ValueOf(rule).Pointer()
 	_, ok := e.appliedRuleSet[uint64(ruleID)]
 	return ok

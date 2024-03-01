@@ -102,14 +102,14 @@ func newMockedSnapshot(retriever *mockedRetriever) *mockedSnapshot {
 	return &mockedSnapshot{mockedRetriever: retriever}
 }
 
-func (s *mockedSnapshot) SetOption(_ int, _ interface{}) {
+func (s *mockedSnapshot) SetOption(_ int, _ any) {
 	require.FailNow(s.t, "SetOption not supported")
 }
 
 type methodInvoke struct {
 	Method string
-	Args   []interface{}
-	Ret    []interface{}
+	Args   []any
+	Ret    []any
 }
 
 type mockedRetriever struct {
@@ -118,7 +118,7 @@ type mockedRetriever struct {
 	dataMap map[string][]byte
 	invokes []*methodInvoke
 
-	allowInvokes map[string]interface{}
+	allowInvokes map[string]any
 	errorMap     map[string]error
 }
 
@@ -150,7 +150,7 @@ func (r *mockedRetriever) InjectMethodError(method string, err error) *mockedRet
 }
 
 func (r *mockedRetriever) SetAllowedMethod(methods ...string) *mockedRetriever {
-	r.allowInvokes = make(map[string]interface{})
+	r.allowInvokes = make(map[string]any)
 	for _, m := range methods {
 		r.allowInvokes[m] = struct{}{}
 	}
@@ -174,7 +174,7 @@ func (r *mockedRetriever) Get(ctx context.Context, k kv.Key) (val []byte, err er
 			err = kv.ErrNotExist
 		}
 	}
-	r.appendInvoke("Get", []interface{}{ctx, k}, []interface{}{val, err})
+	r.appendInvoke("Get", []any{ctx, k}, []any{val, err})
 	return
 }
 
@@ -190,7 +190,7 @@ func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key) (data map
 		}
 	}
 
-	r.appendInvoke("BatchGet", []interface{}{ctx, keys}, []interface{}{data, err})
+	r.appendInvoke("BatchGet", []any{ctx, keys}, []any{data, err})
 	return
 }
 
@@ -214,7 +214,7 @@ func (r *mockedRetriever) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, e
 		}
 		iter = mockIter
 	}
-	r.appendInvoke("Iter", []interface{}{k, upperBound}, []interface{}{iter, err})
+	r.appendInvoke("Iter", []any{k, upperBound}, []any{iter, err})
 	return
 }
 
@@ -234,11 +234,11 @@ func (r *mockedRetriever) IterReverse(k kv.Key, lowerBound kv.Key) (iter kv.Iter
 		}
 		iter = mockIter
 	}
-	r.appendInvoke("IterReverse", []interface{}{k}, []interface{}{iter, err})
+	r.appendInvoke("IterReverse", []any{k}, []any{iter, err})
 	return
 }
 
-func (r *mockedRetriever) appendInvoke(method string, args []interface{}, ret []interface{}) {
+func (r *mockedRetriever) appendInvoke(method string, args []any, ret []any) {
 	r.invokes = append(r.invokes, &methodInvoke{
 		Method: method,
 		Args:   args,

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -65,7 +66,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.Ctx().GetSessionVars()
 	defer sessVars.CleanBuffers()
-	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
+	ignoreErr := sessVars.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) != errctx.LevelError
 
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
@@ -199,10 +200,9 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 	}
 
 	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch)
-	if e.Ctx().GetSessionVars().StmtCtx.DupKeyAsWarning && (kv.ErrKeyExists.Equal(err) ||
-		table.ErrCheckConstraintViolated.Equal(err)) {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
-		return nil
+	if kv.ErrKeyExists.Equal(err) || table.ErrCheckConstraintViolated.Equal(err) {
+		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
 	}
 	return err
 }
@@ -308,11 +308,9 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	err := insertRows(ctx, e)
 	if err != nil {
 		terr, ok := errors.Cause(err).(*terror.Error)
-		if ok && len(e.OnDuplicate) == 0 &&
-			e.Ctx().GetSessionVars().StmtCtx.ErrAutoincReadFailedAsWarning &&
-			terr.Code() == errno.ErrAutoincReadFailed {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
-			return nil
+		if ok && len(e.OnDuplicate) == 0 && terr.Code() == errno.ErrAutoincReadFailed {
+			ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+			return ec.HandleError(err)
 		}
 		return err
 	}
@@ -399,13 +397,14 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	sctx := e.Ctx()
+	exprCtx := sctx.GetExprCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for _, col := range cols {
 		if col.LazyErr != nil {
 			return col.LazyErr
 		}
-		val, err1 := col.Expr.Eval(sctx, e.evalBuffer4Dup.ToRow())
+		val, err1 := col.Expr.Eval(exprCtx, e.evalBuffer4Dup.ToRow())
 		if err1 != nil {
 			return err1
 		}
@@ -442,7 +441,7 @@ func (e *InsertExec) setMessage() {
 	if e.SelectExec != nil || numRecords > 1 {
 		numWarnings := stmtCtx.WarningCount()
 		var numDuplicates uint64
-		if stmtCtx.DupKeyAsWarning {
+		if stmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) != errctx.LevelError {
 			// if ignoreErr
 			numDuplicates = numRecords - stmtCtx.CopiedRows()
 		} else {

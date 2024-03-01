@@ -264,3 +264,16 @@ EXPLAIN format = 'brief' SELECT c, a FROM tu WHERE c in(1, 2, 3);
 id	estRows	task	access object	operator info
 Projection	3.00	root		generated_columns.tu.c, generated_columns.tu.a
 └─Batch_Point_Get	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false
+set @@sql_mode=default;
+drop table if exists t1;
+create table t1(a int);
+insert into t1 values(0);
+alter table t1 add index i((100/a));
+Error 1365 (22012): Division by 0
+drop table t1;
+set @@sql_mode='';
+create table t1(a int);
+insert into t1 values(0);
+alter table t1 add index i((100/a));
+drop table t1;
+set @@sql_mode=default;

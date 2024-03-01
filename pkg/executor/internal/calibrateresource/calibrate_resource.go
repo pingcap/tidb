@@ -139,7 +139,7 @@ type Executor struct {
 }
 
 func (e *Executor) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
-	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), tsExpr)
+	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx().GetPlanCtx(), tsExpr)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -593,18 +593,6 @@ func getRUPerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.Rest
 func getComponentCPUUsagePerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, component, startTime, endTime string) (*timeSeriesValues, error) {
 	query := fmt.Sprintf("SELECT time, sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%%s' GROUP BY time ORDER BY time asc", startTime, endTime, component)
 	return getValuesFromMetrics(ctx, sctx, exec, query)
-}
-
-func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (float64, error) {
-	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
-	if err != nil {
-		return 0.0, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return 0.0, errors.Errorf("metrics '%s' is empty", metrics)
-	}
-
-	return rows[0].GetFloat64(0), nil
 }
 
 func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, query string) (*timeSeriesValues, error) {

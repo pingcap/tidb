@@ -2330,7 +2330,7 @@ func (b *builtinCharSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	encBuf := &bytes.Buffer{}
 	enc := charset.FindEncoding(b.tp.GetCharset())
-	hasStrictMode := ctx.GetSessionVars().StrictSQLMode
+	hasStrictMode := sqlMode(ctx).HasStrictMode()
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
@@ -2342,7 +2342,8 @@ func (b *builtinCharSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 		dBytes := b.convertToBytes(bigints)
 		resultBytes, err := enc.Transform(encBuf, dBytes, charset.OpDecode)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(err)
 			if hasStrictMode {
 				result.AppendNull()
 				continue
@@ -2951,7 +2952,7 @@ func (b *builtinCharLengthUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 	return nil
 }
 
-func formatDecimal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
 	xDecimals := xBuf.Decimals()
 	for i := range xDecimals {
 		if xBuf.IsNull(i) {
@@ -2972,10 +2973,12 @@ func formatDecimal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
@@ -2991,7 +2994,7 @@ func formatDecimal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result
 	return nil
 }
 
-func formatReal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
 	xFloat64s := xBuf.Float64s()
 	for i := range xFloat64s {
 		if xBuf.IsNull(i) {
@@ -3012,10 +3015,12 @@ func formatReal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *c
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))

@@ -33,7 +33,7 @@ type mockScanWorker struct {
 	*ttlScanWorker
 	t        *testing.T
 	delCh    chan *ttlDeleteTask
-	notifyCh chan interface{}
+	notifyCh chan any
 	sessPoll *mockSessionPool
 }
 
@@ -41,7 +41,7 @@ func NewMockScanWorker(t *testing.T) *mockScanWorker {
 	w := &mockScanWorker{
 		t:        t,
 		delCh:    make(chan *ttlDeleteTask),
-		notifyCh: make(chan interface{}, 10),
+		notifyCh: make(chan any, 10),
 		sessPoll: newMockSessionPool(t),
 	}
 
@@ -110,7 +110,7 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 	return nil
 }
 
-func (w *mockScanWorker) setOneRowResult(tbl *cache.PhysicalTable, val ...interface{}) {
+func (w *mockScanWorker) setOneRowResult(tbl *cache.PhysicalTable, val ...any) {
 	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
 	w.sessPoll.se.rows = newMockRows(w.t, tbl.KeyColumnTypes...).Append(val...).Rows()
 }
@@ -351,7 +351,7 @@ func (t *mockScanTask) checkDelTasks(cnt int) {
 	}
 }
 
-func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...interface{}) ([]chunk.Row, error) {
+func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
 	var i int
 	found := false
 	for i = 0; i < len(t.sqlRetry); i++ {

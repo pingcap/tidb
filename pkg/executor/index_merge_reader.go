@@ -86,6 +86,7 @@ const (
 //  3. if accessed, just ignore it.
 type IndexMergeReaderExecutor struct {
 	exec.BaseExecutor
+	indexUsageReporter *exec.IndexUsageReporter
 
 	table        table.Table
 	indexes      []*model.IndexInfo
@@ -166,7 +167,7 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
 	if e.isCorColInTableFilter {
-		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.tblPlans)
 		if err != nil {
 			return err
 		}
@@ -369,7 +370,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
-					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -387,7 +388,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.partialNetDataSizes[workID])).
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetSessionVars(), &builder.Request, e.partialNetDataSizes[workID])).
 					SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
 				tps := worker.getRetTpsForIndexScan(e.handleCols)
@@ -473,17 +474,18 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				failpoint.Inject("testIndexMergePanicPartialTableWorker", nil)
 				var err error
 				partialTableReader := &TableReaderExecutor{
-					BaseExecutor:     exec.NewBaseExecutor(e.Ctx(), ts.Schema(), e.getPartitalPlanID(workID)),
-					dagPB:            e.dagPBs[workID],
-					startTS:          e.startTS,
-					txnScope:         e.txnScope,
-					readReplicaScope: e.readReplicaScope,
-					isStaleness:      e.isStaleness,
-					plans:            e.partialPlans[workID],
-					ranges:           e.ranges[workID],
-					netDataSize:      e.partialNetDataSizes[workID],
-					keepOrder:        ts.KeepOrder,
-					byItems:          ts.ByItems,
+					BaseExecutorV2:             exec.NewBaseExecutorV2(e.Ctx().GetSessionVars(), ts.Schema(), e.getPartitalPlanID(workID)),
+					tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx()),
+					dagPB:                      e.dagPBs[workID],
+					startTS:                    e.startTS,
+					txnScope:                   e.txnScope,
+					readReplicaScope:           e.readReplicaScope,
+					isStaleness:                e.isStaleness,
+					plans:                      e.partialPlans[workID],
+					ranges:                     e.ranges[workID],
+					netDataSize:                e.partialNetDataSizes[workID],
+					keepOrder:                  ts.KeepOrder,
+					byItems:                    ts.ByItems,
 				}
 
 				worker := &partialTableWorker{
@@ -511,7 +513,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if e.isCorColInPartialFilters[workID] {
-					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -784,19 +786,20 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ exec.Executor, err error) {
 	tableReaderExec := &TableReaderExecutor{
-		BaseExecutor:     exec.NewBaseExecutor(e.Ctx(), e.Schema(), e.getTablePlanRootID()),
-		table:            tbl,
-		dagPB:            e.tableRequest,
-		startTS:          e.startTS,
-		txnScope:         e.txnScope,
-		readReplicaScope: e.readReplicaScope,
-		isStaleness:      e.isStaleness,
-		columns:          e.columns,
-		plans:            e.tblPlans,
-		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(e.Ctx().GetSessionVars(), e.Schema(), e.getTablePlanRootID()),
+		tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx()),
+		table:                      tbl,
+		dagPB:                      e.tableRequest,
+		startTS:                    e.startTS,
+		txnScope:                   e.txnScope,
+		readReplicaScope:           e.readReplicaScope,
+		isStaleness:                e.isStaleness,
+		columns:                    e.columns,
+		plans:                      e.tblPlans,
+		netDataSize:                e.dataAvgRowSize * float64(len(handles)),
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	// Reorder handles because SplitKeyRangesByLocations() requires startKey of kvRanges is ordered.
+	// Reorder handles because SplitKeyRangesByLocationsWith/WithoutBuckets() requires startKey of kvRanges is ordered.
 	// Also it's good for performance.
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if err != nil {
@@ -866,8 +869,8 @@ func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*indexMer
 	return e.resultCurr, nil
 }
 
-func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r interface{}) {
-	return func(r interface{}) {
+func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r any) {
+	return func(r any) {
 		if worker == processWorkerType {
 			// There is only one processWorker, so it's safe to close here.
 			// No need to worry about "close on closed channel" error.
@@ -909,6 +912,16 @@ func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{},
 func (e *IndexMergeReaderExecutor) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+	}
+	if e.indexUsageReporter != nil {
+		for _, p := range e.partialPlans {
+			is, ok := p[0].(*plannercore.PhysicalIndexScan)
+			if !ok {
+				continue
+			}
+
+			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID())
+		}
 	}
 	if e.finished == nil {
 		return nil
@@ -970,7 +983,7 @@ func (h handleHeap) Swap(i, j int) {
 	h.idx[i], h.idx[j] = h.idx[j], h.idx[i]
 }
 
-func (h *handleHeap) Push(x interface{}) {
+func (h *handleHeap) Push(x any) {
 	idx := x.(rowIdx)
 	h.idx = append(h.idx, idx)
 	if h.tracker != nil {
@@ -978,7 +991,7 @@ func (h *handleHeap) Push(x interface{}) {
 	}
 }
 
-func (h *handleHeap) Pop() interface{} {
+func (h *handleHeap) Pop() any {
 	idxRet := h.idx[len(h.idx)-1]
 	h.idx = h.idx[:len(h.idx)-1]
 	if h.tracker != nil {
@@ -996,7 +1009,8 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 
 	requiredCnt := uint64(0)
 	if w.indexMerge.pushedLimit != nil {
-		requiredCnt = max(requiredCnt, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
+		// Pre-allocate up to 1024 to avoid oom
+		requiredCnt = min(1024, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
 	}
 	return &handleHeap{
 		requiredCnt: requiredCnt,
@@ -1867,8 +1881,8 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 	}
 }
 
-func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
-	return func(r interface{}) {
+func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r any) {
+	return func(r any) {
 		if r == nil {
 			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
 			return

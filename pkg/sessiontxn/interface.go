@@ -99,12 +99,12 @@ type TxnAdvisable interface {
 	// AdviseWarmup provides warmup for inner state
 	AdviseWarmup() error
 	// AdviseOptimizeWithPlan providers optimization according to the plan
-	AdviseOptimizeWithPlan(plan interface{}) error
+	AdviseOptimizeWithPlan(plan any) error
 }
 
 // AdviseOptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
 // and then do `AdviseWarmup` to do some tso fetch if necessary
-func AdviseOptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan interface{}) error {
+func AdviseOptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan any) error {
 	txnManager := GetTxnManager(sctx)
 	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
 		return err

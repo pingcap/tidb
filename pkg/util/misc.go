@@ -81,7 +81,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 //
 //	exec:      execute logic function.
 //	recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
-func WithRecovery(exec func(), recoverFn func(r interface{})) {
+func WithRecovery(exec func(), recoverFn func(r any)) {
 	defer func() {
 		r := recover()
 		if recoverFn != nil {
@@ -110,15 +110,16 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		return
 	}
 
-	if recoverFn != nil {
-		recoverFn()
-	}
 	logutil.BgLogger().Error("panic in the recoverable goroutine",
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+
+	if recoverFn != nil {
+		recoverFn()
+	}
 	if quit {
 		// Wait for metrics to be pushed.
 		time.Sleep(time.Second * 15)
@@ -206,7 +207,7 @@ func IsMemDB(dbLowerName string) bool {
 
 // IsSysDB checks whether dbLowerName is system database.
 func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB
+	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
 }
 
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
@@ -445,15 +446,15 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is any, schema, sequence model.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
-	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
-	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
+	GetSequenceNextVal(ctx any, dbName, seqName string) (int64, error)
+	SetSequenceVal(ctx any, newVal int64, dbName, seqName string) (int64, bool, error)
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
@@ -485,12 +486,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	requireTLS := tlsutil.RequireSecureTransport.Load()
 
-	var minTLSVersion uint16 = tls.VersionTLS11
+	var minTLSVersion uint16 = tls.VersionTLS12
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
-	case "TLSv1.0":
-		minTLSVersion = tls.VersionTLS10
-	case "TLSv1.1":
-		minTLSVersion = tls.VersionTLS11
 	case "TLSv1.2":
 		minTLSVersion = tls.VersionTLS12
 	case "TLSv1.3":
@@ -503,9 +500,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		)
 	}
 	if minTLSVersion < tls.VersionTLS12 {
-		logutil.BgLogger().Warn(
-			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
-		)
+		err = errors.New("Minimum TLS version pre-TLSv1.2 protocols are not allowed")
+		return
 	}
 
 	// Try loading CA cert.

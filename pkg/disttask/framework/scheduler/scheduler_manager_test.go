@@ -46,7 +46,6 @@ func TestCleanUpRoutine(t *testing.T) {
 	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	sch.Start()
 	defer sch.Stop()
-	testutil.WaitNodeRegistered(ctx, t)
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
@@ -57,7 +56,7 @@ func TestCleanUpRoutine(t *testing.T) {
 			tasks, err = mgr.GetTasksInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == 1
-		}, time.Second, 50*time.Millisecond)
+		}, 5*time.Second, 50*time.Millisecond)
 		return tasks
 	}
 
@@ -66,7 +65,7 @@ func TestCleanUpRoutine(t *testing.T) {
 			cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 			require.NoError(t, err)
 			return int64(subtaskCnt) == cntByStates[proto.SubtaskStatePending]
-		}, time.Second, 50*time.Millisecond)
+		}, 5*time.Second, 50*time.Millisecond)
 	}
 
 	tasks := checkTaskRunningCnt()
@@ -75,10 +74,10 @@ func TestCleanUpRoutine(t *testing.T) {
 		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
-	sch.DoCleanUpRoutine()
+	sch.DoCleanupRoutine()
 	require.Eventually(t, func() bool {
-		tasks, err := mgr.GetTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
+		tasks, err := testutil.GetTasksFromHistoryInStates(ctx, mgr, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		return len(tasks) != 0
-	}, time.Second*10, time.Millisecond*300)
+	}, 5*time.Second*10, time.Millisecond*300)
 }

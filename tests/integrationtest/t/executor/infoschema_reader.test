@@ -150,6 +150,8 @@ GRANT r_stats_meta TO key_column_tester;
 connection conn1;
 set role r_stats_meta;
 select count(*)>0 from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where upper(TABLE_NAME)='STATS_META';
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where lower(TABLE_NAME)='stats_meta';
 
 connection default;
 disconnect conn1;
@@ -239,3 +241,15 @@ SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"
 
 connection default;
 disconnect conn1;
+
+# test information_schema.VARIABLES_INFO DEFAULT_VALUE
+select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+set global tidb_enable_async_commit = default;
+set global tidb_enable_1pc = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_auto_analyze = default;
+set global tidb_row_format_version = default;
+set global tidb_txn_assertion_level = default;
+set global tidb_enable_mutation_checker = default;
+set global tidb_pessimistic_txn_fair_locking = default;
+select a.VARIABLE_NAME from information_schema.VARIABLES_INFO as a, mysql.GLOBAL_VARIABLES as b where a.VARIABLE_NAME = b.VARIABLE_NAME and a.DEFAULT_VALUE = b.VARIABLE_VALUE and a.CURRENT_VALUE = b.VARIABLE_VALUE and a.variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;

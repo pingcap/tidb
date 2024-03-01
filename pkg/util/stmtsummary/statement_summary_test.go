@@ -599,7 +599,7 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 	return true
 }
 
-func match(t *testing.T, row []types.Datum, expected ...interface{}) {
+func match(t *testing.T, row []types.Datum, expected ...any) {
 	require.Equal(t, len(expected), len(row))
 	for i := range row {
 		got := fmt.Sprintf("%v", row[i].GetValue())
@@ -827,7 +827,7 @@ func TestToDatum(t *testing.T) {
 	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
 	f := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
-	expectedDatum := []interface{}{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
+	expectedDatum := []any{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
@@ -877,7 +877,7 @@ func TestToDatum(t *testing.T) {
 	ssMap.AddStatement(stmtExecInfo2)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	datums = reader.GetStmtSummaryCurrentRows()
-	expectedEvictedDatum := []interface{}{n, e, "", "<nil>", "<nil>", "",
+	expectedEvictedDatum := []any{n, e, "", "<nil>", "<nil>", "",
 		"<nil>", "<nil>", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),

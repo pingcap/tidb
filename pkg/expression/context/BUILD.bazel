@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "context",
+    srcs = ["context.go"],
+    importpath = "github.com/pingcap/tidb/pkg/expression/context",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema/context",
+        "//pkg/kv",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+    ],
+)

@@ -172,7 +172,7 @@ func GetCreateTableSQL(ctx context.Context, db QueryExecutor, schemaName string,
 
 // GetRowCount returns row count of the table.
 // if not specify where condition, return total row count of the table.
-func GetRowCount(ctx context.Context, db QueryExecutor, schemaName string, tableName string, where string, args []interface{}) (int64, error) {
+func GetRowCount(ctx context.Context, db QueryExecutor, schemaName string, tableName string, where string, args []any) (int64, error) {
 	/*
 		select count example result:
 		mysql> SELECT count(1) cnt from `test`.`itest` where id > 0;
@@ -202,7 +202,7 @@ func GetRowCount(ctx context.Context, db QueryExecutor, schemaName string, table
 }
 
 // GetRandomValues returns some random value. Tips: limitArgs is the value in limitRange.
-func GetRandomValues(ctx context.Context, db QueryExecutor, schemaName, table, column string, num int, limitRange string, limitArgs []interface{}, collation string) ([]string, error) {
+func GetRandomValues(ctx context.Context, db QueryExecutor, schemaName, table, column string, num int, limitRange string, limitArgs []any, collation string) ([]string, error) {
 	/*
 		example:
 		mysql> SELECT `id` FROM (SELECT `id`, rand() rand_value FROM `test`.`test`  WHERE `id` COLLATE "latin1_bin" > 0 AND `id` COLLATE "latin1_bin" < 100 ORDER BY rand_value LIMIT 5) rand_tmp ORDER BY `id` COLLATE "latin1_bin";
@@ -249,7 +249,7 @@ func GetRandomValues(ctx context.Context, db QueryExecutor, schemaName, table, c
 }
 
 // GetMinMaxValue return min and max value of given column by specified limitRange condition.
-func GetMinMaxValue(ctx context.Context, db QueryExecutor, schema, table, column string, limitRange string, limitArgs []interface{}, collation string) (minStr string, maxStr string, err error) {
+func GetMinMaxValue(ctx context.Context, db QueryExecutor, schema, table, column string, limitRange string, limitArgs []any, collation string) (minStr string, maxStr string, err error) {
 	/*
 		example:
 		mysql> SELECT MIN(`id`) as MIN, MAX(`id`) as MAX FROM `test`.`testa` WHERE id > 0 AND id < 10;
@@ -419,7 +419,7 @@ func GetSchemas(ctx context.Context, db QueryExecutor) ([]string, error) {
 }
 
 // GetCRC32Checksum returns checksum code of some data by given condition
-func GetCRC32Checksum(ctx context.Context, db QueryExecutor, schemaName, tableName string, tbInfo *model.TableInfo, limitRange string, args []interface{}) (int64, error) {
+func GetCRC32Checksum(ctx context.Context, db QueryExecutor, schemaName, tableName string, tbInfo *model.TableInfo, limitRange string, args []any) (int64, error) {
 	/*
 		calculate CRC32 checksum example:
 		mysql> SELECT BIT_XOR(CAST(CRC32(CONCAT_WS(',', id, name, age, CONCAT(ISNULL(id), ISNULL(name), ISNULL(age))))AS UNSIGNED)) AS checksum FROM test.test WHERE id > 0 AND id < 10;
@@ -743,7 +743,7 @@ func ReplacePlaceholder(str string, args []string) string {
 }
 
 // ExecSQLWithRetry executes sql with retry
-func ExecSQLWithRetry(ctx context.Context, db DBExecutor, sql string, args ...interface{}) (err error) {
+func ExecSQLWithRetry(ctx context.Context, db DBExecutor, sql string, args ...any) (err error) {
 	for i := 0; i < DefaultRetryTime; i++ {
 		startTime := time.Now()
 		_, err = db.ExecContext(ctx, sql, args...)
@@ -781,7 +781,7 @@ func ExecSQLWithRetry(ctx context.Context, db DBExecutor, sql string, args ...in
 }
 
 // ExecuteSQLs executes some sqls in one transaction
-func ExecuteSQLs(ctx context.Context, db DBExecutor, sqls []string, args [][]interface{}) error {
+func ExecuteSQLs(ctx context.Context, db DBExecutor, sqls []string, args [][]any) error {
 	txn, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		log.Error("exec sqls begin", zap.Error(err))
@@ -842,7 +842,7 @@ func ignoreDDLError(err error) bool {
 }
 
 // DeleteRows delete rows in several times. Only can delete less than 300,000 one time in TiDB.
-func DeleteRows(ctx context.Context, db DBExecutor, schemaName string, tableName string, where string, args []interface{}) error {
+func DeleteRows(ctx context.Context, db DBExecutor, schemaName string, tableName string, where string, args []any) error {
 	deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE %s limit %d;", TableName(schemaName, tableName), where, DefaultDeleteRowsNum)
 	result, err := db.ExecContext(ctx, deleteSQL, args...)
 	if err != nil {

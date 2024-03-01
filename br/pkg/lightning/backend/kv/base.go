@@ -189,7 +189,7 @@ func (e *BaseKVEncoder) GetOrCreateRecord() []types.Datum {
 
 // Record2KV converts a row into a KV pair.
 func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64) (*Pairs, error) {
-	_, err := e.Table.AddRecord(e.SessionCtx, record)
+	_, err := e.Table.AddRecord(e.SessionCtx.GetTableCtx(), record)
 	if err != nil {
 		e.logger.Error("kv encode failed",
 			zap.Array("originalRow", RowArrayMarshaller(originalRow)),
@@ -218,14 +218,14 @@ func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDat
 		meta := e.Table.Meta()
 		shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
 		// this allocator is the same as the allocator in table importer, i.e. PanickingAllocators. below too.
-		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoRandomType)
+		alloc := e.Table.Allocators(e.SessionCtx.GetTableCtx()).Get(autoid.AutoRandomType)
 		if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
 			return value, errors.Trace(err)
 		}
 	}
 	if IsAutoIncCol(col.ToInfo()) {
 		// same as RowIDAllocType, since SepAutoInc is always false when initializing allocators of Table.
-		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoIncrementType)
+		alloc := e.Table.Allocators(e.SessionCtx.GetTableCtx()).Get(autoid.AutoIncrementType)
 		if err := alloc.Rebase(context.Background(), GetAutoRecordID(value, &col.FieldType), false); err != nil {
 			return value, errors.Trace(err)
 		}
@@ -270,7 +270,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
 		value = types.GetMinValue(&col.FieldType)
 	case isBadNullValue:
-		err = col.HandleBadNull(&value, e.SessionCtx.Vars.StmtCtx, 0)
+		err = col.HandleBadNull(e.SessionCtx.Vars.StmtCtx.ErrCtx(), &value, 0)
 	default:
 		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
 		if col.DefaultIsExpr {
@@ -280,7 +280,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 				e.SessionCtx.Vars.TxnCtx = nil
 			}()
 		}
-		value, err = table.GetColDefaultValue(e.SessionCtx, col.ToInfo())
+		value, err = table.GetColDefaultValue(e.SessionCtx.GetExprCtx(), col.ToInfo())
 	}
 	return value, err
 }
@@ -353,7 +353,7 @@ func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Colum
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.Index].ToInfo()
-		evaluated, err := gc.Expr.Eval(se, mutRow.ToRow())
+		evaluated, err := gc.Expr.Eval(se.GetExprCtx(), mutRow.ToRow())
 		if err != nil {
 			return col, err
 		}

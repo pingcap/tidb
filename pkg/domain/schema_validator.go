@@ -70,6 +70,7 @@ type schemaValidator struct {
 	mux                sync.RWMutex
 	lease              time.Duration
 	latestSchemaVer    int64
+	restartSchemaVer   int64
 	latestInfoSchema   infoschema.InfoSchema
 	do                 *Domain
 	latestSchemaExpire time.Time
@@ -110,6 +111,12 @@ func (s *schemaValidator) Restart() {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
+	if s.do != nil {
+		// When this instance reconnects PD, we should record the latest schema verion after mustReload(),
+		// to prevent write txns using a stale schema version by aborting them before commit.
+		// However, the problem still exists for read-only txns.
+		s.restartSchemaVer = s.do.InfoSchema().SchemaMetaVersion()
+	}
 }
 
 func (s *schemaValidator) Reset() {
@@ -119,6 +126,7 @@ func (s *schemaValidator) Reset() {
 	s.isStarted = true
 	s.latestSchemaVer = 0
 	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
+	s.restartSchemaVer = 0
 }
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, change *transaction.RelatedSchemaChange) {
@@ -199,12 +207,12 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		}
 	}
 	if len(changedTblMap) > 0 {
-		tblIds := make([]int64, 0, len(changedTblMap))
+		tblIDs := make([]int64, 0, len(changedTblMap))
 		for id := range changedTblMap {
-			tblIds = append(tblIds, id)
+			tblIDs = append(tblIDs, id)
 		}
-		slices.Sort(tblIds)
-		logutil.BgLogger().Info("schema of tables in the transaction are changed", zap.Int64s("conflicted table IDs", tblIds),
+		slices.Sort(tblIDs)
+		logutil.BgLogger().Info("schema of tables in the transaction are changed", zap.Int64s("conflicted table IDs", tblIDs),
 			zap.Int64("transaction schema", currVer), zap.Int64s("schema versions that changed the tables", changedSchemaVers))
 		return true
 	}
@@ -227,6 +235,12 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 	if !s.isStarted {
 		logutil.BgLogger().Info("the schema validator stopped before checking")
 		return nil, ResultUnknown
+	}
+
+	if schemaVer < s.restartSchemaVer {
+		logutil.BgLogger().Info("the schema version is too old, TiDB and PD maybe unhealthy after the transaction started",
+			zap.Int64("schemaVer", schemaVer))
+		return nil, ResultFail
 	}
 	if s.lease == 0 {
 		return nil, ResultSucc

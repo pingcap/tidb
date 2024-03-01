@@ -36,7 +36,7 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 		return nil, nil
 	}
 
-	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.tls, rc.pdCli.GetLeaderAddr())
+	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.pdHTTPCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

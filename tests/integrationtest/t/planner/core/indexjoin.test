@@ -1,0 +1,20 @@
+# Test index join
+set @@tidb_enable_inl_join_inner_multi_pattern=on;
+
+create table t(a int, b int, index idx(a, b));
+create table t1 like t;
+insert into t values(1, 1), (1, 2), (1, 3);
+insert into t1 values(1, 1), (1, 2);
+
+explain format='brief' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+begin;
+insert into t1 values(1, 3);
+insert into t values(1, 4);
+explain format='brief' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+rollback;
+
+set @@tidb_enable_inl_join_inner_multi_pattern=default;

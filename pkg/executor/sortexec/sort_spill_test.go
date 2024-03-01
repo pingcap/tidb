@@ -16,7 +16,9 @@ package sortexec_test
 
 import (
 	"context"
+	"sort"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -24,149 +26,347 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSortSpillDisk(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))
-	}()
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
-	opt := testutil.MockDataSourceParameters{
-		DataSchema: expression.NewSchema(cas.Columns()...),
-		Rows:       cas.Rows,
-		Ctx:        cas.Ctx,
-		Ndvs:       cas.Ndvs,
+// It will sort values in memory and compare them with the results produced by sort executor.
+type resultChecker struct {
+	schema      *expression.Schema
+	keyColumns  []int
+	keyCmpFuncs []chunk.CompareFunc
+	byItemsDesc []bool
+
+	// Initially, savedChunks are not sorted
+	savedChunks []*chunk.Chunk
+	rowPtrs     []chunk.RowPtr
+}
+
+func newResultChecker(schema *expression.Schema, keyColumns []int, keyCmpFuncs []chunk.CompareFunc, byItemsDesc []bool, savedChunks []*chunk.Chunk) *resultChecker {
+	checker := resultChecker{}
+	checker.schema = schema
+	checker.keyColumns = keyColumns
+	checker.keyCmpFuncs = keyCmpFuncs
+	checker.byItemsDesc = byItemsDesc
+	checker.savedChunks = savedChunks
+	return &checker
+}
+
+func (r *resultChecker) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range r.keyColumns {
+		cmpFunc := r.keyCmpFuncs[i]
+		if cmpFunc != nil {
+			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+			if r.byItemsDesc[i] {
+				cmp = -cmp
+			}
+			if cmp < 0 {
+				return true
+			} else if cmp > 0 {
+				return false
+			}
+		}
 	}
-	dataSource := testutil.BuildMockDataSource(opt)
+	return false
+}
+
+func (r *resultChecker) keyColumnsLess(i, j int) bool {
+	rowI := r.savedChunks[r.rowPtrs[i].ChkIdx].GetRow(int(r.rowPtrs[i].RowIdx))
+	rowJ := r.savedChunks[r.rowPtrs[j].ChkIdx].GetRow(int(r.rowPtrs[j].RowIdx))
+	return r.lessRow(rowI, rowJ)
+}
+
+func (r *resultChecker) getSavedChunksRowNumber() int {
+	rowNum := 0
+	for _, chk := range r.savedChunks {
+		rowNum += chk.NumRows()
+	}
+	return rowNum
+}
+
+func (r *resultChecker) initRowPtrs() {
+	r.rowPtrs = make([]chunk.RowPtr, 0, r.getSavedChunksRowNumber())
+	chunkNum := len(r.savedChunks)
+	for chkIdx := 0; chkIdx < chunkNum; chkIdx++ {
+		chk := r.savedChunks[chkIdx]
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			r.rowPtrs = append(r.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
+}
+
+func (r *resultChecker) check(resultChunks []*chunk.Chunk) bool {
+	if r.rowPtrs == nil {
+		r.initRowPtrs()
+		sort.Slice(r.rowPtrs, r.keyColumnsLess)
+	}
+
+	cursor := 0
+	fieldTypes := make([]*types.FieldType, 0)
+	for _, col := range r.schema.Columns {
+		fieldTypes = append(fieldTypes, col.GetType())
+	}
+
+	// Check row number
+	totalResRowNum := 0
+	for _, chk := range resultChunks {
+		totalResRowNum += chk.NumRows()
+	}
+	if totalResRowNum != len(r.rowPtrs) {
+		return false
+	}
+
+	for _, chk := range resultChunks {
+		rowNum := chk.NumRows()
+		for i := 0; i < rowNum; i++ {
+			resRow := chk.GetRow(i)
+			res := resRow.ToString(fieldTypes)
+
+			expectRow := r.savedChunks[r.rowPtrs[cursor].ChkIdx].GetRow(int(r.rowPtrs[cursor].RowIdx))
+			expect := expectRow.ToString(fieldTypes)
+
+			if res != expect {
+				return false
+			}
+			cursor++
+		}
+	}
+
+	return true
+}
+
+func buildDataSource(ctx *mock.Context, sortCase *testutil.SortCase, schema *expression.Schema) *testutil.MockDataSource {
+	opt := testutil.MockDataSourceParameters{
+		DataSchema: schema,
+		Rows:       sortCase.Rows,
+		Ctx:        sortCase.Ctx,
+		Ndvs:       sortCase.Ndvs,
+	}
+	return testutil.BuildMockDataSource(opt)
+}
+
+func buildSortExec(ctx *mock.Context, sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) *sortexec.SortExec {
+	dataSource.PrepareChunks()
 	exe := &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.Ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.OrderByIdx)),
+		BaseExecutor: exec.NewBaseExecutor(sortCase.Ctx, dataSource.Schema(), 0, dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(sortCase.OrderByIdx)),
 		ExecSchema:   dataSource.Schema(),
 	}
-	for _, idx := range cas.OrderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.Columns()[idx]})
+
+	for _, idx := range sortCase.OrderByIdx {
+		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: sortCase.Columns()[idx]})
 	}
+
+	return exe
+}
+
+func executeSortExecutor(t *testing.T, exe *sortexec.SortExec) []*chunk.Chunk {
 	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(exe)
-	dataSource.PrepareChunks()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
+
+	resultChunks := make([]*chunk.Chunk, 0)
+	chk := exec.NewFirstChunk(exe)
 	for {
 		err = exe.Next(tmpCtx, chk)
 		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
+		resultChunks = append(resultChunks, chk.CopyConstruct())
 	}
-	// Test only 1 partition and all data in memory.
-	require.Len(t, exe.PartitionList, 1)
-	require.Equal(t, false, exe.PartitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.PartitionList[0].NumRow())
-	err = exe.Close()
+	return resultChunks
+}
+
+func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker) []*chunk.Chunk {
+	tmpCtx := context.Background()
+	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
+	resultChunks := make([]*chunk.Chunk, 0)
+	chk := exec.NewFirstChunk(exe)
+	for i := 0; i >= 0; i++ {
+		err = exe.Next(tmpCtx, chk)
+		require.NoError(t, err)
+
+		if i == 10 {
+			// Trigger the spill
+			tracker.Consume(hardLimit)
+			// Wait for spill
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		resultChunks = append(resultChunks, chk.CopyConstruct())
+	}
+	return resultChunks
+}
+
+func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk) bool {
+	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
+	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.GenData)
+	return checker.check(resultChunks)
+}
+
+func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1048576)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.PrepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test 2 partitions and all data in disk.
-	// Now spilling is in parallel.
-	// Maybe the second add() will called before spilling, depends on
-	// Golang goroutine scheduling. So the result has two possibilities.
-	if len(exe.PartitionList) == 2 {
-		require.Len(t, exe.PartitionList, 2)
-		require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, true, exe.PartitionList[1].AlreadySpilledSafeForTest())
-		require.Equal(t, 1024, exe.PartitionList[0].NumRow())
-		require.Equal(t, 1024, exe.PartitionList[1].NumRow())
-	} else {
-		require.Len(t, exe.PartitionList, 1)
-		require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, 2048, exe.PartitionList[0].NumRow())
-	}
+	ctx.GetSessionVars().EnableParallelSort = false
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	resultChunks := executeSortExecutor(t, exe)
 
-	err = exe.Close()
+	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
+	require.Equal(t, false, exe.IsSpillTriggeredInOnePartitionForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionDiskForTest(0))
+	err := exe.Close()
 	require.NoError(t, err)
 
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 28000)
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
+}
+
+func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+	ctx.GetSessionVars().InitChunkSize = 1024
+	ctx.GetSessionVars().MaxChunkSize = 1024
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 50000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.PrepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test only 1 partition but spill disk.
-	require.Len(t, exe.PartitionList, 1)
-	require.Equal(t, true, exe.PartitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.PartitionList[0].NumRow())
-	err = exe.Close()
+	ctx.GetSessionVars().EnableParallelSort = false
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+
+	// To ensure that spill has been trigger before getting chunk, or we may get chunk from memory.
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(true)`)
+	resultChunks := executeSortExecutor(t, exe)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(false)`)
+
+	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
+	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionDiskForTest(0))
+	err := exe.Close()
 	require.NoError(t, err)
 
-	// Test partition nums.
-	ctx = mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 16864*50)
-	ctx.GetSessionVars().MemTracker.Consume(16864 * 45)
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
+}
+
+// When we enable the `unholdSyncLock` failpoint, we can ensure that there must be multi partitions.
+// However, `unholdSyncLock` failpoint introduces sleep and this will hide some concurrent problems,
+// so this failpoint needs to be disabled if we want to test concurrent problem.
+func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase, enableFailPoint bool) {
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas = &testutil.SortCase{Rows: 20480, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
-	opt = testutil.MockDataSourceParameters{
-		DataSchema: expression.NewSchema(cas.Columns()...),
-		Rows:       cas.Rows,
-		Ctx:        cas.Ctx,
-		Ndvs:       cas.Ndvs,
+	ctx.GetSessionVars().EnableParallelSort = false
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	if enableFailPoint {
+		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
 	}
-	dataSource = testutil.BuildMockDataSource(opt)
-	exe = &sortexec.SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.Ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.OrderByIdx)),
-		ExecSchema:   dataSource.Schema(),
+	resultChunks := executeSortExecutor(t, exe)
+	if enableFailPoint {
+		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 	}
-	for _, idx := range cas.OrderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.Columns()[idx]})
-	}
-	tmpCtx = context.Background()
-	chk = exec.NewFirstChunk(exe)
-	dataSource.PrepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
+	sortPartitionNum := exe.GetSortPartitionListLenForTest()
+	if enableFailPoint {
+		// If we disable the failpoint, there may be only one partition.
+		require.Greater(t, sortPartitionNum, 1)
+
+		// Ensure all partitions are spilled
+		for i := 0; i < sortPartitionNum; i++ {
+			// The last partition may not be spilled.
+			if i < sortPartitionNum-1 {
+				require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
+			}
 		}
 	}
-	// Don't spill too many partitions.
-	require.True(t, len(exe.PartitionList) <= 4)
-	err = exe.Close()
+
+	err := exe.Close()
 	require.NoError(t, err)
+
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
+}
+
+// Data are all in memory and some of then are fetched, then the spill is triggered
+func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+	hardLimit := int64(100000)
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	ctx.GetSessionVars().EnableParallelSort = false
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit, ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
+	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
+
+	rowNumInDisk := exe.GetRowNumInOnePartitionDiskForTest(0)
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Greater(t, int64(2048), rowNumInDisk)
+	require.Less(t, int64(0), rowNumInDisk)
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
+}
+
+func TestSortSpillDiskUnparallel(t *testing.T) {
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+
+	for i := 0; i < 50; i++ {
+		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
+		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
+		multiPartitionCase(t, ctx, sortCase, false)
+		multiPartitionCase(t, ctx, sortCase, true)
+		inMemoryThenSpillCase(t, ctx, sortCase)
+	}
+}
+
+func TestFallBackAction(t *testing.T) {
+	hardLimitBytesNum := int64(1000000)
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
+	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
+	// Consume lots of memory in advance to help to trigger fallback action.
+	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.99999))
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	executeSortExecutor(t, exe)
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }

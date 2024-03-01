@@ -654,8 +654,8 @@ func TestDecimal(t *testing.T) {
 	}
 
 	tblCmp := []struct {
-		Arg1 interface{}
-		Arg2 interface{}
+		Arg1 any
+		Arg2 any
 		Ret  int
 	}{
 		// Test for float type decimal.
@@ -1012,7 +1012,7 @@ func datumsForTest(_ *stmtctx.StatementContext) ([]types.Datum, []*types.FieldTy
 	_tp4 := types.NewFieldType(mysql.TypeBit)
 	_tp4.SetFlen(8)
 	table := []struct {
-		value interface{}
+		value any
 		tp    *types.FieldType
 	}{
 		{nil, types.NewFieldType(mysql.TypeNull)},
@@ -1104,7 +1104,7 @@ func TestDecodeRange(t *testing.T) {
 	}
 }
 
-func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
+func testHashChunkRowEqual(t *testing.T, a, b any, equal bool) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	buf1 := make([]byte, 1)
 	buf2 := make([]byte, 1)

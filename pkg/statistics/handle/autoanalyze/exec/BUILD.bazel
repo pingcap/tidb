@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "exec",
+    srcs = ["exec.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/metrics",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlescape",
+        "//pkg/util/sqlexec",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "exec_test",
+    timeout = "short",
+    srcs = ["exec_test.go"],
+    flaky = True,
+    deps = [
+        ":exec",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

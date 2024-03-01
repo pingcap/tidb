@@ -62,6 +62,7 @@ go_test(
         "engine_test.go",
         "file_test.go",
         "iter_test.go",
+        "misc_bench_test.go",
         "onefile_writer_test.go",
         "reader_test.go",
         "sort_test.go",
@@ -75,6 +76,7 @@ go_test(
     deps = [
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/membuf",
         "//br/pkg/storage",
@@ -89,6 +91,7 @@ go_test(
         "@com_github_aws_aws_sdk_go//service/s3",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_docker_go_units//:go-units",
+        "@com_github_felixge_fgprof//:fgprof",
         "@com_github_google_uuid//:uuid",
         "@com_github_jfcg_sorty_v2//:sorty",
         "@com_github_johannesboyne_gofakes3//:gofakes3",

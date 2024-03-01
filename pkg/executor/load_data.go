@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -148,9 +149,10 @@ type LoadDataWorker struct {
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 	// meaning of this flag is not clear. I can only reuse it here.
-	stmtCtx.DupKeyAsWarning = true
-	stmtCtx.BadNullAsWarning = true
-
+	levels := stmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	stmtCtx.SetErrLevels(levels)
 	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
 }
 
@@ -538,7 +540,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := w.colAssignExprs[i].Eval(w.Ctx(), chunk.Row{})
+		d, err := w.colAssignExprs[i].Eval(w.Ctx().GetExprCtx(), chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err

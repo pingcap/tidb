@@ -17,32 +17,18 @@ package importer
 import (
 	"maps"
 	"sync"
-
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
-
-// Job describes a import job.
-type Job struct {
-	ID int64
-	// Job don't manage the life cycle of the connection.
-	Conn sqlexec.SQLExecutor
-	User string
-}
 
 // Progress is the progress of the IMPORT INTO task.
 type Progress struct {
-	// SourceFileSize is the size of the source file in bytes. When we can't get
-	// the size of the source file, it will be set to -1.
-	SourceFileSize int64
-	colSizeMu      sync.Mutex
-	colSizeMap     map[int64]int64
+	colSizeMu  sync.Mutex
+	colSizeMap map[int64]int64
 }
 
 // NewProgress creates a new Progress.
 func NewProgress() *Progress {
 	return &Progress{
-		SourceFileSize: -1,
-		colSizeMap:     make(map[int64]int64),
+		colSizeMap: make(map[int64]int64),
 	}
 }
 

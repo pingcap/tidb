@@ -130,7 +130,7 @@ func TestColumnAdd(t *testing.T) {
 			sess := testNewContext(store)
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			_, err = writeOnlyTable.AddRecord(sess, types.MakeDatums(10, 10))
+			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), types.MakeDatums(10, 10))
 			require.NoError(t, err)
 		}
 	}
@@ -219,7 +219,7 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3))
+	_, err = writeOnlyTable.AddRecord(ctx.GetTableCtx(), types.MakeDatums(2, 3))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -257,7 +257,7 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = writeOnlyTable.UpdateRecord(context.Background(), ctx, h, types.MakeDatums(1, 2, 3), types.MakeDatums(2, 2, 3), touchedSlice(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(context.Background(), ctx.GetTableCtx(), h, types.MakeDatums(1, 2, 3), types.MakeDatums(2, 2, 3), touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -274,7 +274,7 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 		return errors.Trace(err)
 	}
 	// DeleteOnlyTable: delete from t where c2 = 2
-	err = deleteOnlyTable.RemoveRecord(ctx, h, types.MakeDatums(2, 2))
+	err = deleteOnlyTable.RemoveRecord(ctx.GetTableCtx(), h, types.MakeDatums(2, 2))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -304,7 +304,7 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h, err := publicTable.AddRecord(sctx, types.MakeDatums(4, 4, 4))
+	h, err := publicTable.AddRecord(sctx.GetTableCtx(), types.MakeDatums(4, 4, 4))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -321,7 +321,7 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 		return errors.Errorf("%v", oldRow)
 	}
 	newRow := types.MakeDatums(3, 4, oldRow[2].GetValue())
-	err = writeOnlyTable.UpdateRecord(context.Background(), sctx, h, oldRow, newRow, touchedSlice(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(context.Background(), sctx.GetTableCtx(), h, oldRow, newRow, touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -341,7 +341,7 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 }
 
 func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]string) error {
-	var gotRows [][]interface{}
+	var gotRows [][]any
 	err := tables.IterRecords(t, ctx, cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
 		return true, nil
@@ -357,8 +357,8 @@ func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, ro
 	return nil
 }
 
-func datumsToInterfaces(datums []types.Datum) []interface{} {
-	ifs := make([]interface{}, 0, len(datums))
+func datumsToInterfaces(datums []types.Datum) []any {
+	ifs := make([]any, 0, len(datums))
 	for _, d := range datums {
 		ifs = append(ifs, d.GetValue())
 	}

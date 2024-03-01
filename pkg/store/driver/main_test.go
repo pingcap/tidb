@@ -45,6 +45,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("syscall.Syscall"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
@@ -86,7 +87,7 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 }
 
 func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
-	client, pdClient, cluster, err := unistore.New("")
+	client, pdClient, cluster, err := unistore.New("", nil)
 	require.NoError(t, err)
 
 	unistore.BootstrapWithSingleStore(cluster)
@@ -108,7 +109,7 @@ func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
 	return store, dom
 }
 
-func prepareSnapshot(t *testing.T, store kv.Storage, data [][]interface{}) kv.Snapshot {
+func prepareSnapshot(t *testing.T, store kv.Storage, data [][]any) kv.Snapshot {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	defer func() {
@@ -128,7 +129,7 @@ func prepareSnapshot(t *testing.T, store kv.Storage, data [][]interface{}) kv.Sn
 	return store.GetSnapshot(kv.MaxVersion)
 }
 
-func makeBytes(s interface{}) []byte {
+func makeBytes(s any) []byte {
 	if s == nil {
 		return nil
 	}

@@ -30,6 +30,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -108,28 +109,28 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 	// However, our current implementation requires generating it for each step.
 	// we only generate needed plans for the next step.
 	switch planCtx.NextTaskStep {
-	case StepImport, StepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		specs, err := generateImportSpecs(planCtx, p)
 		if err != nil {
 			return nil, err
 		}
 
 		addSpecs(specs)
-	case StepMergeSort:
+	case proto.ImportStepMergeSort:
 		specs, err := generateMergeSortSpecs(planCtx)
 		if err != nil {
 			return nil, err
 		}
 
 		addSpecs(specs)
-	case StepWriteAndIngest:
+	case proto.ImportStepWriteAndIngest:
 		specs, err := generateWriteIngestSpecs(planCtx, p)
 		if err != nil {
 			return nil, err
 		}
 
 		addSpecs(specs)
-	case StepPostProcess:
+	case proto.ImportStepPostProcess:
 		physicalPlan.AddProcessor(planner.ProcessorSpec{
 			ID: len(inputLinks),
 			Input: planner.InputSpec{
@@ -204,11 +205,12 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
-	var localChecksum verify.KVChecksum
+	localChecksum := verify.NewKVGroupChecksumForAdd()
 	maxIDs := make(map[autoid.AllocatorType]int64, 3)
 	for _, subtaskMeta := range subtaskMetas {
-		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
-		localChecksum.Add(&checksum)
+		for id, c := range subtaskMeta.Checksum {
+			localChecksum.AddRawGroup(id, c.Size, c.KVs, c.Sum)
+		}
 
 		for key, val := range subtaskMeta.MaxIDs {
 			if maxIDs[key] < val {
@@ -216,13 +218,17 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 			}
 		}
 	}
+	c := localChecksum.GetInnerChecksums()
 	postProcessStepMeta := &PostProcessStepMeta{
-		Checksum: Checksum{
-			Size: localChecksum.SumSize(),
-			KVs:  localChecksum.SumKVS(),
-			Sum:  localChecksum.Sum(),
-		},
-		MaxIDs: maxIDs,
+		Checksum: make(map[int64]Checksum, len(c)),
+		MaxIDs:   maxIDs,
+	}
+	for id, cksum := range c {
+		postProcessStepMeta.Checksum[id] = Checksum{
+			Size: cksum.SumSize(),
+			KVs:  cksum.SumKVS(),
+			Sum:  cksum.Sum(),
+		}
 	}
 	return json.Marshal(postProcessStepMeta)
 }
@@ -297,7 +303,7 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, error) {
 	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
-	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[StepEncodeAndSort])
+	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
 	if err != nil {
 		return nil, err
 	}
@@ -465,11 +471,11 @@ func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.So
 }
 
 func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.SortedKVMeta, error) {
-	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.PreviousSubtaskMetas[StepMergeSort])
+	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort])
 	if err != nil {
 		return nil, err
 	}
-	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[StepEncodeAndSort])
+	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
 	if err != nil {
 		return nil, err
 	}

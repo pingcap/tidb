@@ -395,7 +395,7 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql1, "", "")
 		require.NoError(t, err)
 		is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-		builder, _ := core.NewPlanBuilder().Init(tk.Session(), is, hint.NewQBHintHandler(nil))
+		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
 		execPlan, ok := p.(*core.Execute)
@@ -430,6 +430,16 @@ func TestPrepareCacheNow(t *testing.T) {
 	require.Equal(t, rs[0][6].(string), rs[0][1].(string))
 	require.Equal(t, rs[0][7].(string), rs[0][2].(string))
 	require.Equal(t, rs[0][8].(string), rs[0][3].(string))
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=0;")
+	tk.MustExec("set global tidb_sysdate_is_now=0;")
+	tk.MustExec("prepare s from 'select sleep(a), now(6), sysdate(6),sysdate(6)=now(6) from t';")
+	t1 := tk.MustQuery("execute s").Rows()
+	tk.MustExec("set global tidb_sysdate_is_now=1;")
+	t2 := tk.MustQuery("execute s").Rows()
+	require.NotEqual(t, t1, t2)
 }
 
 func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
@@ -1051,7 +1061,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 
-		var rscan, rpoint, rbatch [][]interface{}
+		var rscan, rpoint, rbatch [][]any
 		for id, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_tablescan using @mina, @maxa`, tbl)).Sort()
 			if id == 0 {
@@ -1094,7 +1104,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 
-		var rscan, rlookup, rpoint, rbatch [][]interface{}
+		var rscan, rlookup, rpoint, rbatch [][]any
 		var expectedFromPlanCache string
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()

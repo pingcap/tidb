@@ -45,6 +45,7 @@ func TestInspectionTables(t *testing.T) {
 		"tidb,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,1001",
 		"tikv,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
 		"tiproxy,127.0.0.1:6000,127.0.0.1:3380,mock-version,mock-githash,0",
+		"ticdc,127.0.0.1:8300,127.0.0.1:8301,mock-version,mock-githash,0",
 	}
 	fpName := "github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo"
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
@@ -56,6 +57,7 @@ func TestInspectionTables(t *testing.T) {
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
+		"ticdc 127.0.0.1:8300 127.0.0.1:8301 mock-version mock-githash 0",
 	))
 
 	// enable inspection mode
@@ -66,9 +68,10 @@ func TestInspectionTables(t *testing.T) {
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
+		"ticdc 127.0.0.1:8300 127.0.0.1:8301 mock-version mock-githash 0",
 	))
 	require.NoError(t, inspectionTableCache["cluster_info"].Err)
-	require.Len(t, inspectionTableCache["cluster_info"].Rows, 4)
+	require.Len(t, inspectionTableCache["cluster_info"].Rows, 5)
 
 	// check whether is obtain data from cache at the next time
 	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", mysql.DefaultCollationName)
@@ -77,6 +80,7 @@ func TestInspectionTables(t *testing.T) {
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
+		"ticdc 127.0.0.1:8300 127.0.0.1:8301 mock-version mock-githash 0",
 	))
 	tk.Session().GetSessionVars().InspectionTableCache = nil
 }
@@ -92,7 +96,7 @@ func TestUserPrivileges(t *testing.T) {
 		Username: "constraints_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]any{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
 	tk.MustExec("CREATE ROLE r_gc_delete_range ;")
@@ -101,7 +105,7 @@ func TestUserPrivileges(t *testing.T) {
 	constraintsTester.MustExec("set role r_gc_delete_range")
 	rows := constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Rows()
 	require.Greater(t, len(rows), 0)
-	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='tables_priv';").Check([][]interface{}{})
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='tables_priv';").Check([][]any{})
 
 	// test the privilege of new user for information_schema
 	tk.MustExec("create user tester1")
@@ -111,7 +115,7 @@ func TestUserPrivileges(t *testing.T) {
 		Username: "tester1",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
+	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]any{})
 
 	// test the privilege of user with some privilege for information_schema
 	tk.MustExec("create user tester2")
@@ -128,7 +132,7 @@ func TestUserPrivileges(t *testing.T) {
 	rows = tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
 	tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Check(
-		[][]interface{}{})
+		[][]any{})
 
 	// test the privilege of user with all privilege for information_schema
 	tk.MustExec("create user tester3")
@@ -285,7 +289,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 		"  `FAIL_REASON` longtext DEFAULT NULL,\n" +
 		"  `INSTANCE` varchar(512) DEFAULT NULL,\n" +
 		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL,\n" +
-		"  `REMAINING_SECONDS` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `REMAINING_SECONDS` varchar(512) DEFAULT NULL,\n" +
 		"  `PROGRESS` double(22,6) DEFAULT NULL,\n" +
 		"  `ESTIMATED_TOTAL_ROWS` bigint(64) unsigned DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
@@ -296,7 +300,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("create table analyze_test (a int, b int, index idx(a))")
 	tk.MustExec("insert into analyze_test values (1,2),(3,4)")
 
-	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check([][]interface{}{})
+	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check([][]any{})
 	tk.MustExec("analyze table analyze_test")
 	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check(testkit.Rows("analyze_test"))
 
@@ -308,8 +312,8 @@ func TestForAnalyzeStatus(t *testing.T) {
 		Username: "analyze_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
-	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
+	analyzeTester.MustQuery("show analyze status").Check([][]any{})
+	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]any{})
 
 	// test the privilege of user with privilege of test.t1 for information_schema.analyze_status
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")

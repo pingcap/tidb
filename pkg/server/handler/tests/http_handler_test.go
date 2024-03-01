@@ -469,7 +469,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
 	go func() {
-		err := server.Run()
+		err := server.Run(ts.domain)
 		require.NoError(t, err)
 	}()
 	ts.WaitUntilServerOnline()
@@ -612,7 +612,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.FetchStatus("/mvcc/key/tidb/test/1?decode=true")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data3 map[string]interface{}
+	var data3 map[string]any
 	err = decoder.Decode(&data3)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -624,7 +624,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.FetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data4 map[string]interface{}
+	var data4 map[string]any
 	err = decoder.Decode(&data4)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -645,7 +645,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.FetchStatus("/mvcc/key/tidb/t?a=1.1&b=111&decode=1")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data5 map[string]interface{}
+	var data5 map[string]any
 	err = decoder.Decode(&data5)
 	require.NoError(t, err)
 	require.NotNil(t, data4["key"])
@@ -712,7 +712,7 @@ func TestDecodeColumnValue(t *testing.T) {
 		resp, err := ts.FetchStatus(path)
 		require.NoErrorf(t, err, "url: %v", ts.StatusURL(path))
 		decoder := json.NewDecoder(resp.Body)
-		var data interface{}
+		var data any
 		err = decoder.Decode(&data)
 		require.NoErrorf(t, err, "url: %v\ndata: %v", ts.StatusURL(path), data)
 		require.NoError(t, resp.Body.Close())
@@ -849,7 +849,7 @@ func TestGetSchema(t *testing.T) {
 	err = decoder.Decode(&dbs)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "sys", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L
@@ -1388,7 +1388,7 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 			},
 		},
 	}
-	makeFailpointRes := func(v interface{}) string {
+	makeFailpointRes := func(v any) string {
 		bytes, err := json.Marshal(v)
 		require.NoError(t, err)
 		return fmt.Sprintf("return(`%s`)", string(bytes))

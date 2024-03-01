@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -49,23 +50,59 @@ import (
 const maxCloudStorageConnections = 1000
 
 type memKVsAndBuffers struct {
-	mu           sync.Mutex
-	keys         [][]byte
-	values       [][]byte
+	mu     sync.Mutex
+	keys   [][]byte
+	values [][]byte
+	// memKVBuffers contains two types of buffer, first half are used for small block
+	// buffer, second half are used for large one.
 	memKVBuffers []*membuf.Buffer
 	size         int
+	droppedSize  int
+
+	// temporary fields to store KVs to reduce slice allocations.
+	keysPerFile        [][][]byte
+	valuesPerFile      [][][]byte
+	droppedSizePerFile []int
+}
+
+func (b *memKVsAndBuffers) build(ctx context.Context) {
+	sumKVCnt := 0
+	for _, keys := range b.keysPerFile {
+		sumKVCnt += len(keys)
+	}
+	b.droppedSize = 0
+	for _, size := range b.droppedSizePerFile {
+		b.droppedSize += size
+	}
+	b.droppedSizePerFile = nil
+
+	logutil.Logger(ctx).Info("building memKVsAndBuffers",
+		zap.Int("sumKVCnt", sumKVCnt),
+		zap.Int("droppedSize", b.droppedSize))
+
+	b.keys = make([][]byte, 0, sumKVCnt)
+	b.values = make([][]byte, 0, sumKVCnt)
+	for i := range b.keysPerFile {
+		b.keys = append(b.keys, b.keysPerFile[i]...)
+		b.keysPerFile[i] = nil
+		b.values = append(b.values, b.valuesPerFile[i]...)
+		b.valuesPerFile[i] = nil
+	}
+	b.keysPerFile = nil
+	b.valuesPerFile = nil
 }
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
-	storage         storage.ExternalStorage
-	dataFiles       []string
-	statsFiles      []string
-	startKey        []byte
-	endKey          []byte
-	splitKeys       [][]byte
-	regionSplitSize int64
-	bufPool         *membuf.Pool
+	storage           storage.ExternalStorage
+	dataFiles         []string
+	statsFiles        []string
+	startKey          []byte
+	endKey            []byte
+	splitKeys         [][]byte
+	regionSplitSize   int64
+	smallBlockBufPool *membuf.Pool
+	largeBlockBufPool *membuf.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
 
@@ -92,7 +129,10 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 16 * 1024 * 1024 * 1024
+const (
+	memLimit       = 12 * units.GiB
+	smallBlockSize = units.MiB
+)
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
@@ -122,7 +162,12 @@ func NewExternalEngine(
 		endKey:          endKey,
 		splitKeys:       splitKeys,
 		regionSplitSize: regionSplitSize,
-		bufPool: membuf.NewPool(
+		smallBlockBufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(smallBlockSize),
+		),
+		largeBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
@@ -182,23 +227,34 @@ func getFilesReadConcurrency(
 	startKey, endKey []byte,
 ) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
-	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
+	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	endOffs, err := seekPropsOffsets(ctx, endKey, statsFiles, storage, false)
-	if err != nil {
-		return nil, nil, err
-	}
+	startOffs, endOffs := offsets[0], offsets[1]
 	for i := range statsFiles {
-		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
-		result[i] = max(result[i], 1)
-		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-			zap.String("filename", statsFiles[i]),
-			zap.Uint64("startOffset", startOffs[i]),
-			zap.Uint64("endOffset", endOffs[i]),
-			zap.Uint64("expected concurrency", result[i]),
-		)
+		expectedConc := (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
+		// always return an offset that is less than or equal to the key.
+		expectedConc += 1
+		// readAllData will enable concurrent read and use large buffer if result[i] > 1
+		// when expectedConc < readAllDataConcThreshold, we don't use concurrent read to
+		// reduce overhead
+		if expectedConc >= readAllDataConcThreshold {
+			result[i] = expectedConc
+		} else {
+			result[i] = 1
+		}
+		// only log for files with expected concurrency > 1, to avoid too many logs
+		if expectedConc > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffs[i]),
+				zap.Uint64("endOffset", endOffs[i]),
+				zap.Uint64("expectedConc", expectedConc),
+				zap.Uint64("concurrency", result[i]),
+			)
+		}
 	}
 	return result, startOffs, nil
 }
@@ -219,16 +275,21 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		e.statsFiles,
 		startKey,
 		endKey,
-		e.bufPool,
+		e.smallBlockBufPool,
+		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
 	)
 	if err != nil {
 		return err
 	}
+	e.memKVsAndBuffers.build(ctx)
+
 	readSecond := time.Since(readStart).Seconds()
 	readDurHist.Observe(readSecond)
 	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(readStart)))
+		zap.Duration("cost time", time.Since(readStart)),
+		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize))
+
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
@@ -293,9 +354,8 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
-	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
-	// data at once
-	regionBatchSize := 40
+	// try to make every worker busy for each batch
+	regionBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
@@ -338,11 +398,11 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		logger.Info("no stats files",
 			zap.String("startKey", hex.EncodeToString(start)))
 	} else {
-		offs, err := seekPropsOffsets(ctx, start, e.statsFiles, e.storage, e.checkHotspot)
+		offs, err := seekPropsOffsets(ctx, []kv.Key{start}, e.statsFiles, e.storage, e.checkHotspot)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		offsets = offs
+		offsets = offs[0]
 		logger.Debug("seek props offsets",
 			zap.Uint64s("offsets", offsets),
 			zap.String("startKey", hex.EncodeToString(start)),
@@ -407,20 +467,35 @@ func (e *Engine) SplitRanges(
 
 // Close implements common.Engine.
 func (e *Engine) Close() error {
-	if e.bufPool != nil {
-		e.bufPool.Destroy()
-		e.bufPool = nil
+	if e.smallBlockBufPool != nil {
+		e.smallBlockBufPool.Destroy()
+		e.smallBlockBufPool = nil
 	}
+	if e.largeBlockBufPool != nil {
+		e.largeBlockBufPool.Destroy()
+		e.largeBlockBufPool = nil
+	}
+	e.storage.Close()
 	return nil
 }
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	if e.bufPool != nil {
-		e.bufPool.Destroy()
-		memLimiter := membuf.NewLimiter(memLimit)
-		e.bufPool = membuf.NewPool(
+	memLimiter := membuf.NewLimiter(memLimit)
+	if e.smallBlockBufPool != nil {
+		e.smallBlockBufPool.Destroy()
+		e.smallBlockBufPool = membuf.NewPool(
+			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(smallBlockSize),
+		)
+	}
+	if e.largeBlockBufPool != nil {
+		e.largeBlockBufPool.Destroy()
+		e.largeBlockBufPool = membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 		)
 	}
 	return nil
@@ -645,6 +720,8 @@ func (m *MemoryIngestData) IncRef() {
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
 	if m.refCnt.Dec() == 0 {
+		m.keys = nil
+		m.values = nil
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}

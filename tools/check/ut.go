@@ -344,26 +344,31 @@ func cmdRun(args ...string) bool {
 		}
 	}
 
+	if coverprofile != "" {
+		collectCoverProfileFile()
+	}
+
 	for _, work := range works {
 		if work.Fail {
 			return false
 		}
 	}
-	if coverprofile != "" {
-		collectCoverProfileFile()
-	}
 	return true
 }
 
 func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
+	ret := make(map[string]struct{})
+
 	f, err := os.Open(filepath.Clean(fileName))
+	if os.IsNotExist(err) {
+		return ret, nil
+	}
 	if err != nil {
 		return nil, withTrace(err)
 	}
 	//nolint: errcheck
 	defer f.Close()
 
-	ret := make(map[string]struct{})
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		line := s.Bytes()
@@ -864,8 +869,26 @@ func buildTestBinary(pkg string) error {
 	return nil
 }
 
+func generateBuildCache() error {
+	// cd cmd/tidb-server && go test -tags intest -exec true -vet off -toolexec=go-compile-without-link
+	cmd := exec.Command("go", "test", "-tags=intest", "-exec=true", "-vet=off")
+	goCompileWithoutLink := fmt.Sprintf("-toolexec=%s/tools/check/go-compile-without-link.sh", workDir)
+	cmd.Args = append(cmd.Args, goCompileWithoutLink)
+	cmd.Dir = path.Join(workDir, "cmd/tidb-server")
+	if err := cmd.Run(); err != nil {
+		return withTrace(err)
+	}
+	return nil
+}
+
 // buildTestBinaryMulti is much faster than build the test packages one by one.
 func buildTestBinaryMulti(pkgs []string) error {
+	// staged build, generate the build cache for all the tests first, then generate the test binary.
+	// This way is faster than generating test binaries directly, because the cache can be used.
+	if err := generateBuildCache(); err != nil {
+		return withTrace(err)
+	}
+
 	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
 	xprogPath := path.Join(workDir, "tools/bin/xprog")
 	packages := make([]string, 0, len(pkgs))

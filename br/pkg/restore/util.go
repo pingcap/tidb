@@ -255,6 +255,7 @@ func GetSSTMetaFromFile(
 	}
 
 	log.Debug("get sstMeta",
+		logutil.Region(region),
 		logutil.File(file),
 		logutil.Key("startKey", rangeStart),
 		logutil.Key("endKey", rangeEnd))
@@ -517,7 +518,7 @@ func SplitRanges(
 		isRawKv,
 	))
 
-	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
+	return splitter.ExecuteSplit(ctx, ranges, rewriteRules, client.GetStoreCount(), client.GetGranularity(), isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}
@@ -601,7 +602,7 @@ func encodeKeyPrefix(key []byte) []byte {
 
 // ZapTables make zap field of table for debuging, including table names.
 func ZapTables(tables []CreatedTable) zapcore.Field {
-	return logutil.AbbreviatedArray("tables", tables, func(input interface{}) []string {
+	return logutil.AbbreviatedArray("tables", tables, func(input any) []string {
 		tables := input.([]CreatedTable)
 		names := make([]string, 0, len(tables))
 		for _, t := range tables {
@@ -682,7 +683,7 @@ func keyCmp(a, b []byte) int {
 	return chosen
 }
 
-func keyCmpInterface(a, b interface{}) int {
+func keyCmpInterface(a, b any) int {
 	return keyCmp(a.([]byte), b.([]byte))
 }
 
@@ -740,7 +741,7 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 	// Resolve version conflicts.
 	var treeMap = treemap.NewWith(keyCmpInterface)
 	for _, p := range regionInfos {
-		var fk, fv interface{}
+		var fk, fv any
 		fk, _ = treeMap.Ceiling(p.StartKey)
 		// keyspace overlap sk within ceiling - fk
 		if fk != nil && (keyEq(fk.([]byte), p.StartKey) || keyCmp(fk.([]byte), p.EndKey) < 0) {

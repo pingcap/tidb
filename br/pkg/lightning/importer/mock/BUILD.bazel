@@ -11,11 +11,11 @@ go_library(
         "//br/pkg/storage",
         "//pkg/errno",
         "//pkg/parser/model",
-        "//pkg/store/pdtypes",
         "//pkg/util/dbterror",
         "//pkg/util/filter",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_tikv_pd_client//http",
     ],
 )
 

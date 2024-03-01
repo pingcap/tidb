@@ -22,6 +22,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -753,8 +754,8 @@ func (m mockWriteClient) CloseAndRecv() (*sst.WriteResponse, error) {
 }
 
 type baseCodec interface {
-	Marshal(v interface{}) ([]byte, error)
-	Unmarshal(data []byte, v interface{}) error
+	Marshal(v any) ([]byte, error)
+	Unmarshal(data []byte, v any) error
 }
 
 //go:linkname newContextWithRPCInfo google.golang.org/grpc.newContextWithRPCInfo
@@ -762,11 +763,11 @@ func newContextWithRPCInfo(ctx context.Context, failfast bool, codec baseCodec, 
 
 type mockCodec struct{}
 
-func (m mockCodec) Marshal(v interface{}) ([]byte, error) {
+func (m mockCodec) Marshal(v any) ([]byte, error) {
 	return nil, nil
 }
 
-func (m mockCodec) Unmarshal(data []byte, v interface{}) error {
+func (m mockCodec) Unmarshal(data []byte, v any) error {
 	return nil
 }
 
@@ -775,7 +776,7 @@ func (m mockWriteClient) Context() context.Context {
 	return newContextWithRPCInfo(ctx, false, mockCodec{}, nil, nil)
 }
 
-func (m mockWriteClient) SendMsg(_ interface{}) error {
+func (m mockWriteClient) SendMsg(_ any) error {
 	return nil
 }
 
@@ -1258,6 +1259,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
+			LocalStoreDir:         path.Join(t.TempDir(), "sorted-kv"),
 		},
 		tikvCodec: keyspace.CodecV1,
 	}
@@ -1380,6 +1382,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
+			LocalStoreDir:         path.Join(t.TempDir(), "sorted-kv"),
 		},
 		tikvCodec: keyspace.CodecV1,
 	}
@@ -1477,6 +1480,9 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 		writeLimiter:       noopStoreWriteLimiter{},
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
+		BackendConfig: BackendConfig{
+			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
+		},
 	}
 	var err error
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
@@ -1570,6 +1576,9 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		writeLimiter:       noopStoreWriteLimiter{},
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
+		BackendConfig: BackendConfig{
+			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
+		},
 	}
 	var err error
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
@@ -2322,6 +2331,7 @@ func TestExternalEngine(t *testing.T) {
 	local := &Backend{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 2,
+			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,

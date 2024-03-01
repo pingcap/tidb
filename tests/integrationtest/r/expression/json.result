@@ -429,9 +429,20 @@ json_length('{}'),
 json_length('[]'),
 json_length('{"a": 1}'),
 json_length('{"a": 1, "b": 2}'),
-json_length('[1, 2, 3]');
-json_length('1')	json_length('{}')	json_length('[]')	json_length('{"a": 1}')	json_length('{"a": 1, "b": 2}')	json_length('[1, 2, 3]')
-1	0	0	1	2	3
+json_length('[1, 2, 3]'),
+json_length('{}', '$'),
+json_length('1', '$'),
+json_length(null, '$'),
+json_length(null, 'fdfd'),
+json_length('{}', null),
+json_length('1', '$.a'),
+json_length('{}', '$.a');
+json_length('1')	json_length('{}')	json_length('[]')	json_length('{"a": 1}')	json_length('{"a": 1, "b": 2}')	json_length('[1, 2, 3]')	json_length('{}', '$')	json_length('1', '$')	json_length(null, '$')	json_length(null, 'fdfd')	json_length('{}', null)	json_length('1', '$.a')	json_length('{}', '$.a')
+1	0	0	1	2	3	0	1	NULL	NULL	NULL	NULL	NULL
+select json_length('{}', 'fsdfds');
+Error 3143 (42000): Invalid JSON path expression. The error is around character position 1.
+select json_length('1', 'fsdfds');
+Error 3143 (42000): Invalid JSON path expression. The error is around character position 1.
 select json_array(922337203685477580) =  json_array(922337203685477581);
 json_array(922337203685477580) =  json_array(922337203685477581)
 0

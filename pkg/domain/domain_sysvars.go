@@ -50,26 +50,36 @@ func (do *Domain) setStatsCacheCapacity(c int64) {
 	do.StatsHandle().SetStatsCacheCapacity(c)
 }
 
-func (do *Domain) setPDClientDynamicOption(name, sVal string) {
+func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 	switch name {
 	case variable.TiDBTSOClientBatchMaxWaitTime:
 		val, err := strconv.ParseFloat(sVal, 64)
 		if err != nil {
-			break
+			return err
 		}
 		err = do.updatePDClient(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
 		if err != nil {
-			break
+			return err
 		}
 		variable.MaxTSOBatchWaitInterval.Store(val)
 	case variable.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
 		err := do.updatePDClient(pd.EnableTSOFollowerProxy, val)
 		if err != nil {
-			break
+			return err
 		}
 		variable.EnableTSOFollowerProxy.Store(val)
+	case variable.PDEnableFollowerHandleRegion:
+		val := variable.TiDBOptOn(sVal)
+		// Note: EnableFollowerHandle is only used for region API now.
+		// If pd support more APIs in follower, the pd option may be changed.
+		err := do.updatePDClient(pd.EnableFollowerHandle, val)
+		if err != nil {
+			return err
+		}
+		variable.EnablePDFollowerHandleRegion.Store(val)
 	}
+	return nil
 }
 
 func (*Domain) setGlobalResourceControl(enable bool) {
@@ -81,7 +91,7 @@ func (*Domain) setGlobalResourceControl(enable bool) {
 }
 
 // updatePDClient is used to set the dynamic option into the PD client.
-func (do *Domain) updatePDClient(option pd.DynamicOption, val interface{}) error {
+func (do *Domain) updatePDClient(option pd.DynamicOption, val any) error {
 	store, ok := do.store.(interface{ GetPDClient() pd.Client })
 	if !ok {
 		return nil

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -66,24 +67,14 @@ type StatsUsage interface {
 	// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 	CollectColumnsInExtendedStats(tableID int64) ([]int64, error)
 
-	// Below methods are for index usage.
+	IndexUsage
 
-	// NewSessionIndexUsageCollector creates a new IndexUsageCollector on the list.
-	// The returned value's type should be *usage.SessionIndexUsageCollector, use interface{} to avoid cycle import now.
-	// TODO: use *usage.SessionIndexUsageCollector instead of interface{}.
-	NewSessionIndexUsageCollector() interface{}
-
-	// DumpIndexUsageToKV dumps all collected index usage info to storage.
-	DumpIndexUsageToKV() error
-
-	// GCIndexUsage removes unnecessary index usage data.
-	GCIndexUsage() error
-
+	// TODO: extract these function to a new interface only for delta/stats usage, like `IndexUsage`.
 	// Blow methods are for table delta and stats usage.
 
 	// NewSessionStatsItem allocates a stats collector for a session.
 	// TODO: use interface{} to avoid cycle import, remove this interface{}.
-	NewSessionStatsItem() interface{}
+	NewSessionStatsItem() any
 
 	// ResetSessionStatsList resets the sessions stats list.
 	ResetSessionStatsList()
@@ -93,6 +84,24 @@ type StatsUsage interface {
 
 	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 	DumpColStatsUsageToKV() error
+}
+
+// IndexUsage is an interface to define the function of collecting index usage stats.
+type IndexUsage interface {
+	// NewSessionIndexUsageCollector creates a new Collector for a session.
+	NewSessionIndexUsageCollector() *indexusage.SessionIndexUsageCollector
+
+	// GCIndexUsage removes unnecessary index usage data.
+	GCIndexUsage() error
+
+	// StartWorker starts for the collector worker.
+	StartWorker()
+
+	// Close closes and waits for the index usage collector worker.
+	Close()
+
+	// GetIndexUsage returns the index usage information
+	GetIndexUsage(tableID int64, indexID int64) indexusage.Sample
 }
 
 // StatsHistory is used to manage historical stats.
@@ -228,6 +237,15 @@ type StatsLock interface {
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
 }
 
+// PartitionStatisticLoadTask currently records a partition-level jsontable.
+type PartitionStatisticLoadTask struct {
+	JSONTable  *statsutil.JSONTable
+	PhysicalID int64
+}
+
+// PersistFunc is used to persist JSONTable in the partition level.
+type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
+
 // StatsReadWriter is used to read and write stats to the storage.
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
@@ -319,6 +337,15 @@ type StatsReadWriter interface {
 	// DumpStatsToJSONBySnapshot dumps statistic to json.
 	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*statsutil.JSONTable, error)
 
+	// PersistStatsBySnapshot dumps statistic to json and call the function for each partition statistic to persist.
+	// Notice:
+	//  1. It might call the function `persist` with nil jsontable.
+	//  2. It is only used by BR, so partitions' statistic are always dumped.
+	PersistStatsBySnapshot(ctx context.Context, dbName string, tableInfo *model.TableInfo, snapshot uint64, persist PersistFunc) error
+
+	// LoadStatsFromJSONConcurrently consumes concurrently the statistic task from `taskCh`.
+	LoadStatsFromJSONConcurrently(ctx context.Context, tableInfo *model.TableInfo, taskCh chan *PartitionStatisticLoadTask, concurrencyForPartition int) error
+
 	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 	// In final, it will also udpate the stats cache.
 	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
@@ -384,7 +411,7 @@ type StatsGlobal interface {
 		physicalID int64,
 		isIndex bool,
 		histIDs []int64,
-	) (globalStats interface{}, err error)
+	) (globalStats any, err error)
 }
 
 // DDL is used to handle ddl events.
@@ -412,8 +439,14 @@ type StatsHandle interface {
 	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
 
+	// GetTableStatsForAutoAnalyze retrieves the statistics table from cache, but it will not return pseudo.
+	GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table
+
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
+	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
+	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
 	// StatsGC is used to do the GC job.
 	StatsGC

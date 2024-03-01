@@ -32,7 +32,7 @@ type invalidMockType struct {
 }
 
 // Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
+func Convert(val any, target *FieldType) (v any, err error) {
 	d := NewDatum(val)
 	ret, err := d.ConvertTo(DefaultStmtNoWarningContext, target)
 	if err != nil {
@@ -322,7 +322,7 @@ func TestConvertType(t *testing.T) {
 	require.Error(t, err)
 }
 
-func testToString(t *testing.T, val interface{}, expect string) {
+func testToString(t *testing.T, val any, expect string) {
 	b, err := ToString(val)
 	require.NoError(t, err)
 	require.Equal(t, expect, b)
@@ -577,7 +577,7 @@ func TestFieldTypeToStr(t *testing.T) {
 	require.Equal(t, "binary", v)
 }
 
-func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
+func accept(t *testing.T, tp byte, value any, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
 		ft.AddFlag(mysql.UnsignedFlag)
@@ -595,15 +595,15 @@ func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected st
 	}
 }
 
-func unsignedAccept(t *testing.T, tp byte, value interface{}, expected string) {
+func unsignedAccept(t *testing.T, tp byte, value any, expected string) {
 	accept(t, tp, value, true, expected)
 }
 
-func signedAccept(t *testing.T, tp byte, value interface{}, expected string) {
+func signedAccept(t *testing.T, tp byte, value any, expected string) {
 	accept(t, tp, value, false, expected)
 }
 
-func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
+func deny(t *testing.T, tp byte, value any, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
 		ft.AddFlag(mysql.UnsignedFlag)
@@ -620,15 +620,15 @@ func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected stri
 	}
 }
 
-func unsignedDeny(t *testing.T, tp byte, value interface{}, expected string) {
+func unsignedDeny(t *testing.T, tp byte, value any, expected string) {
 	deny(t, tp, value, true, expected)
 }
 
-func signedDeny(t *testing.T, tp byte, value interface{}, expected string) {
+func signedDeny(t *testing.T, tp byte, value any, expected string) {
 	deny(t, tp, value, false, expected)
 }
 
-func strvalue(v interface{}) string {
+func strvalue(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
@@ -1074,13 +1074,13 @@ func TestConvertJSONToInt(t *testing.T) {
 
 func TestConvertJSONToFloat(t *testing.T) {
 	var tests = []struct {
-		in  interface{}
+		in  any
 		out float64
 		ty  JSONTypeCode
 		err bool
 	}{
-		{in: make(map[string]interface{}), ty: JSONTypeCodeObject, err: true},
-		{in: make([]interface{}, 0), ty: JSONTypeCodeArray, err: true},
+		{in: make(map[string]any), ty: JSONTypeCodeObject, err: true},
+		{in: make([]any, 0), ty: JSONTypeCodeArray, err: true},
 		{in: int64(3), out: 3, ty: JSONTypeCodeInt64},
 		{in: int64(-3), out: -3, ty: JSONTypeCodeInt64},
 		{in: uint64(1 << 63), out: 1 << 63, ty: JSONTypeCodeUint64},

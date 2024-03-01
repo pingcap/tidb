@@ -89,7 +89,6 @@ func InitMetrics() {
 	InitSessionMetrics()
 	InitSliMetrics()
 	InitStatsMetrics()
-	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()
@@ -237,6 +236,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsCacheCounter)
 	prometheus.MustRegister(StatsCacheGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
+	prometheus.MustRegister(StatsDeltaLoadHistogram)
+	prometheus.MustRegister(StatsDeltaUpdateHistogram)
 	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
 	prometheus.MustRegister(LastCheckpoint)
@@ -270,9 +271,6 @@ func RegisterMetrics() {
 
 	prometheus.MustRegister(DistTaskGauge)
 	prometheus.MustRegister(DistTaskStarttimeGauge)
-	prometheus.MustRegister(DistTaskSubTaskCntGauge)
-	prometheus.MustRegister(DistTaskSubTaskStartTimeGauge)
-
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)

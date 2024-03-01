@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -114,7 +112,7 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *coalesceFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -428,7 +426,7 @@ func resolveType4Extremum(args []Expression) (_ *types.FieldType, fieldTimeType 
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
-func unsupportedJSONComparison(ctx sessionctx.Context, args []Expression) {
+func unsupportedJSONComparison(ctx BuildContext, args []Expression) {
 	for _, arg := range args {
 		tp := arg.GetType().GetType()
 		if tp == mysql.TypeJSON {
@@ -442,7 +440,7 @@ type greatestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *greatestFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -655,13 +653,12 @@ func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
 // evalString evals a builtinGreatestCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
 func (b *builtinGreatestCmpStringAsTimeSig) evalString(ctx EvalContext, row chunk.Row) (strRes string, isNull bool, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		v, err = doTimeConversionForGL(b.cmpAsDate, ctx, sc, v)
+		v, err = doTimeConversionForGL(b.cmpAsDate, ctx, v)
 		if err != nil {
 			return v, true, err
 		}
@@ -673,18 +670,19 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(ctx EvalContext, row chun
 	return strRes, false, nil
 }
 
-func doTimeConversionForGL(cmpAsDate bool, ctx EvalContext, sc *stmtctx.StatementContext, strVal string) (string, error) {
+func doTimeConversionForGL(cmpAsDate bool, ctx EvalContext, strVal string) (string, error) {
 	var t types.Time
 	var err error
+	tc := typeCtx(ctx)
 	if cmpAsDate {
-		t, err = types.ParseDate(sc.TypeCtx(), strVal)
+		t, err = types.ParseDate(tc, strVal)
 		if err == nil {
-			t, err = t.Convert(sc.TypeCtx(), mysql.TypeDate)
+			t, err = t.Convert(tc, mysql.TypeDate)
 		}
 	} else {
-		t, err = types.ParseDatetime(sc.TypeCtx(), strVal)
+		t, err = types.ParseDatetime(tc, strVal)
 		if err == nil {
-			t, err = t.Convert(sc.TypeCtx(), mysql.TypeDatetime)
+			t, err = t.Convert(tc, mysql.TypeDatetime)
 		}
 	}
 	if err != nil {
@@ -720,9 +718,9 @@ func (b *builtinGreatestTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res t
 		}
 	}
 	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	if res, err = res.Convert(sc.TypeCtx(), resTimeTp); err != nil {
+	if res, err = res.Convert(tc, resTimeTp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 	return res, false, nil
@@ -755,7 +753,7 @@ type leastFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *leastFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -953,13 +951,12 @@ func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
 // evalString evals a builtinLeastCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
 func (b *builtinLeastCmpStringAsTimeSig) evalString(ctx EvalContext, row chunk.Row) (strRes string, isNull bool, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		v, err = doTimeConversionForGL(b.cmpAsDate, ctx, sc, v)
+		v, err = doTimeConversionForGL(b.cmpAsDate, ctx, v)
 		if err != nil {
 			return v, true, err
 		}
@@ -994,9 +991,9 @@ func (b *builtinLeastTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res type
 		}
 	}
 	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	if res, err = res.Convert(sc.TypeCtx(), resTimeTp); err != nil {
+	if res, err = res.Convert(tc, resTimeTp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 	return res, false, nil
@@ -1039,7 +1036,7 @@ type intervalFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *intervalFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1340,7 +1337,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 }
 
 // GetCmpFunction get the compare function according to two arguments.
-func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
+func GetCmpFunction(ctx BuildContext, lhs, rhs Expression) CompareFunc {
 	switch GetAccurateCmpType(lhs, rhs) {
 	case types.ETInt:
 		return CompareInt
@@ -1382,7 +1379,7 @@ func isTemporalColumn(expr Expression) bool {
 //
 //	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 //	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
-func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
+func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
 	}
@@ -1420,7 +1417,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 //
 //	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 //	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
-func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
+func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return con, false
@@ -1515,7 +1512,7 @@ func matchRefineRule3Pattern(conEvalType types.EvalType, exprType *types.FieldTy
 // needs to decide to whether to skip the refining or skip plan-cache for safety.
 // For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
 // can be broken if the parameter changes to 1 after.
-func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (allowRefining bool) {
+func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowRefining bool) {
 	if !MaybeOverOptimized4PlanCache(ctx, args) {
 		return true // plan-cache disabled or no parameter in these args
 	}
@@ -1535,7 +1532,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		exprType := args[1-conIdx].GetType()
 		exprEvalType := exprType.EvalType()
 		if exprType.GetType() == mysql.TypeYear {
-			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
 		}
@@ -1545,7 +1542,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		conEvalType := args[conIdx].GetType().EvalType()
 		if exprEvalType == types.ETInt &&
 			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
-			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
 		}
@@ -1570,7 +1567,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 // 3. It also handles comparing datetime/timestamp column with numeric constant, try to cast numeric constant as timestamp type, do nothing if failed.
 // This refining operation depends on the values of these args, but these values can change when using plan-cache.
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
-func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) ([]Expression, error) {
+func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) ([]Expression, error) {
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0EvalType, arg1EvalType := arg0Type.EvalType(), arg1Type.EvalType()
 	arg0IsInt := arg0EvalType == types.ETInt
@@ -1680,7 +1677,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 }
 
 // see https://github.com/pingcap/tidb/issues/38361 for more details
-func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.Context, args []Expression, constArg *Constant, constArgIdx int) []Expression {
+func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx BuildContext, args []Expression, constArg *Constant, constArgIdx int) []Expression {
 	dt, err := constArg.Eval(ctx, chunk.Row{})
 	if err != nil || dt.IsNull() {
 		return args
@@ -1704,7 +1701,7 @@ func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx sessionctx.C
 	return []Expression{args[0], &finalArg}
 }
 
-func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, args []Expression) []Expression {
+func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx BuildContext, args []Expression) []Expression {
 	// Only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
 	// and support for it would be removed in a future version.
 	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt {
@@ -1765,7 +1762,7 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 }
 
 // getFunction sets compare built-in function signatures for various types.
-func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Expression) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) getFunction(ctx BuildContext, rawArgs []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, err
 	}
@@ -1779,7 +1776,7 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 }
 
 // generateCmpSigs generates compare function signatures.
-func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) generateCmpSigs(ctx BuildContext, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
 	if err != nil {
 		return nil, err
@@ -2578,22 +2575,8 @@ func (b *builtinNullEQIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 		res = 1
 	case isNull0 != isNull1:
 		return res, false, nil
-	case isUnsigned0 && isUnsigned1 && cmp.Compare(uint64(arg0), uint64(arg1)) == 0:
-		res = 1
-	case !isUnsigned0 && !isUnsigned1 && cmp.Compare(arg0, arg1) == 0:
-		res = 1
-	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 {
-			return res, false, nil
-		}
-		if cmp.Compare(arg0, arg1) == 0 {
-			res = 1
-		}
-	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 {
-			return res, false, nil
-		}
-		if cmp.Compare(arg0, arg1) == 0 {
+	default:
+		if types.CompareInt(arg0, isUnsigned0, arg1, isUnsigned1) == 0 {
 			res = 1
 		}
 	}
@@ -2896,26 +2879,7 @@ func CompareInt(sctx EvalContext, lhsArg, rhsArg Expression, lhsRow, rhsRow chun
 	}
 
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().GetFlag()), mysql.HasUnsignedFlag(rhsArg.GetType().GetFlag())
-	var res int
-	switch {
-	case isUnsigned0 && isUnsigned1:
-		res = cmp.Compare(uint64(arg0), uint64(arg1))
-	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
-			res = 1
-		} else {
-			res = cmp.Compare(arg0, arg1)
-		}
-	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
-			res = -1
-		} else {
-			res = cmp.Compare(arg0, arg1)
-		}
-	case !isUnsigned0 && !isUnsigned1:
-		res = cmp.Compare(arg0, arg1)
-	}
-	return int64(res), false, nil
+	return int64(types.CompareInt(arg0, isUnsigned0, arg1, isUnsigned1)), false, nil
 }
 
 func genCompareString(collation string) func(sctx EvalContext, lhsArg Expression, rhsArg Expression, lhsRow chunk.Row, rhsRow chunk.Row) (int64, bool, error) {

@@ -21,9 +21,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -36,15 +36,15 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// GenSelectResultFromResponse generates an iterator from response.
-func GenSelectResultFromResponse(sctx sessionctx.Context, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response) SelectResult {
+// GenSelectResultFromMPPResponse generates an iterator from response.
+func GenSelectResultFromMPPResponse(dctx distsqlctx.DistSQLContext, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response) SelectResult {
 	// TODO: Add metric label and set open tracing.
 	return &selectResult{
 		label:      "mpp",
 		resp:       resp,
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
-		ctx:        sctx,
+		ctx:        dctx,
 		copPlanIDs: planIDs,
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
@@ -53,7 +53,7 @@ func GenSelectResultFromResponse(sctx sessionctx.Context, fieldTypes []*types.Fi
 
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+func Select(ctx context.Context, dctx distsqlctx.DistSQLContext, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "distsql.Select")
 	defer r.End()
 
@@ -62,8 +62,8 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
-	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
+	enabledRateLimitAction := dctx.GetSessionVars().EnabledRateLimitAction
+	originalSQL := dctx.GetSessionVars().StmtCtx.OriginalSQL
 	eventCb := func(event trxevents.TransactionEvent) {
 		// Note: Do not assume this callback will be invoked within the same goroutine.
 		if copMeetLock := event.GetCopMeetLock(); copMeetLock != nil {
@@ -74,27 +74,27 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		}
 	}
 
-	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
+	ctx = WithSQLKvExecCounterInterceptor(ctx, dctx.GetSessionVars().StmtCtx)
 	option := &kv.ClientSendOption{
-		SessionMemTracker:          sctx.GetSessionVars().MemTracker,
+		SessionMemTracker:          dctx.GetSessionVars().MemTracker,
 		EnabledRateLimitAction:     enabledRateLimitAction,
 		EventCb:                    eventCb,
 		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
 	}
 
 	if kvReq.StoreType == kv.TiFlash {
-		ctx = SetTiFlashConfVarsInContext(ctx, sctx)
-		option.TiFlashReplicaRead = sctx.GetSessionVars().TiFlashReplicaRead
-		option.AppendWarning = sctx.GetSessionVars().StmtCtx.AppendWarning
+		ctx = SetTiFlashConfVarsInContext(ctx, dctx.GetSessionVars())
+		option.TiFlashReplicaRead = dctx.GetSessionVars().TiFlashReplicaRead
+		option.AppendWarning = dctx.GetSessionVars().StmtCtx.AppendWarning
 	}
 
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
+	resp := dctx.GetClient().Send(ctx, kvReq, dctx.GetSessionVars().KVVars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
 
 	label := metrics.LblGeneral
-	if sctx.GetSessionVars().InRestrictedSQL {
+	if dctx.GetSessionVars().InRestrictedSQL {
 		label = metrics.LblInternal
 	}
 
@@ -106,7 +106,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		resp:               resp,
 		rowLen:             len(fieldTypes),
 		fieldTypes:         fieldTypes,
-		ctx:                sctx,
+		ctx:                dctx,
 		sqlType:            label,
 		memTracker:         kvReq.MemTracker,
 		storeType:          kvReq.StoreType,
@@ -116,34 +116,34 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 }
 
 // SetTiFlashConfVarsInContext set some TiFlash config variables in context.
-func SetTiFlashConfVarsInContext(ctx context.Context, sctx sessionctx.Context) context.Context {
-	if sctx.GetSessionVars().TiFlashMaxThreads != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxThreads, 10))
+func SetTiFlashConfVarsInContext(ctx context.Context, vars *variable.SessionVars) context.Context {
+	if vars.TiFlashMaxThreads != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(vars.TiFlashMaxThreads, 10))
 	}
-	if sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin, 10))
+	if vars.TiFlashMaxBytesBeforeExternalJoin != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(vars.TiFlashMaxBytesBeforeExternalJoin, 10))
 	}
-	if sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalGroupBy != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalGroupBy, 10))
+	if vars.TiFlashMaxBytesBeforeExternalGroupBy != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(vars.TiFlashMaxBytesBeforeExternalGroupBy, 10))
 	}
-	if sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalSort != -1 {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalSort, 10))
+	if vars.TiFlashMaxBytesBeforeExternalSort != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(vars.TiFlashMaxBytesBeforeExternalSort, 10))
 	}
-	if sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode <= 0 {
+	if vars.TiFlashMaxQueryMemoryPerNode <= 0 {
 		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMemQuotaQueryPerNode, "0")
 	} else {
-		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode, 10))
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(vars.TiFlashMaxQueryMemoryPerNode, 10))
 	}
-	ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashQuerySpillRatio, strconv.FormatFloat(sctx.GetSessionVars().TiFlashQuerySpillRatio, 'f', -1, 64))
+	ctx = metadata.AppendToOutgoingContext(ctx, variable.TiFlashQuerySpillRatio, strconv.FormatFloat(vars.TiFlashQuerySpillRatio, 'f', -1, 64))
 	return ctx
 }
 
 // SelectWithRuntimeStats sends a DAG request, returns SelectResult.
 // The difference from Select is that SelectWithRuntimeStats will set copPlanIDs into selectResult,
 // which can help selectResult to collect runtime stats.
-func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+func SelectWithRuntimeStats(ctx context.Context, dctx distsqlctx.DistSQLContext, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
-	sr, err := Select(ctx, sctx, kvReq, fieldTypes)
+	sr, err := Select(ctx, dctx, kvReq, fieldTypes)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 }
 
 // Analyze do a analyze request.
-func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
+func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
 	kvReq.RequestSource.RequestSourceInternal = true
@@ -178,7 +178,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 }
 
 // Checksum sends a checksum request.
-func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{}) (SelectResult, error) {
+func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
 	// Checksum function signature. The two-way dependence should be removed in the future.
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
@@ -198,7 +198,7 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars int
 // methods are:
 // 1. TypeChunk: the result is encoded using the Chunk format, refer util/chunk/chunk.go
 // 2. TypeDefault: the result is encoded row by row
-func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
+func SetEncodeType(ctx distsqlctx.DistSQLContext, dagReq *tipb.DAGRequest) {
 	if canUseChunkRPC(ctx) {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 		setChunkMemoryLayout(dagReq)
@@ -207,7 +207,7 @@ func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 	}
 }
 
-func canUseChunkRPC(ctx sessionctx.Context) bool {
+func canUseChunkRPC(ctx distsqlctx.DistSQLContext) bool {
 	if !ctx.GetSessionVars().EnableChunkRPC {
 		return false
 	}

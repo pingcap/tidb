@@ -38,7 +38,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -54,11 +54,11 @@ type PlanCacheKeyTestIssue46760 struct{}
 type PlanCacheKeyTestIssue47133 struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
-func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+func SetParameterValuesIntoSCtx(sctx PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(sctx, chunk.Row{})
+		val, err := usingParam.Eval(sctx.GetExprCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -95,11 +95,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 1: check parameter number
 	if len(stmtAst.Params) != len(params) {
-		return errors.Trace(ErrWrongParamCount)
+		return errors.Trace(plannererrors.ErrWrongParamCount)
 	}
 
 	// step 2: set parameter values
-	if err := SetParameterValuesIntoSCtx(sctx, isNonPrepared, stmtAst.Params, params); err != nil {
+	if err := SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), isNonPrepared, stmtAst.Params, params); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -121,7 +121,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(ctx, sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
-			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		stmtAst.SchemaVersion = is.SchemaMetaVersion()
 	}
@@ -164,14 +164,14 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
 	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
-	if !stmt.StmtCacheable && stmt.UncacheableReason != "" {
-		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
+	if stmt.UncacheableReason != "" {
+		stmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError(stmt.UncacheableReason))
 	}
 
 	var bindSQL string
 	if stmtCtx.UseCache {
 		var ignoreByBinding bool
-		bindSQL, ignoreByBinding = GetBindSQL4PlanCache(sctx, stmt)
+		bindSQL, ignoreByBinding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 		if ignoreByBinding {
 			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"))
 		}
@@ -274,7 +274,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		return nil, nil, false, err
 	}
 	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+		if !unionScan && tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
 			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
 			// rebuilding the filters in UnionScan is pretty trivial.
 			sctx.GetSessionPlanCache().Delete(cacheKey)
@@ -316,14 +316,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx, stmt, p, names)
+	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
 			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
 		}
 	}
@@ -489,7 +489,7 @@ func rebuildRange(p Plan) error {
 		}
 		// The code should never run here as long as we're not using point get for partition table.
 		// And if we change the logic one day, here work as defensive programming to cache the error.
-		if x.PartitionInfo != nil {
+		if x.PartitionDef != nil {
 			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
@@ -618,8 +618,8 @@ func rebuildRange(p Plan) error {
 	return nil
 }
 
-func convertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
-	val, err := con.Eval(ctx, chunk.Row{})
+func convertConstant2Datum(ctx PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+	val, err := con.Eval(ctx.GetExprCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -636,7 +636,7 @@ func convertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, tar
 	return &dVal, nil
 }
 
-func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err error) {
+func buildRangeForTableScan(sctx PlanContext, ts *PhysicalTableScan) (err error) {
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))
@@ -701,7 +701,7 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 	return
 }
 
-func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
+func buildRangeForIndexScan(sctx PlanContext, is *PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
 		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
 			is.Ranges = ranger.FullRange()
@@ -758,7 +758,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
-func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
+func tryCachePointPlan(_ context.Context, sctx PlanContext,
 	stmt *PlanCacheStmt, p Plan, names types.NameSlice) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil
@@ -770,7 +770,7 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 	)
 
 	if plan, _ok := p.(*PointGetPlan); _ok {
-		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
 		if err != nil {
 			return err
 		}
@@ -790,40 +790,6 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 	return err
 }
 
-// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string, bool) {
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	ignore := false
-	if !useBinding || stmt.PreparedAst.Stmt == nil || stmt.NormalizedSQL4PC == "" || stmt.SQLDigest4PC == "" {
-		return "", ignore
-	}
-	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return "", ignore
-	}
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	bindRecord := sessionHandle.GetSessionBinding(stmt.SQLDigest4PC)
-	if bindRecord != nil {
-		enabledBinding := bindRecord.FindEnabledBinding()
-		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(h.HintIgnorePlanCache)
-			return enabledBinding.BindSQL, ignore
-		}
-	}
-	globalHandle := domain.GetDomain(sctx).BindHandle()
-	if globalHandle == nil {
-		return "", ignore
-	}
-	bindRecord = globalHandle.GetGlobalBinding(stmt.SQLDigest4PC)
-	if bindRecord != nil {
-		enabledBinding := bindRecord.FindEnabledBinding()
-		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(h.HintIgnorePlanCache)
-			return enabledBinding.BindSQL, ignore
-		}
-	}
-	return "", ignore
-}
-
 // IsPointGetPlanShortPathOK check if we can execute using plan cached in prepared structure
 // Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
@@ -833,7 +799,7 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		return false, nil
 	}
 	// check auto commit
-	if !IsAutoCommitTxn(sctx) {
+	if !IsAutoCommitTxn(sctx.GetSessionVars()) {
 		return false, nil
 	}
 	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {

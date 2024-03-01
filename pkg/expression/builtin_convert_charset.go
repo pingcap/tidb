@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -56,7 +55,7 @@ type tidbToBinaryFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
@@ -138,7 +137,7 @@ type tidbFromBinaryFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
@@ -218,7 +217,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 }
 
 // BuildToBinaryFunction builds to_binary function.
-func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Expression) {
+func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 	fc := &tidbToBinaryFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
@@ -233,7 +232,7 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
@@ -306,7 +305,7 @@ func init() {
 }
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
-func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollation, funcName string) Expression {
+func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string) Expression {
 	argChs, dstChs := expr.GetType().GetCharset(), ec.Charset
 	switch convertFuncsMap[funcName] {
 	case funcPropNone:

@@ -54,7 +54,7 @@ func isAnalyzeWorkerPanic(err error) bool {
 	return err == errAnalyzeWorkerPanic || err == errAnalyzeOOM
 }
 
-func getAnalyzePanicErr(r interface{}) error {
+func getAnalyzePanicErr(r any) error {
 	if msg, ok := r.(string); ok {
 		if msg == globalPanicAnalyzeMemoryExceed {
 			return errors.Trace(errAnalyzeOOM)

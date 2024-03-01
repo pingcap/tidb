@@ -554,24 +554,6 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	ch := make(chan struct{})
 	hook := &callback.TestDDLCallback{}
 	var jobID int64
-	doOnce := true
-	hook.OnGetJobBeforeExported = func(str string) {
-		if jobID == 0 || !doOnce {
-			return
-		}
-
-		for i := 0; i < 50; i++ {
-			sql := fmt.Sprintf("admin show ddl jobs where job_id=%d or job_id=%d", jobID, jobID+1)
-			se := session.CreateSessionAndSetID(t, store)
-			rows, err := execute(context.Background(), se, sql)
-			require.NoError(t, err)
-			if len(rows) == 2 {
-				doOnce = false
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	times := 0

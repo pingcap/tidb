@@ -284,7 +284,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
 			if e.innerIter == nil {
-				e.innerIter = chunk.NewIterator4Slice(task.matchedInners).(*chunk.Iterator4Slice)
+				e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
 			}
 			e.innerIter.Reset(task.matchedInners)
 			e.innerIter.Begin()
@@ -456,11 +456,12 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	if ow.filter != nil {
 		task.outerMatch = make([][]bool, task.outerResult.NumChunks())
 		var err error
+		exprCtx := ow.ctx.GetExprCtx()
 		for i := 0; i < numChks; i++ {
 			chk := task.outerResult.GetChunk(i)
 			outerMatch := make([]bool, 0, chk.NumRows())
 			task.memTracker.Consume(int64(cap(outerMatch)))
-			task.outerMatch[i], err = expression.VectorizedFilter(ow.ctx, ow.filter, chunk.NewIterator4Chunk(chk), outerMatch)
+			task.outerMatch[i], err = expression.VectorizedFilter(exprCtx, ow.filter, chunk.NewIterator4Chunk(chk), outerMatch)
 			if err != nil {
 				return task, err
 			}

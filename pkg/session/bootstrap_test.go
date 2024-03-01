@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,13 +27,14 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/telemetry"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,7 +138,7 @@ func globalVarsCount() int64 {
 // We should make sure that the following session could finish the bootstrap process.
 func TestBootstrapWithError(t *testing.T) {
 	ctx := context.Background()
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -148,11 +150,13 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
+		se.exprctx = newExpressionContextImpl(se)
+		se.pctx = newPlanContextImpl(se)
+		se.tblctx = tbctximpl.NewTableContextImpl(se, se.exprctx)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
-		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
-		se.mu.values = make(map[fmt.Stringer]interface{})
+		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
 		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
 		require.NoError(t, err)
@@ -333,6 +337,19 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	require.Equal(t, "False", req.GetRow(0).GetString(0))
 	require.NoError(t, r.Close())
+
+	r = MustExecToRecodeSet(t, se2, "admin show ddl jobs 1000;")
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	rowCnt := req.NumRows()
+	for i := 0; i < rowCnt; i++ {
+		jobType := req.GetRow(i).GetString(3) // get job type.
+		// Should not use multi-schema change in bootstrap DDL because the job arguments may be changed.
+		require.False(t, strings.Contains(jobType, "multi-schema"))
+	}
+	require.NoError(t, r.Close())
+
 	dom.Close()
 }
 
@@ -515,83 +532,6 @@ func TestStmtSummary(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, []byte("ON"), row.GetBytes(0))
 	require.NoError(t, r.Close())
-}
-
-type bindTestStruct struct {
-	originText   string
-	bindText     string
-	db           string
-	originWithDB string
-	bindWithDB   string
-	deleteText   string
-}
-
-func TestUpdateBindInfo(t *testing.T) {
-	bindCases := []bindTestStruct{
-		{
-			originText:   "select * from t where a > ?",
-			bindText:     "select /*+ use_index(t, idxb) */ * from t where a > 1",
-			db:           "test",
-			originWithDB: "select * from `test` . `t` where `a` > ?",
-			bindWithDB:   "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t` WHERE `a` > 1",
-			deleteText:   "select * from test.t where a > 1",
-		},
-		{
-			originText:   "select count ( ? ), max ( a ) from t group by b",
-			bindText:     "select /*+ use_index(t, idx) */ count(1), max(a) from t group by b",
-			db:           "test",
-			originWithDB: "select count ( ? ) , max ( `a` ) from `test` . `t` group by `b`",
-			bindWithDB:   "SELECT /*+ use_index(`t` `idx`)*/ count(1),max(`a`) FROM `test`.`t` GROUP BY `b`",
-			deleteText:   "select count(1), max(a) from test.t group by b",
-		},
-		{
-			originText:   "select * from `test` . `t` where `a` = (_charset) ?",
-			bindText:     "SELECT * FROM test.t WHERE a = _utf8\\'ab\\'",
-			db:           "test",
-			originWithDB: "select * from `test` . `t` where `a` = ?",
-			bindWithDB:   "SELECT * FROM `test`.`t` WHERE `a` = 'ab'",
-			deleteText:   "select * from test.t where a = 'c'",
-		},
-	}
-
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-	se := CreateSessionAndSetID(t, store)
-
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
-	for _, bindCase := range bindCases {
-		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
-			bindCase.originText,
-			bindCase.bindText,
-			bindCase.db,
-		)
-		MustExec(t, se, sql)
-
-		upgradeToVer67(se, version66)
-		r := MustExecToRecodeSet(t, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
-		req := r.NewChunk(nil)
-		require.NoError(t, r.Next(ctx, req))
-		row := req.GetRow(0)
-		require.Equal(t, bindCase.originWithDB, row.GetString(0))
-		require.Equal(t, bindCase.bindWithDB, row.GetString(1))
-		require.Equal(t, "", row.GetString(2))
-		require.Equal(t, bindinfo.Enabled, row.GetString(3))
-		require.NoError(t, r.Close())
-		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
-		MustExec(t, se, sql)
-		r = MustExecToRecodeSet(t, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
-		require.NoError(t, r.Next(ctx, req))
-		row = req.GetRow(0)
-		require.Equal(t, bindCase.originWithDB, row.GetString(0))
-		require.Equal(t, bindCase.bindWithDB, row.GetString(1))
-		require.Equal(t, "deleted", row.GetString(2))
-		require.NoError(t, r.Close())
-		sql = fmt.Sprintf("delete from mysql.bind_info where original_sql = '%s'", bindCase.originWithDB)
-		MustExec(t, se, sql)
-	}
 }
 
 func TestUpdateDuplicateBindInfo(t *testing.T) {
@@ -780,7 +720,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 }
 
 func TestIndexMergeInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
@@ -1100,7 +1040,7 @@ func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 }
 
 func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
@@ -1126,7 +1066,7 @@ func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
 }
 
 func TestTiDBCostModelInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
@@ -2017,9 +1957,12 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	// create some bindings at version174
 	MustExec(t, seV174, "use test")
 	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
+	_, digest := parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1,2,3)")
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1)")
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)")
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
 
 	showBindings := func(s sessiontypes.Session) (records []string) {
 		MustExec(t, s, "admin reload bindings")

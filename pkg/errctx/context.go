@@ -33,10 +33,23 @@ const (
 	LevelIgnore
 )
 
+// LevelMap indicates the map from `ErrGroup` to `Level`
+type LevelMap [errGroupCount]Level
+
 // Context defines how to handle an error
 type Context struct {
-	levelMap    [errGroupCount]Level
+	levelMap    LevelMap
 	warnHandler contextutil.WarnHandler
+}
+
+// LevelMap returns the `levelMap` of the context.
+func (ctx *Context) LevelMap() LevelMap {
+	return ctx.levelMap
+}
+
+// LevelForGroup returns the level for a specified group.
+func (ctx *Context) LevelForGroup(errGroup ErrGroup) Level {
+	return ctx.levelMap[errGroup]
 }
 
 // WithStrictErrGroupLevel makes the context to return the error directly for any kinds of errors.
@@ -59,8 +72,16 @@ func (ctx *Context) WithErrGroupLevel(eg ErrGroup, l Level) Context {
 	return newCtx
 }
 
-// appendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
-func (ctx *Context) appendWarning(err error) {
+// WithErrGroupLevels sets `levelMap` for an `ErrGroup`
+func (ctx *Context) WithErrGroupLevels(levels LevelMap) Context {
+	return Context{
+		levelMap:    levels,
+		warnHandler: ctx.warnHandler,
+	}
+}
+
+// AppendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
+func (ctx *Context) AppendWarning(err error) {
 	intest.Assert(ctx.warnHandler != nil)
 	if w := ctx.warnHandler; w != nil {
 		// warnHandler should always not be nil, check fn != nil here to just make code safe.
@@ -127,7 +148,7 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 	case LevelError:
 		return err
 	case LevelWarn:
-		ctx.appendWarning(warnErr)
+		ctx.AppendWarning(warnErr)
 	case LevelIgnore:
 	}
 
@@ -136,9 +157,15 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 
 // NewContext creates an error context to handle the errors and warnings
 func NewContext(handler contextutil.WarnHandler) Context {
+	return NewContextWithLevels(LevelMap{}, handler)
+}
+
+// NewContextWithLevels creates an error context to handle the errors and warnings
+func NewContextWithLevels(levels LevelMap, handler contextutil.WarnHandler) Context {
 	intest.Assert(handler != nil)
 	return Context{
 		warnHandler: handler,
+		levelMap:    levels,
 	}
 }
 
@@ -153,27 +180,71 @@ type ErrGroup int
 const (
 	// ErrGroupTruncate is the group of truncated errors
 	ErrGroupTruncate ErrGroup = iota
-	// ErrGroupOverflow is the group of overflow errors
-	ErrGroupOverflow
-
+	// ErrGroupDupKey is the group of duplicate key errors
+	ErrGroupDupKey
+	// ErrGroupBadNull is the group of bad null errors
+	ErrGroupBadNull
+	// ErrGroupDividedByZero is the group of divided by zero errors
+	ErrGroupDividedByZero
+	// ErrGroupAutoIncReadFailed is the group of auto increment read failed errors
+	ErrGroupAutoIncReadFailed
+	// ErrGroupNoMatchedPartition is the group of no partition is matched errors.
+	ErrGroupNoMatchedPartition
 	// errGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list.
 	errGroupCount
 )
 
 func init() {
-	truncateErrCodes := []errors.ErrCode{
-		errno.ErrTruncatedWrongValue,
-		errno.ErrDataTooLong,
-		errno.ErrTruncatedWrongValueForField,
-		errno.ErrWarnDataOutOfRange,
-		errno.ErrDataOutOfRange,
-		errno.ErrBadNumber,
-		errno.ErrWrongValueForType,
-		errno.ErrDatetimeFunctionOverflow,
-		errno.WarnDataTruncated,
-		errno.ErrIncorrectDatetimeValue,
+	group2Errors := map[ErrGroup][]errors.ErrCode{
+		ErrGroupTruncate: {
+			errno.ErrTruncatedWrongValue,
+			errno.ErrDataTooLong,
+			errno.ErrTruncatedWrongValueForField,
+			errno.ErrWarnDataOutOfRange,
+			errno.ErrDataOutOfRange,
+			errno.ErrBadNumber,
+			errno.ErrWrongValueForType,
+			errno.ErrDatetimeFunctionOverflow,
+			errno.WarnDataTruncated,
+			errno.ErrIncorrectDatetimeValue,
+		},
+		ErrGroupBadNull: {
+			errno.ErrBadNull,
+			errno.ErrWarnNullToNotnull,
+			errno.ErrNoDefaultForField,
+		},
+		ErrGroupDividedByZero: {
+			errno.ErrDivisionByZero,
+		},
+		ErrGroupAutoIncReadFailed: {
+			errno.ErrAutoincReadFailed,
+		},
+		ErrGroupNoMatchedPartition: {
+			errno.ErrNoPartitionForGivenValue,
+			errno.ErrRowDoesNotMatchGivenPartitionSet,
+		},
+		ErrGroupDupKey: {
+			errno.ErrDupEntry,
+		},
 	}
-	for _, errCode := range truncateErrCodes {
-		errGroupMap[errCode] = ErrGroupTruncate
+
+	for group, codes := range group2Errors {
+		for _, errCode := range codes {
+			errGroupMap[errCode] = group
+		}
 	}
+}
+
+// ResolveErrLevel resolves the error level according to the `ignore` and `warn` flags
+// if ignore is true, it will return `LevelIgnore` to ignore the error,
+// otherwise, it will return `LevelWarn` or `LevelError` according to the `warn` flag
+// Only one of `ignore` and `warn` can be true.
+func ResolveErrLevel(ignore bool, warn bool) Level {
+	if ignore {
+		return LevelIgnore
+	}
+	if warn {
+		return LevelWarn
+	}
+	return LevelError
 }

@@ -46,7 +46,7 @@ type tikvTxn struct {
 	idxNameCache        map[int64]*model.TableInfo
 	snapshotInterceptor kv.SnapshotInterceptor
 	// columnMapsCache is a cache used for the mutation checker
-	columnMapsCache interface{}
+	columnMapsCache any
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -200,7 +200,7 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return newMemBuffer(txn.KVTxn.GetMemBuffer())
 }
 
-func (txn *tikvTxn) SetOption(opt int, val interface{}) {
+func (txn *tikvTxn) SetOption(opt int, val any) {
 	switch opt {
 	case kv.BinlogInfo:
 		txn.SetBinlogExecutor(&binlogExecutor{
@@ -287,7 +287,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	}
 }
 
-func (txn *tikvTxn) GetOption(opt int) interface{} {
+func (txn *tikvTxn) GetOption(opt int) any {
 	switch opt {
 	case kv.GuaranteeLinearizability:
 		return !txn.KVTxn.IsCasualConsistency()
@@ -305,13 +305,13 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 }
 
 // SetVars sets variables to the transaction.
-func (txn *tikvTxn) SetVars(vars interface{}) {
+func (txn *tikvTxn) SetVars(vars any) {
 	if vs, ok := vars.(*tikv.Variables); ok {
 		txn.KVTxn.SetVars(vs)
 	}
 }
 
-func (txn *tikvTxn) GetVars() interface{} {
+func (txn *tikvTxn) GetVars() any {
 	return txn.KVTxn.GetVars()
 }
 
@@ -333,7 +333,10 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
-	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	if txn.IsPipelined() {
+		return genKeyExistsError("UNKNOWN", key.String(), errors.New("currently pipelined dml doesn't extract value from key exists error"))
+	}
+	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().GetMemDB().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}

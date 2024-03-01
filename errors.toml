@@ -176,6 +176,11 @@ error = '''
 PD leader not found
 '''
 
+["BR:PD:ErrPDUknownScatterResult"]
+error = '''
+failed to wait region splitted
+'''
+
 ["BR:PD:ErrPDUpdateFailed"]
 error = '''
 failed to update PD
@@ -1964,6 +1969,11 @@ error = '''
 ["expression:1365"]
 error = '''
 Division by 0
+'''
+
+["expression:1426"]
+error = '''
+Too big precision %d specified for column '%-.192s'. Maximum is %d.
 '''
 
 ["expression:1582"]

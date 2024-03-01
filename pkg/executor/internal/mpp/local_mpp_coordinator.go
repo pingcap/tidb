@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -102,6 +103,7 @@ type mppRequestReport struct {
 
 // localMppCoordinator stands for constructing and dispatching mpp tasks in local tidb server, since these work might be done remotely too
 type localMppCoordinator struct {
+	ctx          context.Context
 	sessionCtx   sessionctx.Context
 	is           infoschema.InfoSchema
 	originalPlan plannercore.PhysicalPlan
@@ -149,11 +151,12 @@ type localMppCoordinator struct {
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
-func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
+func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
 	if sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
 		coordinatorAddr = ""
 	}
 	coord := &localMppCoordinator{
+		ctx:             ctx,
 		sessionCtx:      sctx,
 		is:              is,
 		originalPlan:    plan,
@@ -577,7 +580,7 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 	return nil
 }
 
-func (c *localMppCoordinator) handleAllReports() {
+func (c *localMppCoordinator) handleAllReports() error {
 	if c.reportExecutionInfo && atomic.LoadUint32(&c.dispatchFailed) == 0 && atomic.CompareAndSwapUint32(&c.allReportsHandled, 0, 1) {
 		startTime := time.Now()
 		select {
@@ -592,6 +595,11 @@ func (c *localMppCoordinator) handleAllReports() {
 							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
 					}
 				}
+				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
+					if err := execdetails.MergeTiFlashRUConsumption(report.executionSummaries, ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
+						return err
+					}
+				}
 			}
 			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
@@ -603,6 +611,7 @@ func (c *localMppCoordinator) handleAllReports() {
 				zap.Int("actualCount", c.reportedReqCount))
 		}
 	}
+	return nil
 }
 
 // IsClosed implements MppCoordinator interface
@@ -613,13 +622,16 @@ func (c *localMppCoordinator) IsClosed() bool {
 // Close implements MppCoordinator interface
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
+	c.closeWithoutReport()
+	return c.handleAllReports()
+}
+
+func (c *localMppCoordinator) closeWithoutReport() {
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		close(c.finishCh)
 	}
 	c.cancelFunc()
 	<-c.wgDoneChan
-	c.handleAllReports()
-	return nil
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
@@ -668,10 +680,17 @@ func (c *localMppCoordinator) nextImpl(ctx context.Context) (resp *mppResponse, 
 		case resp, ok = <-c.respChan:
 			return
 		case <-ticker.C:
-			if c.vars != nil && c.vars.Killed != nil && atomic.LoadUint32(c.vars.Killed) == 1 {
-				err = derr.ErrQueryInterrupted
-				exit = true
-				return
+			if c.vars != nil && c.vars.Killed != nil {
+				killed := atomic.LoadUint32(c.vars.Killed)
+				if killed != 0 {
+					logutil.Logger(ctx).Info(
+						"a killed signal is received",
+						zap.Uint32("signal", killed),
+					)
+					err = derr.ErrQueryInterrupted
+					exit = true
+					return
+				}
 			}
 		case <-c.finishCh:
 			exit = true
@@ -735,7 +754,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 
 	ctx = distsql.WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	ctx = distsql.SetTiFlashConfVarsInContext(ctx, sctx)
+	ctx = distsql.SetTiFlashConfVarsInContext(ctx, sctx.GetSessionVars())
 	c.needTriggerFallback = allowTiFlashFallback
 	c.enableCollectExecutionInfo = config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 

@@ -270,7 +270,11 @@ func (svr *Server) KVPessimisticRollback(ctx context.Context, req *kvrpcpb.Pessi
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.PessimisticRollbackResponse{RegionError: reqCtx.regErr}, nil
 	}
-	err = svr.mvccStore.PessimisticRollback(reqCtx, req)
+	if len(req.Keys) == 0 {
+		err = svr.mvccStore.PessimisticRollbackWithScanFirst(reqCtx, req)
+	} else {
+		err = svr.mvccStore.PessimisticRollback(reqCtx, req)
+	}
 	resp := &kvrpcpb.PessimisticRollbackResponse{}
 	resp.Errors, resp.RegionError = convertToPBErrors(err)
 	return resp, nil

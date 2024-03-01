@@ -18,10 +18,12 @@ import (
 	"context"
 	"encoding/binary"
 	"path/filepath"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -37,6 +39,7 @@ type OneFileWriter struct {
 
 	// Statistic information per writer.
 	totalSize uint64
+	totalCnt  uint64
 	rc        *rangePropertiesCollector
 
 	// file information.
@@ -47,7 +50,11 @@ type OneFileWriter struct {
 	dataWriter     storage.ExternalFileWriter
 	statWriter     storage.ExternalFileWriter
 
-	closed bool
+	onClose OnCloseFunc
+	closed  bool
+
+	minKey []byte
+	maxKey []byte
 
 	logger *zap.Logger
 }
@@ -86,6 +93,9 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	if w.minKey == nil {
+		w.minKey = slices.Clone(idxKey)
+	}
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
@@ -111,11 +121,13 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
 	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(idxVal)))
 	copy(buf[lengthBytes*2:], idxKey)
+	w.maxKey = buf[lengthBytes*2 : lengthBytes*2+keyLen]
 	copy(buf[lengthBytes*2+keyLen:], idxVal)
 	err := w.kvStore.addEncodedData(buf[:length])
 	if err != nil {
 		return err
 	}
+	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
 	return nil
 }
@@ -132,6 +144,21 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	w.logger.Info("close one file writer",
 		zap.String("writerID", w.writerID))
 
+	maxKey := slices.Clone(w.maxKey)
+	var stat MultipleFilesStat
+	stat.Filenames = append(stat.Filenames,
+		[2]string{w.dataFile, w.statFile})
+	stat.build([]tidbkv.Key{w.minKey}, []tidbkv.Key{maxKey})
+	w.onClose(&WriterSummary{
+		WriterID:           w.writerID,
+		Seq:                0,
+		Min:                w.minKey,
+		Max:                maxKey,
+		TotalSize:          w.totalSize,
+		TotalCnt:           w.totalCnt,
+		MultipleFilesStats: []MultipleFilesStat{stat},
+	})
+	w.totalCnt = 0
 	w.totalSize = 0
 	w.closed = true
 	return nil

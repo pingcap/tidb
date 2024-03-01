@@ -35,7 +35,7 @@ type Result struct {
 }
 
 // Check asserts the result equals the expected results.
-func (res *Result) Check(expected [][]interface{}) {
+func (res *Result) Check(expected [][]any) {
 	resBuff := bytes.NewBufferString("")
 	for _, row := range res.rows {
 		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
@@ -50,7 +50,7 @@ func (res *Result) Check(expected [][]interface{}) {
 }
 
 // Equal check whether the result equals the expected results.
-func (res *Result) Equal(expected [][]interface{}) bool {
+func (res *Result) Equal(expected [][]any) bool {
 	resBuff := bytes.NewBufferString("")
 	for _, row := range res.rows {
 		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
@@ -70,7 +70,7 @@ func (res *Result) AddComment(c string) {
 }
 
 // CheckWithFunc asserts the result match the expected results in the way `f` specifies.
-func (res *Result) CheckWithFunc(expected [][]interface{}, f func([]string, []interface{}) bool) {
+func (res *Result) CheckWithFunc(expected [][]any, f func([]string, []any) bool) {
 	res.require.Equal(len(res.rows), len(expected), res.comment+"\nResult length mismatch")
 
 	for i, resRow := range res.rows {
@@ -80,7 +80,7 @@ func (res *Result) CheckWithFunc(expected [][]interface{}, f func([]string, []in
 }
 
 // Rows is similar to RowsWithSep, use white space as separator string.
-func Rows(args ...string) [][]interface{} {
+func Rows(args ...string) [][]any {
 	return RowsWithSep(" ", args...)
 }
 
@@ -94,11 +94,11 @@ func (res *Result) Sort() *Result {
 
 // RowsWithSep is a convenient function to wrap args to a slice of []interface.
 // The arg represents a row, split by sep.
-func RowsWithSep(sep string, args ...string) [][]interface{} {
-	rows := make([][]interface{}, len(args))
+func RowsWithSep(sep string, args ...string) [][]any {
+	rows := make([][]any, len(args))
 	for i, v := range args {
 		parts := strings.Split(v, sep)
-		row := make([]interface{}, len(parts))
+		row := make([]any, len(parts))
 		for j, s := range parts {
 			row[j] = s
 		}
@@ -108,10 +108,10 @@ func RowsWithSep(sep string, args ...string) [][]interface{} {
 }
 
 // Rows returns the result data.
-func (res *Result) Rows() [][]interface{} {
-	ifacesSlice := make([][]interface{}, len(res.rows))
+func (res *Result) Rows() [][]any {
+	ifacesSlice := make([][]any, len(res.rows))
 	for i := range res.rows {
-		ifaces := make([]interface{}, len(res.rows[i]))
+		ifaces := make([]any, len(res.rows[i]))
 		for j := range res.rows[i] {
 			ifaces[j] = res.rows[i][j]
 		}
@@ -121,7 +121,7 @@ func (res *Result) Rows() [][]interface{} {
 }
 
 // CheckAt asserts the result of selected columns equals the expected results.
-func (res *Result) CheckAt(cols []int, expected [][]interface{}) {
+func (res *Result) CheckAt(cols []int, expected [][]any) {
 	for _, e := range expected {
 		res.require.Equal(len(e), len(cols))
 	}

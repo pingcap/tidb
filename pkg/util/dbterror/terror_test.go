@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func genErrMsg(pattern string, a ...interface{}) string {
+func genErrMsg(pattern string, a ...any) string {
 	return fmt.Sprintf(pattern, a...)
 }
 

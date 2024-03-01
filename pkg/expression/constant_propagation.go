@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -38,7 +37,7 @@ type basePropConstSolver struct {
 	eqList    []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
 	unionSet  *disjointset.IntSet // unionSet stores the relations like col_i = col_j
 	columns   []*Column           // columns stores all columns appearing in the conditions
-	ctx       sessionctx.Context
+	ctx       BuildContext
 }
 
 func (s *basePropConstSolver) getColID(col *Column) int {
@@ -124,7 +123,7 @@ func validEqualCond(cond Expression) (*Column, *Constant) {
 //	for 'a, b, a < 3', it returns 'true, false, b < 3'
 //	for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
 //	for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
-func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression, nullAware bool) (bool, bool, Expression) {
+func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expression, nullAware bool) (bool, bool, Expression) {
 	if src.RetType.GetType() != tgt.RetType.GetType() {
 		return false, false, cond
 	}
@@ -359,7 +358,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
-func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+func PropagateConstant(ctx BuildContext, conditions []Expression) []Expression {
 	return newPropConstSolver().PropagateConstant(ctx, conditions)
 }
 
@@ -386,6 +385,52 @@ func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}}
 	}
+}
+
+func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Constant) (*Constant, bool) {
+	if !col.GetType().Hybrid() {
+		return con, true
+	}
+	if col.GetType().GetType() == mysql.TypeEnum {
+		d, err := con.Eval(s.ctx, chunk.Row{})
+		if err != nil {
+			return nil, false
+		}
+		if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
+			s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Skip plan cache since mutable constant is restored and propagated"))
+		}
+		switch d.Kind() {
+		case types.KindInt64:
+			enum, err := types.ParseEnumValue(col.GetType().GetElems(), uint64(d.GetInt64()))
+			if err != nil {
+				logutil.BgLogger().Debug("Invalid Enum parsed during constant propagation")
+				return nil, false
+			}
+			con = &Constant{
+				Value:         types.NewMysqlEnumDatum(enum),
+				RetType:       col.RetType.Clone(),
+				collationInfo: col.collationInfo,
+			}
+		case types.KindString:
+			enum, err := types.ParseEnumName(col.GetType().GetElems(), d.GetString(), d.Collation())
+			if err != nil {
+				logutil.BgLogger().Debug("Invalid Enum parsed during constant propagation")
+				return nil, false
+			}
+			con = &Constant{
+				Value:         types.NewMysqlEnumDatum(enum),
+				RetType:       col.RetType.Clone(),
+				collationInfo: col.collationInfo,
+			}
+		case types.KindMysqlEnum, types.KindMysqlSet:
+			// It's already a hybrid type. Just use it.
+		default:
+			// We skip other cases first.
+			return nil, false
+		}
+		return con, true
+	}
+	return nil, false
 }
 
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
@@ -420,6 +465,11 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				s.setConds2ConstFalse(filterConds)
 				return nil
 			}
+			continue
+		}
+		var valid bool
+		con, valid = s.dealWithPossibleHybridType(col, con)
+		if !valid {
 			continue
 		}
 		// Only extract `outerCol = const` expressions.
@@ -613,7 +663,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
-func propagateConstantDNF(ctx sessionctx.Context, conds []Expression) []Expression {
+func propagateConstantDNF(ctx BuildContext, conds []Expression) []Expression {
 	for i, cond := range conds {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
@@ -632,7 +682,7 @@ func propagateConstantDNF(ctx sessionctx.Context, conds []Expression) []Expressi
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
-func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Expression,
+func PropConstOverOuterJoin(ctx BuildContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
 		outerSchema:   outerSchema,
@@ -646,7 +696,7 @@ func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Exp
 
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
-	PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression
+	PropagateConstant(ctx BuildContext, conditions []Expression) []Expression
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -657,7 +707,7 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+func (s *propConstSolver) PropagateConstant(ctx BuildContext, conditions []Expression) []Expression {
 	s.ctx = ctx
 	return s.solve(conditions)
 }
