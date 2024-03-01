@@ -3727,7 +3727,7 @@ func TestDDL(t *testing.T) {
 
 		// for alter sequence
 		{"alter sequence seq", false, ""},
-		{"alter sequence seq comment=\"haha\"", false, ""},
+		{"alter sequence seq comment=\"haha\"", true, "ALTER SEQUENCE `seq` COMMENT = 'haha'"},
 		{"alter sequence seq start = 1", true, "ALTER SEQUENCE `seq` START WITH 1"},
 		{"alter sequence seq start with 1 increment by 1", true, "ALTER SEQUENCE `seq` START WITH 1 INCREMENT BY 1"},
 		{"alter sequence seq start with 1 increment by 2 minvalue 0 maxvalue 100", true, "ALTER SEQUENCE `seq` START WITH 1 INCREMENT BY 2 MINVALUE 0 MAXVALUE 100"},
