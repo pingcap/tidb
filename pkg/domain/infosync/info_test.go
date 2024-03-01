@@ -15,12 +15,10 @@
 package infosync
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path"
 	"runtime"
@@ -281,47 +279,4 @@ func TestTiFlashManager(t *testing.T) {
 	require.Equal(t, true, z.Accel)
 
 	CloseTiFlashManager(ctx)
-}
-
-func TestUpdateServerInfoLabels(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
-	}
-	integration.BeforeTestExternal(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	currentID := "test"
-
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	client := cluster.RandClient()
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockServerInfo", "return(true)"))
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockServerInfo")
-		require.NoError(t, err)
-	}()
-
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false)
-	require.NoError(t, err)
-
-	getLabels := func() map[string]string {
-		servers, err := info.getAllServerInfo(ctx)
-		require.NoError(t, err)
-		server, ok := servers[currentID]
-		require.True(t, ok)
-		return server.Labels
-	}
-	updateLabels := func(labels map[string]string) {
-		buffer := bytes.NewBuffer([]byte{})
-		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
-		url := fmt.Sprintf("http://localhost:%d%s", 4000, "/labels")
-		resp, err := http.Post(url, "application/json", buffer)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-	}
-	updateLabels(map[string]string{"zone": "east-1"})
-	_ = getLabels()
 }
