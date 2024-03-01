@@ -1019,6 +1019,7 @@ func (importer *FileImporter) downloadSSTV2(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		sstMeta.ApiVersion = apiVersion
 		downloadMetasMap[file.Name] = sstMeta
 		downloadReqsMap[file.Name] = req
 	}
