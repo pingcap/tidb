@@ -84,26 +84,16 @@ func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (Ta
         return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task/pause path (%s)", string(event.Kv.Key))
     }
 
-    if prefix == PrefixOfTask() {
-        switch event.Type {
-        case clientv3.EventTypeDelete:
-			if prefix == PrefixOfTask() {
-            	te.Type = EventDel
-			} else  {
-				return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
-			}
-        case clientv3.EventTypePut:
-            if prefix == PrefixOfTask() {
-				te.Type = EventAdd
-			}else if prefix == PrefixOfPause() {
-				te.Type = EventPause
-			}else {
-				return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
-			}
-        default:
-            return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
-        }
-    }
+	switch {
+	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfTask():
+		te.Type = EventDel
+	case event.Type == clientv3.EventTypePut && prefix == PrefixOfTask():
+		te.Type = EventAdd
+	case event.Type == clientv3.EventTypePut && prefix == PrefixOfPause():
+		te.Type = EventPause
+	default:
+		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "invalid event type or prefix: type=%s, prefix=%s", event.Type, prefix)
+	}
 
     te.Info = new(backuppb.StreamBackupTaskInfo)
     if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
