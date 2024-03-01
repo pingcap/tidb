@@ -16,6 +16,7 @@ package partitionedhashjoin
 
 import (
 	"bytes"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"hash/fnv"
 	"unsafe"
 
@@ -39,13 +40,13 @@ func (hCtx *PartitionedHashJoinCtx) hasOtherCondition() bool {
 	return hCtx.otherCondition != nil
 }
 
-type joinProbe interface {
-	setChunkForProbe(chunk *chunk.Chunk) error
-	probe(joinResult *hashjoinWorkerResult) (ok bool, result *hashjoinWorkerResult)
-	isCurrentChunkProbeDone() bool
-	scanHT(joinResult *hashjoinWorkerResult) (result *hashjoinWorkerResult)
-	isScanHTDone() bool
-	needScanHT() bool
+type JoinProbe interface {
+	SetChunkForProbe(chunk *chunk.Chunk) error
+	Probe(joinResult *util.HashjoinWorkerResult) (ok bool, result *util.HashjoinWorkerResult)
+	IsCurrentChunkProbeDone() bool
+	ScanHT(joinResult *util.HashjoinWorkerResult) (result *util.HashjoinWorkerResult)
+	IsScanHTDone() bool
+	NeedScanHT() bool
 }
 
 type offsetAndLength struct {
@@ -99,7 +100,7 @@ func (j *baseJoinProbe) isCurrentChunkProbeDone() bool {
 	return j.currentChunk == nil || j.currentProbeRow >= j.chunkRows
 }
 
-func (j *baseJoinProbe) setChunkForProbe(chk *chunk.Chunk) (err error) {
+func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if j.currentChunk != nil {
 		if j.currentProbeRow < j.chunkRows {
 			return errors.New("Previous chunk is not probed yet")
@@ -263,7 +264,7 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 	}
 }
 
-func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer, meta *tableMeta) bool {
+func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer, meta *JoinTableMeta) bool {
 	switch keyMode {
 	case OneInt64:
 		return *(*int64)(unsafe.Pointer(&serializedKey[0])) == *(*int64)(unsafe.Add(rowStart, meta.nullMapLength+SizeOfNextPtr))

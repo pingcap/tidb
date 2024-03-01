@@ -17,6 +17,7 @@ package partitionedhashjoin
 import (
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -33,7 +34,7 @@ type leftOuterJoinProbe struct {
 }
 
 func (j *leftOuterJoinProbe) setChunkForProbe(chunk *chunk.Chunk) (err error) {
-	err = j.innerJoinProbe.setChunkForProbe(chunk)
+	err = j.innerJoinProbe.SetChunkForProbe(chunk)
 	if err != nil {
 		return err
 	}
@@ -57,11 +58,11 @@ func (j *leftOuterJoinProbe) isScanHTDone() bool {
 	return j.currentScanIndex >= j.scanEndIndex
 }
 
-func (j *leftOuterJoinProbe) scanHT(joinResult *hashjoinWorkerResult) *hashjoinWorkerResult {
+func (j *leftOuterJoinProbe) scanHT(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
-	if joinResult.chk.IsFull() {
+	if joinResult.Chk.IsFull() {
 		return joinResult
 	}
 	buildRows := j.ctx.joinHashTable.tables[j.hashTableToScan].hashTable
@@ -71,13 +72,13 @@ func (j *leftOuterJoinProbe) scanHT(joinResult *hashjoinWorkerResult) *hashjoinW
 	}
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
-	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
+	remainCap := joinResult.Chk.RequiredRows() - joinResult.Chk.NumRows()
 	for insertedRows < remainCap && j.currentScanIndex < j.scanEndIndex {
 		if j.currentRowTobeChecked != nil {
 			if !meta.isCurrentRowUsed(j.currentRowTobeChecked) {
 				// append build side of this row
-				j.appendBuildRowToChunkInternal(joinResult.chk, j.lUsed, &rowInfo{rowStart: j.currentRowTobeChecked, rowData: nil, currentColumnIndex: 0}, -1, 0)
-				joinResult.chk.IncNumVirtualRows()
+				j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: j.currentRowTobeChecked, rowData: nil, currentColumnIndex: 0}, -1, 0)
+				joinResult.Chk.IncNumVirtualRows()
 				insertedRows++
 			}
 			j.currentRowTobeChecked = getNextRowAddress(j.currentRowTobeChecked)
@@ -91,7 +92,7 @@ func (j *leftOuterJoinProbe) scanHT(joinResult *hashjoinWorkerResult) *hashjoinW
 	// append probe side in batch
 	colOffset := len(j.lUsed)
 	for index := range j.rUsed {
-		joinResult.chk.Column(index + colOffset).AppendNNulls(insertedRows)
+		joinResult.Chk.Column(index + colOffset).AppendNNulls(insertedRows)
 	}
 	return joinResult
 }
