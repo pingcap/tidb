@@ -204,7 +204,13 @@ func (j *TableAnalysisJob) Execute(
 	})
 }
 
-func (j *TableAnalysisJob) Analyze(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, sysProcTracker sessionctx.SysProcTracker) {
+// Analyze performs analysis on the specified table, indexes, partitions, or partition indexes.
+// Exported for testing purposes.
+func (j *TableAnalysisJob) Analyze(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
+) {
 	switch j.getAnalyzeType() {
 	case analyzeTable:
 		j.analyzeTable(sctx, statsHandle, sysProcTracker)
