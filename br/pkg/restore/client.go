@@ -3764,12 +3764,12 @@ func CheckNewCollationEnable(
 	if backupNewCollationEnable == "" {
 		if CheckRequirements {
 			return enabled, errors.Annotatef(berrors.ErrUnknown,
-				"the value 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
 					"you can use \"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
 					"if you ensure the value 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, use --check-requirements=false to skip this check",
 			)
 		}
-		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not found in backupmeta")
 		return enabled, nil
 	}
 
