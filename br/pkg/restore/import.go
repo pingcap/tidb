@@ -243,37 +243,39 @@ func (ic *importClient) createGrpcConn(
 	return conn, errors.Trace(err)
 }
 
-func (ic *importClient) GetImportClient(
+func (ic *importClient) cachedConnectionFrom(
 	ctx context.Context,
 	storeID uint64,
+	caches map[uint64]*grpc.ClientConn,
 ) (import_sstpb.ImportSSTClient, error) {
 	ic.mu.Lock()
 	defer ic.mu.Unlock()
-	conn, ok := ic.conns[storeID]
+	conn, ok := caches[storeID]
 	if ok {
 		return import_sstpb.NewImportSSTClient(conn), nil
 	}
 	conn, err := ic.createGrpcConn(ctx, storeID)
-	ic.conns[storeID] = conn
+	caches[storeID] = conn
 	return import_sstpb.NewImportSSTClient(conn), errors.Trace(err)
+}
+
+func (ic *importClient) GetImportClient(
+	ctx context.Context,
+	storeID uint64,
+) (import_sstpb.ImportSSTClient, error) {
+	return ic.cachedConnectionFrom(ctx, storeID, ic.conns)
 }
 
 func (ic *importClient) GetIngestClient(
 	ctx context.Context,
 	storeID uint64,
 ) (import_sstpb.ImportSSTClient, error) {
-	ic.mu.Lock()
-	defer ic.mu.Unlock()
-	conn, ok := ic.ingestConns[storeID]
-	if ok {
-		return import_sstpb.NewImportSSTClient(conn), nil
-	}
-	conn, err := ic.createGrpcConn(ctx, storeID)
-	ic.ingestConns[storeID] = conn
-	return import_sstpb.NewImportSSTClient(conn), errors.Trace(err)
+	return ic.cachedConnectionFrom(ctx, storeID, ic.ingestConns)
 }
 
 func (ic *importClient) CloseGrpcClient() error {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
 	for id, conn := range ic.conns {
 		if err := conn.Close(); err != nil {
 			return errors.Trace(err)
