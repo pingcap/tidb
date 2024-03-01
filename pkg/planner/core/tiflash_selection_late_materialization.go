@@ -252,10 +252,16 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 		return
 	}
 	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(selectedConds))))
+	PushedDown(physicalSelection, physicalTableScan, selectedConds, selectedSelectivity)
+}
+
+// PushedDown is used to push down the selected conditions from PhysicalSelection to PhysicalTableScan.
+// Used in unit test, so it is exported.
+func PushedDown(sel *PhysicalSelection, ts *PhysicalTableScan, selectedConds []expression.Expression, selectedSelectivity float64) {
 	// remove the pushed down conditions from selection
-	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
+	removeSpecificExprsFromSelection(sel, selectedConds)
 	// add the pushed down conditions to table scan
-	physicalTableScan.LateMaterializationFilterCondition = selectedConds
+	ts.LateMaterializationFilterCondition = selectedConds
 	// Update the row count of table scan after pushing down the conditions.
-	physicalTableScan.StatsInfo().RowCount *= selectedSelectivity
+	ts.StatsInfo().RowCount *= selectedSelectivity
 }
