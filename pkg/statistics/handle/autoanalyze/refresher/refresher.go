@@ -115,6 +115,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 	return false
 }
 
+// RebuildTableAnalysisJobQueue rebuilds the priority queue of analysis jobs.
 func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	// Reset the priority queue.
 	r.Jobs = priorityqueue.NewAnalysisPriorityQueue()
