@@ -551,7 +551,6 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
-	// TODO: check if the checkpoint lag is too large.
 	if lag := oracle.GetTimeFromTS(c.lastCheckpoint.safeTS()); time.Since(lag) > c.cfg.CheckPointLagLimit {
 		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
 			zap.Stringer("lag", time.Since(lag)))
