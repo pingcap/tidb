@@ -349,6 +349,9 @@ func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
 		rs = append(rs, item.dbInfo.Name)
 		return true
 	})
+	for _, sc := range is.Data.specials {
+		rs = append(rs, sc.dbInfo.Name)
+	}
 	return rs
 }
 
