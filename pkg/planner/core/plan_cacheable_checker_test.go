@@ -446,14 +446,14 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	for i, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 		require.False(t, ok, "unsupported index: %d: %s", i, q)
 	}
 
 	for _, q := range supported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 		require.True(t, ok)
 	}
 }
@@ -474,11 +474,11 @@ func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
 	sctx := tk.Session()
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 
-	core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+	core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 		if !ok {
 			b.Fatal()
 		}

@@ -126,7 +126,7 @@ func generateHashPartitionExpr(ctx PlanContext, pi *model.PartitionInfo, columns
 	// we have to increase the `PlanID` here. But it is safe to remove this line without introducing any bug.
 	// TODO: remove this line after fixing the test cases.
 	ctx.GetSessionVars().PlanID.Add(1)
-	expr, err := expression.ParseSimpleExpr(ctx, pi.Expr, expression.WithInputSchemaAndNames(schema, names, nil))
+	expr, err := expression.ParseSimpleExpr(ctx.GetExprCtx(), pi.Expr, expression.WithInputSchemaAndNames(schema, names, nil))
 	if err != nil {
 		return nil, err
 	}
@@ -169,12 +169,12 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 			if col, ok := hashExpr.(*expression.Column); ok && col.RetType.EvalType() == types.ETInt {
 				numPartitions := len(pi.Definitions)
 
-				posHigh, highIsNull, err := hashExpr.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+				posHigh, highIsNull, err := hashExpr.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
 					return nil, err
 				}
 
-				posLow, lowIsNull, err := hashExpr.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+				posLow, lowIsNull, err := hashExpr.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(r.LowVal).ToRow())
 				if err != nil {
 					return nil, err
 				}
@@ -245,7 +245,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 		highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
 		highLowVals = append(highLowVals, r.HighVal...)
 		highLowVals = append(highLowVals, r.LowVal...)
-		pos, isNull, err := hashExpr.EvalInt(ctx, chunk.MutRowFromDatums(highLowVals).ToRow())
+		pos, isNull, err := hashExpr.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(highLowVals).ToRow())
 		if err != nil {
 			// If we failed to get the point position, we can just skip and ignore it.
 			continue
@@ -281,12 +281,12 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx PlanContext,
 		if !r.IsPointNullable(tc) {
 			if len(partCols) == 1 && partCols[0].RetType.EvalType() == types.ETInt {
 				col := partCols[0]
-				posHigh, highIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+				posHigh, highIsNull, err := col.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
 					return nil, err
 				}
 
-				posLow, lowIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+				posLow, lowIsNull, err := col.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(r.LowVal).ToRow())
 				if err != nil {
 					return nil, err
 				}
@@ -770,7 +770,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 		if len(r.HighVal) != len(exprCols) {
 			return l.fullRange, nil
 		}
-		value, isNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+		value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -832,7 +832,7 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
 	for i, cond := range ds.allConds {
-		ds.allConds[i] = expression.PushDownNot(ds.SCtx(), cond)
+		ds.allConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
 	}
 	// Try to locate partition directly for hash partition.
 	// TODO: See if there is a way to remove conditions that does not
@@ -1062,7 +1062,7 @@ func makePartitionByFnCol(sctx PlanContext, columns []*expression.Column, names 
 	// we have to increase the `PlanID` here. But it is safe to remove this line without introducing any bug.
 	// TODO: remove this line after fixing the test cases.
 	sctx.GetSessionVars().PlanID.Add(1)
-	partExpr, err := expression.ParseSimpleExpr(sctx, partitionExpr, expression.WithInputSchemaAndNames(schema, names, nil))
+	partExpr, err := expression.ParseSimpleExpr(sctx.GetExprCtx(), partitionExpr, expression.WithInputSchemaAndNames(schema, names, nil))
 	if err != nil {
 		return nil, nil, monotonous, err
 	}
@@ -1380,7 +1380,7 @@ func partitionRangeColumnForInExpr(sctx PlanContext, args []expression.Expressio
 		}
 
 		// convert all elements to EQ-exprs and prune them one by one
-		sf, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
+		sf, err := expression.NewFunction(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
 		if err != nil {
 			return pruner.fullRange()
 		}
@@ -1418,10 +1418,10 @@ func partitionRangeForInExpr(sctx PlanContext, args []expression.Expression,
 		if pruner.partFn != nil {
 			// replace fn(col) to fn(const)
 			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
-			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
+			val, _, err = partFnConst.EvalInt(sctx.GetExprCtx(), chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
 		} else {
-			val, _, err = constExpr.EvalInt(sctx, chunk.Row{})
+			val, _, err = constExpr.EvalInt(sctx.GetExprCtx(), chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
 		}
 		if err != nil {
@@ -1537,7 +1537,7 @@ func (p *rangePruner) extractDataForPrune(sctx PlanContext, expr expression.Expr
 	if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache) {
 		return ret, false
 	}
-	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
+	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx(), chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
 		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
@@ -1953,14 +1953,14 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx PlanContext, op string, d
 			if p.lessThan[ith][i] == nil { // MAXVALUE
 				return true
 			}
-			expr, err := expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), *p.lessThan[ith][i], v)
+			expr, err := expression.NewFunctionBase(sctx.GetExprCtx(), op, types.NewFieldType(mysql.TypeLonglong), *p.lessThan[ith][i], v)
 			if err != nil {
 				savedError = err
 				return true
 			}
 			expr.SetCharsetAndCollation(charSet, collation)
 			var val int64
-			val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
+			val, isNull, err = expr.EvalInt(sctx.GetExprCtx(), chunk.Row{})
 			if err != nil {
 				savedError = err
 				return true

@@ -291,7 +291,7 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 	if ok {
 		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
 		if bc.GetCheckpointManager() == nil {
-			mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, reorgInfo.currElement.ID)
+			mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, extractElemIDs(reorgInfo))
 			if err != nil {
 				logutil.BgLogger().Warn("create checkpoint manager failed", zap.String("category", "ddl-ingest"), zap.Error(err))
 			}
@@ -308,6 +308,14 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		reorgInfo.PhysicalTableID = pid
 	}
 	return nil
+}
+
+func extractElemIDs(r *reorgInfo) []int64 {
+	elemIDs := make([]int64, 0, len(r.elements))
+	for _, elem := range r.elements {
+		elemIDs = append(elemIDs, elem.ID)
+	}
+	return elemIDs
 }
 
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
@@ -403,7 +411,7 @@ func (dc *ddlCtx) isReorgPaused(jobID int64) bool {
 }
 
 func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
-	if isChanClosed(dc.ctx.Done()) {
+	if dc.ctx.Err() != nil {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
@@ -617,7 +625,7 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
 	err = iterateSnapshotKeys(ctx, d.store, priority, tbl.RecordPrefix(), snapshotVer, nil, nil,
-		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
+		func(_ kv.Handle, rowKey kv.Key, _ []byte) (bool, error) {
 			startHandleKey = rowKey
 			return false, nil
 		})

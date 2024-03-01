@@ -317,9 +317,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		rowLen := len(pbSample.Row)
 		data := make([]types.Datum, 0, rowLen)
 		for _, col := range pbSample.Row {
-			b := make([]byte, len(col))
-			copy(b, col)
-			data = append(data, types.NewBytesDatum(b))
+			data = append(data, types.NewBytesDatum(col))
 		}
 		// Directly copy the weight.
 		sampleItem := &ReservoirRowSampleItem{Columns: data, Weight: pbSample.Weight}

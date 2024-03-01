@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"regexp"
 	"strings"
@@ -68,14 +69,14 @@ const (
 
 func withTiKVConnection(
 	ctx context.Context,
-	tls *common.TLS,
+	tls *tls.Config,
 	tikvAddr string,
 	action func(import_sstpb.ImportSSTClient) error,
 ) error {
 	// Connect to the ImportSST service on the given TiKV node.
 	// The connection is needed for executing `action` and will be tear down
 	// when this function exits.
-	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption(), config.DefaultGrpcKeepaliveParams)
+	conn, err := grpc.DialContext(ctx, tikvAddr, common.ToGRPCDialOption(tls), config.DefaultGrpcKeepaliveParams)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -125,7 +126,7 @@ func ignoreUnimplementedError(err error, logger log.Logger) error {
 // SwitchMode changes the TiKV node at the given address to a particular mode.
 func SwitchMode(
 	ctx context.Context,
-	tls *common.TLS,
+	tls *tls.Config,
 	tikvAddr string,
 	mode import_sstpb.SwitchMode,
 	ranges ...*import_sstpb.Range,
@@ -146,7 +147,7 @@ func SwitchMode(
 // Compact performs a leveled compaction with the given minimum level.
 func Compact(ctx context.Context, tls *common.TLS, tikvAddr string, level int32, resourceGroupName string) error {
 	task := log.With(zap.Int32("level", level), zap.String("tikv", tikvAddr)).Begin(zap.InfoLevel, "compact cluster")
-	err := withTiKVConnection(ctx, tls, tikvAddr, func(client import_sstpb.ImportSSTClient) error {
+	err := withTiKVConnection(ctx, tls.TLSConfig(), tikvAddr, func(client import_sstpb.ImportSSTClient) error {
 		_, err := client.Compact(ctx, &import_sstpb.CompactRequest{
 			OutputLevel: level,
 			Context: &kvrpcpb.Context{
@@ -235,17 +236,32 @@ func CheckTiKVVersion(
 	pdHTTPCli pdhttp.Client,
 	requiredMinVersion, requiredMaxVersion semver.Version,
 ) error {
+	return ForTiKVVersions(
+		ctx,
+		pdHTTPCli,
+		func(ver *semver.Version, addrMsg string) error {
+			return version.CheckVersion(addrMsg, *ver, requiredMinVersion, requiredMaxVersion)
+		},
+	)
+}
+
+// ForTiKVVersions runs the given action for all versions of TiKV nodes.
+func ForTiKVVersions(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	action func(ver *semver.Version, addrMsg string) error,
+) error {
 	return ForAllStores(
 		ctx,
 		pdHTTPCli,
 		metapb.StoreState_Offline,
-		func(c context.Context, store *pdhttp.MetaStore) error {
+		func(_ context.Context, store *pdhttp.MetaStore) error {
 			component := fmt.Sprintf("TiKV (at %s)", store.Address)
 			ver, err := semver.NewVersion(strings.TrimPrefix(store.Version, "v"))
 			if err != nil {
 				return errors.Annotate(err, component)
 			}
-			return version.CheckVersion(component, *ver, requiredMinVersion, requiredMaxVersion)
+			return action(ver, component)
 		},
 	)
 }

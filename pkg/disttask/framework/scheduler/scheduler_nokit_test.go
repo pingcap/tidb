@@ -41,9 +41,11 @@ func TestDispatcherOnNextStage(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 	task := proto.Task{
-		ID:    1,
-		State: proto.TaskStatePending,
-		Step:  proto.StepInit,
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			State: proto.TaskStatePending,
+			Step:  proto.StepInit,
+		},
 	}
 	cloneTask := task
 	nodeMgr := NewNodeManager()
@@ -143,16 +145,16 @@ func TestManagerSchedulersOrdered(t *testing.T) {
 	defer ctrl.Finish()
 	mgr := NewManager(context.Background(), nil, "1")
 	for i := 1; i <= 5; i++ {
-		task := &proto.Task{
+		task := &proto.Task{TaskBase: proto.TaskBase{
 			ID: int64(i * 10),
-		}
+		}}
 		mockScheduler := mock.NewMockScheduler(ctrl)
 		mockScheduler.EXPECT().GetTask().Return(task).AnyTimes()
 		mgr.addScheduler(task.ID, mockScheduler)
 	}
 	ordered := func(schedulers []Scheduler) bool {
 		for i := 1; i < len(schedulers); i++ {
-			if schedulers[i-1].GetTask().Compare(schedulers[i].GetTask()) >= 0 {
+			if schedulers[i-1].GetTask().CompareTask(schedulers[i].GetTask()) >= 0 {
 				return false
 			}
 		}
@@ -161,9 +163,9 @@ func TestManagerSchedulersOrdered(t *testing.T) {
 	require.Len(t, mgr.getSchedulers(), 5)
 	require.True(t, ordered(mgr.getSchedulers()))
 
-	task35 := &proto.Task{
+	task35 := &proto.Task{TaskBase: proto.TaskBase{
 		ID: int64(35),
-	}
+	}}
 	mockScheduler35 := mock.NewMockScheduler(ctrl)
 	mockScheduler35.EXPECT().GetTask().Return(task35).AnyTimes()
 
@@ -180,7 +182,7 @@ func TestGetEligibleNodes(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	mockSch := mock.NewMockScheduler(ctrl)
-	mockSch.EXPECT().GetTask().Return(&proto.Task{ID: 1}).AnyTimes()
+	mockSch.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).AnyTimes()
 
 	mockSch.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock err"))
 	_, err := getEligibleNodes(ctx, mockSch, []string{":4000"})
@@ -230,7 +232,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 
 	// normal
 	tasks := []*proto.Task{
-		{ID: 1},
+		{TaskBase: proto.TaskBase{ID: 1}},
 	}
 	taskMgr.EXPECT().GetTasksInStates(
 		mgr.ctx,

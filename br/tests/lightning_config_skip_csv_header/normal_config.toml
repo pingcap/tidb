@@ -6,4 +6,4 @@ header = true
 header-schema-match = false
 
 [tikv-importer]
-duplicate-resolution = 'remove'
+duplicate-resolution = 'replace'

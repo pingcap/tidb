@@ -22,15 +22,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/extension"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -44,18 +51,22 @@ import (
 
 var (
 	_ sessionctx.Context  = (*Context)(nil)
+	_ planctx.PlanContext = (*Context)(nil)
 	_ sqlexec.SQLExecutor = (*Context)(nil)
 )
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
+	planctx.EmptyPlanContextExtended
+	*exprctximpl.ExprCtxExtendedImpl
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
-	is            sessionctx.InfoschemaMetaVersion
+	is            infoschema.InfoSchemaMetaVersion
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
+	tblctx        *tbctximpl.TableContextImpl
 	cancel        context.CancelFunc
 	pcache        sessionctx.PlanCache
 	level         kvrpcpb.DiskFullOpt
@@ -110,6 +121,23 @@ func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
 		return nil
 	}
 	return txn.Transaction.GetTableInfo(id)
+}
+
+// SetDiskFullOpt implements the interface.
+func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
+
+// SetOption implements the interface.
+func (*wrapTxn) SetOption(_ int, _ any) {}
+
+// StartTS implements the interface.
+func (*wrapTxn) StartTS() uint64 { return uint64(time.Now().UnixNano()) }
+
+// Get implements the interface.
+func (txn *wrapTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	if txn.Transaction == nil {
+		return nil, nil
+	}
+	return txn.Transaction.Get(ctx, k)
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
@@ -173,6 +201,26 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 	return c.sessionVars
 }
 
+// GetPlanCtx returns the PlanContext.
+func (c *Context) GetPlanCtx() planctx.PlanContext {
+	return c
+}
+
+// GetExprCtx returns the expression context of the session.
+func (c *Context) GetExprCtx() exprctx.BuildContext {
+	return c
+}
+
+// GetTableCtx returns the table.MutateContext
+func (c *Context) GetTableCtx() tbctx.MutateContext {
+	return c.tblctx
+}
+
+// GetDistSQLCtx returns the distsql context of the session
+func (c *Context) GetDistSQLCtx() distsqlctx.DistSQLContext {
+	return c
+}
+
 // Txn implements sessionctx.Context Txn interface.
 func (c *Context) Txn(bool) (kv.Transaction, error) {
 	return &c.txn, nil
@@ -195,13 +243,13 @@ func (c *Context) GetMPPClient() kv.MPPClient {
 }
 
 // GetInfoSchema implements sessionctx.Context GetInfoSchema interface.
-func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (c *Context) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
 	vars := c.GetSessionVars()
-	if snap, ok := vars.SnapshotInfoschema.(sessionctx.InfoschemaMetaVersion); ok {
+	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchemaMetaVersion); ok {
 		return snap
 	}
 	if vars.TxnCtx != nil && vars.InTxn() {
-		if is, ok := vars.TxnCtx.InfoSchema.(sessionctx.InfoschemaMetaVersion); ok {
+		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchemaMetaVersion); ok {
 			return is
 		}
 	}
@@ -212,10 +260,10 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 }
 
 // MockInfoschema only serves for test.
-var MockInfoschema func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion
+var MockInfoschema func(tbList []*model.TableInfo) infoschema.InfoSchemaMetaVersion
 
 // GetDomainInfoSchema returns the latest information schema in domain
-func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (c *Context) GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion {
 	if c.is == nil {
 		c.is = MockInfoschema(nil)
 	}
@@ -226,9 +274,6 @@ func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
 func (*Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
-
-// BuiltinFunctionUsageInc implements sessionctx.Context.
-func (*Context) BuiltinFunctionUsageInc(_ string) {}
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (*Context) GetGlobalSysVar(_ sessionctx.Context, name string) (string, error) {
@@ -452,7 +497,7 @@ func (c *Context) InSandBoxMode() bool {
 }
 
 // SetInfoSchema is to set info shema for the test.
-func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
+func (c *Context) SetInfoSchema(is infoschema.InfoSchemaMetaVersion) {
 	c.is = is
 }
 
@@ -483,6 +528,8 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
+	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
+	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC

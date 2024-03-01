@@ -70,7 +70,7 @@ func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess(exit chan struct{}) {
 
 func (w *WaitGroupEnhancedWrapper) check() bool {
 	unexitedProcess := make([]string, 0)
-	w.registerProcess.Range(func(key, value any) bool {
+	w.registerProcess.Range(func(key, _ any) bool {
 		unexitedProcess = append(unexitedProcess, key.(string))
 		return true
 	})

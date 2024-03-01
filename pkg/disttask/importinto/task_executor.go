@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -52,6 +53,7 @@ type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
+	store         tidbkv.Storage
 	sharedVars    sync.Map
 	logger        *zap.Logger
 
@@ -62,7 +64,12 @@ type importStepExecutor struct {
 	wg           sync.WaitGroup
 }
 
-func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
+func getTableImporter(
+	ctx context.Context,
+	taskID int64,
+	taskMeta *TaskMeta,
+	store tidbkv.Storage,
+) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -80,16 +87,12 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 		return nil, err
 	}
 
-	return importer.NewTableImporter(&importer.JobImportParam{
-		GroupCtx: ctx,
-		Progress: importer.NewProgress(),
-		Job:      &importer.Job{},
-	}, controller, strconv.FormatInt(taskID, 10))
+	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("init subtask env")
-	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta)
+	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
 	}
@@ -148,7 +151,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		DataEngine:       dataEngine,
 		IndexEngine:      indexEngine,
 		Progress:         importer.NewProgress(),
-		Checksum:         &verification.KVChecksum{},
+		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetCodec()),
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
@@ -201,7 +204,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	var dataKVCount int64
+	var dataKVCount uint64
 	if s.tableImporter.IsLocalSort() {
 		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
 		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
@@ -209,10 +212,11 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		if err != nil {
 			return err
 		}
-		dataKVCount, err = s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+		dataKVCount2, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
 		if err != nil {
 			return err
 		}
+		dataKVCount = uint64(dataKVCount2)
 
 		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
@@ -225,11 +229,16 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
-	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
-	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
-	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
+	subtaskMeta.Checksum = map[int64]Checksum{}
+	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
+		subtaskMeta.Checksum[id] = Checksum{
+			Sum:  c.Sum(),
+			KVs:  c.SumKVS(),
+			Size: c.SumSize(),
+		}
+	}
 	subtaskMeta.Result = Result{
-		LoadedRowCnt: uint64(dataKVCount),
+		LoadedRowCnt: dataKVCount,
 		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}
 	allocators := sharedVars.TableImporter.Allocators()
@@ -355,12 +364,13 @@ type writeAndIngestStepExecutor struct {
 	taskMeta      *TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
+	store         tidbkv.Storage
 }
 
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
 
 func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
-	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
+	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store)
 	if err != nil {
 		return err
 	}
@@ -477,13 +487,22 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
+	store tidbkv.Storage
 }
 
-func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+// NewImportExecutor creates a new import task executor.
+func NewImportExecutor(
+	ctx context.Context,
+	id string,
+	task *proto.Task,
+	taskTable taskexecutor.TaskTable,
+	store tidbkv.Storage,
+) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, id, task, taskTable),
+		store:            store,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -499,7 +518,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (e *importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -516,6 +535,7 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) 
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
@@ -528,6 +548,7 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) 
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
@@ -537,11 +558,7 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) 
 }
 
 func (e *importExecutor) Close() {
-	task := e.GetTask()
+	task := e.GetTaskBase()
 	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
-}
-
-func init() {
-	taskexecutor.RegisterTaskType(proto.ImportInto, newImportExecutor)
 }

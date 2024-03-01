@@ -384,7 +384,7 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, pairsExpect, pairs)
-	require.Equal(t, tbl.Allocators(lkv.GetEncoderSe(encoder).GetSessionVars()).Get(autoid.AutoIncrementType).Base(), int64(70))
+	require.Equal(t, tbl.Allocators(lkv.GetEncoderSe(encoder).GetTableCtx()).Get(autoid.AutoIncrementType).Base(), int64(70))
 }
 
 func TestEncodeMissingAutoValue(t *testing.T) {
@@ -445,13 +445,13 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		}, rowID, []int{0}, 1234)
 		require.NoError(t, err)
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
-		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder).GetSessionVars()).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
+		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder).GetTableCtx()).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
 
 		// test insert a row without specifying the auto_xxxx column
 		pairs, err = encoder.Encode([]types.Datum{}, rowID, []int{0}, 1234)
 		require.NoError(t, err)
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
-		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder).GetSessionVars()).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
+		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder).GetTableCtx()).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
 	}
 }
 
@@ -524,7 +524,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 			RowID: common.EncodeIntRowID(70),
 		},
 	}))
-	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetSessionVars()).Get(autoid.AutoRandomType).Base(), int64(70))
+	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetTableCtx()).Get(autoid.AutoRandomType).Base(), int64(70))
 
 	pairs, err = encoder.Encode([]types.Datum{types.NewStringDatum("")}, 71, []int{-1, 0}, 1234)
 	require.NoError(t, err)
@@ -535,7 +535,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 			RowID: common.EncodeIntRowID(71),
 		},
 	}))
-	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetSessionVars()).Get(autoid.AutoRandomType).Base(), int64(71))
+	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetTableCtx()).Get(autoid.AutoRandomType).Base(), int64(71))
 }
 
 func TestShardRowId(t *testing.T) {
@@ -566,54 +566,7 @@ func TestShardRowId(t *testing.T) {
 		keyMap[rowID>>60] = struct{}{}
 	}
 	require.Len(t, keyMap, 8)
-	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetSessionVars()).Get(autoid.RowIDAllocType).Base(), int64(32))
-}
-
-func TestSplitIntoChunks(t *testing.T) {
-	pairs := []common.KvPair{
-		{
-			Key: []byte{1, 2, 3},
-			Val: []byte{4, 5, 6},
-		},
-		{
-			Key: []byte{7, 8},
-			Val: []byte{9, 0},
-		},
-		{
-			Key: []byte{1, 2, 3, 4},
-			Val: []byte{5, 6, 7, 8},
-		},
-		{
-			Key: []byte{9, 0},
-			Val: []byte{1, 2},
-		},
-	}
-
-	splitBy10 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(10)
-	require.Equal(t, splitBy10, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:3]),
-		lkv.MakeRowsFromKvPairs(pairs[3:4]),
-	})
-
-	splitBy12 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(12)
-	require.Equal(t, splitBy12, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:4]),
-	})
-
-	splitBy1000 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(1000)
-	require.Equal(t, splitBy1000, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:4]),
-	})
-
-	splitBy1 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(1)
-	require.Equal(t, splitBy1, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:1]),
-		lkv.MakeRowsFromKvPairs(pairs[1:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:3]),
-		lkv.MakeRowsFromKvPairs(pairs[3:4]),
-	})
+	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetTableCtx()).Get(autoid.RowIDAllocType).Base(), int64(32))
 }
 
 func TestClassifyAndAppend(t *testing.T) {

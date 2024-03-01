@@ -63,11 +63,11 @@ const (
 	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
 	CheckpointDriverFile = "file"
 
-	// ReplaceOnDup indicates using REPLACE INTO to insert data
+	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
 	ReplaceOnDup = "replace"
-	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data
+	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
 	IgnoreOnDup = "ignore"
-	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
+	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint for TiDB backend.
 	ErrorOnDup = "error"
 
 	// KVWriteBatchSize batch size when write to TiKV.
@@ -83,6 +83,8 @@ const (
 	defaultIndexConcurrency           = 2
 	DefaultRegionCheckBackoffLimit    = 1800
 	DefaultRegionSplitBatchSize       = 4096
+	defaultLogicalImportBatchSize     = 96 * units.KiB
+	defaultLogicalImportBatchRows     = 65536
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
@@ -598,21 +600,13 @@ const (
 	// DupeResAlgNone doesn't detect duplicate.
 	DupeResAlgNone DuplicateResolutionAlgorithm = iota
 
-	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v2` table on the target TiDB.
-	DupeResAlgRecord
-
-	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
-	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v2 table to add back the correct rows.
-	DupeResAlgRemove
-
 	// DupeResAlgReplace records all duplicate records like the 'record' algorithm, and remove some rows with conflict
 	// and reserve other rows that can be kept and not cause conflict anymore. Users need to analyze the
 	// lightning_task_info.conflict_error_v2 table to check whether the reserved data cater to their need and check whether
 	// they need to add back the correct rows.
 	DupeResAlgReplace
 
-	// DupeResAlgErr reports an error and stops the import process.
-	// Note: this value is only used for internal.
+	// DupeResAlgErr reports an error after detecting the first conflict and stops the import process.
 	DupeResAlgErr
 )
 
@@ -621,7 +615,7 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v any) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
 	}
-	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['record', 'none', 'remove']", v)
+	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['none', 'replace', 'error']", v)
 }
 
 // MarshalText implements the encoding.TextMarshaler interface.
@@ -632,16 +626,14 @@ func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
 // FromStringValue parses the string value to the DuplicateResolutionAlgorithm.
 func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
-	case "record":
-		*dra = DupeResAlgRecord
 	case "none":
 		*dra = DupeResAlgNone
-	case "remove":
-		*dra = DupeResAlgRemove
 	case "replace":
 		*dra = DupeResAlgReplace
+	case "error":
+		*dra = DupeResAlgErr
 	default:
-		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['record', 'none', 'remove']", s)
+		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['none', 'replace', 'error']", s)
 	}
 	return nil
 }
@@ -659,14 +651,12 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
 // String implements the fmt.Stringer interface.
 func (dra DuplicateResolutionAlgorithm) String() string {
 	switch dra {
-	case DupeResAlgRecord:
-		return "record"
 	case DupeResAlgNone:
 		return "none"
-	case DupeResAlgRemove:
-		return "remove"
 	case DupeResAlgReplace:
 		return "replace"
+	case DupeResAlgErr:
+		return "error"
 	default:
 		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
 	}
@@ -1079,6 +1069,9 @@ type TikvImporter struct {
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
+	LogicalImportBatchSize  ByteSize `toml:"logical-import-batch-size" json:"logical-import-batch-size"`
+	LogicalImportBatchRows  int      `toml:"logical-import-batch-rows" json:"logical-import-batch-rows"`
+
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
@@ -1095,6 +1088,16 @@ func (t *TikvImporter) adjust() error {
 	}
 	switch t.Backend {
 	case BackendTiDB:
+		if t.LogicalImportBatchSize <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.logical-import-batch-size` got %d, should be larger than 0",
+				t.LogicalImportBatchSize)
+		}
+		if t.LogicalImportBatchRows <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
+				t.LogicalImportBatchRows)
+		}
 		t.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
@@ -1473,6 +1476,8 @@ func NewConfig() *Config {
 			DuplicateResolution:     DupeResAlgNone,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 			BlockSize:               16 * 1024,
+			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
+			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

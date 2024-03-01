@@ -349,7 +349,7 @@ func NewImportControllerWithPauser(
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		encodingBuilder = tidb.NewEncodingBuilder()
-		backendObj = tidb.NewTiDBBackend(ctx, db, cfg.Conflict, errorMgr)
+		backendObj = tidb.NewTiDBBackend(ctx, db, cfg, errorMgr)
 	case config.BackendLocal:
 		var rLimit local.RlimT
 		rLimit, err = local.GetSystemRLimit()
@@ -386,9 +386,6 @@ func NewImportControllerWithPauser(
 		initGlobalConfig(tls.ToTiKVSecurityConfig())
 
 		encodingBuilder = local.NewEncodingBuilder(ctx)
-		regionSizeGetter := &local.TableRegionSizeGetterImpl{
-			DB: db,
-		}
 
 		// get resource group name.
 		exec := common.SQLWithRetry{
@@ -419,7 +416,7 @@ func NewImportControllerWithPauser(
 			raftKV2SwitchModeDuration = cfg.Cron.SwitchMode.Duration
 		}
 		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, p.TaskType, raftKV2SwitchModeDuration)
-		backendObj, err = local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
+		backendObj, err = local.NewBackend(ctx, tls, backendConfig, pdCli.GetServiceDiscovery())
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -517,7 +514,7 @@ func NewImportControllerWithPauser(
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
 		encBuilder:          encodingBuilder,
-		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls, pdHTTPCli, log.FromContext(ctx).Logger),
+		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls.TLSConfig(), pdHTTPCli, log.FromContext(ctx).Logger),
 
 		keyspaceName:      p.KeyspaceName,
 		resourceGroupName: p.ResourceGroupName,
@@ -1611,20 +1608,26 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		}
 
 		// Disable GC because TiDB enables GC already.
-
-		currentLeaderAddr := rc.pdCli.GetLeaderAddr()
+		urlsWithScheme := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
 		// remove URL scheme
-		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "http://")
-		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "https://")
+		urlsWithoutScheme := make([]string, 0, len(urlsWithScheme))
+		for _, u := range urlsWithScheme {
+			u = strings.TrimPrefix(u, "http://")
+			u = strings.TrimPrefix(u, "https://")
+			urlsWithoutScheme = append(urlsWithoutScheme, u)
+		}
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", currentLeaderAddr, rc.keyspaceName),
+			fmt.Sprintf(
+				"tikv://%s?disableGC=true&keyspaceName=%s",
+				strings.Join(urlsWithoutScheme, ","), rc.keyspaceName,
+			),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		etcdCli, err := clientv3.New(clientv3.Config{
-			Endpoints:        []string{rc.cfg.TiDB.PdAddr},
+			Endpoints:        urlsWithScheme,
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),
 		})
@@ -1837,7 +1840,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 }
 
 func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
-	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetLeaderAddr())
+	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetServiceDiscovery().GetServiceURLs())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2138,8 +2141,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
 	if isLocalBackend(rc.cfg) {
-		pdController, err := pdutil.NewPdController(ctx, rc.pdCli.GetLeaderAddr(),
-			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
+		pdAddrs := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
+		pdController, err := pdutil.NewPdController(
+			ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
+		)
 		if err != nil {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 		}

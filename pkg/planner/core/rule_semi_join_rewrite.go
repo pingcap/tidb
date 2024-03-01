@@ -23,6 +23,16 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
+// semiJoinRewriter rewrites semi join to inner join with aggregation.
+// Note: This rewriter is only used for exists subquery.
+// And it also requires the hint `SEMI_JOIN_REWRITE` to be set.
+// For example:
+//
+//	select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ * from s where s.a = t.a);
+//
+// will be rewriten to:
+//
+//	select * from t join (select a from s group by a) s on t.a = s.a;
 type semiJoinRewriter struct {
 }
 
@@ -93,7 +103,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	aggOutputCols := make([]*expression.Column, 0, len(join.EqualConditions))
 	for i := range join.EqualConditions {
 		innerCol := join.EqualConditions[i].GetArgs()[1].(*expression.Column)
-		firstRow, err := aggregation.NewAggFuncDesc(join.SCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(join.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
 		if err != nil {
 			return nil, err
 		}

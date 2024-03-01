@@ -3689,11 +3689,8 @@ analyze table t2;
 set @@tidb_partition_prune_mode='dynamic';
 explain format='brief' select * from t;
 id	estRows	task	access object	operator info
-PartitionUnion	8.00	root		
-├─TableReader	4.00	root		data:TableFullScan
-│ └─TableFullScan	4.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	4.00	root		data:TableFullScan
-  └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
+TableReader	10000.00	root	partition:all	data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 analyze table t;
 explain format='brief' select * from t;
 id	estRows	task	access object	operator info
@@ -3701,17 +3698,11 @@ TableReader	8.00	root	partition:all	data:TableFullScan
 └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
 explain format='brief' select  * from t union all select * from t2;
 id	estRows	task	access object	operator info
-Union	16.00	root		
-├─PartitionUnion	8.00	root		
-│ ├─TableReader	4.00	root		data:TableFullScan
-│ │ └─TableFullScan	4.00	cop[tikv]	table:t, partition:p0	keep order:false
-│ └─TableReader	4.00	root		data:TableFullScan
-│   └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
-└─PartitionUnion	8.00	root		
-  ├─TableReader	4.00	root		data:TableFullScan
-  │ └─TableFullScan	4.00	cop[tikv]	table:t2, partition:p0	keep order:false
-  └─TableReader	4.00	root		data:TableFullScan
-    └─TableFullScan	4.00	cop[tikv]	table:t2, partition:p1	keep order:false
+Union	10008.00	root		
+├─TableReader	8.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
+└─TableReader	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 set @@tidb_partition_prune_mode=DEFAULT;
 drop table if exists t1, t2;
 create table t1 (a int primary key, b int);
@@ -4353,3 +4344,12 @@ StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(1
   └─TableReader	1.00	root		data:TableRangeScan
     └─TableRangeScan	1.00	cop[tikv]	table:sbtest	range:[0,1), keep order:false, stats:pseudo
 set @@tidb_opt_fix_control = default;
+create table sys.t (id int);
+insert into sys.t values (1),(2);
+set tidb_isolation_read_engines='tiflash';
+select * from sys.t;
+id
+1
+2
+drop table sys.t;
+set tidb_isolation_read_engines=DEFAULT;

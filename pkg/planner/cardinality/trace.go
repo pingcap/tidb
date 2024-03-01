@@ -37,7 +37,7 @@ import (
 
 // ceTraceExpr appends an expression and related information into CE trace
 func ceTraceExpr(sctx context.PlanContext, tableID int64, tp string, expr expression.Expression, rowCount float64) {
-	exprStr, err := exprToString(sctx, expr)
+	exprStr, err := exprToString(sctx.GetExprCtx(), expr)
 	if err != nil {
 		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
 			zap.Any("expression", expr))
@@ -64,7 +64,7 @@ func ceTraceExpr(sctx context.PlanContext, tableID int64, tp string, expr expres
 // It may be more appropriate to put this in expression package. But currently we only use it for CE trace,
 //
 //	and it may not be general enough to handle all possible expressions. So we put it here for now.
-func exprToString(ctx context.PlanContext, e expression.Expression) (string, error) {
+func exprToString(ctx expression.EvalContext, e expression.Expression) (string, error) {
 	switch expr := e.(type) {
 	case *expression.ScalarFunction:
 		var buffer bytes.Buffer
