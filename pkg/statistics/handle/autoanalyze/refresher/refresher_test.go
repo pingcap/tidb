@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package refresher
+package refresher_test
 
 import (
 	"math"
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -41,10 +42,10 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	sysProcTracker := dom.SysProcTracker()
-	r, err := NewRefresher(handle, sysProcTracker)
+	r, err := refresher.NewRefresher(handle, sysProcTracker)
 	require.NoError(t, err)
 	// No jobs in the queue.
-	r.pickOneTableAndAnalyzeByPriority()
+	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
 	is := dom.InfoSchema()
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -61,7 +62,7 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 		ChangePercentage: 0.5,
 		Weight:           1,
 	}
-	r.jobs.Push(job1)
+	r.Jobs.Push(job1)
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	job2 := &priorityqueue.TableAnalysisJob{
@@ -71,8 +72,8 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 		ChangePercentage: 0.5,
 		Weight:           0.9,
 	}
-	r.jobs.Push(job2)
-	r.pickOneTableAndAnalyzeByPriority()
+	r.Jobs.Push(job2)
+	r.PickOneTableAndAnalyzeByPriority()
 	// The table is analyzed.
 	tblStats1 = handle.GetPartitionStats(tbl1.Meta(), pid1)
 	require.False(t, tblStats1.Pseudo)
@@ -81,7 +82,7 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
 	require.True(t, tblStats2.Pseudo)
 	// Do one more round.
-	r.pickOneTableAndAnalyzeByPriority()
+	r.PickOneTableAndAnalyzeByPriority()
 	// t2 is analyzed.
 	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats2 = handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -100,10 +101,10 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	sysProcTracker := dom.SysProcTracker()
-	r, err := NewRefresher(handle, sysProcTracker)
+	r, err := refresher.NewRefresher(handle, sysProcTracker)
 	require.NoError(t, err)
 	// No jobs in the queue.
-	r.pickOneTableAndAnalyzeByPriority()
+	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
 	is := dom.InfoSchema()
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -120,7 +121,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 		ChangePercentage: 0.5,
 		Weight:           1,
 	}
-	r.jobs.Push(job1)
+	r.Jobs.Push(job1)
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	job2 := &priorityqueue.TableAnalysisJob{
@@ -130,12 +131,12 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 		ChangePercentage: 0.5,
 		Weight:           0.9,
 	}
-	r.jobs.Push(job2)
+	r.Jobs.Push(job2)
 	// Add a failed job to t1.
 	startTime := tk.MustQuery("select now() - interval 2 second").Rows()[0][0].(string)
 	insertFailedJobForPartitionWithStartTime(tk, "test", "t1", "p0", startTime)
 
-	r.pickOneTableAndAnalyzeByPriority()
+	r.PickOneTableAndAnalyzeByPriority()
 	// t2 is analyzed.
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -199,21 +200,21 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	require.Nil(t, handle.Update(dom.InfoSchema()))
 
 	sysProcTracker := dom.SysProcTracker()
-	r, err := NewRefresher(handle, sysProcTracker)
+	r, err := refresher.NewRefresher(handle, sysProcTracker)
 	require.NoError(t, err)
 
 	// Rebuild the job queue. No jobs are added.
-	err = r.rebuildTableAnalysisJobQueue()
+	err = r.RebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
-	require.Equal(t, 0, r.jobs.Len())
+	require.Equal(t, 0, r.Jobs.Len())
 	// Insert more data into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6)")
 	require.Nil(t, handle.DumpStatsDeltaToKV(true))
 	require.Nil(t, handle.Update(dom.InfoSchema()))
-	err = r.rebuildTableAnalysisJobQueue()
+	err = r.RebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
-	require.Equal(t, 1, r.jobs.Len())
-	job1 := r.jobs.Pop()
+	require.Equal(t, 1, r.Jobs.Len())
+	job1 := r.Jobs.Pop()
 	require.Equal(t, 1.2, math.Round(job1.Weight*10)/10)
 	require.Equal(t, float64(1), job1.ChangePercentage)
 	require.Equal(t, float64(6*2), job1.TableSize)
@@ -302,7 +303,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := calculateChangePercentage(tt.tblStats, tt.autoAnalyzeRatio)
+			got := refresher.CalculateChangePercentage(tt.tblStats, tt.autoAnalyzeRatio)
 			require.Equal(t, tt.want, got)
 		})
 	}
@@ -330,7 +331,7 @@ func TestGetTableLastAnalyzeDuration(t *testing.T) {
 	currentTs := oracle.GoTimeToTS(currentTime)
 	want := 24 * time.Hour
 
-	got := getTableLastAnalyzeDuration(tblStats, currentTs)
+	got := refresher.GetTableLastAnalyzeDuration(tblStats, currentTs)
 	require.Equal(t, want, got)
 }
 
@@ -343,7 +344,7 @@ func TestGetTableLastAnalyzeDurationForUnanalyzedTable(t *testing.T) {
 	currentTs := oracle.GoTimeToTS(currentTime)
 	want := 1800 * time.Second
 
-	got := getTableLastAnalyzeDuration(tblStats, currentTs)
+	got := refresher.GetTableLastAnalyzeDuration(tblStats, currentTs)
 	require.Equal(t, want, got)
 }
 
@@ -396,7 +397,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := checkIndexesNeedAnalyze(tt.tblInfo, tt.tblStats)
+			got := refresher.CheckIndexesNeedAnalyze(tt.tblInfo, tt.tblStats)
 			require.Equal(t, tt.want, got)
 		})
 	}
@@ -643,7 +644,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				gotAvgSize,
 				gotAvgLastAnalyzeDuration,
 				gotPartitions :=
-				calculateIndicatorsForPartitions(
+				refresher.CalculateIndicatorsForPartitions(
 					tt.tblInfo,
 					tt.partitionStats,
 					tt.defs,
@@ -714,7 +715,7 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 		},
 	}
 
-	partitionIndexes := checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, defs, partitionStats)
+	partitionIndexes := refresher.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, defs, partitionStats)
 	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
 	require.Equal(t, len(expected), len(partitionIndexes))
 

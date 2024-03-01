@@ -47,7 +47,7 @@ type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sessionctx.SysProcTracker
 
-	jobs *priorityqueue.AnalysisPriorityQueue
+	Jobs *priorityqueue.AnalysisPriorityQueue
 }
 
 // NewRefresher creates a new Refresher and starts the goroutine.
@@ -58,7 +58,7 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		jobs:           priorityqueue.NewAnalysisPriorityQueue(),
+		Jobs:           priorityqueue.NewAnalysisPriorityQueue(),
 	}
 
 	return r, nil
@@ -76,8 +76,8 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() {
 	defer r.statsHandle.SPool().Put(se)
 	sctx := se.(sessionctx.Context)
 	// Pick the table with the highest weight.
-	for r.jobs.Len() > 0 {
-		job := r.jobs.Pop()
+	for r.Jobs.Len() > 0 {
+		job := r.Jobs.Pop()
 		if valid, failReason := job.IsValidToAnalyze(
 			sctx,
 		); !valid {
@@ -110,7 +110,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() {
 
 func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	// Reset the priority queue.
-	r.jobs = priorityqueue.NewAnalysisPriorityQueue()
+	r.Jobs = priorityqueue.NewAnalysisPriorityQueue()
 
 	if err := statsutil.CallWithSCtx(
 		r.statsHandle.SPool(),
@@ -169,11 +169,11 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 							return
 						}
 						// Push the job onto the queue.
-						r.jobs.Push(job)
+						r.Jobs.Push(job)
 					}
 					// No partitions, analyze the whole table.
 					if pi == nil {
-						job := createTableAnalysisJob(
+						job := CreateTableAnalysisJob(
 							sctx,
 							db,
 							tblInfo,
@@ -198,7 +198,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 					// If the prune mode is static, we need to analyze every partition as a separate table.
 					if pruneMode == variable.Static {
 						for _, def := range pi.Definitions {
-							job := createTableAnalysisJob(
+							job := CreateTableAnalysisJob(
 								sctx,
 								db,
 								tblInfo,
@@ -234,7 +234,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	return nil
 }
 
-func createTableAnalysisJob(
+func CreateTableAnalysisJob(
 	sctx sessionctx.Context,
 	tableSchema string,
 	tblInfo *model.TableInfo,
@@ -245,10 +245,10 @@ func createTableAnalysisJob(
 	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
 
-	changePercentage := calculateChangePercentage(tblStats, autoAnalyzeRatio)
+	changePercentage := CalculateChangePercentage(tblStats, autoAnalyzeRatio)
 	tableSize := calculateTableSize(tblInfo, tblStats)
-	lastAnalysisDuration := getTableLastAnalyzeDuration(tblStats, currentTs)
-	indexes := checkIndexesNeedAnalyze(tblInfo, tblStats)
+	lastAnalysisDuration := GetTableLastAnalyzeDuration(tblStats, currentTs)
+	indexes := CheckIndexesNeedAnalyze(tblInfo, tblStats)
 
 	// No need to analyze.
 	if changePercentage == 0 && len(indexes) == 0 {
@@ -269,7 +269,7 @@ func createTableAnalysisJob(
 	return job
 }
 
-func calculateChangePercentage(
+func CalculateChangePercentage(
 	tblStats *statistics.Table,
 	autoAnalyzeRatio float64,
 ) float64 {
@@ -307,7 +307,7 @@ func calculateTableSize(
 	return tblCnt * colCnt
 }
 
-func getTableLastAnalyzeDuration(
+func GetTableLastAnalyzeDuration(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Duration {
@@ -345,7 +345,7 @@ func findLastAnalyzeTime(
 	return oracle.GetTimeFromTS(maxVersion)
 }
 
-func checkIndexesNeedAnalyze(
+func CheckIndexesNeedAnalyze(
 	tblInfo *model.TableInfo,
 	tblStats *statistics.Table,
 ) []string {
@@ -380,14 +380,14 @@ func createTableAnalysisJobForPartitions(
 	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
 
-	averageChangePercentage, avgSize, minLastAnalyzeDuration, partitionNames := calculateIndicatorsForPartitions(
+	averageChangePercentage, avgSize, minLastAnalyzeDuration, partitionNames := CalculateIndicatorsForPartitions(
 		tblInfo,
 		partitionStats,
 		defs,
 		autoAnalyzeRatio,
 		currentTs,
 	)
-	partitionIndexes := checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
+	partitionIndexes := CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		tblInfo,
 		defs,
 		partitionStats,
@@ -412,12 +412,12 @@ func createTableAnalysisJobForPartitions(
 	return job
 }
 
-// calculateIndicatorsForPartitions calculates the average change percentage,
+// CalculateIndicatorsForPartitions calculates the average change percentage,
 // average size and average last analyze duration for the partitions that meet the threshold.
 // Change percentage is the ratio of the number of modified rows to the total number of rows.
 // Size is the product of the number of rows and the number of columns.
 // Last analyze duration is the duration since the last analyze.
-func calculateIndicatorsForPartitions(
+func CalculateIndicatorsForPartitions(
 	tblInfo *model.TableInfo,
 	partitionStats map[int64]*statistics.Table,
 	defs []model.PartitionDefinition,
@@ -438,7 +438,7 @@ func calculateIndicatorsForPartitions(
 
 	for _, def := range defs {
 		tblStats := partitionStats[def.ID]
-		changePercent := calculateChangePercentage(tblStats, autoAnalyzeRatio)
+		changePercent := CalculateChangePercentage(tblStats, autoAnalyzeRatio)
 		// No need to analyze the partition because it doesn't meet the threshold or stats are not loaded yet.
 		if changePercent == 0 {
 			continue
@@ -447,7 +447,7 @@ func calculateIndicatorsForPartitions(
 		totalChangePercent += changePercent
 		// size = count * cols
 		totalSize += float64(tblStats.RealtimeCount) * cols
-		lastAnalyzeDuration := getTableLastAnalyzeDuration(tblStats, currentTs)
+		lastAnalyzeDuration := GetTableLastAnalyzeDuration(tblStats, currentTs)
 		totalLastAnalyzeDuration += lastAnalyzeDuration
 		partitionNames = append(partitionNames, def.Name.O)
 		count++
@@ -463,10 +463,10 @@ func calculateIndicatorsForPartitions(
 	return avgChange, avgSize, avgLastAnalyzeDuration, partitionNames
 }
 
-// checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable checks if the indexes of the partitioned table need to be analyzed.
+// CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable checks if the indexes of the partitioned table need to be analyzed.
 // It returns a map from index name to the names of the partitions that need to be analyzed.
 // NOTE: This is only for newly added indexes.
-func checkNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
+func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 	tblInfo *model.TableInfo,
 	defs []model.PartitionDefinition,
 	partitionStats map[int64]*statistics.Table,

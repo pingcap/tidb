@@ -13,6 +13,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/autoanalyze/refresher",
         "//pkg/statistics/handle/lockstats",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
