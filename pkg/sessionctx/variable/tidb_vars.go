@@ -1534,8 +1534,8 @@ var (
 	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 	// EnableRowLevelChecksum indicates whether to append checksum to row values.
-	EnableRowLevelChecksum = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
-	LowResTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)
+	EnableRowLevelChecksum         = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
+	LowResolutionTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
@@ -1610,8 +1610,8 @@ var (
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
 	// ValidateCloudStorageURI validates the cloud storage URI.
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
-	// SetLowResTSOUpdateInterval is the func that applies the setting LowResTSOUpdateInterval
-	SetLowResTSOUpdateInterval func() error = nil
+	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
+	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
 )
 
 // Hooks functions for Cluster Resource Control.

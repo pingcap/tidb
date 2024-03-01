@@ -394,13 +394,6 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	var err error
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
-	// Register the callback to propagate the update interval config change
-	variable.SetLowResTSOUpdateInterval = func() error {
-		return storage.GetOracle().SetLowResolutionTimestampUpdateInterval(time.Duration(variable.LowResTSOUpdateInterval.Load()) * time.Millisecond)
-	}
-	err = variable.SetLowResTSOUpdateInterval()
-	terror.MustNil(err)
-
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.

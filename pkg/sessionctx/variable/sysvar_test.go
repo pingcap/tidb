@@ -1543,7 +1543,7 @@ func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(GetSysVar(TiDBLowResolutionTSOUpdateInterval).MaxValue, 10), val)
 	warn = vars.StmtCtx.GetWarnings()[1].Err
-	require.Equal(t, "[variable:1292]Truncated incorrect tidb_low_resolution_tso_update_interval value: '10000'", warn.Error())
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_low_resolution_tso_update_interval value: '100000'", warn.Error())
 
 	// valid
 	val, err = sv.Validate(vars, "1000", ScopeGlobal)

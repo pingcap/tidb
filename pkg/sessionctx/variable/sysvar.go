@@ -1377,13 +1377,12 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: ScopeGlobal, Name: TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(DefTiDBLowResolutionTSOUpdateInterval), Type: TypeInt, MinValue: 10, MaxValue: 60000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			LowResTSOUpdateInterval.Store(uint32(TidbOptInt64(val, DefTiDBLowResolutionTSOUpdateInterval)))
-			if SetLowResTSOUpdateInterval != nil {
-				return SetLowResTSOUpdateInterval()
+			LowResolutionTSOUpdateInterval.Store(uint32(TidbOptInt64(val, DefTiDBLowResolutionTSOUpdateInterval)))
+			if SetLowResolutionTSOUpdateInterval != nil {
+				interval := time.Duration(LowResolutionTSOUpdateInterval.Load()) * time.Millisecond
+				return SetLowResolutionTSOUpdateInterval(interval)
 			}
 			return nil
-		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return fmt.Sprint(LowResTSOUpdateInterval.Load()), nil
 		},
 	},
 
