@@ -292,12 +292,8 @@ func HandleAutoAnalyze(
 		}
 	}()
 	if variable.EnableAutoAnalyzePriorityQueue.Load() {
-		r, err := refresher.NewRefresher(statsHandle, sysProcTracker)
-		if err != nil {
-			statslogutil.StatsLogger().Error("new refresher failed", zap.Error(err))
-			return false
-		}
-		err = r.RebuildTableAnalysisJobQueue()
+		r := refresher.NewRefresher(statsHandle, sysProcTracker)
+		err := r.RebuildTableAnalysisJobQueue()
 		if err != nil {
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
 			return false
