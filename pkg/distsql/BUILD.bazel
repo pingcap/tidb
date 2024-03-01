@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/ddl/placement",
+        "//pkg/distsql/context",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression",
@@ -21,7 +22,6 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/util",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",

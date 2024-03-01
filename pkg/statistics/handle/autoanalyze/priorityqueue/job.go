@@ -66,6 +66,11 @@ type TableAnalysisJob struct {
 	Weight               float64
 }
 
+// HasNewlyAddedIndex checks whether the table has newly added index.
+func (j *TableAnalysisJob) HasNewlyAddedIndex() bool {
+	return len(j.PartitionIndexes) > 0 || len(j.Indexes) > 0
+}
+
 // IsValidToAnalyze checks whether the table is valid to analyze.
 // It checks the last failed analysis duration and the average analysis duration.
 // If the last failed analysis duration is less than 2 times the average analysis duration,
