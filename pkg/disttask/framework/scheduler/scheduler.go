@@ -166,9 +166,10 @@ func (s *BaseScheduler) scheduleTask() {
 				continue
 			}
 			task := *s.GetTask()
-			if OnTaskRefreshed != nil {
+
+			failpoint.Inject("onTaskRefreshed", func() {
 				OnTaskRefreshed(s.ctx, s.taskMgr, &task)
-			}
+			})
 
 			switch task.State {
 			case proto.TaskStateCancelling:
