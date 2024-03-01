@@ -608,6 +608,8 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
+					// TODO: Handle all other cases when the previous run had duplicates
+					// and IndexValues and/or handles are not the original length
 					x.IndexValues[i][j] = *dVal
 				}
 			}
