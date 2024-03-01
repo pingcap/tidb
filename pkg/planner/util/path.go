@@ -127,6 +127,13 @@ func (path *AccessPath) Clone() *AccessPath {
 	for _, partialPath := range path.PartialIndexPaths {
 		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
 	}
+	for _, onePartialAlternative := range path.PartialAlternativeIndexPaths {
+		tmp := make([]*AccessPath, 0, len(onePartialAlternative))
+		for _, oneAlternative := range onePartialAlternative {
+			tmp = append(tmp, oneAlternative.Clone())
+		}
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+	}
 	return ret
 }
 
