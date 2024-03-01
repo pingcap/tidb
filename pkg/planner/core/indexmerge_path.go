@@ -273,14 +273,14 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			indexCondsForP := minCountAfterAccessPath.AccessConds[:]
 			indexCondsForP = append(indexCondsForP, minCountAfterAccessPath.IndexFilters...)
 			if len(indexCondsForP) > 0 {
-				accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx(), indexCondsForP...))
+				accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
 			}
 		}
 		if len(indexMap) == 1 {
 			continue
 		}
 		// 2.2 get the theoretical whole count after access for index merge.
-		accessDNF := expression.ComposeDNFCondition(ds.SCtx(), accessConds...)
+		accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
 		sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
