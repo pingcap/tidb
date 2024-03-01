@@ -69,6 +69,8 @@ func errorEvent(err error) TaskEvent {
 	}
 }
 
+
+//TODO: add new task event
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
 	if !bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
 		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument,
@@ -113,7 +115,10 @@ func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResp
 }
 
 func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
-	c := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	taskCh := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	pauseCh := t.Client.Watcher.Watch(ctx, PrefixOfPause(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	
+	// inner function def
 	handleResponse := func(resp clientv3.WatchResponse) bool {
 		events, err := t.eventFromWatch(ctx, resp)
 		if err != nil {
@@ -127,13 +132,22 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		}
 		return true
 	}
+
+	// inner function def
 	collectRemaining := func() {
 		log.Info("Start collecting remaining events in the channel.", zap.String("category", "log backup advancer"),
-			zap.Int("remained", len(c)))
+			zap.Int("remained", len(taskCh)))
 		defer log.Info("Finish collecting remaining events in the channel.", zap.String("category", "log backup advancer"))
 		for {
 			select {
-			case resp, ok := <-c:
+			case resp, ok := <-taskCh:
+				if !ok {
+					return
+				}
+				if !handleResponse(resp) {
+					return
+				}
+			case resp, ok := <-pauseCh:
 				if !ok {
 					return
 				}
@@ -150,8 +164,20 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		defer close(ch)
 		for {
 			select {
-			case resp, ok := <-c:
+			case resp, ok := <-taskCh:
 				failpoint.Inject("advancer_close_channel", func() {
+					// We cannot really close the channel, just simulating it.
+					ok = false
+				})
+				if !ok {
+					ch <- errorEvent(io.EOF)
+					return
+				}
+				if !handleResponse(resp) {
+					return
+				}
+			case resp, ok := <-pauseCh:
+				failpoint.Inject("advancer_close_pause_channel", func() {
 					// We cannot really close the channel, just simulating it.
 					ok = false
 				})
