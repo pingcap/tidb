@@ -47,6 +47,8 @@ type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sessionctx.SysProcTracker
 
+	// Jobs is the priority queue of analysis jobs.
+	// Exported for testing purposes.
 	Jobs *priorityqueue.AnalysisPriorityQueue
 }
 
@@ -239,6 +241,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	return nil
 }
 
+// CreateTableAnalysisJob creates a TableAnalysisJob for the physical table.
 func CreateTableAnalysisJob(
 	sctx sessionctx.Context,
 	tableSchema string,
@@ -274,6 +277,8 @@ func CreateTableAnalysisJob(
 	return job
 }
 
+// CalculateChangePercentage calculates the change percentage of the table
+// based on the change count and the analysis count.
 func CalculateChangePercentage(
 	tblStats *statistics.Table,
 	autoAnalyzeRatio float64,
@@ -312,6 +317,7 @@ func calculateTableSize(
 	return tblCnt * colCnt
 }
 
+// GetTableLastAnalyzeDuration gets the duration since the last analysis of the table.
 func GetTableLastAnalyzeDuration(
 	tblStats *statistics.Table,
 	currentTs uint64,
@@ -350,6 +356,7 @@ func findLastAnalyzeTime(
 	return oracle.GetTimeFromTS(maxVersion)
 }
 
+// CheckIndexesNeedAnalyze checks if the indexes of the table need to be analyzed.
 func CheckIndexesNeedAnalyze(
 	tblInfo *model.TableInfo,
 	tblStats *statistics.Table,
