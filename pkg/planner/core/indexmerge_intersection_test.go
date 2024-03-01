@@ -52,14 +52,11 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 		" key abd(a, b, d), key cd(c, d))")
 	tk.MustExec("create table t2 (a int, b int, c int, key a(a), key b(b), key ac(a, c))")
 
-	tk.MustExec("")
-
 	var (
 		input  []string
 		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
+			SQL  string
+			Plan []string
 		}
 	)
 	planSuiteData := core.GetIndexMergeSuiteData()
@@ -68,10 +65,8 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 		// Expect no warnings.
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 	}

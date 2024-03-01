@@ -444,8 +444,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ac(a, c) range:[1,1], keep order:true, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:bc(b, c) range:[1,1], keep order:true, stats:pseudo",
           "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, ac, bc) */ * from t where a=1 or b=1 order by c; -- 2. hint instruction to pick the suitable index ac and bc",
@@ -455,8 +454,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ac(a, c) range:[1,1], keep order:true, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:bc(b, c) range:[1,1], keep order:true, stats:pseudo",
           "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t2 where a=1 or b=1 order by c; -- 3. if one of the index order path can't satisfied, back to normal choice",
@@ -466,8 +464,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, ac, b) */ * from t where a=1 or b=1 order by c; -- 4. hint to use ac strongly, but sort OP is still needed",
@@ -477,8 +474,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ac(a, c) range:[1,1], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t where a=1 or a=2 order by c; -- 5. duplicated column a's conditions and lack of column b's conditions",
@@ -487,8 +483,7 @@
           "└─TableReader 250.00 root  data:Selection",
           "  └─Selection 250.00 cop[tikv]  or(eq(test.t.a, 1), eq(test.t.a, 2))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t use index(a) where a=1 or a=2 order by c; -- 6. duplicated column a's conditions and lack of column b's conditions",
@@ -497,8 +492,7 @@
           "└─IndexLookUp 250.00 root  ",
           "  ├─IndexRangeScan(Build) 250.00 cop[tikv] table:t, index:a(a) range:[1,2], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 250.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t where a=1 or a=2 or b=3 order by c; -- 7. duplicate column a's conditions",
@@ -509,8 +503,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ac(a, c) range:[2,2], keep order:true, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:bc(b, c) range:[3,3], keep order:true, stats:pseudo",
           "  └─TableRowIDScan(Probe) 259.75 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, ac, bc) */ * from t where a=1 or a=2 or b=3 order by c; -- 8. duplicate column a's conditions",
@@ -521,8 +514,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ac(a, c) range:[2,2], keep order:true, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:bc(b, c) range:[3,3], keep order:true, stats:pseudo",
           "  └─TableRowIDScan(Probe) 259.75 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t where a=1 or b=1 or c=1 order by d; -- 9. more than 2 index related columns, here c condition is interference",
@@ -533,8 +525,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 29.97 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, a, b, c) */ * from t where a=1 or b=1 or c=1 order by d; -- 10. more than 2 index related columns, here c condition is interference",
@@ -545,8 +536,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:c(c) range:[1,1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 29.97 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t where a=1 or b=1 or c=1 or d=1 order by e; -- 11. more index definition about idx(a,e), idx(b,e)",
@@ -555,8 +545,7 @@
           "└─TableReader 39.94 root  data:Selection",
           "  └─Selection 39.94 cop[tikv]  or(or(eq(test.t.a, 1), eq(test.t.b, 1)), or(eq(test.t.c, 1), eq(test.t.d, 1)))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select /*+ use_index_merge(t, ae, be, c) */ * from t where a=1 or b=1 or c=1 order by e; -- 12. more index definition about idx(a,e), idx(b,e)",
@@ -567,8 +556,7 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:be(b, e) range:[1,1], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:c(c) range:[1,1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 29.97 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t where (a=1 and b=1) or c=1 order by d; -- 13. composite predicates and more index defined, idx(a, b, d), idx(c, d)",
@@ -578,8 +566,7 @@
           "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:abd(a, b, d) range:[1 1,1 1], keep order:true, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:cd(c, d) range:[1,1], keep order:true, stats:pseudo",
           "  └─TableRowIDScan(Probe) 10.10 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t where (a=1 and b=1) or (c=1 and d=2) order by d; -- 14. composite predicates and more index defined, idx(a, b, d), idx(c, d)",
@@ -589,8 +576,7 @@
           "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:abd(a, b, d) range:[1 1,1 1], keep order:true, stats:pseudo",
           "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:cd(c, d) range:[1 2,1 2], keep order:true, stats:pseudo",
           "  └─TableRowIDScan(Probe) 0.20 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       },
       {
         "SQL": "select * from t where (a=1 and b=1) or (c=1 and d=1) order by e",
@@ -600,8 +586,7 @@
           "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:cd(c, d) range:[1 1,1 1], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:abd(a, b, d) range:[1 1,1 1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 0.20 cop[tikv] table:t keep order:false, stats:pseudo"
-        ],
-        "Result": null
+        ]
       }
     ]
   }

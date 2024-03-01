@@ -60,7 +60,7 @@ type AccessPath struct {
 	// ShouldBeKeptCurrentFilter and ShouldBeKeptCurrentFilterExpression are only used with PartialAlternativeIndexPaths, which means for
 	// the new state/type of access path. (undetermined index merge path)
 	KeepIndexMergeORSourceFilter bool
-	// ShouldBeKeptCurrentFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
+	// IndexMergeORSourceFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
 	IndexMergeORSourceFilter expression.Expression
 	// ********************************************************************************************************************************
 

@@ -252,6 +252,9 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			// keep all the possible index merge partial paths here to let the property choose.
 			partialAlternativePaths = append(partialAlternativePaths, itemPaths)
 		}
+		if len(partialAlternativePaths) <= 1 {
+			continue
+		}
 		// in this loop we do two things.
 		// 1: If all the partialPaths use the same index, we will not use the indexMerge.
 		// 2: Compute a theoretical best countAfterAccess(pick its accessConds) for every alternative path(s).
@@ -287,15 +290,13 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			sel = SelectionFactor
 		}
 
-		if len(partialAlternativePaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(filters, partialAlternativePaths, k, shouldKeepCurrentFilter)
-			if possiblePath == nil {
-				return nil
-			}
-			possiblePath.CountAfterAccess = sel * ds.tableStats.RowCount
-			// only after all partial path is determined, can the countAfterAccess be done, delay it to converging.
-			ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
+		possiblePath := ds.buildIndexMergeOrPath(filters, partialAlternativePaths, k, shouldKeepCurrentFilter)
+		if possiblePath == nil {
+			return nil
 		}
+		possiblePath.CountAfterAccess = sel * ds.tableStats.RowCount
+		// only after all partial path is determined, can the countAfterAccess be done, delay it to converging.
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 	}
 	return nil
 }
