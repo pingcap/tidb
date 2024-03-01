@@ -429,7 +429,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		}
 		log.Info("added event", zap.Stringer("task", e.Info),
 			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
-	case EventDel:
+	case EventDel,EventPause:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
 		c.taskRange = nil
