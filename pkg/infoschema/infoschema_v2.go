@@ -336,8 +336,8 @@ func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
 }
 
 func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
-	rs := make([]model.CIStr, 0, is.schemaMap.Len())
-	is.schemaMap.Scan(func(item schemaItem) bool {
+	rs := make([]model.CIStr, 0, is.Data.schemaMap.Len())
+	is.Data.schemaMap.Scan(func(item schemaItem) bool {
 		rs = append(rs, item.dbInfo.Name)
 		return true
 	})
