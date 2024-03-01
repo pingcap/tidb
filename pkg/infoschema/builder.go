@@ -1103,21 +1103,6 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 	}
 }
 
-// func (b *Builder) initForV1(dbInfos []*model.DBInfo, schemaVersion int64) error {
-// 	for _, di := range dbInfos {
-// 		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
-// 		if err != nil {
-// 			return errors.Trace(err)
-// 		}
-// <<<<<<< HEAD
-// 		// no need to update v1 for v2.
-// 		b.is.schemaMap[di.Name.L] = schTbls
-// =======
-// >>>>>>> 718c7a3919c9bbab370650b1a3341ff08f5aea77
-// 	}
-// 	return nil
-// }
-
 func (b *Builder) initVirtualTables(schemaVersion int64) error {
 	// Initialize virtual tables.
 	for _, driver := range drivers {
