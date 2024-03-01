@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -52,6 +53,7 @@ type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
+	store         tidbkv.Storage
 	sharedVars    sync.Map
 	logger        *zap.Logger
 
@@ -62,7 +64,12 @@ type importStepExecutor struct {
 	wg           sync.WaitGroup
 }
 
-func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
+func getTableImporter(
+	ctx context.Context,
+	taskID int64,
+	taskMeta *TaskMeta,
+	store tidbkv.Storage,
+) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -80,12 +87,12 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 		return nil, err
 	}
 
-	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10))
+	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("init subtask env")
-	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta)
+	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
 	}
@@ -357,12 +364,13 @@ type writeAndIngestStepExecutor struct {
 	taskMeta      *TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
+	store         tidbkv.Storage
 }
 
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
 
 func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
-	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
+	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store)
 	if err != nil {
 		return err
 	}
@@ -479,13 +487,22 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
+	store tidbkv.Storage
 }
 
-func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+// NewImportExecutor creates a new import task executor.
+func NewImportExecutor(
+	ctx context.Context,
+	id string,
+	task *proto.Task,
+	taskTable taskexecutor.TaskTable,
+	store tidbkv.Storage,
+) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, id, task, taskTable),
+		store:            store,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -501,7 +518,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (e *importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -518,6 +535,7 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) 
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
@@ -530,6 +548,7 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) 
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
@@ -542,8 +561,4 @@ func (e *importExecutor) Close() {
 	task := e.GetTaskBase()
 	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
-}
-
-func init() {
-	taskexecutor.RegisterTaskType(proto.ImportInto, newImportExecutor)
 }

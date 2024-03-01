@@ -161,6 +161,7 @@ func (e *HashAggExec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+
 	if e.IsUnparallelExec {
 		e.childResult = nil
 		e.groupSet, _ = set.NewStringSetWithMemoryUsage()
@@ -212,7 +213,16 @@ func (e *HashAggExec) Close() error {
 			e.spillHelper.close()
 		}
 	}
-	return e.BaseExecutor.Close()
+
+	err := e.BaseExecutor.Close()
+	failpoint.Inject("injectHashAggClosePanic", func(val failpoint.Value) {
+		if enabled := val.(bool); enabled {
+			if e.Ctx().GetSessionVars().ConnectionID != 0 {
+				panic(errors.New("test"))
+			}
+		}
+	})
+	return err
 }
 
 // Open implements the Executor Open interface.

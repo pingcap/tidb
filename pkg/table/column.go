@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -743,7 +744,7 @@ func OptionalFsp(fieldType *types.FieldType) string {
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated
 // expression using rows from a chunk, and then fill this value into the chunk.
 func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
-	expCols []*expression.Column, colInfos []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
+	expCols []*expression.Column, colInfos []*model.ColumnInfo, ectx exprctx.BuildContext, req *chunk.Chunk) error {
 	if len(virtualColumnIndex) == 0 {
 		return nil
 	}
@@ -752,19 +753,19 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	iter := chunk.NewIterator4Chunk(req)
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := expCols[idx].EvalVirtualColumn(sctx.GetExprCtx(), row)
+			datum, err := expCols[idx].EvalVirtualColumn(ectx, row)
 			if err != nil {
 				return err
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := CastValue(sctx, datum, colInfos[idx], false, true)
+			castDatum, err := CastColumnValue(ectx.GetSessionVars(), datum, colInfos[idx], false, true)
 			if err != nil {
 				return err
 			}
 
 			// Clip to zero if get negative value after cast to unsigned.
-			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && sctx.GetSessionVars().StmtCtx.TypeFlags().AllowNegativeToUnsigned() {
+			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && ectx.GetSessionVars().StmtCtx.TypeFlags().AllowNegativeToUnsigned() {
 				switch datum.Kind() {
 				case types.KindInt64:
 					if datum.GetInt64() < 0 {
