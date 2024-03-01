@@ -224,6 +224,9 @@ func (c *bindingCache) get(key bindingCacheKey) Bindings {
 	if !hit {
 		return nil
 	}
+	if value == nil {
+		return nil
+	}
 	typedValue := value.(Bindings)
 	return typedValue
 }
@@ -249,6 +252,7 @@ func (c *bindingCache) set(key bindingCacheKey, value Bindings) (ok bool, err er
 			return
 		}
 		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindingCacheKey), evictedValue.(Bindings)))
+		c.cache.Put(evictedKey, nil)
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
