@@ -239,13 +239,6 @@ func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, mat
 }
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
-	if isTableVirtual(id) {
-		// Don't store the virtual table in the tableCache, because when cache missing
-		// we can't refill it from tikv.
-		// TODO: returns the correct result.
-		return nil, false
-	}
-
 	// Get from the cache.
 	key := tableCacheKey{id, is.schemaVersion}
 	tbl, found := is.tableCache.Get(key)
@@ -257,6 +250,14 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	itm, ok := search(is.byID, is.schemaVersion, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
+		return nil, false
+	}
+
+	if isTableVirtual(id) {
+		if schTbls, exist := is.Data.specials[itm.dbName]; exist {
+			val, ok = schTbls.tables[itm.tableName]
+			return
+		}
 		return nil, false
 	}
 
@@ -309,6 +310,10 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 }
 
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+	if isSpecialDB(schema.L) {
+		return is.Data.specials[schema.L].dbInfo, true
+	}
+
 	var dbInfo model.DBInfo
 	dbInfo.Name = schema
 	is.Data.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
@@ -332,6 +337,9 @@ func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
 		schemas = append(schemas, item.dbInfo)
 		return true
 	})
+	for _, sc := range is.Data.specials {
+		schemas = append(schemas, sc.dbInfo)
+	}
 	return
 }
 
@@ -341,6 +349,11 @@ func (is *infoschemaV2) SchemaMetaVersion() int64 {
 
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 	var ok bool
+	if isSpecialDB(schema.L) {
+		_, ok = is.Data.specials[schema.L]
+		return ok
+	}
+
 	// TODO: support different version
 	is.Data.schemaMap.Scan(func(item schemaItem) bool {
 		if item.dbInfo.Name.L == schema.L {
@@ -364,6 +377,16 @@ func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	var ok bool
 	var dbInfo *model.DBInfo
+	if isTableVirtual(id) {
+		for _, st := range is.Data.specials {
+			if st.dbInfo.ID == id {
+				return st.dbInfo, true
+			}
+		}
+		// Something wrong?
+		return nil, false
+	}
+
 	is.Data.schemaMap.Scan(func(item schemaItem) bool {
 		if item.dbInfo.ID == id {
 			ok = true
@@ -376,6 +399,15 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
+	if isSpecialDB(schema.L) {
+		schTbls := is.Data.specials[schema.L]
+		tables := make([]table.Table, 0, len(schTbls.tables))
+		for _, tbl := range schTbls.tables {
+			tables = append(tables, tbl)
+		}
+		return tables
+	}
+
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
 		return
