@@ -54,14 +54,14 @@ type Refresher struct {
 func NewRefresher(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
-) (*Refresher, error) {
+) *Refresher {
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
 		Jobs:           priorityqueue.NewAnalysisPriorityQueue(),
 	}
 
-	return r, nil
+	return r
 }
 
 // PickOneTableAndAnalyzeByPriority picks one table and analyzes it by priority.

@@ -42,8 +42,7 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	sysProcTracker := dom.SysProcTracker()
-	r, err := refresher.NewRefresher(handle, sysProcTracker)
-	require.NoError(t, err)
+	r := refresher.NewRefresher(handle, sysProcTracker)
 	// No jobs in the queue.
 	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
@@ -101,8 +100,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	sysProcTracker := dom.SysProcTracker()
-	r, err := refresher.NewRefresher(handle, sysProcTracker)
-	require.NoError(t, err)
+	r := refresher.NewRefresher(handle, sysProcTracker)
 	// No jobs in the queue.
 	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
@@ -200,11 +198,10 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	require.Nil(t, handle.Update(dom.InfoSchema()))
 
 	sysProcTracker := dom.SysProcTracker()
-	r, err := refresher.NewRefresher(handle, sysProcTracker)
-	require.NoError(t, err)
+	r := refresher.NewRefresher(handle, sysProcTracker)
 
 	// Rebuild the job queue. No jobs are added.
-	err = r.RebuildTableAnalysisJobQueue()
+	err := r.RebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
 	require.Equal(t, 0, r.Jobs.Len())
 	// Insert more data into t1.
