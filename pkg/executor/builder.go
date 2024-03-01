@@ -1485,16 +1485,38 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 	e := &partitionedhashjoin.PartitionedHashJoinExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		PartitionedHashJoinCtx: &partitionedhashjoin.PartitionedHashJoinCtx{
-			SessCtx:         b.ctx,
-			UseOuterToBuild: v.JoinType.IsOuterJoin(),
-			JoinType:        v.JoinType,
-			Concurrency:     v.Concurrency,
+			SessCtx:     b.ctx,
+			JoinType:    v.JoinType,
+			Concurrency: v.Concurrency,
 		},
 	}
 	err := e.Init()
 	if err != nil {
 		return nil
 	}
+	/*
+		e.PartitionedHashJoinCtx.RightAsBuildSide = true
+		if v.InnerChildIdx == 1 && v.UseOuterToBuild {
+			e.PartitionedHashJoinCtx.RightAsBuildSide = false
+		} else if v.InnerChildIdx == 0 && !v.UseOuterToBuild {
+			e.PartitionedHashJoinCtx.RightAsBuildSide = false
+		}
+
+		defaultValues := v.DefaultValues
+		lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
+
+		if v.InnerChildIdx == 1 {
+			if len(v.RightConditions) > 0 {
+				b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+				return nil
+			}
+		} else {
+			if len(v.LeftConditions) > 0 {
+				b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+				return nil
+			}
+		}
+	*/
 	return e
 }
 
