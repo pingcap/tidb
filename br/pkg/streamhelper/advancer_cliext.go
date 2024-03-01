@@ -29,6 +29,7 @@ const (
 	EventAdd EventType = iota
 	EventDel
 	EventErr
+	EventPause
 )
 
 func (t EventType) String() string {
@@ -69,34 +70,55 @@ func errorEvent(err error) TaskEvent {
 	}
 }
 
-
-//TODO: add new task event
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
-	if !bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument,
-			"the path isn't a task path (%s)", string(event.Kv.Key))
-	}
+    te := TaskEvent{}
+    var prefix string
 
-	te := TaskEvent{}
-	te.Name = strings.TrimPrefix(string(event.Kv.Key), PrefixOfTask())
-	if event.Type == clientv3.EventTypeDelete {
-		te.Type = EventDel
-	} else if event.Type == clientv3.EventTypePut {
-		te.Type = EventAdd
-	} else {
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
-	}
-	te.Info = new(backuppb.StreamBackupTaskInfo)
-	if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
-		return TaskEvent{}, err
-	}
-	var err error
-	te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
-	if err != nil {
-		return TaskEvent{}, err
-	}
-	return te, nil
+    if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
+        prefix = PrefixOfTask()
+        te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
+    } else if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfPause())) {
+        prefix = PrefixOfPause()
+        te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
+    } else {
+        return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task/pause path (%s)", string(event.Kv.Key))
+    }
+
+    if prefix == PrefixOfTask() {
+        switch event.Type {
+        case clientv3.EventTypeDelete:
+			if prefix == PrefixOfTask() {
+            	te.Type = EventDel
+			} else  {
+				return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
+			}
+        case clientv3.EventTypePut:
+            if prefix == PrefixOfTask() {
+				te.Type = EventAdd
+			}else if prefix == PrefixOfPause() {
+				te.Type = EventPause
+			}else {
+				return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
+			}
+        default:
+            return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
+        }
+    }
+
+    te.Info = new(backuppb.StreamBackupTaskInfo)
+    if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
+        return TaskEvent{}, err
+    }
+
+    var err error
+    te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
+    if err != nil {
+        return TaskEvent{}, err
+    }
+
+    return te, nil
 }
+
 
 func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResponse) ([]TaskEvent, error) {
 	result := make([]TaskEvent, 0, len(resp.Events))
