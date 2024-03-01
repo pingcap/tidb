@@ -589,7 +589,13 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				x.Handles[i] = kv.IntHandle(iv)
+				if i >= len(x.Handles) {
+					// Previous execution might have removed duplicates,
+					// so Handles are not the same length as HandleParams
+					x.Handles = append(x.Handles, kv.IntHandle(iv))
+				} else {
+					x.Handles[i] = kv.IntHandle(iv)
+				}
 			}
 		}
 		for i, params := range x.IndexValueParams {
