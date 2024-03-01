@@ -64,14 +64,15 @@ func NewRefresher(
 	return r, nil
 }
 
-func (r *Refresher) PickOneTableAndAnalyzeByPriority() {
+// PickOneTableAndAnalyzeByPriority picks one table and analyzes it by priority.
+func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
 		statslogutil.StatsLogger().Error(
 			"Get session context failed",
 			zap.Error(err),
 		)
-		return
+		return false
 	}
 	defer r.statsHandle.SPool().Put(se)
 	sctx := se.(sessionctx.Context)
@@ -104,8 +105,12 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() {
 			)
 		}
 		// Only analyze one table each time.
-		return
+		return true
 	}
+	statslogutil.StatsLogger().Info(
+		"No table to analyze",
+	)
+	return false
 }
 
 func (r *Refresher) RebuildTableAnalysisJobQueue() error {
