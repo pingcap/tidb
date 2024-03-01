@@ -3726,7 +3726,7 @@ func TestDDL(t *testing.T) {
 		{"alter table t auto_increment 30, force auto_random_base 40", true, "ALTER TABLE `t` AUTO_INCREMENT = 30, FORCE AUTO_RANDOM_BASE = 40"},
 
 		// for alter sequence
-		{"alter sequence seq", false, ""},
+		{"alter sequence seq", true, "ALTER SEQUENCE `seq`"},
 		{"alter sequence seq comment=\"haha\"", true, "ALTER SEQUENCE `seq` COMMENT = 'haha'"},
 		{"alter sequence seq start = 1", true, "ALTER SEQUENCE `seq` START WITH 1"},
 		{"alter sequence seq start with 1 increment by 1", true, "ALTER SEQUENCE `seq` START WITH 1 INCREMENT BY 1"},
