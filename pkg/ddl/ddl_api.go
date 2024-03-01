@@ -8537,7 +8537,7 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 	// Validate the new sequence option value in old sequenceInfo.
 	oldSequenceInfo := tbl.Meta().Sequence
 	copySequenceInfo := *oldSequenceInfo
-	_, _, err = alterSequenceOptions(stmt.SeqOptions, ident, &copySequenceInfo)
+	_, _, err = alterSequenceOptions(stmt.SeqOptions, stmt.TblOptions, ident, &copySequenceInfo)
 	if err != nil {
 		return err
 	}
@@ -8549,7 +8549,7 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 		TableName:      tbl.Meta().Name.L,
 		Type:           model.ActionAlterSequence,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{ident, stmt.SeqOptions},
+		Args:           []any{ident, stmt.SeqOptions, stmt.TblOptions},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
