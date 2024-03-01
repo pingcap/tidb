@@ -11,6 +11,7 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
+        "//pkg/parser/auth",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
