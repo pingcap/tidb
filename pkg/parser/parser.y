@@ -22,6 +22,7 @@
 //  $ ebnf2y -o ql.y -oe ql.ebnf -start StatementList -pkg ql -p _
 //
 //   [1]: http://github.com/cznic/ebnf2y
+// add new line to test approver suggestion
 
 package parser
 
