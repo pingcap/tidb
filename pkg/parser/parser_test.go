@@ -79,6 +79,7 @@ func TestSimple(t *testing.T) {
 		require.NoErrorf(t, err, "source %s", src)
 	}
 
+	// add new line to test approvers suggestion
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
