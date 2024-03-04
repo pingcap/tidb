@@ -229,9 +229,19 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(e.planPhysIDs) > 0 {
 				physID = e.planPhysIDs[i]
 			} else {
+<<<<<<< HEAD
 				physID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, idxVals[e.partPos])
 				if err != nil {
 					continue
+=======
+				if len(e.planPhysIDs) > 0 {
+					physID = e.planPhysIDs[i]
+				} else {
+					physID, err = core.GetPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
+					if err != nil {
+						continue
+					}
+>>>>>>> c1befbba610 (executor: fix `BatchPoint` leads to tidb panic when KeyPartition column is part of multi-column index (#51315))
 				}
 			}
 
@@ -364,7 +374,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		} else {
 			if handle.IsInt() {
 				d := types.NewIntDatum(handle.IntValue())
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -373,7 +383,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if err1 != nil {
 					return err1
 				}
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
