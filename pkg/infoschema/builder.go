@@ -981,8 +981,6 @@ func (b *Builder) Build() InfoSchema {
 	b.updateInfoSchemaBundles(b.infoSchema)
 	if b.enableV2 {
 		b.infoschemaV2.ts = math.MaxUint64 // TODO: should be the correct TS
-		b.infoschemaV2.r = b.Requirement
-		b.infoschemaV2.Data = b.infoData
 		b.infoschemaV2.schemaVersion = b.infoSchema.SchemaMetaVersion()
 		return &b.infoschemaV2
 	}
@@ -1258,6 +1256,8 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 				schemaMap:           map[string]*schemaTables{},
 				sortedTablesBuckets: make([]sortedTables, bucketCount),
 			},
+			Data: infoData,
+			r:    r,
 		},
 		dirtyDB:  make(map[string]bool),
 		factory:  factory,

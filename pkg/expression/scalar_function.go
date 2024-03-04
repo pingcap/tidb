@@ -197,7 +197,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	}
 
 	if !ok {
-		db := ctx.GetSessionVars().CurrentDB
+		db := ctx.CurrentDB()
 		if db == "" {
 			return nil, errors.Trace(plannererrors.ErrNoDB)
 		}
