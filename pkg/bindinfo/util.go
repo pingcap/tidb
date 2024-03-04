@@ -27,7 +27,7 @@ import (
 )
 
 // exec is a helper function to execute sql and return RecordSet.
-func exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
 	sqlExec, ok := sctx.(sqlexec.SQLExecutor)
 	if !ok {
 		return nil, errors.Errorf("invalid sql executor")
@@ -36,7 +36,7 @@ func exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.Rec
 }
 
 // execRows is a helper function to execute sql and return rows and fields.
-func execRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
 	if !ok {
 		return nil, nil, errors.Errorf("invalid sql executor")

@@ -29,8 +29,8 @@ var (
 //
 // in generate the implement should be *sql.DB or *sql.Conn
 type QueryExecutor interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // DBExecutor is a interface for execute read and write statements from a database.
@@ -39,5 +39,5 @@ type QueryExecutor interface {
 type DBExecutor interface {
 	QueryExecutor
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }

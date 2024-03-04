@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client/http"
@@ -250,13 +251,13 @@ func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 		return "", errors.Trace(err)
 	}
 
-	var j map[string]interface{}
+	var j map[string]any
 	err = json.Unmarshal(buf.Bytes(), &j)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
 
-	engineStore, ok := j["engine-store"].(map[string]interface{})
+	engineStore, ok := j["engine-store"].(map[string]any)
 	if !ok {
 		return "", errors.New("Error json")
 	}
@@ -340,11 +341,8 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	}
 	pollTiFlashContext.TiFlashStores = make(map[int64]pd.StoreInfo)
 	for _, store := range tikvStats.Stores {
-		for _, l := range store.Store.Labels {
-			if l.Key == "engine" && l.Value == "tiflash" {
-				pollTiFlashContext.TiFlashStores[store.Store.ID] = store
-				logutil.BgLogger().Debug("Found tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
-			}
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			pollTiFlashContext.TiFlashStores[store.Store.ID] = store
 		}
 	}
 	logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(pollTiFlashContext.TiFlashStores)))

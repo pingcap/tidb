@@ -263,7 +263,7 @@ func (e *Engine) unlock() {
 // TotalMemorySize returns the total memory size of the engine.
 func (e *Engine) TotalMemorySize() int64 {
 	var memSize int64
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		w := k.(*Writer)
 		if w.kvBuffer != nil {
 			w.Lock()
@@ -528,7 +528,7 @@ func (e *Engine) getEngineFileSize() backend.EngineFileSize {
 		total = metrics.Total()
 	}
 	var memSize int64
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		w := k.(*Writer)
 		memSize += int64(w.EstimatedSize())
 		return true
@@ -579,12 +579,12 @@ func (h *metaSeqHeap) Swap(i, j int) {
 }
 
 // Push pushes the item onto the priority queue.
-func (h *metaSeqHeap) Push(x interface{}) {
+func (h *metaSeqHeap) Push(x any) {
 	h.arr = append(h.arr, x.(metaSeq))
 }
 
 // Pop removes the minimum item (according to Less) from the priority queue
-func (h *metaSeqHeap) Pop() interface{} {
+func (h *metaSeqHeap) Pop() any {
 	item := h.arr[len(h.arr)-1]
 	h.arr = h.arr[:len(h.arr)-1]
 	return item
@@ -886,7 +886,7 @@ func (e *Engine) ingestSSTs(metas []*sstMeta) error {
 
 func (e *Engine) flushLocalWriters(parentCtx context.Context) error {
 	eg, ctx := errgroup.WithContext(parentCtx)
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		eg.Go(func() error {
 			w := k.(*Writer)
 			return w.flush(ctx)
@@ -1461,12 +1461,12 @@ func (h *sstIterHeap) Swap(i, j int) {
 }
 
 // Push implements heap.Interface.
-func (h *sstIterHeap) Push(x interface{}) {
+func (h *sstIterHeap) Push(x any) {
 	h.iters = append(h.iters, x.(*sstIter))
 }
 
 // Pop implements heap.Interface.
-func (h *sstIterHeap) Pop() interface{} {
+func (h *sstIterHeap) Pop() any {
 	item := h.iters[len(h.iters)-1]
 	h.iters = h.iters[:len(h.iters)-1]
 	return item

@@ -3579,39 +3579,15 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' select * from thash use index(idx_ac, idx_bc) where a = 1 or b = 1 order by c limit 2;
 id	estRows	task	access object	operator info
-TopN	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.c, offset:0, count:2
-└─PartitionUnion	8.00	root		
-  ├─Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
-  │ └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p0, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p0, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
-  │   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash, partition:p0	keep order:false, stats:pseudo
-  ├─Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
-  │ └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p1, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p1, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
-  │   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash, partition:p1	keep order:false, stats:pseudo
-  ├─Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
-  │ └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p2, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p2, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
-  │   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash, partition:p2	keep order:false, stats:pseudo
-  └─Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
-    └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-      ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-      │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p3, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-      ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-      │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p3, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
-      └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash, partition:p3	keep order:false, stats:pseudo
+Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
+└─IndexMerge	2.00	root	partition:all	type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Warning	1105	disable dynamic pruning due to thash has no global stats
 set tidb_cost_model_version=DEFAULT;
 drop table if exists t, t2, t3;
 set tidb_cost_model_version=1;
@@ -3679,18 +3655,18 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) limit 1;
 id	estRows	task	access object	operator info
-IndexMerge	0.00	root		type: union, limit embedded(offset:0, count:1)
-├─Limit(Build)	0.00	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan	0.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	1.00	root		type: union, limit embedded(offset:0, count:1)
+├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1;
 id	estRows	task	access object	operator info
 IndexMerge	0.00	root		type: intersection, limit embedded(offset:0, count:1)
-├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
@@ -3698,46 +3674,46 @@ explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_over
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─Selection	1.00	root		json_overlaps(planner__core__casetest__physicalplantest__physical_plan.t.j, cast("[1, 2, 3]", json BINARY))
-  └─IndexMerge	0.00	root		type: union
-    ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
-    ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge	1.00	root		type: union
+    ├─IndexRangeScan(Build)	0.33	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	0.33	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	0.33	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now.
 explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1;
 id	estRows	task	access object	operator info
-Limit	1.00	root		offset:0, count:1
-└─IndexMerge	0.00	root		type: union
-  ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
-  └─Limit(Probe)	0.00	cop[tikv]		offset:0, count:1
-    └─Selection	0.00	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
-      └─TableRowIDScan	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit	0.01	root		offset:0, count:1
+└─IndexMerge	0.01	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  └─Limit(Probe)	0.01	cop[tikv]		offset:0, count:1
+    └─Selection	0.01	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
+      └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1;
 id	estRows	task	access object	operator info
-Limit	1.00	root		offset:0, count:1
+Limit	0.00	root		offset:0, count:1
 └─IndexMerge	0.00	root		type: intersection
-  ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
   └─Limit(Probe)	0.00	cop[tikv]		offset:0, count:1
     └─Selection	0.00	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
-      └─TableRowIDScan	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
+      └─TableRowIDScan	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─Selection	1.00	root		json_overlaps(planner__core__casetest__physicalplantest__physical_plan.t.j, cast("[1, 2, 3]", json BINARY))
-  └─IndexMerge	1.00	root		type: union
+  └─IndexMerge	0.00	root		type: union
     ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
     ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[2,2], keep order:false, stats:pseudo
     ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:kj(cast(`j` as signed array))	range:[3,3], keep order:false, stats:pseudo
-    └─Selection(Probe)	1.00	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
-      └─TableRowIDScan	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
+      └─TableRowIDScan	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now.

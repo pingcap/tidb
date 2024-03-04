@@ -415,6 +415,10 @@ func TestWindowSpecRestore(t *testing.T) {
 func TestLoadDataRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
+			sourceSQL: "load data low_priority infile '/a.csv' into table `t`",
+			expectSQL: "LOAD DATA LOW_PRIORITY INFILE '/a.csv' INTO TABLE `t`",
+		},
+		{
 			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
 			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
 		},
@@ -573,6 +577,31 @@ func TestImportIntoRestore(t *testing.T) {
 			sourceSQL: "IMPORT INTO `t` from '/file.csv' with fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
 			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
 		},
+		{
+			// SelectStmt
+			sourceSQL: "IMPORT INTO `t` from select * from xx",
+			expectSQL: "IMPORT INTO `t` FROM SELECT * FROM `xx`",
+		},
+		{
+			// SelectStmtWithClause
+			sourceSQL: "IMPORT INTO `t` from with `c` as (select * from `xx`) select * from `c` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM WITH `c` AS (SELECT * FROM `xx`) SELECT * FROM `c` WITH thread=1",
+		},
+		{
+			// SetOprStmt
+			sourceSQL: "IMPORT INTO `t` from select * from `xx` union select * from `yy` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM SELECT * FROM `xx` UNION SELECT * FROM `yy` WITH thread=1",
+		},
+		{
+			// SetOprStmt
+			sourceSQL: "IMPORT INTO `t` from with `c` as (select * from `xx`) select * from `c` union select * from `c` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM WITH `c` AS (SELECT * FROM `xx`) SELECT * FROM `c` UNION SELECT * FROM `c` WITH thread=1",
+		},
+		{
+			// SubSelect
+			sourceSQL: "IMPORT INTO `t` from (select * from xx)",
+			expectSQL: "IMPORT INTO `t` FROM (SELECT * FROM `xx`)",
+		},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*ImportIntoStmt)
@@ -610,4 +639,14 @@ func TestImportIntoSecureText(t *testing.T) {
 		require.True(t, ok, comment)
 		require.Regexp(t, tc.secured, n.SecureText(), comment)
 	}
+}
+
+func TestImportIntoFromSelectInvalidStmt(t *testing.T) {
+	p := parser.New()
+	_, err := p.ParseOneStmt("IMPORT INTO t1(a, @1) FROM select * from t2;", "", "")
+	require.ErrorContains(t, err, "Cannot use user variable(1) in IMPORT INTO FROM SELECT statement")
+	_, err = p.ParseOneStmt("IMPORT INTO t1(a, @b) FROM select * from t2;", "", "")
+	require.ErrorContains(t, err, "Cannot use user variable(b) in IMPORT INTO FROM SELECT statement")
+	_, err = p.ParseOneStmt("IMPORT INTO t1(a) set a=1 FROM select a from t2;", "", "")
+	require.ErrorContains(t, err, "Cannot use SET clause in IMPORT INTO FROM SELECT statement.")
 }

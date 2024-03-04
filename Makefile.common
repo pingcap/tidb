@@ -130,5 +130,4 @@ ifneq ("$(CI)", "")
 	BAZEL_CMD_CONFIG := --config=ci --repository_cache=/home/jenkins/.tidb/tmp
 	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
 endif
-BAZEL_INSTRUMENTATION_FILTER_PACKAGE := go list ./...| sed 's/github.com\/pingcap\/tidb//g'
-BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter='${BAZEL_INSTRUMENTATION_FILTER_PACKAGE}'
+BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...

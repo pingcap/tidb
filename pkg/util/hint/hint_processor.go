@@ -19,19 +19,16 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
-var errWarnConflictingHint = dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint)
 
 func init() {
 	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
@@ -76,7 +73,7 @@ func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
-func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*ast.TableOptimizerHint {
+func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler hintWarnHandler) []*ast.TableOptimizerHint {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return x.TableHints
@@ -86,8 +83,20 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 		return x.TableHints
 	case *ast.InsertStmt:
 		// check duplicated hints
-		checkInsertStmtHintDuplicated(node, sctx)
+		checkInsertStmtHintDuplicated(node, warnHandler)
 		return x.TableHints
+	case *ast.SetOprStmt:
+		var result []*ast.TableOptimizerHint
+		if x.SelectList == nil {
+			return nil
+		}
+		for _, s := range x.SelectList.Selects {
+			tmp := ExtractTableHintsFromStmtNode(s, warnHandler)
+			if len(tmp) != 0 {
+				result = append(result, tmp...)
+			}
+		}
+		return result
 	default:
 		return nil
 	}
@@ -95,7 +104,7 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 
 // checkInsertStmtHintDuplicated check whether existed the duplicated hints in both insertStmt and its selectStmt.
 // If existed, it would send a warning message.
-func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
+func checkInsertStmtHintDuplicated(node ast.Node, warnHandler hintWarnHandler) {
 	switch x := node.(type) {
 	case *ast.InsertStmt:
 		if len(x.TableHints) > 0 {
@@ -116,7 +125,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					sctx.GetSessionVars().StmtCtx.AppendWarning(errWarnConflictingHint.FastGenByArgs(hint))
+					warnHandler.SetHintWarningFromError(plannererrors.ErrWarnConflictingHint.FastGenByArgs(hint))
 				}
 			}
 		}

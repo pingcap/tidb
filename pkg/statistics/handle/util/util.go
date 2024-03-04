@@ -196,7 +196,7 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 }
 
 // Exec is a helper function to execute sql and return RecordSet.
-func Exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
 	sqlExec, ok := sctx.(sqlexec.SQLExecutor)
 	if !ok {
 		return nil, errors.Errorf("invalid sql executor")
@@ -206,7 +206,7 @@ func Exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.Rec
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
@@ -222,7 +222,7 @@ func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
-func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
 	if !ok {
 		return nil, nil, errors.Errorf("invalid sql executor")

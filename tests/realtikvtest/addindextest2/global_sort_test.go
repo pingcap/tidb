@@ -214,7 +214,12 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 
 	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add index idx(a);")
+	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows())
+	tk.MustExec("alter table t drop index idx;")
+
 	tk.MustExec("insert into t values (1), (2), (3);")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("alter table t add index idx(a);")
 
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()

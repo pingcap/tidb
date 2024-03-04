@@ -79,10 +79,12 @@ func testReadAndCompare(
 			curStart,
 			curEnd,
 			bufPool,
+			bufPool,
 			loaded,
 		)
-
 		require.NoError(t, err)
+		loaded.build(ctx)
+
 		// check kvs sorted
 		sorty.MaxGor = uint64(8)
 		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {

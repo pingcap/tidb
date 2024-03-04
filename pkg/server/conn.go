@@ -102,10 +102,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
+	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -1257,7 +1260,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
 		var r tracing.Region
-		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		r, ctx = tracing.StartRegionWithNewRootSpan(ctx, "server.dispatch")
 		defer r.End()
 	}
 
@@ -1739,7 +1742,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
-		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
+		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts, sql)
 		if err != nil {
 			for _, stmt := range stmts {
 				cc.onExtensionStmtEnd(stmt, false, err)
@@ -1815,7 +1818,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
 // For pessimistic transaction, the keys will be batch locked.
-func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode, sqls string) ([]plannercore.Plan, error) {
 	txn, err := cc.ctx.Txn(false)
 	if err != nil {
 		return nil, err
@@ -1839,13 +1842,14 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
+	isCommonHandle := make(map[string]bool, 0)
 
 	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			if v.PartitionInfo != nil {
-				tableID = v.PartitionInfo.ID
+			if v.PartitionDef != nil {
+				tableID = v.PartitionDef.ID
 			} else {
 				tableID = v.TblInfo.ID
 			}
@@ -1856,16 +1860,17 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					return err1
 				}
 				idxKeys = append(idxKeys, idxKey)
+				isCommonHandle[string(hack.String(idxKey))] = v.TblInfo.IsCommonHandle
 			} else {
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			if v.PartitionInfos != nil && len(v.PartitionIDs) == 0 {
+			if v.PartitionDefs != nil && len(v.PartitionIDs) == 0 {
 				// skip when PartitionIDs is not initialized.
 				return nil
 			}
 			getPhysID := func(i int) int64 {
-				if v.PartitionInfos == nil {
+				if v.PartitionDefs == nil {
 					return v.TblInfo.ID
 				}
 				return v.PartitionIDs[i]
@@ -1878,6 +1883,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 						return err1
 					}
 					idxKeys = append(idxKeys, idxKey)
+					isCommonHandle[string(hack.String(idxKey))] = v.TblInfo.IsCommonHandle
 				}
 			} else {
 				for i, handle := range v.Handles {
@@ -1901,7 +1907,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}
-		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
+		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), stmt)
 		pointPlans[i] = p
 		if p == nil {
 			continue
@@ -1942,12 +1948,14 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return pointPlans, nil
 	}
 	snapshot := txn.GetSnapshot()
+	setResourceGroupTaggerForMultiStmtPrefetch(snapshot, sqls)
 	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
 	if err1 != nil {
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, false)
+		isCommonHd := isCommonHandle[idxKey]
+		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, isCommonHd)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -1969,6 +1977,24 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 	}
 	return pointPlans, nil
+}
+
+func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls string) {
+	if !topsqlstate.TopSQLEnabled() {
+		return
+	}
+	normalized, digest := parser.NormalizeDigest(sqls)
+	topsql.AttachAndRegisterSQLInfo(context.Background(), normalized, digest, false)
+	snapshot.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(func(req *tikvrpc.Request) {
+		if req == nil {
+			return
+		}
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	}))
 }
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
@@ -2650,8 +2676,8 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 type compressionStats struct{}
 
 // Stats returns the connection statistics.
-func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, 3)
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any, 3)
 
 	switch vars.CompressionAlgorithm {
 	case mysql.CompressionNone:

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -37,8 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -136,6 +139,8 @@ type ImportSchedulerExt struct {
 	// It may be changed when we switch to a new task or switch to a new owner.
 	currTaskID            atomic.Int64
 	disableTiKVImportMode atomic.Bool
+
+	storeWithPD kv.StorageWithPD
 }
 
 var _ scheduler.Extension = (*ImportSchedulerExt)(nil)
@@ -151,7 +156,7 @@ func (sch *ImportSchedulerExt) OnTick(ctx context.Context, task *proto.Task) {
 }
 
 func (*ImportSchedulerExt) isImporting2TiKV(task *proto.Task) bool {
-	return task.Step == StepImport || task.Step == StepWriteAndIngest
+	return task.Step == proto.ImportStepImport || task.Step == proto.ImportStepWriteAndIngest
 }
 
 func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
@@ -173,13 +178,20 @@ func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.T
 	}
 
 	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
+	// TODO: use the TLS object from TiDB server
+	tidbCfg := tidb.GetGlobalConfig()
+	tls, err := util.NewTLSConfig(
+		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
+		util.WithCertAndKeyPath(tidbCfg.Security.ClusterSSLCert, tidbCfg.Security.ClusterSSLKey),
+	)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
+	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
+	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
+
 	switcher.ToImportMode(ctx)
-	pdCli.Close()
 	sch.lastSwitchTime.Store(time.Now())
 }
 
@@ -199,7 +211,7 @@ func (sch *ImportSchedulerExt) unregisterTask(ctx context.Context, task *proto.T
 // OnNextSubtasksBatch generate batch of next stage's plan.
 func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle storage.TaskHandle,
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
@@ -208,8 +220,8 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", stepStr(task.Step)),
-		zap.String("next-step", stepStr(nextStep)),
+		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
@@ -220,7 +232,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
 	switch nextStep {
-	case StepImport, StepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
@@ -231,32 +243,32 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err = startJob(ctx, logger, taskHandle, taskMeta, jobStep); err != nil {
 			return nil, err
 		}
-	case StepMergeSort:
-		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepEncodeAndSort)
+	case proto.ImportStepMergeSort:
+		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[StepEncodeAndSort] = sortAndEncodeMeta
-	case StepWriteAndIngest:
+		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
+	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
 		})
 		// merge sort might be skipped for some kv groups, so we need to get all
-		// subtask metas of StepEncodeAndSort step too.
-		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepEncodeAndSort)
+		// subtask metas of ImportStepEncodeAndSort step too.
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
 		if err != nil {
 			return nil, err
 		}
-		mergeSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepMergeSort)
+		mergeSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepMergeSort)
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[StepEncodeAndSort] = encodeAndSortMetas
-		previousSubtaskMetas[StepMergeSort] = mergeSortMetas
+		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
-	case StepPostProcess:
+	case proto.ImportStepPostProcess:
 		sch.switchTiKV2NormalMode(ctx, task, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
 			sch.lastSwitchTime.Store(time.Time{})
@@ -265,7 +277,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 			return nil, err
 		}
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
-			failpoint.Return(nil, errors.New("injected error after StepImport"))
+			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
 		// we need get metas where checksum is stored.
 		if err := updateResult(taskHandle, task, taskMeta, sch.GlobalSort); err != nil {
@@ -309,11 +321,11 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 }
 
 // OnDone implements scheduler.Extension interface.
-func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle scheduler.TaskHandle, task *proto.Task) error {
+func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle storage.TaskHandle, task *proto.Task) error {
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("step", stepStr(task.Step)),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
 	logger.Info("task done", zap.Stringer("state", task.State), zap.Error(task.Error))
 	taskMeta := &TaskMeta{}
@@ -355,17 +367,17 @@ func (sch *ImportSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if sch.GlobalSort {
-			return StepEncodeAndSort
+			return proto.ImportStepEncodeAndSort
 		}
-		return StepImport
-	case StepEncodeAndSort:
-		return StepMergeSort
-	case StepMergeSort:
-		return StepWriteAndIngest
-	case StepImport, StepWriteAndIngest:
-		return StepPostProcess
+		return proto.ImportStepImport
+	case proto.ImportStepEncodeAndSort:
+		return proto.ImportStepMergeSort
+	case proto.ImportStepMergeSort:
+		return proto.ImportStepWriteAndIngest
+	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
+		return proto.ImportStepPostProcess
 	default:
-		// current step must be StepPostProcess
+		// current step must be ImportStepPostProcess
 		return proto.StepDone
 	}
 }
@@ -379,13 +391,20 @@ func (sch *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
+	// TODO: use the TLS object from TiDB server
+	tidbCfg := tidb.GetGlobalConfig()
+	tls, err := util.NewTLSConfig(
+		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
+		util.WithCertAndKeyPath(tidbCfg.Security.ClusterSSLCert, tidbCfg.Security.ClusterSSLKey),
+	)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
+	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
+	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
+
 	switcher.ToNormalMode(ctx)
-	pdCli.Close()
 
 	// clear it, so next task can switch TiKV mode again.
 	sch.lastSwitchTime.Store(time.Time{})
@@ -403,14 +422,21 @@ func (sch *ImportSchedulerExt) updateCurrentTask(task *proto.Task) {
 
 type importScheduler struct {
 	*scheduler.BaseScheduler
+	storeWithPD kv.StorageWithPD
 }
 
-func newImportScheduler(ctx context.Context, taskMgr scheduler.TaskManager,
-	nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
+// NewImportScheduler creates a new import scheduler.
+func NewImportScheduler(
+	ctx context.Context,
+	task *proto.Task,
+	param scheduler.Param,
+	storeWithPD kv.StorageWithPD,
+) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := importScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(subCtx, taskMgr, nodeMgr, task),
+		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
+		storeWithPD:   storeWithPD,
 	}
 	return &sch
 }
@@ -419,33 +445,33 @@ func (sch *importScheduler) Init() (err error) {
 	defer func() {
 		if err != nil {
 			// if init failed, close is not called, so we need to unregister here.
-			metricsManager.unregister(sch.Task.ID)
+			metricsManager.unregister(sch.GetTask().ID)
 		}
 	}()
 	taskMeta := &TaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
 	sch.BaseScheduler.Extension = &ImportSchedulerExt{
-		GlobalSort: taskMeta.Plan.CloudStorageURI != "",
+		GlobalSort:  taskMeta.Plan.CloudStorageURI != "",
+		storeWithPD: sch.storeWithPD,
 	}
 	return sch.BaseScheduler.Init()
 }
 
 func (sch *importScheduler) Close() {
-	metricsManager.unregister(sch.Task.ID)
+	metricsManager.unregister(sch.GetTask().ID)
 	sch.BaseScheduler.Close()
 }
 
 // nolint:deadcode
-func dropTableIndexes(ctx context.Context, handle scheduler.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
+func dropTableIndexes(ctx context.Context, handle storage.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
-	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
 
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo)
 	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+		sqlStr := common.BuildDropIndexSQL(taskMeta.Plan.DBName, tblInfo.Name.L, idxInfo)
 		if err := executeSQL(ctx, handle, logger, sqlStr); err != nil {
 			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
 				switch merr.Number {
@@ -498,7 +524,7 @@ func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, t
 }
 
 // TODO: return the result of sql.
-func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *zap.Logger, sql string, args ...interface{}) (err error) {
+func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *zap.Logger, sql string, args ...any) (err error) {
 	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
 	return executor.WithNewSession(func(se sessionctx.Context) error {
 		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
@@ -530,13 +556,13 @@ func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[i
 
 func getStepOfEncode(globalSort bool) proto.Step {
 	if globalSort {
-		return StepEncodeAndSort
+		return proto.ImportStepEncodeAndSort
 	}
-	return StepImport
+	return proto.ImportStepImport
 }
 
 // we will update taskMeta in place and make task.Meta point to the new taskMeta.
-func updateResult(handle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
+func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
 	stepOfEncode := getStepOfEncode(globalSort)
 	metas, err := handle.GetPreviousSubtaskMetas(task.ID, stepOfEncode)
 	if err != nil {
@@ -570,8 +596,8 @@ func updateResult(handle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskM
 	return updateMeta(task, taskMeta)
 }
 
-func getLoadedRowCountOnGlobalSort(handle scheduler.TaskHandle, task *proto.Task) (uint64, error) {
-	metas, err := handle.GetPreviousSubtaskMetas(task.ID, StepWriteAndIngest)
+func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) (uint64, error) {
+	metas, err := handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepWriteAndIngest)
 	if err != nil {
 		return 0, err
 	}
@@ -587,7 +613,7 @@ func getLoadedRowCountOnGlobalSort(handle scheduler.TaskHandle, task *proto.Task
 	return loadedRowCount, nil
 }
 
-func startJob(ctx context.Context, logger *zap.Logger, taskHandle scheduler.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
+func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
 	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -631,7 +657,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 }
 
 func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger,
-	taskHandle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
+	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
@@ -640,6 +666,12 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
+				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, &importer.JobImportResult{
+					Affected:   taskMeta.Result.LoadedRowCnt,
+					ColSizeMap: taskMeta.Result.ColSizeMap,
+				}); err != nil {
+					logger.Warn("flush table stats failed", zap.Error(err))
+				}
 				exec := se.(sqlexec.SQLExecutor)
 				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
 			})
@@ -647,7 +679,7 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 	)
 }
 
-func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle scheduler.TaskHandle, task *proto.Task,
+func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
@@ -663,7 +695,7 @@ func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle scheduler
 	)
 }
 
-func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle scheduler.TaskHandle, task *proto.Task,
+func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	meta *TaskMeta, logger *zap.Logger) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
@@ -689,29 +721,4 @@ func redactSensitiveInfo(task *proto.Task, taskMeta *TaskMeta) {
 		// marshal failed, should not happen
 		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
 	}
-}
-
-func stepStr(step proto.Step) string {
-	switch step {
-	case proto.StepInit:
-		return "init"
-	case StepImport:
-		return "import"
-	case StepPostProcess:
-		return "post-process"
-	case StepEncodeAndSort:
-		return "encode&sort"
-	case StepMergeSort:
-		return "merge-sort"
-	case StepWriteAndIngest:
-		return "write&ingest"
-	case proto.StepDone:
-		return "done"
-	default:
-		return "unknown"
-	}
-}
-
-func init() {
-	scheduler.RegisterSchedulerFactory(proto.ImportInto, newImportScheduler)
 }

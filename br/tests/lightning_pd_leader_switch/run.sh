@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 
-set -eux
+set -eu
 
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 . $cur/../_utils/run_services
@@ -48,7 +48,7 @@ sleep 5
 start_tidb
 
 export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/beforeRun=sleep(60000)'
-run_lightning --backend local --enable-checkpoint=0 &
+run_lightning --backend local --enable-checkpoint=0 --pd-urls '127.0.0.1:9999,127.0.0.1:2379' &
 lightning_pid=$!
 # in many libraries, etcd client's auto-sync-interval is 30s, so we need to wait at least 30s before kill PD leader
 sleep 45

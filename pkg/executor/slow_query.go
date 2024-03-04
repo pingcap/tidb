@@ -673,7 +673,7 @@ func (e *slowQueryRetriever) setDefaultValue(row []types.Datum) {
 	}
 }
 
-type slowQueryColumnValueFactory func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error)
+type slowQueryColumnValueFactory func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error)
 
 func parseUserOrHostValue(value string) string {
 	// the new User&Host format: root[root] @ localhost [127.0.0.1]
@@ -700,7 +700,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			return true, nil
 		}, nil
 	case variable.SlowLogBackoffDetail:
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (bool, error) {
 			backoffDetail := row[columnIdx].GetString()
 			if len(backoffDetail) > 0 {
 				backoffDetail += " "
@@ -710,13 +710,13 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			return true, nil
 		}, nil
 	case variable.SlowLogPlan:
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (bool, error) {
 			plan := parsePlan(value)
 			row[columnIdx] = types.NewStringDatum(plan)
 			return true, nil
 		}, nil
 	case variable.SlowLogBinaryPlan:
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (bool, error) {
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (bool, error) {
 			if strings.HasPrefix(value, variable.SlowLogBinaryPlanPrefix) {
 				value = value[len(variable.SlowLogBinaryPlanPrefix) : len(value)-len(variable.SlowLogPlanSuffix)]
 			}
@@ -729,7 +729,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		execdetails.RocksdbDeleteSkippedCountStr, execdetails.RocksdbKeySkippedCountStr,
 		execdetails.RocksdbBlockCacheHitCountStr, execdetails.RocksdbBlockReadCountStr,
 		variable.SlowLogTxnStartTSStr, execdetails.RocksdbBlockReadByteStr:
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
 				return false, err
@@ -747,7 +747,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		variable.SlowLogCopWaitAvg, variable.SlowLogCopWaitP90, variable.SlowLogCopWaitMax, variable.SlowLogKVTotal,
 		variable.SlowLogPDTotal, variable.SlowLogBackoffTotal, variable.SlowLogWriteSQLRespTotal, variable.SlowLogRRU,
 		variable.SlowLogWRU, variable.SlowLogWaitRUDuration:
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseFloat(value, 64)
 			if err != nil {
 				return false, err
@@ -759,12 +759,12 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
 		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogWarnings, variable.SlowLogSessAliasStr,
 		variable.SlowLogResourceGroup:
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil
 		}, nil
 	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows:
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
 				return false, err
@@ -774,7 +774,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
 		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable, variable.SlowLogHasMoreResults:
-		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
+		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {
 				return false, err

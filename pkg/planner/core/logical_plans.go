@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -127,7 +128,7 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *h.TableHintInfo
+	hintInfo            *h.PlanHints
 	preferJoinType      uint
 	preferJoinOrder     bool
 	leftPreferJoinType  uint
@@ -411,29 +412,29 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 	copy(cpOtherConditions, p.OtherConditions)
 	copy(cpEqualConditions, p.EqualConditions)
 
-	ctx := p.SCtx()
+	exprCtx := p.SCtx().GetExprCtx()
 	// try to substitute columns in these condition.
 	for i, cond := range cpLeftConditions {
-		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(ctx, cond, schema, exprs); hasFail {
+		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpRightConditions {
-		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(ctx, cond, schema, exprs); hasFail {
+		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpOtherConditions {
-		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(ctx, cond, schema, exprs); hasFail {
+		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpEqualConditions {
 		var tmp expression.Expression
-		if hasFail, tmp = expression.ColumnSubstituteAll(ctx, cond, schema, exprs); hasFail {
+		if hasFail, tmp = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 		cpEqualConditions[i] = tmp.(*expression.ScalarFunction)
@@ -728,7 +729,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 				}
 			}
 			if !find {
-				return nil, ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
+				return nil, plannererrors.ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
 			}
 		}
 	}
@@ -916,8 +917,9 @@ type LogicalAggregation struct {
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 
-	// aggHints stores aggregation hint information.
-	aggHints h.AggHintInfo
+	// PreferAggType And PreferAggToCop stores aggregation hint information.
+	PreferAggType  uint
+	PreferAggToCop bool
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -1077,7 +1079,8 @@ func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
 	// partialAgg (in cascades planner) should share the same hint, instead
 	// of a copy.
-	la.aggHints = agg.aggHints
+	la.PreferAggType = agg.PreferAggType
+	la.PreferAggToCop = agg.PreferAggToCop
 }
 
 // IsPartialModeAgg returns if all of the AggFuncs are partialMode.
@@ -1187,7 +1190,7 @@ func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) intset.FastIntSet {
+func extractConstantCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) intset.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -1195,7 +1198,7 @@ func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Con
 		constObjs      []expression.Expression
 		constUniqueIDs = intset.NewFastIntSet()
 	)
-	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, conditions)
+	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx.GetExprCtx(), constObjs, conditions)
 	for _, constObj := range constObjs {
 		switch x := constObj.(type) {
 		case *expression.Column:
@@ -1214,7 +1217,7 @@ func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Con
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]intset.FastIntSet {
+func extractEquivalenceCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) [][]intset.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]intset.FastIntSet, 0, len(equivObjsPair))
@@ -1345,7 +1348,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 		for _, col := range innerPlan.Schema().Columns {
 			if cc.UniqueID == col.CorrelatedColUniqueID {
 				ccc := &cc.Column
-				cond := expression.NewFunctionInternal(la.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
+				cond := expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
 				eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 			}
 		}
@@ -1368,9 +1371,13 @@ type LogicalMaxOneRow struct {
 }
 
 // LogicalTableDual represents a dual table plan.
+// Note that sometimes we don't set schema for LogicalTableDual (most notably in buildTableDual()), which means
+// outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
+// cause any actual problems now.
 type LogicalTableDual struct {
 	logicalSchemaProducer
 
+	// RowCount could only be 0 or 1.
 	RowCount int
 }
 
@@ -1407,12 +1414,17 @@ type LogicalUnionScan struct {
 	handleCols HandleCols
 }
 
+// GetAllConds Exported for unit test.
+func (ds *DataSource) GetAllConds() []expression.Expression {
+	return ds.allConds
+}
+
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
-	IndexHints    []h.IndexHintInfo
+	IndexHints    []h.HintedIndex
 	table         table.Table
 	tableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
@@ -1420,7 +1432,7 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []h.IndexHintInfo
+	indexMergeHints []h.HintedIndex
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -1535,8 +1547,9 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 		return false
 	}
 	sctx := p.SCtx()
+	exprCtx := sctx.GetExprCtx()
 	for i, col := range p.IdxCols {
-		if col.Equal(sctx, prop.SortItems[0].Col) {
+		if col.Equal(exprCtx, prop.SortItems[0].Col) {
 			return matchIndicesProp(sctx, p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
 		} else if i >= p.EqCondCount {
 			break
@@ -1609,7 +1622,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 }
 
 func detachCondAndBuildRangeForPath(
-	sctx sessionctx.Context,
+	sctx PlanContext,
 	path *util.AccessPath,
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
@@ -1722,7 +1735,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				continue
 			}
 			lCol, lOk := eqFunc.GetArgs()[0].(*expression.Column)
-			if lOk && lCol.Equal(ds.SCtx(), pkCol) {
+			if lOk && lCol.Equal(ds.SCtx().GetExprCtx(), pkCol) {
 				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
 				if rOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1732,7 +1745,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				}
 			}
 			rCol, rOk := eqFunc.GetArgs()[1].(*expression.Column)
-			if rOk && rCol.Equal(ds.SCtx(), pkCol) {
+			if rOk && rCol.Equal(ds.SCtx().GetExprCtx(), pkCol) {
 				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
 				if lOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1912,10 +1925,10 @@ type LogicalTopN struct {
 
 	ByItems []*util.ByItems
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  h.LimitHintInfo
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -1941,11 +1954,11 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  h.LimitHintInfo
-	IsPartial   bool
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
+	IsPartial        bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -2050,7 +2063,7 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
 		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
 			var err error
-			fb.CompareCols[0], err = expression.NewFunctionBase(ctx, ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+			fb.CompareCols[0], err = expression.NewFunctionBase(ctx.GetExprCtx(), ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
 			if err != nil {
 				return err
 			}
@@ -2082,7 +2095,7 @@ func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualPartitionBy(newWindow *LogicalWindow) bool {
 	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
 		return false
 	}
@@ -2099,7 +2112,7 @@ func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *Logica
 }
 
 // EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
-func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualOrderBy(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
 	if len(p.OrderBy) != len(newWindow.OrderBy) {
 		return false
 	}
@@ -2113,7 +2126,7 @@ func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalW
 }
 
 // EqualFrame checks whether two LogicalWindow.Frames are equal.
-func (p *LogicalWindow) EqualFrame(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualFrame(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
 	if (p.Frame == nil && newWindow.Frame != nil) ||
 		(p.Frame != nil && newWindow.Frame == nil) {
 		return false

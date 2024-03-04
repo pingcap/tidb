@@ -41,7 +41,7 @@ type ParquetParser struct {
 	Reader      *preader.ParquetReader
 	columns     []string
 	columnMetas []*parquet.SchemaElement
-	rows        []interface{}
+	rows        []any
 	readRows    int64
 	curStart    int64
 	curIndex    int

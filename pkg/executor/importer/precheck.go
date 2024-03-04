@@ -49,14 +49,18 @@ var GetEtcdClient = getEtcdClient
 // todo: check if there's running lightning tasks?
 // we check them one by one, and return the first error we meet.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
-	if err := e.checkTotalFileSize(); err != nil {
-		return err
+	if e.DataSourceType == DataSourceTypeFile {
+		if err := e.checkTotalFileSize(); err != nil {
+			return err
+		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
-	if err := e.checkCDCPiTRTasks(ctx); err != nil {
-		return err
+	if !e.DisablePrecheck {
+		if err := e.checkCDCPiTRTasks(ctx); err != nil {
+			return err
+		}
 	}
 	if e.IsGlobalSort() {
 		return e.checkGlobalSortStorePrivilege(ctx)
@@ -75,7 +79,7 @@ func (e *LoadDataController) checkTotalFileSize() error {
 }
 
 func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {
-	sql := fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(e.DBName, e.Table.Meta().Name.L))
+	sql := common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s USE INDEX() LIMIT 1", e.DBName, e.Table.Meta().Name.L)
 	rs, err := conn.ExecuteInternal(ctx, sql)
 	if err != nil {
 		return err

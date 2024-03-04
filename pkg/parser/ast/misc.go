@@ -1972,7 +1972,6 @@ type CreateBindingStmt struct {
 	stmtNode
 
 	GlobalScope bool
-	IsUniversal bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
 	PlanDigest  string
@@ -1984,9 +1983,6 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("GLOBAL ")
 	} else {
 		ctx.WriteKeyWord("SESSION ")
-	}
-	if n.IsUniversal {
-		ctx.WriteKeyWord("UNIVERSAL ")
 	}
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
@@ -2332,12 +2328,11 @@ const (
 	AdminCaptureBindings
 	AdminEvolveBindings
 	AdminReloadBindings
-	AdminShowTelemetry
-	AdminResetTelemetryID
 	AdminReloadStatistics
 	AdminFlushPlanCache
 	AdminSetBDRRole
 	AdminShowBDRRole
+	AdminUnsetBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2352,7 +2347,7 @@ type BDRRole string
 const (
 	BDRRolePrimary   BDRRole = "primary"
 	BDRRoleSecondary BDRRole = "secondary"
-	BDRRoleLocalOnly BDRRole = "local_only"
+	BDRRoleNone      BDRRole = ""
 )
 
 // DeniedByBDR checks whether the DDL is denied by BDR.
@@ -2369,20 +2364,6 @@ func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied 
 			len(job.Args) >= 1 && job.Args[0].(bool) {
 			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
 			return true
-		}
-
-		// add or update comments for column, change default values of one particular column
-		// which is allowed on primary role. Other modify column operations are denied.
-		// nolint:staticcheck
-		if job != nil && action == model.ActionModifyColumn {
-			// TODO
-		}
-
-		// add a new column to table that it’s nullable or with default value,
-		// which is allowed on primary role. Other add column operations are denied.
-		// nolint:staticcheck
-		if job != nil && action == model.ActionAddColumn {
-			// TODO
 		}
 
 		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
@@ -2631,10 +2612,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
-	case AdminShowTelemetry:
-		ctx.WriteKeyWord("SHOW TELEMETRY")
-	case AdminResetTelemetryID:
-		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -2651,13 +2628,13 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
 		case BDRRoleSecondary:
 			ctx.WriteKeyWord("SET BDR ROLE SECONDARY")
-		case BDRRoleLocalOnly:
-			ctx.WriteKeyWord("SET BDR ROLE LOCAL_ONLY")
 		default:
 			return errors.New("Unsupported BDR role")
 		}
 	case AdminShowBDRRole:
 		ctx.WriteKeyWord("SHOW BDR ROLE")
+	case AdminUnsetBDRRole:
+		ctx.WriteKeyWord("UNSET BDR ROLE")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -3830,7 +3807,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		hintData := n.HintData.(HintSetVar)
 		ctx.WritePlain(hintData.VarName)
 		ctx.WritePlain(" = ")
-		ctx.WritePlain(hintData.Value)
+		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil

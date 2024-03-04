@@ -155,7 +155,7 @@ func ParseHint(input string, sqlMode mysql.SQLMode, initPos Pos) ([]*ast.TableOp
 }
 
 func (hp *hintParser) warnUnsupportedHint(name string) {
-	warn := ErrWarnOptimizerHintUnsupportedHint.GenWithStackByArgs(name)
+	warn := ErrWarnOptimizerHintUnsupportedHint.FastGenByArgs(name)
 	hp.lexer.warns = append(hp.lexer.warns, warn)
 }
 

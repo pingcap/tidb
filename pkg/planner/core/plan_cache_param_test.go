@@ -30,79 +30,79 @@ func TestParameterize(t *testing.T) {
 	cases := []struct {
 		sql      string
 		paramSQL string
-		params   []interface{}
+		params   []any
 	}{
 		{
 			"select * from t where a<10",
 			"SELECT * FROM `t` WHERE `a`<?",
-			[]interface{}{int64(10)},
+			[]any{int64(10)},
 		},
 		{
 			"select * from t",
 			"SELECT * FROM `t`",
-			[]interface{}{},
+			[]any{},
 		},
 		{
 			"select * from t where a<10 and b<20 and c=30 and d>40",
 			"SELECT * FROM `t` WHERE `a`<? AND `b`<? AND `c`=? AND `d`>?",
-			[]interface{}{int64(10), int64(20), int64(30), int64(40)},
+			[]any{int64(10), int64(20), int64(30), int64(40)},
 		},
 		{
 			"select * from t where a='a' and b='bbbbbbbbbbbbbbbbbbbbbbbb'",
 			"SELECT * FROM `t` WHERE `a`=? AND `b`=?",
-			[]interface{}{"a", "bbbbbbbbbbbbbbbbbbbbbbbb"},
+			[]any{"a", "bbbbbbbbbbbbbbbbbbbbbbbb"},
 		},
 		{
 			"select 1, 2, 3 from t where a<10",
 			"SELECT 1,2,3 FROM `t` WHERE `a`<?",
-			[]interface{}{int64(10)},
+			[]any{int64(10)},
 		},
 		{
 			"select a+1 from t where a<10",
 			"SELECT a+1 FROM `t` WHERE `a`<?",
-			[]interface{}{int64(10)},
+			[]any{int64(10)},
 		},
 		{
 			`select a+ "a b c" from t`,
 			"SELECT a+ \"a b c\" FROM `t`",
-			[]interface{}{},
+			[]any{},
 		},
 		{
 			`select a + 'a b c'+"x" from t`,
 			"SELECT a + 'a b c'+\"x\" FROM `t`", // keep the original format for select fields
-			[]interface{}{},
+			[]any{},
 		},
 		{
 			`select a + 'a b c'+"x" as 'xxx' from t`,
 			"SELECT a + 'a b c'+\"x\" as 'xxx' FROM `t`", // keep the original format for select fields
-			[]interface{}{},
+			[]any{},
 		},
 		{
 			`insert into t (a, B, c) values (1, 2, 3), (4, 5, 6)`,
 			"INSERT INTO `t` (`a`,`B`,`c`) VALUES (?,?,?),(?,?,?)",
-			[]interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
+			[]any{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
 		},
 		{
 			`select * from t where a < date_format('2020-02-02', '%Y-%m-%d')`,
 			"SELECT * FROM `t` WHERE `a`<date_format(?, '%Y-%m-%d')",
-			[]interface{}{"2020-02-02"},
+			[]any{"2020-02-02"},
 		},
 		{
 			"select * from `txu#p#p1`",
 			"SELECT * FROM `txu#p#p1`",
-			[]interface{}{},
+			[]any{},
 		},
 
 		// keep the original format for limit clauses
 		{
 			`select * from t limit 10`,
 			"SELECT * FROM `t` LIMIT 10",
-			[]interface{}{},
+			[]any{},
 		},
 		{
 			`select * from t limit 10, 20`,
 			"SELECT * FROM `t` LIMIT 10,20",
-			[]interface{}{},
+			[]any{},
 		},
 		// TODO: more test cases
 	}

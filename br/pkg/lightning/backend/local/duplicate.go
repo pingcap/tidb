@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"slices"
 	"sync"
 
 	"github.com/cockroachdb/pebble"
@@ -43,20 +42,16 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -1004,29 +999,14 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 	}()
 
 	switch algorithm {
-	case config.DupeResAlgRecord, config.DupeResAlgNone:
+	case config.DupeResAlgNone:
 		logger.Warn("skipping resolution due to selected algorithm. this table will become inconsistent!", zap.String("category", "resolve-dupe"), zap.Stringer("algorithm", algorithm))
 		return nil
-	case config.DupeResAlgRemove:
-	case config.DupeResAlgReplace:
+	case config.DupeResAlgReplace, config.DupeResAlgErr:
 	default:
 		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}
 
-	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
-	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-	}, log.FromContext(ctx))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	tableIDs := physicalTableIDs(tbl.Meta())
-	keyInTable := func(key []byte) bool {
-		return slices.Contains(tableIDs, tablecodec.DecodeTableID(key))
-	}
-
-	errLimiter := rate.NewLimiter(1, 1)
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
 
 	tblInfo, err := json.Marshal(tbl.Meta())
@@ -1037,31 +1017,6 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 		zap.ByteString("tblInfo", tblInfo))
 
 	switch algorithm {
-	case config.DupeResAlgRemove:
-		err = local.errorMgr.RemoveAllConflictKeys(
-			ctx, tableName, pool,
-			func(ctx context.Context, handleRows [][2][]byte) error {
-				for {
-					err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder, keyInTable)
-					if err == nil {
-						return nil
-					}
-					if types.ErrBadNumber.Equal(err) {
-						logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-						return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
-					}
-					if log.IsContextCanceledError(err) {
-						return errors.Trace(err)
-					}
-					if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
-						logger.Warn("delete duplicate rows encounter error", log.ShortError(errors.Trace(err)))
-					}
-					if err = errLimiter.Wait(ctx); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			},
-		)
 	case config.DupeResAlgReplace:
 		err = local.errorMgr.ReplaceConflictKeys(
 			ctx, tbl, tableName, pool,
@@ -1075,11 +1030,15 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 			func(ctx context.Context, key []byte) error {
 				err := local.deleteDuplicateRow(ctx, logger, key)
 				if err != nil {
-					logger.Debug("delete duplicate rows encounter error", zap.Error(err))
-					return errors.Trace(err)
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+					return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
 				}
 				return nil
 			},
+		)
+	case config.DupeResAlgErr:
+		err = local.errorMgr.ResolveConflictKeysError(
+			ctx, tableName,
 		)
 	}
 
@@ -1129,64 +1088,4 @@ func (local *DupeController) deleteDuplicateRow(
 	err = txn.Delete(key)
 
 	return errors.Trace(err)
-}
-
-func (local *DupeController) deleteDuplicateRows(
-	ctx context.Context,
-	logger *log.Task,
-	handleRows [][2][]byte,
-	decoder *kv.TableKVDecoder,
-	keyInTable func(key []byte) bool,
-) (err error) {
-	// Starts a Delete transaction.
-	txn, err := local.tikvCli.Begin()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err == nil {
-			err = txn.Commit(ctx)
-		} else {
-			if rollbackErr := txn.Rollback(); rollbackErr != nil {
-				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
-			}
-		}
-	}()
-
-	deleteKey := func(key []byte) error {
-		logger.Debug("will delete key", zap.String("category", "resolve-dupe"), logutil.Key("key", key))
-		return txn.Delete(key)
-	}
-
-	// Collect all rows & index keys into the deletion transaction.
-	// (if the number of duplicates is small this should fit entirely in memory)
-	// (Txn's MemBuf's bufferSizeLimit is currently infinity)
-	for _, handleRow := range handleRows {
-		// Skip the row key if it's not in the table.
-		// This can happen if the table has been recreated or truncated,
-		// and the duplicate key is from the old table.
-		if !keyInTable(handleRow[0]) {
-			continue
-		}
-		logger.Debug("found row to resolve", zap.String("category", "resolve-dupe"),
-			logutil.Key("handle", handleRow[0]),
-			logutil.Key("row", handleRow[1]))
-
-		if err := deleteKey(handleRow[0]); err != nil {
-			return errors.Trace(err)
-		}
-
-		handle, err := decoder.DecodeHandleFromRowKey(handleRow[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = decoder.IterRawIndexKeys(handle, handleRow[1], deleteKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	logger.Debug("number of KV pairs to be deleted", zap.String("category", "resolve-dupe"), zap.Int("count", txn.Len()))
-	return nil
 }

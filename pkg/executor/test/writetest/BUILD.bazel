@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//br/pkg/lightning/mydump",
         "//pkg/config",
+        "//pkg/errctx",
         "//pkg/executor",
         "//pkg/kv",
         "//pkg/meta/autoid",

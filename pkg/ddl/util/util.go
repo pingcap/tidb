@@ -197,7 +197,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
-		paramNames := make([]interface{}, 0, len(varNames))
+		paramNames := make([]any, 0, len(varNames))
 		for i, name := range varNames {
 			if i > 0 {
 				buf.WriteString(", ")
@@ -293,8 +293,8 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 	opts ...clientv3.OpOption) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
-		if IsContextDone(ctx) {
-			return errors.Trace(ctx.Err())
+		if err = ctx.Err(); err != nil {
+			return errors.Trace(err)
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
@@ -307,16 +307,6 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		time.Sleep(KeyOpRetryInterval)
 	}
 	return errors.Trace(err)
-}
-
-// IsContextDone checks if context is done.
-func IsContextDone(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return true
-	default:
-	}
-	return false
 }
 
 // WrapKey2String wraps the key to a string.

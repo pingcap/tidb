@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -71,7 +71,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 				continue
 			}
-			dt, err := v.Expr.(*expression.Constant).Eval(sctx, chunk.Row{})
+			dt, err := v.Expr.(*expression.Constant).Eval(sctx.GetExprCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -89,7 +89,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := v.Expr.Eval(sctx, chunk.Row{})
+			value, err := v.Expr.Eval(sctx.GetExprCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -129,7 +129,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 				if !semEnabled {
 					msg = "SUPER or " + msg
 				}
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
 			}
 		}
 	}
@@ -170,13 +170,18 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
-			config.GetGlobalConfig().Instance.TiDBServiceScope = valStr
+			oldConfig := config.GetGlobalConfig()
+			if oldConfig.Instance.TiDBServiceScope != valStr {
+				newConfig := *oldConfig
+				newConfig.Instance.TiDBServiceScope = valStr
+				config.StoreGlobalConfig(&newConfig)
+			}
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			taskMgr, err := storage.GetTaskManager()
 			if err != nil {
 				return err
 			}
-			return taskMgr.StartManagerSession(ctx, e.Ctx(), serverID, valStr)
+			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
 		}
 		return err
 	}
@@ -218,7 +223,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
 		if name == variable.TiDBTxnReadTS {
-			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx(), newSnapshotTS)
+			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx().GetSessionVars().StmtCtx, e.Ctx().GetStore(), newSnapshotTS)
 		} else {
 			err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx(), newSnapshotTS)
 			// Also check gc safe point for snapshot read.
@@ -296,11 +301,12 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
 		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 		if sysVar != nil {
-			return sysVar.Value, nil
+			defVal := variable.GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)
+			return defVal, nil
 		}
 		return e.Ctx().GetSessionVars().GetGlobalSystemVar(ctx, v.Name)
 	}
-	nativeVal, err := v.Expr.Eval(e.Ctx(), chunk.Row{})
+	nativeVal, err := v.Expr.Eval(e.Ctx().GetExprCtx(), chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
 		return "", err
 	}

@@ -17,7 +17,6 @@ package expression
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -25,10 +24,10 @@ import (
 )
 
 // specialFoldHandler stores functions for special UDF to constant fold
-var specialFoldHandler = map[string]func(sessionctx.Context, *ScalarFunction) (Expression, bool){}
+var specialFoldHandler = map[string]func(BuildContext, *ScalarFunction) (Expression, bool){}
 
 func init() {
-	specialFoldHandler = map[string]func(sessionctx.Context, *ScalarFunction) (Expression, bool){
+	specialFoldHandler = map[string]func(BuildContext, *ScalarFunction) (Expression, bool){
 		ast.If:     ifFoldHandler,
 		ast.Ifnull: ifNullFoldHandler,
 		ast.Case:   caseWhenHandler,
@@ -37,7 +36,7 @@ func init() {
 }
 
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
-func FoldConstant(ctx sessionctx.Context, expr Expression) Expression {
+func FoldConstant(ctx BuildContext, expr Expression) Expression {
 	e, _ := foldConstant(ctx, expr)
 	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())
@@ -49,7 +48,7 @@ func FoldConstant(ctx sessionctx.Context, expr Expression) Expression {
 	return e
 }
 
-func isNullHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, bool) {
+func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	arg0 := expr.GetArgs()[0]
 	if constArg, isConst := arg0.(*Constant); isConst {
 		isDeferredConst := constArg.DeferredExpr != nil || constArg.ParamMarker != nil
@@ -72,7 +71,7 @@ func isNullHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, bo
 	return expr, false
 }
 
-func ifFoldHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, bool) {
+func ifFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	args := expr.GetArgs()
 	foldedArg0, _ := foldConstant(ctx, args[0])
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
@@ -93,7 +92,7 @@ func ifFoldHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, bo
 	return expr, false
 }
 
-func ifNullFoldHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, bool) {
+func ifNullFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	args := expr.GetArgs()
 	foldedArg0, isDeferred := foldConstant(ctx, args[0])
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
@@ -109,7 +108,7 @@ func ifNullFoldHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression
 	return expr, false
 }
 
-func caseWhenHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, bool) {
+func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	args, l := expr.GetArgs(), len(expr.GetArgs())
 	var isDeferred, isDeferredConst bool
 	for i := 0; i < l-1; i += 2 {
@@ -151,7 +150,7 @@ func caseWhenHandler(ctx sessionctx.Context, expr *ScalarFunction) (Expression, 
 	return expr, isDeferredConst
 }
 
-func foldConstant(ctx sessionctx.Context, expr Expression) (Expression, bool) {
+func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {

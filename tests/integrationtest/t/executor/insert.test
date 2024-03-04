@@ -942,32 +942,6 @@ insert into tt1 values(4556414e723532);
 select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888;
 show warnings;
 
-# TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
-set global tidb_disable_txn_auto_retry=false;
-drop table if exists t;
-create table t(a double auto_increment key, b int);
-insert into t values (146576794, 1);
-
-connect (conn1, localhost, root,, executor__insert);
-begin optimistic;
-insert into t(b) select 1;
-
-connect (conn2, localhost, root,, executor__insert);
-begin optimistic;
-insert into t values (146576795, 1);
-insert into t values (146576796, 1);
-commit;
-disconnect conn2;
-connection conn1;
-
-## since the origin auto-id (146576795) is cached in retryInfo, it will be fetched again to do the retry again,
-## which will duplicate with what has been inserted in conn1.
--- error 1062
-commit;
-disconnect conn1;
-
-set global tidb_disable_txn_auto_retry=default;
-
 # TestIssue38950
 drop table if exists t;
 create table t (id smallint auto_increment primary key);

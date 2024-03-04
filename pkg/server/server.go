@@ -132,7 +132,7 @@ type Server struct {
 	health         *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
-	internalSessions    map[interface{}]struct{}
+	internalSessions    map[any]struct{}
 	autoIDService       *autoid.Service
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
@@ -242,7 +242,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		concurrentLimiter:      NewTokenLimiter(cfg.TokenLimit),
 		clients:                make(map[uint64]*clientConn),
 		ConnNumByResourceGroup: make(map[string]int),
-		internalSessions:       make(map[interface{}]struct{}, 100),
+		internalSessions:       make(map[any]struct{}, 100),
 		health:                 uatomic.NewBool(true),
 		inShutdownMode:         uatomic.NewBool(false),
 		printMDLLogTime:        time.Now(),
@@ -420,13 +420,16 @@ func (s *Server) reportConfig() {
 }
 
 // Run runs the server.
-func (s *Server) Run() error {
+func (s *Server) Run(dom *domain.Domain) error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
+	}
+	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
+		<-dom.StatsHandle().InitStatsDone
 	}
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
@@ -737,10 +740,6 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		connType = variable.ConnTypeTLS
 		sslVersionNum := cc.tlsConn.ConnectionState().Version
 		switch sslVersionNum {
-		case tls.VersionTLS10:
-			sslVersion = "TLSv1.0"
-		case tls.VersionTLS11:
-			sslVersion = "TLSv1.1"
 		case tls.VersionTLS12:
 			sslVersion = "TLSv1.2"
 		case tls.VersionTLS13:
@@ -1008,7 +1007,7 @@ func (s *Server) GetAutoAnalyzeProcID() uint64 {
 
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
-func (s *Server) StoreInternalSession(se interface{}) {
+func (s *Server) StoreInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	s.internalSessions[se] = struct{}{}
 	s.sessionMapMutex.Unlock()
@@ -1016,7 +1015,7 @@ func (s *Server) StoreInternalSession(se interface{}) {
 
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
-func (s *Server) DeleteInternalSession(se interface{}) {
+func (s *Server) DeleteInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	delete(s.internalSessions, se)
 	s.sessionMapMutex.Unlock()
@@ -1040,7 +1039,7 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 }
 
 // InternalSessionExists is used for test
-func (s *Server) InternalSessionExists(se interface{}) bool {
+func (s *Server) InternalSessionExists(se any) bool {
 	s.sessionMapMutex.Lock()
 	_, ok := s.internalSessions[se]
 	s.sessionMapMutex.Unlock()

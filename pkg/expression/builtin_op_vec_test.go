@@ -100,12 +100,12 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 // the construction time. If this slice is exhausted, it falls back to
 // the fallback generator.
 type givenValsGener struct {
-	given    []interface{}
+	given    []any
 	idx      int
 	fallback dataGenerator
 }
 
-func (g *givenValsGener) gen() interface{} {
+func (g *givenValsGener) gen() any {
 	if g.idx >= len(g.given) {
 		return g.fallback.gen()
 	}
@@ -114,7 +114,7 @@ func (g *givenValsGener) gen() interface{} {
 	return v
 }
 
-func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *givenValsGener {
+func makeGivenValsOrDefaultGener(vals []any, eType types.EvalType) *givenValsGener {
 	g := &givenValsGener{}
 	g.given = vals
 	g.fallback = newDefaultGener(0.2, eType)
@@ -123,7 +123,7 @@ func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *give
 
 func makeBinaryLogicOpDataGeners() []dataGenerator {
 	// TODO: rename this to makeBinaryOpDataGenerator, since the BIT ops are also using it?
-	pairs := [][]interface{}{
+	pairs := [][]any{
 		{nil, nil},
 		{0, nil},
 		{nil, 0},
@@ -136,7 +136,7 @@ func makeBinaryLogicOpDataGeners() []dataGenerator {
 		{-1, 1},
 	}
 
-	maybeToInt64 := func(v interface{}) interface{} {
+	maybeToInt64 := func(v any) any {
 		if v == nil {
 			return nil
 		}
@@ -144,8 +144,8 @@ func makeBinaryLogicOpDataGeners() []dataGenerator {
 	}
 
 	n := len(pairs)
-	arg0s := make([]interface{}, n)
-	arg1s := make([]interface{}, n)
+	arg0s := make([]any, n)
+	arg1s := make([]any, n)
 	for i, p := range pairs {
 		arg0s[i] = maybeToInt64(p[0])
 		arg1s[i] = maybeToInt64(p[1])

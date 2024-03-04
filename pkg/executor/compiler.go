@@ -111,9 +111,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, stmtCtx.ResourceGroup)
+		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, stmtCtx.ResourceGroup)
+		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
@@ -129,7 +129,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
 	}
 	// Use cached plan if possible.
 	if pointGetPlanShortPathOK {

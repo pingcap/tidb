@@ -53,7 +53,7 @@ func TestSignedAutoid(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -65,15 +65,15 @@ func TestSignedAutoid(t *testing.T) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: model.NewCIStr("t3")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 5, Name: model.NewCIStr("t3")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -258,7 +258,7 @@ func TestUnsignedAutoid(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -270,15 +270,15 @@ func TestUnsignedAutoid(t *testing.T) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: model.NewCIStr("t3")})
+		err = m.CreateTableOrView(1, "", &model.TableInfo{ID: 5, Name: model.NewCIStr("t3")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -416,7 +416,7 @@ func TestUnsignedAutoid(t *testing.T) {
 // TestConcurrentAlloc is used for the test that
 // multiple allocators allocate ID with the same table ID concurrently.
 func TestConcurrentAlloc(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -434,7 +434,7 @@ func TestConcurrentAlloc(t *testing.T) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, "a", &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -507,7 +507,7 @@ func TestConcurrentAlloc(t *testing.T) {
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
 func TestRollbackAlloc(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -520,7 +520,7 @@ func TestRollbackAlloc(t *testing.T) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, "a", &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -558,7 +558,7 @@ func TestAllocComputationIssue(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDCustomize"))
 	}()
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -570,9 +570,9 @@ func TestAllocComputationIssue(t *testing.T) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(1, "a", &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, "a", &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -609,7 +609,7 @@ func TestAllocComputationIssue(t *testing.T) {
 }
 
 func TestIssue40584(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -621,7 +621,7 @@ func TestIssue40584(t *testing.T) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(1, "a", &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})

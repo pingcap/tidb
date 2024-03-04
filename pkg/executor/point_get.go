@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -57,10 +58,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 
 	e := &PointGetExecutor{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
-		txnScope:         b.txnScope,
-		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
+		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		indexUsageReporter: b.buildIndexUsageReporter(p),
+		txnScope:           b.txnScope,
+		readReplicaScope:   b.readReplicaScope,
+		isStaleness:        b.isStaleness,
 	}
 
 	e.SetInitCap(1)
@@ -116,11 +118,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 // PointGetExecutor executes point select query.
 type PointGetExecutor struct {
 	exec.BaseExecutor
+	indexUsageReporter *exec.IndexUsageReporter
 
 	tblInfo          *model.TableInfo
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
-	partInfo         *model.PartitionDefinition
+	partitionDef     *model.PartitionDefinition
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -162,7 +165,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	e.partInfo = p.PartitionInfo
+	e.partitionDef = p.PartitionDef
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 }
@@ -200,12 +203,14 @@ func (e *PointGetExecutor) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.idxInfo != nil && e.tblInfo != nil {
-		actRows := int64(0)
-		if e.RuntimeStats() != nil {
-			actRows = e.RuntimeStats().GetActRows()
+	if e.indexUsageReporter != nil && e.idxInfo != nil {
+		tableID := e.tblInfo.ID
+		physicalTableID := tableID
+		if e.partitionDef != nil {
+			physicalTableID = e.partitionDef.ID
 		}
-		e.Ctx().StoreIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
+		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
+		e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
 	}
 	e.done = false
 	return nil
@@ -221,8 +226,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	var tblID int64
 	var err error
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partitionDef != nil {
+		tblID = e.partitionDef.ID
 	} else {
 		tblID = e.tblInfo.ID
 	}
@@ -323,10 +328,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
 			!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
 			return (&consistency.Reporter{
-				HandleEncode: func(handle kv.Handle) kv.Key {
+				HandleEncode: func(kv.Handle) kv.Key {
 					return key
 				},
-				IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+				IndexEncode: func(*consistency.RecordData) kv.Key {
 					return e.idxKey
 				},
 				Tbl:  e.tblInfo,
@@ -347,7 +352,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
-		e.Schema().Columns, e.columns, e.Ctx(), req)
+		e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
@@ -510,8 +515,8 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblName string
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partitionDef != nil {
+		tblID = e.partitionDef.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 		partName = partInfo.Name.String()
@@ -632,7 +637,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
 			colInfo := getColInfoByID(tblInfo, col.ID)
-			d, err1 := table.GetColOriginDefaultValue(sctx, colInfo)
+			d, err1 := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 			if err1 != nil {
 				return err1
 			}

@@ -86,6 +86,9 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	oldTblID := oldTblInfo.Meta().ID
+	oldDBID := oldTblInfo.Meta().DBID
+	require.NotEqual(t, oldDBID, 0)
+
 	tk.MustExec("create database test1")
 	tk.MustExec("use test1")
 	tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
@@ -93,6 +96,9 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID, newTblInfo.Meta().ID)
+	require.NotEqual(t, newTblInfo.Meta().DBID, oldDBID)
+	require.NotEqual(t, newTblInfo.Meta().DBID, 0)
+	oldDBID = newTblInfo.Meta().DBID
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustExec("use test")
 
@@ -107,6 +113,7 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID, newTblInfo.Meta().ID)
+	require.Equal(t, oldDBID, newTblInfo.Meta().DBID)
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
 	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	require.False(t, isExist)

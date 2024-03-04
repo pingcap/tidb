@@ -19,9 +19,11 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -29,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -37,18 +39,17 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
-func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
-	sc := sctx.GetSessionVars().StmtCtx
-	l, err := codec.EncodeKey(sc.TimeZone(), nil, low.value)
-	err = sc.HandleError(err)
+func validInterval(ec errctx.Context, loc *time.Location, low, high *point) (bool, error) {
+	l, err := codec.EncodeKey(loc, nil, low.value)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if low.excl {
 		l = kv.Key(l).PrefixNext()
 	}
-	r, err := codec.EncodeKey(sc.TimeZone(), nil, high.value)
-	err = sc.HandleError(err)
+	r, err := codec.EncodeKey(loc, nil, high.value)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -60,7 +61,7 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 
 // convertPoints does some preprocessing on rangePoints to make them ready to build ranges. Preprocessing includes converting
 // points to the specified type, validating intervals and skipping impossible intervals.
-func convertPoints(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
+func convertPoints(sctx planctx.PlanContext, rangePoints []*point, newTp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
 	i := 0
 	numPoints := len(rangePoints)
 	var minValueDatum, maxValueDatum types.Datum
@@ -100,7 +101,8 @@ func convertPoints(sctx sessionctx.Context, rangePoints []*point, newTp *types.F
 		if skipNull && endPoint.value.Kind() == types.KindNull {
 			continue
 		}
-		less, err := validInterval(sctx, startPoint, endPoint)
+		sc := sctx.GetSessionVars().StmtCtx
+		less, err := validInterval(sc.ErrCtx(), sc.TimeZone(), startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -124,7 +126,7 @@ func estimateMemUsageForPoints2Ranges(rangePoints []*point) int64 {
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2Ranges(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+func points2Ranges(sctx planctx.PlanContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
 	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, mysql.HasNotNullFlag(newTp.GetFlag()), false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -154,7 +156,7 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, newTp *types.F
 	return ranges, false, nil
 }
 
-func convertPoint(sctx sessionctx.Context, point *point, newTp *types.FieldType) (*point, error) {
+func convertPoint(sctx planctx.PlanContext, point *point, newTp *types.FieldType) (*point, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
@@ -271,7 +273,7 @@ func estimateMemUsageForAppendPoints2Ranges(origin Ranges, rangePoints []*point)
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges after appending points exceeds
 // rangeMaxSize and the function rejects appending points to ranges.
-func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*point,
+func appendPoints2Ranges(sctx planctx.PlanContext, origin Ranges, rangePoints []*point,
 	newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
 	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, false, false)
 	if err != nil {
@@ -384,7 +386,7 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+func points2TableRanges(sctx planctx.PlanContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
 	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, true, true)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -410,7 +412,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, newTp *ty
 // buildColumnRange builds range from CNF conditions.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
-func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
+func buildColumnRange(accessConditions []expression.Expression, sctx planctx.PlanContext, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	rb := builder{sctx: sctx}
 	newTp := newFieldType(tp)
@@ -455,7 +457,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
-func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType,
+func BuildTableRange(accessConditions []expression.Expression, sctx planctx.PlanContext, tp *types.FieldType,
 	rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMaxSize)
 }
@@ -466,7 +468,7 @@ func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.C
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
-func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int,
+func BuildColumnRange(conds []expression.Expression, sctx planctx.PlanContext, tp *types.FieldType, colLen int,
 	rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
 	if len(conds) == 0 {
 		return FullRange(), nil, nil, nil
@@ -488,7 +490,10 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
-		tmpNewTp := convertStringFTToBinaryCollate(newTp[i])
+		tmpNewTp := newTp[i]
+		if d.convertToSortKey {
+			tmpNewTp = convertStringFTToBinaryCollate(tmpNewTp)
+		}
 		if i == 0 {
 			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
 		} else {
@@ -578,7 +583,7 @@ type sortRange struct {
 // For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
 // And this two can be merged as [a, max(b, d)].
 // Otherwise they aren't overlapped.
-func UnionRanges(sctx sessionctx.Context, ranges Ranges, mergeConsecutive bool) (Ranges, error) {
+func UnionRanges(sctx planctx.PlanContext, ranges Ranges, mergeConsecutive bool) (Ranges, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	if len(ranges) == 0 {
 		return nil, nil
@@ -725,7 +730,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 // 'points'. `col` is the target column to construct the Equal or In condition.
 // NOTE:
 // 1. 'points' should not be empty.
-func points2EqOrInCond(ctx sessionctx.Context, points []*point, col *expression.Column) expression.Expression {
+func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	// Constant and Column args should have same RetType, simply get from first arg
 	retType := col.GetType()

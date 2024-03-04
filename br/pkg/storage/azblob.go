@@ -580,6 +580,9 @@ func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName 
 	return s.DeleteFile(ctx, oldFileName)
 }
 
+// Close implements the ExternalStorage interface.
+func (*AzureBlobStorage) Close() {}
+
 type azblobObjectReader struct {
 	blobClient *blockblob.Client
 

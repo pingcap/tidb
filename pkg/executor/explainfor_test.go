@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,9 +84,9 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustQuery("explain analyze select * from t1;")
 	check()
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-	require.True(t, core.ErrAccessDenied.Equal(err))
+	require.True(t, plannererrors.ErrAccessDenied.Equal(err))
 	err = tkUser.ExecToErr("explain for connection 42")
-	require.True(t, core.ErrNoSuchThread.Equal(err))
+	require.True(t, plannererrors.ErrNoSuchThread.Equal(err))
 
 	tkRootProcess.Plan = nil
 	ps = []*util.ProcessInfo{tkRootProcess}

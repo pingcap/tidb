@@ -139,6 +139,9 @@ type Buffer struct {
 	curBlock      []byte
 	curBlockIdx   int
 	curIdx        int
+
+	smallObjOverhead      int
+	smallObjOverheadCache int
 }
 
 // BufferOption configures a buffer.
@@ -172,8 +175,38 @@ func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
 	return b
 }
 
-// Reset resets the buffer, the memory is still retained in this buffer.
+// smallObjOverheadBatch is the batch size to acquire memory from limiter. 256KB
+// can store 256KB/24B = 10922 []byte objects, or 256KB/12B = 21845 SliceLocation
+// objects.
+const smallObjOverheadBatch = 256 * 1024
+
+// recordSmallObjOverhead records the memory cost of []byte or SliceLocation into
+// pool's limiter. The caller will ensure the pool's limiter is not nil.
+func (b *Buffer) recordSmallObjOverhead(n int) {
+	if n > b.smallObjOverheadCache {
+		b.pool.limiter.Acquire(smallObjOverheadBatch)
+		b.smallObjOverheadCache += smallObjOverheadBatch
+		b.smallObjOverhead += smallObjOverheadBatch
+	}
+	b.smallObjOverheadCache -= n
+}
+
+// releaseSmallObjOverhead releases the memory cost of []byte or SliceLocation
+// that are acquired from this Buffer before to the pool's limiter. The caller
+// will ensure the pool's limiter is not nil.
+func (b *Buffer) releaseSmallObjOverhead() {
+	b.pool.limiter.Release(b.smallObjOverhead)
+	b.smallObjOverhead = 0
+	b.smallObjOverheadCache = 0
+}
+
+// Reset resets the buffer, the memory is still retained in this buffer. Caller
+// must release the reference to the returned []byte or SliceLocation before
+// calling Reset.
 func (b *Buffer) Reset() {
+	if b.pool.limiter != nil {
+		b.releaseSmallObjOverhead()
+	}
 	if len(b.blocks) > 0 {
 		b.curBlock = b.blocks[0]
 		b.curBlockIdx = 0
@@ -181,8 +214,12 @@ func (b *Buffer) Reset() {
 	}
 }
 
-// Destroy releases all buffers to the pool.
+// Destroy releases all buffers to the pool. Caller must release the reference to
+// the returned []byte or SliceLocation before calling Destroy.
 func (b *Buffer) Destroy() {
+	if b.pool.limiter != nil {
+		b.releaseSmallObjOverhead()
+	}
 	for _, buf := range b.blocks {
 		b.pool.release(buf)
 	}
@@ -206,6 +243,9 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	}
 
 	bs, _ := b.allocBytesWithSliceLocation(n)
+	if bs != nil && b.pool.limiter != nil {
+		b.recordSmallObjOverhead(sizeOfSlice)
+	}
 	return bs
 }
 
@@ -217,6 +257,8 @@ type SliceLocation struct {
 	offset int32
 	length int32
 }
+
+var sizeOfSliceLocation = int(unsafe.Sizeof(SliceLocation{}))
 
 func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	if n > b.pool.blockSize {
@@ -245,7 +287,11 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 // we have a large number of slices in memory this can reduce memory occupation.
 // nil returned slice means allocation failed.
 func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
-	return b.allocBytesWithSliceLocation(n)
+	bs, loc := b.allocBytesWithSliceLocation(n)
+	if bs != nil && b.pool.limiter != nil {
+		b.recordSmallObjOverhead(sizeOfSliceLocation)
+	}
+	return bs, loc
 }
 
 func (b *Buffer) addBlock() {

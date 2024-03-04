@@ -38,11 +38,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	exec.BaseExecutor
+	indexUsageReporter *exec.IndexUsageReporter
 
 	tblInfo     *model.TableInfo
 	idxInfo     *model.IndexInfo
@@ -164,6 +166,12 @@ func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
+	if e.indexUsageReporter != nil && e.idxInfo != nil {
+		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
+		// We cannot distinguish how many rows are coming from each partition. Here, we calculate all index usages
+		// percentage according to the row counts for the whole table.
+		e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+	}
 	e.inited = 0
 	e.index = 0
 	return nil
@@ -193,7 +201,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.index++
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), req)
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
 	if err != nil {
 		return err
 	}

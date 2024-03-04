@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -345,13 +346,14 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 		originSQL := cols[0]
 		bindingSQL := cols[1]
 		enabled := cols[3]
+		newNormalizedSQL := parser.NormalizeForBinding(originSQL, true)
 		if strings.Compare(enabled, "enabled") == 0 {
 			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s", func() string {
 				if isSession {
 					return "SESSION"
 				}
 				return "GLOBAL"
-			}(), originSQL, bindingSQL)
+			}(), newNormalizedSQL, bindingSQL)
 			c := context.Background()
 			_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
 			if err != nil {

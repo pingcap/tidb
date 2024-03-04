@@ -16,9 +16,11 @@ package external
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -29,8 +31,10 @@ import (
 var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
-	ConcurrentReaderBufferSizePerConc = int(4 * size.MB)
-	readAllDataConcThreshold          = uint64(16)
+	ConcurrentReaderBufferSizePerConc = int(8 * size.MB)
+	// in readAllData, expected concurrency less than this value will not use
+	// concurrent reader.
+	readAllDataConcThreshold = uint64(4)
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
@@ -307,6 +311,8 @@ func (r *byteReader) reload() error {
 		case io.ErrUnexpectedEOF:
 			// The last batch.
 			r.curBuf[0] = r.curBuf[0][:n]
+		case context.Canceled:
+			return err
 		default:
 			r.logger.Warn("other error during read", zap.Error(err))
 			return err
@@ -323,6 +329,11 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 		zap.Int("dropBytes", r.concurrentReader.bufSizePerConc*(len(r.curBuf)-r.curBufIdx)-r.curBufOffset),
 		zap.Int("curBufIdx", r.curBufIdx),
 	)
+	failpoint.Inject("assertReloadAtMostOnce", func() {
+		if r.concurrentReader.reloadCnt > 1 {
+			panic(fmt.Sprintf("reloadCnt is %d", r.concurrentReader.reloadCnt))
+		}
+	})
 	r.concurrentReader.largeBufferPool.Destroy()
 	r.concurrentReader.largeBuf = nil
 	r.concurrentReader.now = false

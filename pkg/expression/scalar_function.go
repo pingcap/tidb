@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -163,7 +163,7 @@ func typeInferForNull(args []Expression) {
 // newFunctionImpl creates a new scalar function or constant.
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
-func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
+func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
 	defer func() {
 		if err == nil && ret != nil && checkOrInit != nil {
 			if sf, ok := ret.(*ScalarFunction); ok {
@@ -197,9 +197,9 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	}
 
 	if !ok {
-		db := ctx.GetSessionVars().CurrentDB
+		db := ctx.CurrentDB()
 		if db == "" {
-			return nil, errors.Trace(ErrNoDB)
+			return nil, errors.Trace(plannererrors.ErrNoDB)
 		}
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
@@ -270,22 +270,22 @@ func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
 }
 
 // NewFunctionWithInit creates a new scalar function with callback init function.
-func NewFunctionWithInit(ctx sessionctx.Context, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
+func NewFunctionWithInit(ctx BuildContext, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, 1, funcName, retType, init, args...)
 }
 
 // NewFunction creates a new scalar function or constant via a constant folding.
-func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func NewFunction(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, 1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
-func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func NewFunctionBase(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, 0, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionTryFold creates a new scalar function with trying constant folding.
-func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func NewFunctionTryFold(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, -1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
@@ -295,7 +295,7 @@ func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.
 // error, collation derivation error, special function with meta doesn't be initialized error and so on.
 // only threw the these internal error out, then we can debug and dig it out quickly rather than in a confusion
 // of index out of range / nil pointer error / function execution error.
-func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
+func NewFunctionInternal(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
 	terror.Log(errors.Trace(err))
 	return expr
@@ -390,7 +390,7 @@ func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
 	var (
-		res    interface{}
+		res    any
 		isNull bool
 	)
 	intest.AssertNotNil(ctx)
@@ -418,9 +418,8 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 		str, isNull, err = sf.EvalString(ctx, row)
 		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
-			if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-				err = sc.HandleTruncate(err)
-			}
+			tc := typeCtx(ctx)
+			err = tc.HandleTruncate(err)
 		} else {
 			res = str
 		}

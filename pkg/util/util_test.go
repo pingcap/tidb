@@ -40,7 +40,7 @@ func TestLogFormat(t *testing.T) {
 		DB:            "Database",
 		Info:          "select * from table where a > 1",
 		CurTxnStartTS: 23333,
-		StatsInfo: func(interface{}) map[string]uint64 {
+		StatsInfo: func(any) map[string]uint64 {
 			return nil
 		},
 		StmtCtx:           stmtctx.NewStmtCtx(),

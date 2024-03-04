@@ -31,8 +31,8 @@ func TestRestoreConfigAdjust(t *testing.T) {
 
 	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
-	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount)
-	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes)
+	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount.Value)
+	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes.Value)
 }
 
 type mockPDClient struct {
@@ -77,7 +77,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	cases := []struct {
 		cfgSchemas map[string]struct{}
 		cfgTables  map[string]struct{}
-		backupDBs  map[string]*utils.Database
+		backupDBs  map[string]*metautil.Database
 	}{
 		{
 			cfgSchemas: map[string]struct{}{
@@ -154,6 +154,18 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 				"__TiDB_BR_Temporary_mysql": {"tablE"},
 			}),
 		},
+		{
+			cfgSchemas: map[string]struct{}{
+				utils.EncloseName("sys"): {},
+			},
+			cfgTables: map[string]struct{}{
+				utils.EncloseDBAndTable("sys", "t"):  {},
+				utils.EncloseDBAndTable("sys", "t2"): {},
+			},
+			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
+				"__TiDB_BR_Temporary_sys": {"T", "T2"},
+			}),
+		},
 	}
 
 	cfg := &RestoreConfig{}
@@ -167,7 +179,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	}
 }
 
-func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*utils.Database {
+func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*metautil.Database {
 	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
@@ -236,7 +248,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 	err = store.WriteFile(ctx, metautil.MetaFile, data)
 	require.NoError(t, err)
 
-	dbs, err := utils.LoadBackupTables(
+	dbs, err := metautil.LoadBackupTables(
 		ctx,
 		metautil.NewMetaReader(
 			meta,

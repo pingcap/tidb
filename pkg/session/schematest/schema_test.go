@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -77,39 +75,6 @@ func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
 	tk1.MustExec("create table t1 (id int)")
 	tk2.MustExec("execute stmt using @a, @a")
 	tk2.MustExec("commit")
-
-	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk2.MustExec("begin")
-	tk1.MustExec("alter table t drop column b")
-	tk2.MustExec("execute stmt using @a, @a")
-	err := tk2.ExecToErr("commit")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), fmt.Sprintf("err %v", err))
-}
-
-func TestCommitWhenSchemaChanged(t *testing.T) {
-	store := createMockStoreForSchemaTest(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
-	tk1.MustExec("create table t (a int, b int)")
-
-	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk2.MustExec("begin")
-	tk2.MustExec("insert into t values (1, 1)")
-
-	tk1.MustExec("alter table t drop column b")
-
-	// When tk2 commit, it will find schema already changed.
-	tk2.MustExec("insert into t values (4, 4)")
-	err := tk2.ExecToErr("commit")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), fmt.Sprintf("err %v", err))
 }
 
 func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
@@ -132,76 +97,6 @@ func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
 	tk1.MustExec("delete from t")
 	tk1.MustExec("insert into t1 values (1)")
 	tk1.MustExec("commit")
-}
-
-func TestRetrySchemaChange(t *testing.T) {
-	store := createMockStoreForSchemaTest(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	setTxnTk.MustExec("set global tidb_enable_metadata_lock=0")
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
-	tk1.MustExec("create table t (a int primary key, b int)")
-	tk1.MustExec("insert into t values (1, 1)")
-
-	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set b = 5 where a = 1")
-
-	tk1.MustExec("alter table t add index b_i (b)")
-
-	run := false
-	hook := func() {
-		if !run {
-			tk1.MustExec("update t set b = 3 where a = 1")
-			run = true
-		}
-	}
-
-	// In order to cover a bug that statement history is not updated during retry.
-	// See https://github.com/pingcap/tidb/pull/5202
-	// Step1: when tk2 commit, it find schema changed and retry().
-	// Step2: during retry, hook() is called, tk1 update primary key.
-	// Step3: tk2 continue commit in retry() meet a retryable error(write conflict), retry again.
-	// Step4: tk2 retry() success, if it use the stale statement, data and index will inconsistent.
-	fpName := "github.com/pingcap/tidb/pkg/session/preCommitHook"
-	require.NoError(t, failpoint.Enable(fpName, "return"))
-	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
-
-	ctx := context.WithValue(context.Background(), "__preCommitHook", hook)
-	require.NoError(t, tk2.Session().CommitTxn(ctx))
-	tk1.MustQuery("select * from t where t.b = 5").Check(testkit.Rows("1 5"))
-}
-
-func TestRetryMissingUnionScan(t *testing.T) {
-	store := createMockStoreForSchemaTest(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
-	tk1.MustExec("create table t (a int primary key, b int unique, c int)")
-	tk1.MustExec("insert into t values (1, 1, 1)")
-
-	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set b = 1, c = 2 where b = 2")
-	tk2.MustExec("update t set b = 1, c = 2 where a = 1")
-
-	// Create a conflict to reproduces the bug that the second update statement in retry
-	// has a dirty table but doesn't use UnionScan.
-	tk1.MustExec("update t set b = 2 where a = 1")
-
-	tk2.MustExec("commit")
 }
 
 func TestTableReaderChunk(t *testing.T) {

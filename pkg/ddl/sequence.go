@@ -79,7 +79,7 @@ func createSequenceWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInf
 	} else {
 		sequenceBase = tbInfo.Sequence.Start + 1
 	}
-	return t.CreateSequenceAndSetSeqValue(schemaID, tbInfo, sequenceBase)
+	return t.CreateSequenceAndSetSeqValue(schemaID, job.SchemaName, tbInfo, sequenceBase)
 }
 
 func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {

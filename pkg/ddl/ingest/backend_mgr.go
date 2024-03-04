@@ -28,14 +28,27 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
-// BackendCtxMgr is used to manage the backend context.
+// BackendCtxMgr is used to manage the BackendCtx.
 type BackendCtxMgr interface {
 	CheckAvailable() (bool, error)
-	Register(ctx context.Context, unique bool, jobID int64, pdAddr string, resourceGroupName string,
-		instanceID string, useDistributedLock bool) (BackendCtx, error)
+	// Register uses jobID to identify the BackendCtx. If there's already a
+	// BackendCtx with the same jobID, it will be returned. Otherwise, a new
+	// BackendCtx will be created and returned.
+	Register(
+		ctx context.Context,
+		jobID int64,
+		unique bool,
+		etcdClient *clientv3.Client,
+		pdSvcDiscovery pd.ServiceDiscovery,
+		resourceGroupName string,
+		instanceID string,
+		useDistributedLock bool,
+	) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
 
@@ -108,62 +121,63 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 // Register creates a new backend and registers it to the backend context.
 func (m *litBackendCtxMgr) Register(
 	ctx context.Context,
-	unique bool,
 	jobID int64,
-	pdAddr string,
+	unique bool,
+	etcdClient *clientv3.Client,
+	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
 	instanceID string,
 	useDistributedLock bool,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
-	if !exist {
-		m.memRoot.RefreshConsumption()
-		ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
-		if !ok {
-			return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
-		}
-		cfg, err := genConfig(ctx, m.memRoot, jobID, unique)
-		if err != nil {
-			logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
-			return nil, err
-		}
-		cfg.Lightning.TiDB.PdAddr = pdAddr
-		bd, err := createLocalBackend(ctx, cfg, resourceGroupName)
-		if err != nil {
-			logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
-			return nil, err
-		}
-
-		bcCtx := newBackendContext(ctx, jobID, bd, cfg.Lightning, defaultImportantVariables,
-			m.memRoot, m.diskRoot, m.store, instanceID, useDistributedLock)
-		m.Store(jobID, bcCtx)
-
-		m.memRoot.Consume(StructSizeBackendCtx)
-		logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
-			zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
-			zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
-			zap.Bool("is unique index", unique))
-		return bcCtx, nil
+	if exist {
+		return bc, nil
 	}
-	return bc, nil
+
+	m.memRoot.RefreshConsumption()
+	ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
+	if !ok {
+		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
+	}
+	cfg, err := genConfig(ctx, m.memRoot, jobID, unique, resourceGroupName)
+	if err != nil {
+		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
+		return nil, err
+	}
+	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
+	if err != nil {
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
+		return nil, err
+	}
+
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, m.store, instanceID, useDistributedLock)
+	m.Store(jobID, bcCtx)
+
+	m.memRoot.Consume(StructSizeBackendCtx)
+	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
+		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
+		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
+		zap.Bool("is unique index", unique))
+	return bcCtx, nil
 }
 
-func createLocalBackend(ctx context.Context, cfg *Config, resourceGroupName string) (*local.Backend, error) {
-	tls, err := cfg.Lightning.ToTLS()
+func createLocalBackend(
+	ctx context.Context,
+	cfg *litConfig,
+	pdSvcDiscovery pd.ServiceDiscovery,
+) (*local.Backend, error) {
+	tls, err := cfg.lightning.ToTLS()
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
 		return nil, err
 	}
 
-	logutil.BgLogger().Info("create local backend for adding index", zap.String("category", "ddl-ingest"), zap.String("keyspaceName", cfg.KeyspaceName))
-	regionSizeGetter := &local.TableRegionSizeGetterImpl{
-		DB: nil,
-	}
+	logutil.BgLogger().Info("create local backend for adding index", zap.String("category", "ddl-ingest"), zap.String("keyspaceName", cfg.keyspaceName))
 	// We disable the switch TiKV mode feature for now,
 	// because the impact is not fully tested.
 	var raftKV2SwitchModeDuration time.Duration
-	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, resourceGroupName, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
-	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
+	backendConfig := local.NewBackendConfig(cfg.lightning, int(LitRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
+	return local.NewBackend(ctx, tls, backendConfig, pdSvcDiscovery)
 }
 
 const checkpointUpdateInterval = 10 * time.Minute

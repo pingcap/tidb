@@ -1192,7 +1192,7 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 	}
 	patChars, patTypes := stringutil.CompilePattern(search, escape)
 
-	result := make([]interface{}, 0)
+	result := make([]any, 0)
 	walkFn := func(fullpath JSONPathExpression, bj BinaryJSON) (stop bool, err error) {
 		if bj.TypeCode == JSONTypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
 			result = append(result, fullpath.String())

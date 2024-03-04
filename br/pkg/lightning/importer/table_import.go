@@ -849,7 +849,7 @@ ChunkLoop:
 		zap.Uint64("written", totalKVSize),
 	)
 
-	trySavePendingChunks := func(flushCtx context.Context) error {
+	trySavePendingChunks := func(context.Context) error {
 		checkFlushLock.Lock()
 		cnt := 0
 		for _, chunk := range flushPendingChunks {
@@ -951,7 +951,6 @@ func (tr *TableImporter) postProcess(
 
 	// alter table set auto_increment
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
-		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.ContainsAutoRandomBits() {
@@ -976,7 +975,6 @@ func (tr *TableImporter) postProcess(
 				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
 			}
 		}
-		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
 		if err = firstErr(err, saveCpErr); err != nil {
 			return false, errors.Trace(err)
@@ -1395,10 +1393,9 @@ func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
 
 	tblInfo := tr.tableInfo
-	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
 	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+		sqlStr := common.BuildDropIndexSQL(tblInfo.DB, tblInfo.Name, idxInfo)
 
 		logger.Info("drop index", zap.String("sql", sqlStr))
 

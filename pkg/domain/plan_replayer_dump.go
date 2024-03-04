@@ -152,7 +152,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 		schema = tne.curDB
 	}
 	table := t.Name
-	isView := tne.is.TableIsView(schema, table)
+	isView := infoschema.TableIsView(tne.is, schema, table)
 	if !isView {
 		return false, nil
 	}
@@ -593,14 +593,14 @@ func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, z
 	return nil
 }
 
-func dumpSessionBindRecords(records []*bindinfo.BindRecord, zw *zip.Writer) error {
+func dumpSessionBindRecords(records []bindinfo.Bindings, zw *zip.Writer) error {
 	sRows := make([][]string, 0)
 	for _, bindData := range records {
-		for _, hint := range bindData.Bindings {
+		for _, hint := range bindData {
 			sRows = append(sRows, []string{
-				bindData.OriginalSQL,
+				hint.OriginalSQL,
 				hint.BindSQL,
-				bindData.Db,
+				hint.Db,
 				hint.Status,
 				hint.CreateTime.String(),
 				hint.UpdateTime.String(),
@@ -694,7 +694,7 @@ func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string)
 	return nil
 }
 
-func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) (debugTraces []interface{}, err error) {
+func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) (debugTraces []any, err error) {
 	fw, err := zw.Create("explain.txt")
 	if err != nil {
 		return nil, errors.AddStack(err)
@@ -879,7 +879,7 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	return rows, nil
 }
 
-func dumpDebugTrace(zw *zip.Writer, debugTraces []interface{}) error {
+func dumpDebugTrace(zw *zip.Writer, debugTraces []any) error {
 	for i, trace := range debugTraces {
 		fw, err := zw.Create(fmt.Sprintf("debug_trace/debug_trace%d.json", i))
 		if err != nil {
@@ -893,7 +893,7 @@ func dumpDebugTrace(zw *zip.Writer, debugTraces []interface{}) error {
 	return nil
 }
 
-func dumpOneDebugTrace(w io.Writer, debugTrace interface{}) error {
+func dumpOneDebugTrace(w io.Writer, debugTrace any) error {
 	jsonEncoder := json.NewEncoder(w)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)

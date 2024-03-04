@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -37,7 +38,6 @@ type SQLBindExec struct {
 	collation    string
 	db           string
 	isGlobal     bool
-	isUniversal  bool // for universal binding
 	bindAst      ast.StmtNode
 	newStatus    string
 	source       string // by manual or from history, only in create stmt
@@ -99,15 +99,8 @@ func (e *SQLBindExec) dropSQLBindByDigest() error {
 }
 
 func (e *SQLBindExec) setBindingStatus() error {
-	var bindInfo *bindinfo.Binding
-	if e.bindSQL != "" {
-		bindInfo = &bindinfo.Binding{
-			BindSQL:   e.bindSQL,
-			Charset:   e.charset,
-			Collation: e.collation,
-		}
-	}
-	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.normdOrigSQL, bindInfo, e.newStatus)
+	_, sqlDigest := parser.NormalizeDigestForBinding(e.normdOrigSQL)
+	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.newStatus, sqlDigest.String())
 	if err == nil && !ok {
 		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
@@ -116,7 +109,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 }
 
 func (e *SQLBindExec) setBindingStatusByDigest() error {
-	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatusByDigest(e.newStatus, e.sqlDigest)
+	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.newStatus, e.sqlDigest)
 	if err == nil && !ok {
 		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
@@ -136,31 +129,22 @@ func (e *SQLBindExec) createSQLBind() error {
 		e.Ctx().GetSessionVars().StmtCtx = saveStmtCtx
 	}()
 
-	bindingType := bindinfo.TypeNormal
-	if e.isUniversal {
-		bindingType = bindinfo.TypeUniversal
-	}
-
-	bindInfo := bindinfo.Binding{
-		BindSQL:    e.bindSQL,
-		Charset:    e.charset,
-		Collation:  e.collation,
-		Status:     bindinfo.Enabled,
-		Source:     e.source,
-		SQLDigest:  e.sqlDigest,
-		PlanDigest: e.planDigest,
-		Type:       bindingType,
-	}
-	record := &bindinfo.BindRecord{
+	binding := bindinfo.Binding{
 		OriginalSQL: e.normdOrigSQL,
 		Db:          e.db,
-		Bindings:    []bindinfo.Binding{bindInfo},
+		BindSQL:     e.bindSQL,
+		Charset:     e.charset,
+		Collation:   e.collation,
+		Status:      bindinfo.Enabled,
+		Source:      e.source,
+		SQLDigest:   e.sqlDigest,
+		PlanDigest:  e.planDigest,
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		return handle.CreateSessionBinding(e.Ctx(), record)
+		return handle.CreateSessionBinding(e.Ctx(), binding)
 	}
-	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), record)
+	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), binding)
 }
 
 func (e *SQLBindExec) flushBindings() error {

@@ -86,9 +86,9 @@ type RunawayRecord struct {
 }
 
 // GenRunawayQueriesStmt generates statement with given RunawayRecords.
-func GenRunawayQueriesStmt(records []*RunawayRecord) (string, []interface{}) {
+func GenRunawayQueriesStmt(records []*RunawayRecord) (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, len(records)*7)
+	params := make([]any, 0, len(records)*7)
 	builder.WriteString("insert into mysql.tidb_runaway_queries VALUES ")
 	for count, r := range records {
 		if count > 0 {
@@ -130,9 +130,9 @@ func writeInsert(builder *strings.Builder, tableName string) {
 }
 
 // GenInsertionStmt is used to generate insertion sql.
-func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
+func (r *QuarantineRecord) GenInsertionStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, 6)
+	params := make([]any, 0, 6)
 	writeInsert(&builder, RunawayWatchTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
@@ -150,9 +150,9 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
 }
 
 // GenInsertionDoneStmt is used to generate insertion sql for runaway watch done record.
-func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
+func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, 9)
+	params := make([]any, 0, 9)
 	writeInsert(&builder, RunawayWatchDoneTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
@@ -172,9 +172,9 @@ func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
 }
 
 // GenDeletionStmt is used to generate deletion sql.
-func (r *QuarantineRecord) GenDeletionStmt() (string, []interface{}) {
+func (r *QuarantineRecord) GenDeletionStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, 1)
+	params := make([]any, 0, 1)
 	builder.WriteString("delete from ")
 	builder.WriteString(RunawayWatchTableName)
 	builder.WriteString(" where id = %?")
@@ -228,12 +228,12 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		activeGroup:           make(map[string]int64),
 		metricsMap:            generic.NewSyncMap[string, prometheus.Counter](8),
 	}
-	m.insertionCancel = watchList.OnInsertion(func(ctx context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
+	m.insertionCancel = watchList.OnInsertion(func(_ context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
 		m.activeLock.Lock()
 		m.activeGroup[i.Value().ResourceGroupName]++
 		m.activeLock.Unlock()
 	})
-	m.evictionCancel = watchList.OnEviction(func(ctx context.Context, er ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
+	m.evictionCancel = watchList.OnEviction(func(_ context.Context, _ ttlcache.EvictionReason, i *ttlcache.Item[string, *QuarantineRecord]) {
 		m.activeLock.Lock()
 		m.activeGroup[i.Value().ResourceGroupName]--
 		m.activeLock.Unlock()
@@ -499,7 +499,8 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	marked := r.marked.Load()
 	if !marked {
 		// note: now we don't check whether query is in watch list again.
-		until := time.Until(r.deadline)
+		now := time.Now()
+		until := r.deadline.Sub(now)
 		if until > 0 {
 			if r.setting.Action == rmpb.RunawayAction_Kill {
 				// if the execution time is close to the threshold, set a timeout
@@ -511,7 +512,6 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		}
 		// execution time exceeds the threshold, mark the query as runaway
 		if r.marked.CompareAndSwap(false, true) {
-			now := time.Now()
 			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
 			r.markQuarantine(&now)
 		}
@@ -529,20 +529,26 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	}
 }
 
-// AfterCopRequest checks runaway after receiving coprocessor response.
-func (r *RunawayChecker) AfterCopRequest() {
-	if r.setting == nil {
-		return
+// CheckCopRespError checks TiKV error after receiving coprocessor response.
+func (r *RunawayChecker) CheckCopRespError(err error) error {
+	if err == nil || r.setting == nil || r.setting.Action != rmpb.RunawayAction_Kill {
+		return err
 	}
-	// Do not perform action here as it may be the last cop request and just let it finish. If it's not the last cop request, action would be performed in `BeforeCopRequest` when handling the next cop request.
-	// Here only marks the query as runaway
-	if !r.marked.Load() && r.deadline.Before(time.Now()) {
-		if r.marked.CompareAndSwap(false, true) {
+	if strings.HasPrefix(err.Error(), "Coprocessor task terminated due to exceeding the deadline") {
+		if !r.marked.Load() {
 			now := time.Now()
-			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-			r.markQuarantine(&now)
+			if r.deadline.Before(now) && r.marked.CompareAndSwap(false, true) {
+				r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
+				r.markQuarantine(&now)
+				return exeerrors.ErrResourceGroupQueryRunawayInterrupted
+			}
+		}
+		// Due to concurrency, check again.
+		if r.marked.Load() {
+			return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 		}
 	}
+	return err
 }
 
 func (r *RunawayChecker) markQuarantine(now *time.Time) {

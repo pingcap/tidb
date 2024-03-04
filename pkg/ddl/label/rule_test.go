@@ -75,13 +75,13 @@ func TestReset(t *testing.T) {
 	require.Equal(t, "t1", rule.Labels[2].Value)
 	require.Equal(t, rule.Index, 2)
 
-	r := rule.Data.([]interface{})[0].(map[string]string)
+	r := rule.Data.([]any)[0].(map[string]string)
 	require.Equal(t, "7480000000000000ff0100000000000000f8", r["start_key"])
 	require.Equal(t, "7480000000000000ff0200000000000000f8", r["end_key"])
-	r = rule.Data.([]interface{})[1].(map[string]string)
+	r = rule.Data.([]any)[1].(map[string]string)
 	require.Equal(t, "7480000000000000ff0200000000000000f8", r["start_key"])
 	require.Equal(t, "7480000000000000ff0300000000000000f8", r["end_key"])
-	r = rule.Data.([]interface{})[2].(map[string]string)
+	r = rule.Data.([]any)[2].(map[string]string)
 	require.Equal(t, "7480000000000000ff0300000000000000f8", r["start_key"])
 	require.Equal(t, "7480000000000000ff0400000000000000f8", r["end_key"])
 
@@ -97,7 +97,7 @@ func TestReset(t *testing.T) {
 	require.Equal(t, "p2", rule.Labels[3].Value)
 	require.Equal(t, rule.Index, 3)
 
-	r = r2.Data.([]interface{})[0].(map[string]string)
+	r = r2.Data.([]any)[0].(map[string]string)
 	require.Equal(t, "7480000000000000ff0200000000000000f8", r["start_key"])
 	require.Equal(t, "7480000000000000ff0300000000000000f8", r["end_key"])
 

@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -659,14 +659,14 @@ create table small_table_inject_pd_with_partition(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p2, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 	))
-	rows := [][]interface{}{
+	rows := [][]any{
 		{"global", "a"},
 		{"p0", "a"},
 		{"p1", "a"},
 		{"p2", "a"},
 	}
 	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 'small_table_inject_pd_with_partition' and last_analyzed_at is not null").Sort().CheckAt([]int{2, 3}, rows)
-	rows = [][]interface{}{
+	rows = [][]any{
 		{"global", "0", "3"},
 		{"p0", "0", "1"},
 		{"p1", "0", "1"},
@@ -689,11 +689,11 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := autoanalyze.AutoAnalyzeMinCnt
+	originalVal3 := exec.AutoAnalyzeMinCnt
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originalVal3
+		exec.AutoAnalyzeMinCnt = originalVal3
 	}()
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	exec.AutoAnalyzeMinCnt = 0
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1031,11 +1031,11 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := autoanalyze.AutoAnalyzeMinCnt
+	originalVal3 := exec.AutoAnalyzeMinCnt
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originalVal3
+		exec.AutoAnalyzeMinCnt = originalVal3
 	}()
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	exec.AutoAnalyzeMinCnt = 0
 	originalVal4 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal4))
@@ -1379,24 +1379,24 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
-				require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
+				require.Equal(t, []any{"test", "t", "global", "a"}, rows[0][:4])
 				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
 			}
 
 			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 			require.Equal(t, 6, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
-			require.Equal(t, []interface{}{"test", "t", "global", "c"}, rows[1][:4])
-			require.Equal(t, []interface{}{"test", "t", "p0", "a"}, rows[2][:4])
-			require.Equal(t, []interface{}{"test", "t", "p0", "c"}, rows[3][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "a"}, rows[4][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "c"}, rows[5][:4])
+			require.Equal(t, []any{"test", "t", "global", "a"}, rows[0][:4])
+			require.Equal(t, []any{"test", "t", "global", "c"}, rows[1][:4])
+			require.Equal(t, []any{"test", "t", "p0", "a"}, rows[2][:4])
+			require.Equal(t, []any{"test", "t", "p0", "c"}, rows[3][:4])
+			require.Equal(t, []any{"test", "t", "p1", "a"}, rows[4][:4])
+			require.Equal(t, []any{"test", "t", "p1", "c"}, rows[5][:4])
 
 			rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort().Rows()
 			require.Equal(t, 3, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "global", "0", "20"}, append(rows[0][:3], rows[0][4:]...))
-			require.Equal(t, []interface{}{"test", "t", "p0", "0", "9"}, append(rows[1][:3], rows[1][4:]...))
-			require.Equal(t, []interface{}{"test", "t", "p1", "0", "11"}, append(rows[2][:3], rows[2][4:]...))
+			require.Equal(t, []any{"test", "t", "global", "0", "20"}, append(rows[0][:3], rows[0][4:]...))
+			require.Equal(t, []any{"test", "t", "p0", "0", "9"}, append(rows[1][:3], rows[1][4:]...))
+			require.Equal(t, []any{"test", "t", "p1", "0", "11"}, append(rows[2][:3], rows[2][4:]...))
 
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
@@ -1503,21 +1503,21 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
-				require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
+				require.Equal(t, []any{"test", "t", "global", "a"}, rows[0][:4])
 				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
 			}
 
 			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 			require.Equal(t, 4, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "p0", "a"}, rows[0][:4])
-			require.Equal(t, []interface{}{"test", "t", "p0", "c"}, rows[1][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "a"}, rows[2][:4])
-			require.Equal(t, []interface{}{"test", "t", "p1", "c"}, rows[3][:4])
+			require.Equal(t, []any{"test", "t", "p0", "a"}, rows[0][:4])
+			require.Equal(t, []any{"test", "t", "p0", "c"}, rows[1][:4])
+			require.Equal(t, []any{"test", "t", "p1", "a"}, rows[2][:4])
+			require.Equal(t, []any{"test", "t", "p1", "c"}, rows[3][:4])
 
 			rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort().Rows()
 			require.Equal(t, 2, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "p0", "0", "9"}, append(rows[0][:3], rows[0][4:]...))
-			require.Equal(t, []interface{}{"test", "t", "p1", "0", "11"}, append(rows[1][:3], rows[1][4:]...))
+			require.Equal(t, []any{"test", "t", "p0", "0", "9"}, append(rows[0][:3], rows[0][4:]...))
+			require.Equal(t, []any{"test", "t", "p1", "0", "11"}, append(rows[1][:3], rows[1][4:]...))
 
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
 				// db, tbl, part, col, is_idx, value, count
@@ -1636,7 +1636,7 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 					"test t  c 0 1 3 1 5 5 0"))
 			rows = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'").Rows()
 			require.Equal(t, 1, len(rows))
-			require.Equal(t, []interface{}{"test", "t", "s1", "[b,c]", "correlation", "1.000000"}, rows[0][:len(rows[0])-1])
+			require.Equal(t, []any{"test", "t", "s1", "[b,c]", "correlation", "1.000000"}, rows[0][:len(rows[0])-1])
 		}(val)
 	}
 }
@@ -1884,9 +1884,9 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
+		exec.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -1967,9 +1967,9 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
+		exec.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -2062,7 +2062,7 @@ func TestAnalyzeJob(t *testing.T) {
 		executor.StartAnalyzeJob(se, job)
 		ctx := context.WithValue(context.Background(), executor.AnalyzeProgressTest, 100)
 		rows = tk.MustQueryWithContext(ctx, "show analyze status").Rows()
-		checkTime := func(val interface{}) {
+		checkTime := func(val any) {
 			str, ok := val.(string)
 			require.True(t, ok)
 			_, err := time.Parse(time.DateTime, str)
@@ -2722,12 +2722,12 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 		"3 0",
 	))
 
-	originalVal1 := autoanalyze.AutoAnalyzeMinCnt
+	originalVal1 := exec.AutoAnalyzeMinCnt
 	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	exec.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originalVal1
+		exec.AutoAnalyzeMinCnt = originalVal1
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 
@@ -2829,7 +2829,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"index ij_char((cast(j->'$.char' as char(50) array)))" +
 		")")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	jsonData := []map[string]interface{}{
+	jsonData := []map[string]any{
 		{
 			"signed":   []int64{1, 2, 300, 300, 0, 4, 5, -40000},
 			"unsigned": []uint64{0, 3, 4, 600, 12},
@@ -2956,30 +2956,30 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 3.2. emulate the background async loading
 	require.NoError(t, h.LoadNeededHistograms())
 	// 3.3. now, stats on all indexes should be loaded
-	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_signed) */ * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
+		"IndexMerge 27.00 root  type: union",
+		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
-	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_unsigned) */* from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
+		"IndexMerge 18.00 root  type: union",
+		"├─IndexRangeScan(Build) 18.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 18.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
-	tk.MustQuery("explain format = brief select * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_double) */ * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
 		"TableReader 21.60 root  data:Selection",
 		"└─Selection 21.60 cop[tikv]  json_memberof(cast(10.01, json BINARY), json_extract(test.t.j, \"$.dbl\"))",
 		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
-	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_binary) */ * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
+		"IndexMerge 14.83 root  type: union",
+		"├─IndexRangeScan(Build) 14.83 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 14.83 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
-	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_char) */ * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
+		"IndexMerge 13.50 root  type: union",
+		"├─IndexRangeScan(Build) 13.50 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 13.50 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 
 	// 3.4. clean up the stats and re-analyze the table
@@ -2988,24 +2988,24 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 3.5. turn on the sync loading, stats on mv indexes should be loaded
 	tk.MustExec("set session tidb_stats_load_sync_wait = 1000")
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"IndexMerge 3.84 root  type: union",
+		"├─IndexRangeScan(Build) 3.84 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 3.84 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"IndexMerge 3.60 root  type: union",
+		"├─IndexRangeScan(Build) 3.60 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 3.60 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"IndexMerge 1.55 root  type: union",
+		"├─IndexRangeScan(Build) 1.55 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 1.55 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"IndexMerge 1.93 root  type: union",
+		"├─IndexRangeScan(Build) 1.93 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 1.93 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 
 	// 4. check stats content in the memory
@@ -3024,59 +3024,59 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	tk.MustQuery("show stats_topn").Check(testkit.Rows(
 		// db_name, table_name, partition_name, column_name, is_index, value, count
 		"test t  ia 1 1 27",
-		"test t  ij_signed 1 -40000 16",
-		"test t  ij_signed 1 -300 1",
-		"test t  ij_signed 1 -5 11",
+		"test t  ij_signed 1 0 27",
+		"test t  ij_signed 1 1 27",
+		"test t  ij_signed 1 2 27",
 		"test t  ij_unsigned 1 0 27",
 		"test t  ij_unsigned 1 3 27",
 		"test t  ij_unsigned 1 4 27",
 		"test t  ij_double 1 -21.5 27",
-		"test t  ij_double 1 -12.000005 8",
 		"test t  ij_double 1 0 27",
-		"test t  ij_binary 1 0000 26",
-		"test t  ij_binary 1 1234 19",
-		"test t  ij_binary 1 3796 1",
-		"test t  ij_char 1 !@#$ 24",
-		"test t  ij_char 1 %*$%#@qwe 2",
-		"test t  ij_char 1 %*asdf@ 1",
+		"test t  ij_double 1 2.15 27",
+		"test t  ij_binary 1 aaaaaa 27",
+		"test t  ij_binary 1 bbbb 27",
+		"test t  ij_binary 1 ccc 27",
+		"test t  ij_char 1 aaa 27",
+		"test t  ij_char 1 asdf 27",
+		"test t  ij_char 1 cccccc 27",
 	))
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows(
 		// db_name, table_name, partition_name, column_name, is_index, bucket_id, count, repeats, lower_bound, upper_bound, ndv
-		"test t  ij_signed 1 0 27 27 0 0 0",
-		"test t  ij_signed 1 1 54 27 1 1 0",
-		"test t  ij_signed 1 2 81 27 2 2 0",
-		"test t  ij_signed 1 3 107 26 4 4 0",
-		"test t  ij_signed 1 4 123 16 5 5 0",
-		"test t  ij_signed 1 5 124 1 100 100 0",
-		"test t  ij_signed 1 6 151 27 300 300 0",
-		"test t  ij_signed 1 7 162 11 13245 13245 0",
+		"test t  ij_signed 1 0 16 16 -40000 -40000 0",
+		"test t  ij_signed 1 1 17 1 -300 -300 0",
+		"test t  ij_signed 1 2 28 11 -5 -5 0",
+		"test t  ij_signed 1 3 54 26 4 4 0",
+		"test t  ij_signed 1 4 70 16 5 5 0",
+		"test t  ij_signed 1 5 71 1 100 100 0",
+		"test t  ij_signed 1 6 98 27 300 300 0",
+		"test t  ij_signed 1 7 109 11 13245 13245 0",
 		"test t  ij_unsigned 1 0 16 16 12 12 0",
 		"test t  ij_unsigned 1 1 43 27 600 600 0",
 		"test t  ij_unsigned 1 2 54 11 3112 3112 0",
-		"test t  ij_double 1 0 19 19 0.000005 0.000005 0",
-		"test t  ij_double 1 1 46 27 2.15 2.15 0",
-		"test t  ij_double 1 2 73 27 10.555555 10.555555 0",
-		"test t  ij_double 1 3 92 19 10.9876 10.9876 0",
-		"test t  ij_binary 1 0 8 8 5678 5678 0",
-		"test t  ij_binary 1 1 35 27 aaaaaa aaaaaa 0",
-		"test t  ij_binary 1 2 59 24 asdf asdf 0",
-		"test t  ij_binary 1 3 86 27 bbbb bbbb 0",
-		"test t  ij_binary 1 4 113 27 ccc ccc 0",
-		"test t  ij_binary 1 5 116 3 egfb egfb 0",
-		"test t  ij_binary 1 6 124 8 ghjk ghjk 0",
-		"test t  ij_binary 1 7 127 3 nfre nfre 0",
-		"test t  ij_binary 1 8 154 27 ppp ppp 0",
-		"test t  ij_binary 1 9 178 24 qwer qwer 0",
-		"test t  ij_binary 1 10 186 8 yuiop yuiop 0",
-		"test t  ij_binary 1 11 213 27 zzzz zzzz 0",
-		"test t  ij_char 1 0 27 27 aaa aaa 0",
-		"test t  ij_char 1 1 54 27 asdf asdf 0",
-		"test t  ij_char 1 2 81 27 cccccc cccccc 0",
-		"test t  ij_char 1 3 108 27 eee eee 0",
-		"test t  ij_char 1 4 110 2 k!@cvd k!@cvd 0",
-		"test t  ij_char 1 5 111 1 kicvd kicvd 0",
-		"test t  ij_char 1 6 135 24 qwer qwer 0",
-		"test t  ij_char 1 7 162 27 yuiop yuiop 0",
+		"test t  ij_double 1 0 8 8 -12.000005 -12.000005 0",
+		"test t  ij_double 1 1 27 19 0.000005 0.000005 0",
+		"test t  ij_double 1 2 54 27 10.555555 10.555555 0",
+		"test t  ij_double 1 3 73 19 10.9876 10.9876 0",
+		"test t  ij_binary 1 0 26 26 0000 0000 0",
+		"test t  ij_binary 1 1 45 19 1234 1234 0",
+		"test t  ij_binary 1 2 46 1 3796 3796 0",
+		"test t  ij_binary 1 3 54 8 5678 5678 0",
+		"test t  ij_binary 1 4 78 24 asdf asdf 0",
+		"test t  ij_binary 1 5 81 3 egfb egfb 0",
+		"test t  ij_binary 1 6 89 8 ghjk ghjk 0",
+		"test t  ij_binary 1 7 92 3 nfre nfre 0",
+		"test t  ij_binary 1 8 119 27 ppp ppp 0",
+		"test t  ij_binary 1 9 143 24 qwer qwer 0",
+		"test t  ij_binary 1 10 151 8 yuiop yuiop 0",
+		"test t  ij_binary 1 11 178 27 zzzz zzzz 0",
+		"test t  ij_char 1 0 24 24 !@#$ !@#$ 0",
+		"test t  ij_char 1 1 26 2 %*$%#@qwe %*$%#@qwe 0",
+		"test t  ij_char 1 2 27 1 %*asdf@ %*asdf@ 0",
+		"test t  ij_char 1 3 54 27 eee eee 0",
+		"test t  ij_char 1 4 56 2 k!@cvd k!@cvd 0",
+		"test t  ij_char 1 5 57 1 kicvd kicvd 0",
+		"test t  ij_char 1 6 81 24 qwer qwer 0",
+		"test t  ij_char 1 7 108 27 yuiop yuiop 0",
 	))
 }
 

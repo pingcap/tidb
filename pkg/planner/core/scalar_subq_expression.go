@@ -184,12 +184,12 @@ func (*ScalarSubQueryExpr) ConstLevel() expression.ConstLevel {
 }
 
 // Decorrelate implements the Expression interface.
-func (s *ScalarSubQueryExpr) Decorrelate(_ *expression.Schema) expression.Expression {
+func (s *ScalarSubQueryExpr) Decorrelate(*expression.Schema) expression.Expression {
 	return s
 }
 
 // resolveIndices implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndices(_ *expression.Schema) error {
+func (*ScalarSubQueryExpr) resolveIndices(*expression.Schema) error {
 	return nil
 }
 

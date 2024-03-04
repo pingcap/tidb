@@ -210,7 +210,7 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 			}
 		}
 	}
-	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx, chk)
+	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), chk)
 	if err != nil {
 		return err
 	}
@@ -571,11 +571,12 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
+	concurrency := e.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,
 			tableID:     e.TableID,
-			concurrency: e.ctx.GetSessionVars().IndexSerialScanConcurrency(),
+			concurrency: concurrency,
 			analyzePB: &tipb.AnalyzeReq{
 				Tp:             tipb.AnalyzeType_TypeIndex,
 				Flags:          sc.PushDownFlags(),

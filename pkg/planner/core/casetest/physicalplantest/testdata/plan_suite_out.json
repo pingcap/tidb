@@ -3719,5 +3719,32 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestPointgetIndexChoosen",
+    "Cases": [
+      {
+        "SQL": "select * from t where b=1 and c='1';",
+        "Plan": [
+          "Point_Get 1.00 root table:t, index:ubc(b, c) "
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where b=1 and c='1' and d='1';",
+        "Plan": [
+          "Selection 0.00 root  eq(test.t.d, \"1\")",
+          "└─Point_Get 1.00 root table:t, index:ubc(b, c) "
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where b in (1,2,3) and c in ('1');",
+        "Plan": [
+          "Batch_Point_Get 3.00 root table:t, index:ubc(b, c) keep order:false, desc:false"
+        ],
+        "Warning": null
+      }
+    ]
   }
 ]

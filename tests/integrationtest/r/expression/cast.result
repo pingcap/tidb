@@ -78,6 +78,16 @@ select cast(col4 as time(31)) from t where col1 is null;
 Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
 select cast(col5 as time(31)) from t where col1 is null;
 Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+drop table if exists t;
+create table t(a varchar(50));
+insert into t values ('2020-01-01 12:00:00.123456 +0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456 -0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456');
+select cast(a as datetime(3)) from t;
+cast(a as datetime(3))
+2020-01-01 12:00:00.123
+2020-01-01 12:00:00.123
+2020-01-01 12:00:00.123
 drop table if exists t1;
 create table t1 (c1 text);
 insert into t1 values ('a');

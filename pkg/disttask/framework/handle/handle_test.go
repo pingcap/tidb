@@ -23,7 +23,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -35,13 +34,9 @@ import (
 )
 
 func TestHandle(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "handle_test")
+	ctx := util.WithInternalSourceType(context.Background(), "handle_test")
 
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
@@ -55,11 +50,13 @@ func TestHandle(t *testing.T) {
 	// no scheduler registered
 	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, proto.EmptyMeta)
 	require.NoError(t, err)
-	waitedTask, err := handle.WaitTask(ctx, task.ID, func(task *proto.Task) bool {
+	waitedTaskBase, err := handle.WaitTask(ctx, task.ID, func(task *proto.TaskBase) bool {
 		return task.IsDone()
 	})
 	require.NoError(t, err)
-	require.Equal(t, proto.TaskStateFailed, waitedTask.State)
+	require.Equal(t, proto.TaskStateFailed, waitedTaskBase.State)
+	waitedTask, err := mgr.GetTaskByIDWithHistory(ctx, task.ID)
+	require.NoError(t, err)
 	require.ErrorContains(t, waitedTask.Error, "unknown task type")
 
 	task, err = mgr.GetTaskByID(ctx, 1)
@@ -87,6 +84,15 @@ func TestHandle(t *testing.T) {
 	// pause and resume task.
 	require.NoError(t, handle.PauseTask(ctx, "2"))
 	require.NoError(t, handle.ResumeTask(ctx, "2"))
+
+	// submit task with same key
+	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), task.ID)
+	require.NoError(t, mgr.TransferTasks2History(ctx, []*proto.Task{task}))
+	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.Nil(t, task)
+	require.Error(t, storage.ErrTaskAlreadyExists, err)
 }
 
 func TestRunWithRetry(t *testing.T) {
@@ -113,9 +119,7 @@ func TestRunWithRetry(t *testing.T) {
 		)
 		require.Error(t, err)
 	}()
-	require.Eventually(t, func() bool {
-		return end.Load()
-	}, 5*time.Second, 100*time.Millisecond)
+	require.Eventually(t, end.Load, 5*time.Second, 100*time.Millisecond)
 
 	// fail with retryable error once, then success
 	end.Store(false)
@@ -134,9 +138,7 @@ func TestRunWithRetry(t *testing.T) {
 		)
 		require.NoError(t, err)
 	}()
-	require.Eventually(t, func() bool {
-		return end.Load()
-	}, 5*time.Second, 100*time.Millisecond)
+	require.Eventually(t, end.Load, 5*time.Second, 100*time.Millisecond)
 
 	// context done
 	subctx, cancel := context.WithCancel(ctx)

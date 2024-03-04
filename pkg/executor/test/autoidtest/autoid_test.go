@@ -126,7 +126,7 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 	tests := []struct {
 		insert string
 		query  string
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			`insert into t1(id, n) values(1, 1)`,

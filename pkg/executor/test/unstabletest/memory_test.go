@@ -74,7 +74,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 	util.WithRecovery( // Next Consume() will panic and cancel the SQL
 		func() {
 			tracker3.Consume(1)
-		}, func(r interface{}) {
+		}, func(r any) {
 			require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(r.(error)))
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
@@ -93,7 +93,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 	util.WithRecovery( // Next Consume() will panic and cancel the SQL
 		func() {
 			tracker2.Consume(1)
-		}, func(r interface{}) {
+		}, func(r any) {
 			require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(r.(error)))
 		})
 	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse

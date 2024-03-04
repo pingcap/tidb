@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -38,7 +37,7 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 	joinMethodHintInfo := make(map[int]*joinMethodHint)
 	var (
 		group             []LogicalPlan
-		joinOrderHintInfo []*h.TableHintInfo
+		joinOrderHintInfo []*h.PlanHints
 		eqEdges           []*expression.ScalarFunction
 		otherConds        []expression.Expression
 		joinTypes         []*joinTypeWithExtMsg
@@ -234,7 +233,7 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logi
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
-func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimizeRecursive(ctx PlanContext, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
 	}
@@ -271,19 +270,21 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 
 		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
 		if hasDiffLeadingHint {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
+			ctx.GetSessionVars().StmtCtx.SetHintWarning(
+				"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
 		}
 
 		if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
 			if useGreedy {
 				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
 				if !ok {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check if the leading hint table is valid"))
+					ctx.GetSessionVars().StmtCtx.SetHintWarning(
+						"leading hint is inapplicable, check if the leading hint table is valid")
 				} else {
 					curJoinGroup = leftJoinGroup
 				}
 			} else {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable for the DP join reorder algorithm"))
+				ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable for the DP join reorder algorithm")
 			}
 		}
 
@@ -325,7 +326,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		return p, nil
 	}
 	if len(curJoinGroup) == 1 && joinOrderHintInfo != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check the join type or the join algorithm hint"))
+		ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check the join type or the join algorithm hint")
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
@@ -346,9 +347,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 // The Join Group {t1, t2, t3} contains two leading hints includes leading(t3) and leading(t1).
 // Although they are in different query blocks, they are conflicting.
 // In addition, the table alias 't4' cannot be recognized because of the join group.
-func checkAndGenerateLeadingHint(hintInfo []*h.TableHintInfo) (*h.TableHintInfo, bool) {
+func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
 	leadingHintNum := len(hintInfo)
-	var leadingHintInfo *h.TableHintInfo
+	var leadingHintInfo *h.PlanHints
 	hasDiffLeadingHint := false
 	if leadingHintNum > 0 {
 		leadingHintInfo = hintInfo[0]
@@ -368,7 +369,7 @@ func checkAndGenerateLeadingHint(hintInfo []*h.TableHintInfo) (*h.TableHintInfo,
 
 type joinMethodHint struct {
 	preferredJoinMethod uint
-	joinMethodHintInfo  *h.TableHintInfo
+	joinMethodHintInfo  *h.PlanHints
 }
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
@@ -385,19 +386,19 @@ type basicJoinGroupInfo struct {
 type joinGroupResult struct {
 	group             []LogicalPlan
 	hasOuterJoin      bool
-	joinOrderHintInfo []*h.TableHintInfo
+	joinOrderHintInfo []*h.PlanHints
 	*basicJoinGroupInfo
 }
 
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
-	ctx              sessionctx.Context
+	ctx              PlanContext
 	curJoinGroup     []*jrNode
 	leadingJoinGroup LogicalPlan
 	*basicJoinGroupInfo
 }
 
-func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *h.TableHintInfo, hasOuterJoin bool) (bool, []LogicalPlan) {
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool) (bool, []LogicalPlan) {
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
@@ -510,7 +511,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
-				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
 				usedEdges = append(usedEdges, newSf)
 			}
 		}

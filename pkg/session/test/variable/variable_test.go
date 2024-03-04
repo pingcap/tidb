@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -121,6 +120,8 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		t.Logf("disable OOM, testcase: %v", name)
 		quota := 5*copr.MockResponseSizeForTest - 100
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		tk.MustExec("use testoom")
 		tk.MustExec("set @@tidb_enable_rate_limit_action=0")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
@@ -172,38 +173,13 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("use testoom")
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 		err = tk.QueryToErr(testcase.sql)
 		require.Error(t, err)
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		se.Close()
 	}
-}
-
-func TestStatementCountLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table stmt_count_limit (id int)")
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.StmtCountLimit = 3
-	})
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	_, err := tk.Exec("insert into stmt_count_limit values (3)")
-	require.Error(t, err)
-
-	// begin is counted into history but this one is not.
-	tk.MustExec("SET SESSION autocommit = false")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	tk.MustExec("insert into stmt_count_limit values (3)")
-	_, err = tk.Exec("insert into stmt_count_limit values (4)")
-	require.Error(t, err)
 }
 
 func TestCorrectScopeError(t *testing.T) {
@@ -376,11 +352,11 @@ func TestLastQueryInfo(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec(`prepare stmt1 from 'select * from t'`)
 	tk.MustExec("execute stmt1")
-	checkMatch := func(actual []string, expected []interface{}) bool {
+	checkMatch := func(actual []string, expected []any) bool {
 		return strings.Contains(actual[0], expected[0].(string))
 	}
-	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"last_ru_consumption":15`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":15`), checkMatch)
 	tk.MustExec("select a from t where a = 1")
-	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"last_ru_consumption":27`), checkMatch)
-	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"last_ru_consumption":30`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":27`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":30`), checkMatch)
 }

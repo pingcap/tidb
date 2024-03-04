@@ -68,7 +68,7 @@ func TestParseExecArgs(t *testing.T) {
 		args   args
 		err    error
 		warn   error
-		expect interface{}
+		expect any
 	}{
 		// Tests for int overflow
 		{

@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -268,7 +268,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		// or the pushed down conditions are the same with before.
 		sameConds := true
 		for i := range res.AccessConds {
-			if !res.AccessConds[i].Equal(is.SCtx(), is.AccessConds[i]) {
+			if !res.AccessConds[i].Equal(is.SCtx().GetExprCtx(), is.AccessConds[i]) {
 				sameConds = false
 				break
 			}
@@ -331,7 +331,7 @@ func (*PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
 	sctx := sg.SCtx()
-	pushed, remained = expression.PushDownExprs(sctx, sel.Conditions, sctx.GetClient(), kv.TiKV)
+	pushed, remained = expression.PushDownExprs(sctx.GetExprCtx(), sel.Conditions, sctx.GetClient(), kv.TiKV)
 	if len(pushed) == 0 {
 		return nil, false, false, nil
 	}
@@ -551,7 +551,7 @@ func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	ctx := sel.SCtx()
 	for _, cond := range sel.Conditions {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(ctx, cond, projSchema, proj.Exprs, true)
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), cond, projSchema, proj.Exprs, true)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
@@ -848,7 +848,7 @@ type pushDownJoin struct {
 }
 
 func (*pushDownJoin) predicatePushDown(
-	sctx sessionctx.Context,
+	sctx context.PlanContext,
 	predicates []expression.Expression,
 	join *plannercore.LogicalJoin,
 	leftSchema *expression.Schema,
@@ -870,8 +870,8 @@ func (*pushDownJoin) predicatePushDown(
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(join.EqualConditions)...)
 		tempCond = append(tempCond, join.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
-		tempCond = expression.ExtractFiltersFromDNFs(sctx, tempCond)
-		tempCond = expression.PropagateConstant(sctx, tempCond)
+		tempCond = expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), tempCond)
+		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), tempCond)
 		// Return table dual when filter is constant false or null.
 		dual := plannercore.Conds2TableDual(join, tempCond)
 		if dual != nil {
@@ -902,9 +902,9 @@ func (*pushDownJoin) predicatePushDown(
 		copy(remainCond, predicates)
 		nullSensitive := join.JoinType == plannercore.AntiLeftOuterSemiJoin || join.JoinType == plannercore.LeftOuterSemiJoin
 		if join.JoinType == plannercore.RightOuterJoin {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
+			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
 		} else {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
+			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)
@@ -914,7 +914,7 @@ func (*pushDownJoin) predicatePushDown(
 			return leftCond, rightCond, remainCond, dual
 		}
 		if join.JoinType == plannercore.RightOuterJoin {
-			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
+			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx().GetExprCtx(), remainCond)
 			// Only derive right where condition, because left where condition cannot be pushed down
 			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftSchema, rightSchema, false, true)
 			rightCond = rightPushCond
@@ -925,7 +925,7 @@ func (*pushDownJoin) predicatePushDown(
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 			remainCond = append(remainCond, leftPushCond...) // nozero
 		} else {
-			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
+			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx().GetExprCtx(), remainCond)
 			// Only derive left where condition, because right where condition cannot be pushed down
 			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftSchema, rightSchema, true, false)
 			leftCond = leftPushCond
@@ -970,7 +970,7 @@ func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
 
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
 func buildChildSelectionGroup(
-	sctx sessionctx.Context,
+	sctx context.PlanContext,
 	qbOffset int,
 	conditions []expression.Expression,
 	childGroup *memo.Group) *memo.Group {
@@ -1313,7 +1313,7 @@ func (*PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	newTopN.ByItems = make([]*util.ByItems, 0, len(topN.ByItems))
 	for _, by := range topN.ByItems {
 		newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{
-			Expr: expression.ColumnSubstitute(ctx, by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs),
+			Expr: expression.ColumnSubstitute(ctx.GetExprCtx(), by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs),
 			Desc: by.Desc,
 		})
 	}
@@ -1459,7 +1459,7 @@ func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 		return false
 	}
 	for i := 0; i < len(topN.ByItems); i++ {
-		if !topN.ByItems[i].Equal(topN.SCtx(), child.ByItems[i]) {
+		if !topN.ByItems[i].Equal(topN.SCtx().GetExprCtx(), child.ByItems[i]) {
 			return false
 		}
 	}
@@ -1527,7 +1527,7 @@ func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*
 	ctx := oldAgg.SCtx()
 	groupByItems := make([]expression.Expression, len(oldAgg.GroupByItems))
 	for i, item := range oldAgg.GroupByItems {
-		groupByItems[i] = expression.ColumnSubstitute(ctx, item, projSchema, proj.Exprs)
+		groupByItems[i] = expression.ColumnSubstitute(ctx.GetExprCtx(), item, projSchema, proj.Exprs)
 	}
 
 	aggFuncs := make([]*aggregation.AggFuncDesc, len(oldAgg.AggFuncs))
@@ -1535,7 +1535,7 @@ func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*
 		aggFuncs[i] = aggFunc.Clone()
 		newArgs := make([]expression.Expression, len(aggFunc.Args))
 		for j, arg := range aggFunc.Args {
-			newArgs[j] = expression.ColumnSubstitute(ctx, arg, projSchema, proj.Exprs)
+			newArgs[j] = expression.ColumnSubstitute(ctx.GetExprCtx(), arg, projSchema, proj.Exprs)
 		}
 		aggFuncs[i].Args = newArgs
 	}
@@ -1609,8 +1609,8 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
 			sel := plannercore.LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
-			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
-			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
 			selExpr := memo.NewGroupExpr(sel)
 			selExpr.SetChildren(childGroup)
@@ -2088,14 +2088,14 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	caseArgsNum := len(caseArgs)
 
 	// `case when a>0 then null else a end` should be converted to `case when !(a>0) then a else null end`.
-	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.NewNull()) && !caseArgs[2].Equal(ctx, expression.NewNull())
+	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx(), expression.NewNull()) && !caseArgs[2].Equal(ctx.GetExprCtx(), expression.NewNull())
 	// `case when a>0 then 0 else a end` should be converted to `case when !(a>0) then a else 0 end`.
-	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.NewZero())
+	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx(), expression.NewZero())
 
 	var outputIdx int
 	if nullFlip || zeroFlip {
 		outputIdx = 2
-		newConditions = []expression.Expression{expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), conditionFromCase)}
+		newConditions = []expression.Expression{expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), conditionFromCase)}
 	} else {
 		outputIdx = 1
 		newConditions = expression.SplitCNFItems(conditionFromCase)
@@ -2107,7 +2107,7 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 		// =>
 		//   newAggFuncDesc: COUNT(DISTINCT y), newCondition: x = 'foo'
 
-		if aggFuncName == ast.AggFuncCount && r.isOnlyOneNotNull(ctx, caseArgs, caseArgsNum, outputIdx) {
+		if aggFuncName == ast.AggFuncCount && r.isOnlyOneNotNull(ctx.GetExprCtx(), caseArgs, caseArgsNum, outputIdx) {
 			newAggFuncDesc := aggFuncDesc.Clone()
 			newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 			return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2123,8 +2123,8 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	//   => newAggFuncDesc: SUM(cnt), newCondition: x = 'foo'
 
 	switch {
-	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx, expression.NewNull())), // Case A1
-		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx, expression.NewZero()): // Case A2
+	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx.GetExprCtx(), expression.NewNull())), // Case A1
+		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx.GetExprCtx(), expression.NewZero()): // Case A2
 		newAggFuncDesc := aggFuncDesc.Clone()
 		newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 		return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2137,7 +2137,7 @@ func (*TransformAggregateCaseToSelection) allowsSelection(aggFuncName string) bo
 	return aggFuncName != ast.AggFuncFirstRow
 }
 
-func (*TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx sessionctx.Context, args []expression.Expression, argsNum int, outputIdx int) bool {
+func (*TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx expression.EvalContext, args []expression.Expression, argsNum int, outputIdx int) bool {
 	return !args[outputIdx].Equal(ctx, expression.NewNull()) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.NewNull()))
 }
 
@@ -2340,7 +2340,7 @@ func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*me
 	for _, aggFunc := range agg.AggFuncs {
 		copyFunc := aggFunc.Clone()
 		// WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
-		copyFunc.WrapCastForAggArgs(agg.SCtx())
+		copyFunc.WrapCastForAggArgs(agg.SCtx().GetExprCtx())
 		copyFuncs = append(copyFuncs, copyFunc)
 		for _, arg := range copyFunc.Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
@@ -2541,9 +2541,9 @@ func (*MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 	ctx := expr.GetExpr().ExprNode.SCtx()
 
 	// Whether Partition, OrderBy and Frame parts are the same.
-	if !(curWinPlan.EqualPartitionBy(ctx, nextWinPlan) &&
-		curWinPlan.EqualOrderBy(ctx, nextWinPlan) &&
-		curWinPlan.EqualFrame(ctx, nextWinPlan)) {
+	if !(curWinPlan.EqualPartitionBy(nextWinPlan) &&
+		curWinPlan.EqualOrderBy(ctx.GetExprCtx(), nextWinPlan) &&
+		curWinPlan.EqualFrame(ctx.GetExprCtx(), nextWinPlan)) {
 		return false
 	}
 

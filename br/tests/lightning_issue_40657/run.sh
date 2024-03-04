@@ -23,7 +23,7 @@ check_cluster_version 5 2 0 'duplicate detection' || exit 0
 run_lightning -d "$CUR/data1"
 run_sql 'admin check table test.t'
 run_sql 'select count(*) from test.t'
-check_contains 'count(*): 3'
+check_contains 'count(*): 4'
 run_sql 'select count(*) from lightning_task_info.conflict_error_v2'
 check_contains 'count(*): 2'
 

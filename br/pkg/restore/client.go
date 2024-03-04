@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -57,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -86,6 +88,18 @@ const (
 	MetaKVBatchSize = 64 * 1024 * 1024
 )
 
+// tables in this map is restored when fullClusterRestore=true
+var sysPrivilegeTableMap = map[string]string{
+	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
+	"db":            "(user = '%s' and host = '%%')",       // since v1.0.0
+	"tables_priv":   "(user = '%s' and host = '%%')",       // since v1.0.0
+	"columns_priv":  "(user = '%s' and host = '%%')",       // since v1.0.0
+	"default_roles": "(user = '%s' and host = '%%')",       // since v3.0.0
+	"role_edges":    "(to_user = '%s' and to_host = '%%')", // since v3.0.0
+	"global_priv":   "(user = '%s' and host = '%%')",       // since v3.0.8
+	"global_grants": "(user = '%s' and host = '%%')",       // since v5.0.3
+}
+
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
@@ -97,8 +111,9 @@ type Client struct {
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
-	databases map[string]*utils.Database
-	ddlJobs   []*model.Job
+	concurrencyPerStore uint
+	databases           map[string]*metautil.Database
+	ddlJobs             []*model.Job
 
 	// store tables need to rebase info like auto id and random id and so on after create table
 	rebasedTablesMap map[UniqueTableName]bool
@@ -119,10 +134,12 @@ type Client struct {
 	dbPool          []*DB
 	rateLimit       uint64
 	isOnline        bool
+	granularity     string
 	noSchema        bool
 	hasSpeedLimited bool
 
 	restoreStores []uint64
+	storeCount    int
 
 	cipher             *backuppb.CipherInfo
 	switchModeInterval time.Duration
@@ -262,28 +279,18 @@ func (rc *Client) InitCheckpoint(
 	s storage.ExternalStorage,
 	taskName string,
 	config *pdutil.ClusterConfig,
-	useCheckpoint bool,
+	checkpointFirstRun bool,
 ) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
 	var (
 		// checkpoint sets distinguished by range key
 		checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 		checkpointClusterConfig *pdutil.ClusterConfig
+
+		err error
 	)
 
-	// if not use checkpoint, return empty checkpoint ranges and new gc-safepoint id
-	if !useCheckpoint {
-		return checkpointSetWithTableID, nil, nil
-	}
-
-	// if the checkpoint metadata exists in the external storage, the restore is not
-	// for the first time.
-	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
-	if err != nil {
-		return checkpointSetWithTableID, nil, errors.Trace(err)
-	}
-
-	if exists {
+	if !checkpointFirstRun {
 		// load the checkpoint since this is not the first time to restore
 		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
 		if err != nil {
@@ -457,6 +464,10 @@ func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
 
+func (rc *Client) GetStoreCount() int {
+	return rc.storeCount
+}
+
 // GetPDClient returns a pd client.
 func (rc *Client) GetPDClient() pd.Client {
 	return rc.pdClient
@@ -523,10 +534,29 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	return nil
 }
 
-func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
+func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
+	storeWorkerPoolMap := make(map[uint64]chan struct{})
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
+	if err != nil {
+		log.Fatal("failed to get stores", zap.Error(err))
+	}
+	concurrencyPerStore := rc.GetConcurrencyPerStore()
+	useTokenBucket := false
+	if rc.granularity == string(CoarseGrained) {
+		// coarse-grained make split & scatter pipeline fast enough
+		// so we can use a new token bucket way to speed up download.
+		// ToDo remove it when token bucket is stable enough.
+		log.Info("use token bucket to control download and ingest flow")
+		useTokenBucket = true
+		for _, store := range stores {
+			ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
+			storeWorkerPoolMap[store.Id] = ch
+		}
+	}
+
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -544,7 +574,7 @@ func (rc *Client) InitBackupMeta(
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
 	if rc.needLoadSchemas(backupMeta) {
-		databases, err := utils.LoadBackupTables(c, reader)
+		databases, err := metautil.LoadBackupTables(c, reader)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -566,7 +596,7 @@ func (rc *Client) InitBackupMeta(
 	}
 	rc.backupMeta = backupMeta
 
-	rc.InitClients(backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
+	rc.InitClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
@@ -634,13 +664,40 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
-	log.Info("new worker pool", zap.Uint("currency-count", c))
+	log.Info("download worker pool", zap.Uint("size", c))
 	rc.workerPool = utils.NewWorkerPool(c, "file")
+}
+
+// SetConcurrencyPerStore sets the concurrency of download files for each store.
+func (rc *Client) SetConcurrencyPerStore(c uint) {
+	log.Info("per-store download worker pool", zap.Uint("size", c))
+	rc.concurrencyPerStore = c
+}
+
+func (rc *Client) GetTotalDownloadConcurrency() uint {
+	if rc.storeCount <= 0 {
+		log.Fatal("uninitialize store count", zap.Int("storeCount", rc.storeCount))
+	}
+	return rc.concurrencyPerStore * uint(rc.storeCount)
+}
+
+func (rc *Client) GetConcurrencyPerStore() uint {
+	return rc.concurrencyPerStore
 }
 
 // EnableOnline sets the mode of restore to online.
 func (rc *Client) EnableOnline() {
 	rc.isOnline = true
+}
+
+// SetGranularity sets the ganularity of restore pipeline.
+func (rc *Client) SetGranularity(g string) {
+	rc.granularity = g
+}
+
+// GetGranularity sets the ganularity of restore pipeline.
+func (rc *Client) GetGranularity() string {
+	return rc.granularity
 }
 
 // GetTLSConfig returns the tls config.
@@ -711,8 +768,8 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pd
 }
 
 // GetDatabases returns all databases.
-func (rc *Client) GetDatabases() []*utils.Database {
-	dbs := make([]*utils.Database, 0, len(rc.databases))
+func (rc *Client) GetDatabases() []*metautil.Database {
+	dbs := make([]*metautil.Database, 0, len(rc.databases))
 	for _, db := range rc.databases {
 		dbs = append(dbs, db)
 	}
@@ -720,16 +777,22 @@ func (rc *Client) GetDatabases() []*utils.Database {
 }
 
 // GetDatabase returns a database by name.
-func (rc *Client) GetDatabase(name string) *utils.Database {
+func (rc *Client) GetDatabase(name string) *metautil.Database {
 	return rc.databases[name]
 }
 
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *Client) HasBackedUpSysDB() bool {
-	temporaryDB := utils.TemporaryDBName(mysql.SystemDB)
-	_, backedUp := rc.databases[temporaryDB.O]
-	return backedUp
+	sysDBs := []string{"mysql", "sys"}
+	for _, db := range sysDBs {
+		temporaryDB := utils.TemporaryDBName(db)
+		_, backedUp := rc.databases[temporaryDB.O]
+		if backedUp {
+			return true
+		}
+	}
+	return false
 }
 
 // GetPlacementPolicies returns policies.
@@ -768,7 +831,7 @@ func (rc *Client) GetTableSchema(
 // CreatePolicies creates all policies in full restore.
 func (rc *Client) CreatePolicies(ctx context.Context, policyMap *sync.Map) error {
 	var err error
-	policyMap.Range(func(key, value interface{}) bool {
+	policyMap.Range(func(key, value any) bool {
 		e := rc.db.CreatePlacementPolicy(ctx, value.(*model.PolicyInfo))
 		if e != nil {
 			err = e
@@ -785,13 +848,38 @@ func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DB
 	return info.SchemaByName(dbName)
 }
 
-// CreateDatabase creates a database.
-func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
+// CreateDatabases creates databases. If the client has the db pool, it would create it.
+func (rc *Client) CreateDatabases(ctx context.Context, dbs []*metautil.Database) error {
 	if rc.IsSkipCreateSQL() {
-		log.Info("skip create database", zap.Stringer("name", db.Name))
+		log.Info("skip create database")
 		return nil
 	}
 
+	if len(rc.dbPool) == 0 {
+		log.Info("create databases sequentially")
+		for _, db := range dbs {
+			err := rc.createDatabaseWithDBConn(ctx, db.Info, rc.db)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
+	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)))
+	eg, ectx := errgroup.WithContext(ctx)
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
+	for _, db_ := range dbs {
+		db := db_
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
+			return rc.createDatabaseWithDBConn(ectx, db.Info, conn)
+		})
+	}
+	return eg.Wait()
+}
+
+func (rc *Client) createDatabaseWithDBConn(ctx context.Context, db *model.DBInfo, conn *DB) error {
 	log.Info("create database", zap.Stringer("name", db.Name))
 
 	if !rc.supportPolicy {
@@ -801,12 +889,12 @@ func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 	}
 
 	if db.PlacementPolicyRef != nil {
-		if err := rc.db.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
+		if err := conn.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	return rc.db.CreateDatabase(ctx, db)
+	return conn.CreateDatabase(ctx, db)
 }
 
 // CreateTables creates multiple tables, and returns their rewrite rules.
@@ -1072,6 +1160,11 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	return eg.Wait()
 }
 
+// NeedCheckFreshCluster is every time. except restore from a checkpoint or user has not set filter argument.
+func (rc *Client) NeedCheckFreshCluster(ExplicitFilter bool, firstRun bool) bool {
+	return rc.IsFull() && !ExplicitFilter && firstRun
+}
+
 // CheckTargetClusterFresh check whether the target cluster is fresh or not
 // if there's no user dbs or tables, we take it as a fresh cluster, although
 // user may have created some users or made other changes.
@@ -1112,7 +1205,7 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 	privilegeTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableMap[table.Info.Name.L] != "" {
+		if ok && decodedSysDBName.L == mysql.SystemDB && sysPrivilegeTableMap[table.Info.Name.L] != "" {
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
@@ -1224,7 +1317,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128, false)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1427,7 +1520,7 @@ LOOPFORTABLE:
 				// breaking here directly is also a reasonable behavior.
 				break LOOPFORTABLE
 			}
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
 					if importErr := func(fs []*backuppb.File) error {
@@ -1453,7 +1546,15 @@ LOOPFORTABLE:
 					}
 				}
 				return nil
-			})
+			}
+			if rc.granularity == string(CoarseGrained) {
+				eg.Go(restoreFn)
+			} else {
+				// if we are not use coarse granularity which means
+				// we still pipeline split & scatter regions and import sst files
+				// just keep the consistency as before.
+				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
+			}
 		}
 	}
 
@@ -1665,7 +1766,7 @@ func (rc *Client) GoValidateChecksum(
 	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) <-chan *CreatedTable {
+) chan *CreatedTable {
 	log.Info("Start to validate checksum")
 	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
@@ -1762,10 +1863,17 @@ func (rc *Client) execChecksum(
 	return nil
 }
 
-func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoUpdateMetaAndLoadStats(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	inCh <-chan *CreatedTable,
+	errCh chan<- error,
+	statsConcurrency uint,
+) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(16, "UpdateStats")
+	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
 	// The rc.db is not thread safe
 	var updateMetaLock sync.Mutex
 
@@ -1803,6 +1911,20 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
+		} else if oldTable.StatsFileIndexes != nil {
+			log.Info("start to load statistic data for each partition",
+				zap.Int64("old id", oldTable.Info.ID),
+				zap.Int64("new id", tbl.Table.ID),
+			)
+			start := time.Now()
+			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
+			if err := metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); err != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(err))
+			}
+			log.Info("restore statistic data done",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name),
+				zap.Duration("cost", time.Since(start)))
 		}
 		return nil
 	}, func() {
@@ -1822,10 +1944,8 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 	}
 	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
-		for _, l := range store.Store.Labels {
-			if l.Key == "engine" && l.Value == "tiflash" {
-				tiFlashStores[store.Store.ID] = store
-			}
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiFlashStores[store.Store.ID] = store
 		}
 	}
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
@@ -2005,16 +2125,13 @@ const (
 
 // LoadRestoreStores loads the stores used to restore data.
 func (rc *Client) LoadRestoreStores(ctx context.Context) error {
-	if !rc.isOnline {
-		return nil
-	}
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.LoadRestoreStores", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 
-	stores, err := rc.pdClient.GetAllStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2022,14 +2139,19 @@ func (rc *Client) LoadRestoreStores(ctx context.Context) error {
 		if s.GetState() != metapb.StoreState_Up {
 			continue
 		}
-		for _, l := range s.GetLabels() {
-			if l.GetKey() == restoreLabelKey && l.GetValue() == restoreLabelValue {
-				rc.restoreStores = append(rc.restoreStores, s.GetId())
-				break
+		rc.storeCount++
+		if rc.isOnline {
+			for _, l := range s.GetLabels() {
+				if l.GetKey() == restoreLabelKey && l.GetValue() == restoreLabelValue {
+					rc.restoreStores = append(rc.restoreStores, s.GetId())
+					break
+				}
 			}
 		}
 	}
-	log.Info("load restore stores", zap.Uint64s("store-ids", rc.restoreStores))
+	if rc.isOnline {
+		log.Info("load restore stores", zap.Uint64s("store-ids", rc.restoreStores))
+	}
 	return nil
 }
 
@@ -2684,7 +2806,7 @@ func initFullBackupTables(
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, nil)
 
-	databases, err := utils.LoadBackupTables(ctx, reader)
+	databases, err := metautil.LoadBackupTables(ctx, reader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3295,7 +3417,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			addSQL  strings.Builder
-			addArgs []interface{} = make([]interface{}, 0, 5+len(info.ColumnArgs))
+			addArgs []any = make([]any, 0, 5+len(info.ColumnArgs))
 		)
 		if info.IsPrimary {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
@@ -3471,7 +3593,7 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 	}
 	jobIDMap := make(map[int64]int64)
 	for _, query := range rc.deleteRangeQuery {
-		paramsList := make([]interface{}, 0, len(query.ParamsList)*5)
+		paramsList := make([]any, 0, len(query.ParamsList)*5)
 		for _, params := range query.ParamsList {
 			newJobID, exists := jobIDMap[params.JobID]
 			if !exists {
@@ -3663,7 +3785,7 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 }
 
 // MockClient create a fake client used to test.
-func MockClient(dbs map[string]*utils.Database) *Client {
+func MockClient(dbs map[string]*metautil.Database) *Client {
 	return &Client{databases: dbs}
 }
 

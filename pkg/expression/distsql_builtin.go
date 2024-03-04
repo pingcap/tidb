@@ -16,14 +16,11 @@ package expression
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -38,17 +35,13 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	return ft
 }
 
-func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
+func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := PbTypeToFieldType(tp)
 	base, err := newBaseBuiltinFuncWithFieldType(fieldTp, args)
 	if err != nil {
 		return nil, err
 	}
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	maxAllowedPacket := ctx.GetMaxAllowedPacket()
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
 		f = &builtinCastIntAsIntSig{newBaseBuiltinCastFunc(base, false)}
@@ -1090,7 +1083,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	return f, nil
 }
 
-func newDistSQLFunctionBySig(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
+func newDistSQLFunctionBySig(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
 	f, err := getSignatureByPB(ctx, sigCode, tp, args)
 	if err != nil {
 		return nil, err
@@ -1103,7 +1096,7 @@ func newDistSQLFunctionBySig(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig,
 }
 
 // PBToExprs converts pb structures to expressions.
-func PBToExprs(ctx sessionctx.Context, pbExprs []*tipb.Expr, fieldTps []*types.FieldType) ([]Expression, error) {
+func PBToExprs(ctx BuildContext, pbExprs []*tipb.Expr, fieldTps []*types.FieldType) ([]Expression, error) {
 	exprs := make([]Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
 		e, err := PBToExpr(ctx, expr, fieldTps)
@@ -1119,7 +1112,7 @@ func PBToExprs(ctx sessionctx.Context, pbExprs []*tipb.Expr, fieldTps []*types.F
 }
 
 // PBToExpr converts pb structure to expression.
-func PBToExpr(ctx sessionctx.Context, expr *tipb.Expr, tps []*types.FieldType) (Expression, error) {
+func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expression, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:

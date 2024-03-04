@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -38,6 +39,9 @@ var (
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = time.Hour
+
+	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
+	batchInsertSize = 10
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
@@ -50,7 +54,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	if !ok {
 		return false
 	}
-	dbInfo, ok := is.SchemaByTable(tbl.Meta())
+	dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
 	if !ok {
 		return false
 	}
@@ -78,6 +82,11 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		metrics.StatsDeltaUpdateHistogram.Observe(dur.Seconds())
+	}()
 	s.SweepSessionStatsList()
 	deltaMap := s.SessionTableDelta().GetDeltaAndReset()
 	defer func() {
@@ -259,7 +268,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 }
 
 // NewSessionStatsItem allocates a stats collector for a session.
-func (s *statsUsageImpl) NewSessionStatsItem() interface{} {
+func (s *statsUsageImpl) NewSessionStatsItem() any {
 	return s.SessionStatsList.NewSessionStatsItem()
 }
 
