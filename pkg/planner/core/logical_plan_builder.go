@@ -4789,7 +4789,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				tblStats := h.GetTableStats(tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsInitialized()
-				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, false)
+				skipMissingPartition := b.ctx.GetSessionVars().SkipMissingPartitionStats
+				// If we already enabled the tidb_skip_missing_partition_stats, the global stats can be treated as exist.
+				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, skipMissingPartition)
 
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
 				usePartitionProcessor := !isDynamicEnabled || (!globalStatsReady && !allowDynamicWithoutStats)

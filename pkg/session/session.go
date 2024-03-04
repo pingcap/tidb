@@ -43,6 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -2427,7 +2432,11 @@ func (rs *execStmtResult) Finish() error {
 			err1 = f.Finish()
 		}
 		err2 := finishStmt(context.Background(), rs.se, err, rs.sql)
-		err = stderrs.Join(err1, err2)
+		if err1 != nil {
+			err = err1
+		} else {
+			err = err2
+		}
 	})
 	return err
 }
@@ -2439,7 +2448,10 @@ func (rs *execStmtResult) Close() error {
 	err1 := rs.Finish()
 	err2 := rs.RecordSet.Close()
 	rs.closed = true
-	return stderrs.Join(err1, err2)
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -2607,6 +2619,11 @@ func (s *session) GetExprCtx() exprctx.BuildContext {
 // GetTableCtx returns the table.MutateContext
 func (s *session) GetTableCtx() tbctx.MutateContext {
 	return s.tblctx
+}
+
+// GetDistSQLCtx returns the context used in DistSQL
+func (s *session) GetDistSQLCtx() distsqlctx.DistSQLContext {
+	return s
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
@@ -3306,6 +3323,20 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			return nil, err
 		}
 	}
+
+	// initiate disttask framework components which need a store
+	scheduler.RegisterSchedulerFactory(
+		proto.ImportInto,
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			return importinto.NewImportScheduler(ctx, task, param, store.(kv.StorageWithPD))
+		},
+	)
+	taskexecutor.RegisterTaskType(
+		proto.ImportInto,
+		func(ctx context.Context, id string, task *proto.Task, table taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+			return importinto.NewImportExecutor(ctx, id, task, table, store)
+		},
+	)
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)

@@ -6,9 +6,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/expression/context",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errctx",
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
+        "//pkg/types",
     ],
 )

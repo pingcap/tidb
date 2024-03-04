@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -361,7 +362,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder := infoschema.NewBuilder(re, nil, nil).InitWithOldInfoSchema(curIs)
+				builder, err := infoschema.NewBuilder(re, nil, nil).InitWithOldInfoSchema(curIs)
+				require.NoError(t, err)
 				change(m, builder)
 				curIs = builder.Build()
 			}
@@ -881,4 +883,235 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
 	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
+}
+
+func TestEnableInfoSchemaV2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Test the @@tidb_enable_infoschema_v2 variable.
+	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(0))
+
+	// Modify it.
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("1024"))
+	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("1024"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(1024))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table v2 (id int)")
+
+	// Check the InfoSchema used is V2.
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	require.True(t, infoschema.IsV2(is))
+
+	// Execute some basic operations under infoschema v2.
+	tk.MustQuery("show tables").Check(testkit.Rows("v2"))
+	tk.MustExec("drop table v2")
+	tk.MustExec("create table v1 (id int)")
+
+	// Change infoschema back to v1 and check again.
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(0))
+
+	tk.MustExec("drop table v1")
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	require.False(t, infoschema.IsV2(is))
+}
+
+type infoschemaTestContext struct {
+	// only test one db.
+	dbInfo *model.DBInfo
+	t      *testing.T
+	re     autoid.Requirement
+	ctx    context.Context
+}
+
+func (tc *infoschemaTestContext) createSchema() {
+	dbID, err := genGlobalID(tc.re.Store())
+	require.NoError(tc.t, err)
+	dbInfo := &model.DBInfo{
+		ID:     dbID,
+		Name:   model.NewCIStr("test"),
+		Tables: []*model.TableInfo{},
+		State:  model.StatePublic,
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+	tc.dbInfo = dbInfo
+}
+
+func (tc *infoschemaTestContext) runCreateSchema() infoschema.InfoSchema {
+	// create schema
+	tc.createSchema()
+
+	// apply diff
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(tc.t, err)
+	txn, err := tc.re.Store().Begin()
+	require.NoError(tc.t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn),
+		&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID})
+	require.NoError(tc.t, err)
+	is := builder.Build()
+
+	// check infoschema
+	dbInfo, ok := is.SchemaByID(tc.dbInfo.ID)
+	require.True(tc.t, ok)
+	require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
+	return is
+}
+
+func (tc *infoschemaTestContext) dropSchema() {
+	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).DropDatabase(tc.dbInfo.ID, tc.dbInfo.Name.O)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+}
+
+func (tc *infoschemaTestContext) runDropSchema() infoschema.InfoSchema {
+	// create schema
+	oldIs := tc.runCreateSchema()
+
+	// drop schema
+	tc.dropSchema()
+
+	// apply diff
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(oldIs)
+	require.NoError(tc.t, err)
+	txn, err := tc.re.Store().Begin()
+	require.NoError(tc.t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn),
+		&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID})
+	require.NoError(tc.t, err)
+	is := builder.Build()
+
+	// check infoschema
+	_, ok := is.SchemaByID(tc.dbInfo.ID)
+	require.False(tc.t, ok)
+	return is
+}
+
+func (tc *infoschemaTestContext) createTable(tblName string) int64 {
+	colName := model.NewCIStr("a")
+
+	colID, err := genGlobalID(tc.re.Store())
+	require.NoError(tc.t, err)
+	colInfo := &model.ColumnInfo{
+		ID:        colID,
+		Name:      colName,
+		Offset:    0,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
+	}
+
+	tblID, err := genGlobalID(tc.re.Store())
+	require.NoError(tc.t, err)
+	tblInfo := &model.TableInfo{
+		ID:      tblID,
+		Name:    model.NewCIStr(tblName),
+		Columns: []*model.ColumnInfo{colInfo},
+		State:   model.StatePublic,
+	}
+
+	err = kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateTableOrView(tc.dbInfo.ID, tc.dbInfo.Name.O, tblInfo)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+	return tblID
+}
+
+func (tc *infoschemaTestContext) runCreateTable(tblName string) (infoschema.InfoSchema, int64) {
+	if tc.dbInfo == nil {
+		tc.createSchema()
+	}
+	// create table
+	tblID := tc.createTable(tblName)
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithDBInfos([]*model.DBInfo{tc.dbInfo}, nil, nil, 1)
+	require.NoError(tc.t, err)
+
+	// apply diff
+	txn, err := tc.re.Store().Begin()
+	require.NoError(tc.t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn),
+		&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblID})
+	require.NoError(tc.t, err)
+	is := builder.Build()
+
+	// check infoschema
+	tbl, ok := is.TableByID(tblID)
+	require.True(tc.t, ok)
+	require.Equal(tc.t, tbl.Meta().Name.O, tblName)
+	return is, tblID
+}
+
+func (tc *infoschemaTestContext) dropTable(tblName string, tblID int64) {
+	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).DropTableOrView(tc.dbInfo.ID, tc.dbInfo.Name.O, tblID, tblName)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+}
+
+func (tc *infoschemaTestContext) runDropTable(tblName string) infoschema.InfoSchema {
+	// createTable
+	is, tblID := tc.runCreateTable(tblName)
+
+	// dropTable
+	tc.dropTable(tblName, tblID)
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(is)
+	require.NoError(tc.t, err)
+
+	txn, err := tc.re.Store().Begin()
+	require.NoError(tc.t, err)
+	// applyDiff
+	_, err = builder.ApplyDiff(meta.NewMeta(txn),
+		&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: tc.dbInfo.ID, TableID: tblID})
+	require.NoError(tc.t, err)
+	is = builder.Build()
+	// check infoschema
+	tbl, ok := is.TableByID(tblID)
+	require.False(tc.t, ok)
+	require.Nil(tc.t, tbl)
+	return is
+}
+
+func (tc *infoschemaTestContext) clear() {
+	tc.dbInfo = nil
+}
+
+func TestApplyDiff(t *testing.T) {
+	re := createAutoIDRequirement(t)
+	defer func() {
+		err := re.Store().Close()
+		require.NoError(t, err)
+	}()
+
+	tc := &infoschemaTestContext{
+		t:   t,
+		re:  re,
+		ctx: kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+	}
+
+	tc.runCreateSchema()
+	tc.clear()
+	tc.runDropSchema()
+	tc.clear()
+	tc.runCreateTable("test")
+	tc.clear()
+	tc.runDropTable("test")
+	tc.clear()
+	// TODO check all actions..
 }

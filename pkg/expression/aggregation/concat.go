@@ -123,7 +123,7 @@ func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum)
 
 func (cf *concatFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if cf.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	evalCtx.Ctx = ctx
 	evalCtx.Buffer = nil

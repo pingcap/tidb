@@ -1520,7 +1520,7 @@ func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterC
 // This function will spawn a goroutine to keep switch mode periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
 func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common.Range) (<-chan struct{}, error) {
-	switcher := NewTiKVModeSwitcher(local.tls, local.pdHTTPCli, log.FromContext(ctx).Logger)
+	switcher := NewTiKVModeSwitcher(local.tls.TLSConfig(), local.pdHTTPCli, log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
 	keyRanges := make([]*sst.Range, 0, len(ranges))
