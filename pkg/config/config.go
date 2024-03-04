@@ -97,6 +97,8 @@ const (
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
+	// SafePointV2 is means safe point version v2.
+	SafePointV2 = "v2"
 )
 
 // Valid config maps

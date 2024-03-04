@@ -1210,7 +1210,7 @@ func (w *GCWorker) resolveLocks(
 		errMsg = "[gc worker] keyspace resolve locks err."
 	} else {
 		logutil.Logger(ctx).Info("[gc worker] start all keyspaces resolve locks when use safe point v1")
-		err = w.resolveKeyspacesLocks(ctx, runner, safePoint)
+		err = w.resolveAllKeyspacesLocks(ctx, runner, safePoint)
 		errMsg = "[gc worker] resolve locks all keyspace failed"
 	}
 
@@ -1257,16 +1257,13 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 
 func isKeyspaceEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if val, ok := keyspaceMeta.Config["safe_point_version"]; ok {
-		if val == "v2" {
-			return true
-		}
-		return false
+		return val == config.SafePointV2
 	}
 	return false
 }
 
-// Do resolve locks by keyspace.
-func (w *GCWorker) resolveKeyspacesLocks(ctx context.Context, runner *rangetask.Runner, safePoint uint64) error {
+// Do resolve locks by all safe point v1 keyspace.
+func (w *GCWorker) resolveAllKeyspacesLocks(ctx context.Context, runner *rangetask.Runner, safePoint uint64) error {
 	keyspaces, err := w.getAllKeyspace(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("[gc worker] get all keyspace err.", zap.Error(errors.Trace(err)))
@@ -1337,7 +1334,6 @@ func (w *GCWorker) legacyResolveKeyspaceLocks(ctx context.Context, txnLeftBound 
 		return errors.Trace(err)
 	}
 	return nil
-
 }
 
 const gcOneRegionMaxBackoff = 20000
