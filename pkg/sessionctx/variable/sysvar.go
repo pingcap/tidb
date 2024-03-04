@@ -1385,6 +1385,16 @@ var defaultSysVars = []*SysVar{
 			HistoricalStatsDuration.Store(d)
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(DefTiDBLowResolutionTSOUpdateInterval), Type: TypeInt, MinValue: 10, MaxValue: 60000,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			LowResolutionTSOUpdateInterval.Store(uint32(TidbOptInt64(val, DefTiDBLowResolutionTSOUpdateInterval)))
+			if SetLowResolutionTSOUpdateInterval != nil {
+				interval := time.Duration(LowResolutionTSOUpdateInterval.Load()) * time.Millisecond
+				return SetLowResolutionTSOUpdateInterval(interval)
+			}
+			return nil
+		},
+	},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,

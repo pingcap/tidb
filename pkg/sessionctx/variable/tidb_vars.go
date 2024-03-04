@@ -1152,6 +1152,8 @@ const (
 	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
 	// TiDBEnableParallelSort indicates if parallel sort is enabled.
 	TiDBEnableParallelSort = "enable_parallel_sort"
+	// TiDBLowResolutionTSOUpdateInterval defines how often to refresh low resolution timestamps.
+	TiDBLowResolutionTSOUpdateInterval = "tidb_low_resolution_tso_update_interval"
 )
 
 // TiDB intentional limits
@@ -1477,6 +1479,7 @@ const (
 	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
 	DefTiDBSchemaCacheSize                            = 0
+	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 )
 
 // Process global variables.
@@ -1535,7 +1538,8 @@ var (
 	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 	// EnableRowLevelChecksum indicates whether to append checksum to row values.
-	EnableRowLevelChecksum = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
+	EnableRowLevelChecksum         = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
+	LowResolutionTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
@@ -1610,6 +1614,8 @@ var (
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
 	// ValidateCloudStorageURI validates the cloud storage URI.
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
+	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
+	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
 )
 
 // Hooks functions for Cluster Resource Control.
