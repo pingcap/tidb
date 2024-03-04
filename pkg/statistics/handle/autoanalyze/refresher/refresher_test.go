@@ -81,61 +81,59 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 }
 
 func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
+	exec.AutoAnalyzeMinCnt = 0
+	defer func() {
+		exec.AutoAnalyzeMinCnt = 1000
+	}()
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
-	tk.MustExec("create table t1 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
-	tk.MustExec("create table t2 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tk.MustExec("create table t1 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (14))")
+	tk.MustExec("create table t2 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (14))")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
-
 	handle := dom.StatsHandle()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(dom.InfoSchema()))
+	// Analyze those tables first.
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(dom.InfoSchema()))
+	// Insert more data into t1 and t2, but more data is inserted into t1.
+	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13)")
+	tk.MustExec("insert into t2 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(dom.InfoSchema()))
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
-	// No jobs in the queue.
-	r.PickOneTableAndAnalyzeByPriority()
-	// The table is not analyzed.
-	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
-	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
-	require.True(t, tblStats1.Pseudo)
-
-	// Add a job to the queue.
-	job1 := &priorityqueue.TableAnalysisJob{
-		TableID:          tbl1.Meta().ID,
-		TableSchema:      "test",
-		TableName:        "t1",
-		ChangePercentage: 0.5,
-		Weight:           1,
-	}
-	r.Jobs.Push(job1)
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
-	job2 := &priorityqueue.TableAnalysisJob{
-		TableID:          tbl2.Meta().ID,
-		TableSchema:      "test",
-		TableName:        "t2",
-		ChangePercentage: 0.5,
-		Weight:           0.9,
-	}
-	r.Jobs.Push(job2)
-	r.PickOneTableAndAnalyzeByPriority()
+	r.RebuildTableAnalysisJobQueue()
+	require.Equal(t, 2, r.Jobs.Len())
+	// Analyze t1 first.
+	require.True(t, r.PickOneTableAndAnalyzeByPriority())
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(dom.InfoSchema()))
 	// The table is analyzed.
-	tblStats1 = handle.GetPartitionStats(tbl1.Meta(), pid1)
-	require.False(t, tblStats1.Pseudo)
+	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
+	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
+	require.Equal(t, int64(0), tblStats1.ModifyCount)
+	require.Equal(t, int64(12), tblStats1.RealtimeCount)
 	// t2 is not analyzed.
-	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
+	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
-	require.True(t, tblStats2.Pseudo)
+	require.Equal(t, int64(6), tblStats2.ModifyCount)
 	// Do one more round.
-	r.PickOneTableAndAnalyzeByPriority()
+	require.True(t, r.PickOneTableAndAnalyzeByPriority())
 	// t2 is analyzed.
-	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[0].ID
+	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 = handle.GetPartitionStats(tbl2.Meta(), pid2)
-	require.False(t, tblStats2.Pseudo)
+	require.Equal(t, int64(0), tblStats2.ModifyCount)
+	require.Equal(t, int64(8), tblStats2.RealtimeCount)
 }
 
 func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
