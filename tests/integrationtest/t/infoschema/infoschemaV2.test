@@ -17,3 +17,5 @@ drop table test;
 show tables;
 -- error 1051
 drop table test;
+
+set global tidb_schema_cache_size = 0;
