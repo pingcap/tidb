@@ -141,6 +141,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 	if err != nil {
 		return err
 	}
+	tableNames := CollectTableNames(bindingStmt)
 	isFuzzy := isFuzzyBinding(bindingStmt)
 	if isFuzzy {
 		dbName = "*" // ues '*' for universal bindings
@@ -172,6 +173,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 	}
 	binding.Hint = hintsSet
 	binding.ID = hintsStr
+	binding.TableNames = tableNames
 	return nil
 }
 

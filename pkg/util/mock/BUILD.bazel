@@ -12,6 +12,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/mock",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/distsql/context",
+        "//pkg/expression/context",
+        "//pkg/expression/contextimpl",
         "//pkg/extension",
         "//pkg/infoschema/context",
         "//pkg/kv",
@@ -23,6 +26,8 @@ go_library(
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/table/context",
+        "//pkg/table/contextimpl",
         "//pkg/util",
         "//pkg/util/disk",
         "//pkg/util/memory",

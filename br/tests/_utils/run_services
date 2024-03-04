@@ -27,7 +27,7 @@ export TIDB_STATUS_ADDR="127.0.0.1:10080"
 export TIKV_ADDR="127.0.0.1:2016"
 export TIKV_STATUS_ADDR="127.0.0.1:2018"
 export TIKV_COUNT=3
-export TIFLASH_HTTP="127.0.0.1:8125"
+export TIFLASH_HTTP="127.0.0.1:20292"
 export TIKV_PIDS="${TEST_DIR:?}/tikv_pids.txt"
 
 cur_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -56,7 +56,7 @@ stop_services() {
         stop $svc &
     done
     sleep 2 # give some time for the OS to reap all processes
-    lsof -n -P -i :2379 -i :4000 -i :10080 -i :20161 -i :20162 -i :20163 -i :20181 -i :20182 -i :20183 -i :17000 -i :8125 || true
+    lsof -n -P -i :2379 -i :4000 -i :10080 -i :20161 -i :20162 -i :20163 -i :20181 -i :20182 -i :20183 -i :17000 -i :20292 || true
 }
 
 start_services() {
@@ -251,7 +251,7 @@ start_tiflash() {
     tiflash server --config-file="$TEST_DIR/tiflash.toml" &
 
     i=0
-    while ! run_curl https://$TIFLASH_HTTP 1>/dev/null 2>&1; do
+    while ! run_curl "https://$TIFLASH_HTTP/tiflash/store-status" 1>/dev/null 2>&1; do
         i=$((i+1))
         if [ "$i" -gt 20 ]; then
             echo "failed to start tiflash"

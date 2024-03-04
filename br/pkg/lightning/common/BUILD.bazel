@@ -138,6 +138,7 @@ go_test(
         "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_golang_x_time//rate",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_multierr//:multierr",
     ],

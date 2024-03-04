@@ -85,13 +85,12 @@ func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	defer b.bufAllocator.put(buf)
 
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := ctx.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf)
-	afterWarns := sc.WarningCount()
+	afterWarns := ctx.WarningCount()
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {
-			sc.TruncateWarnings(int(beforeWarns))
+			ctx.TruncateWarnings(beforeWarns)
 		}
 		return b.fallbackEvalInt(ctx, input, result)
 	}
@@ -380,13 +379,12 @@ func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	}
 	defer b.bufAllocator.put(buf1)
 
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := ctx.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf1)
-	afterWarns := sc.WarningCount()
+	afterWarns := ctx.WarningCount()
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {
-			sc.TruncateWarnings(int(beforeWarns))
+			ctx.TruncateWarnings(beforeWarns)
 		}
 		return b.fallbackEvalInt(ctx, input, result)
 	}

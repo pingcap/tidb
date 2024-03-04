@@ -411,7 +411,7 @@ func (dc *ddlCtx) isReorgPaused(jobID int64) bool {
 }
 
 func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
-	if isChanClosed(dc.ctx.Done()) {
+	if dc.ctx.Err() != nil {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}

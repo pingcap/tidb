@@ -73,10 +73,12 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
-		Type:            proto.TaskTypeExample,
+		TaskBase: proto.TaskBase{
+			Type:  proto.TaskTypeExample,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            bs,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
 		StateUpdateTime: time.Now(),
 	}
 	manager, err := storage.GetTaskManager()
@@ -214,10 +216,12 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
-		Type:            proto.ImportInto,
+		TaskBase: proto.TaskBase{
+			Type:  proto.ImportInto,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            bs,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
 		StateUpdateTime: time.Now(),
 	}
 	manager, err := storage.GetTaskManager()

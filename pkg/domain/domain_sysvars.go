@@ -39,6 +39,7 @@ func (do *Domain) initDomainSysVars() {
 
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
+	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -88,6 +89,10 @@ func (*Domain) setGlobalResourceControl(enable bool) {
 	} else {
 		variable.DisableGlobalResourceControlFunc()
 	}
+}
+
+func (do *Domain) setLowResolutionTSOUpdateInterval(interval time.Duration) error {
+	return do.store.GetOracle().SetLowResolutionTimestampUpdateInterval(interval)
 }
 
 // updatePDClient is used to set the dynamic option into the PD client.
