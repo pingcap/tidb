@@ -27,8 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// GetSchemaDiffForCreateTables set SchemaDiff for ActionCreateTables.
-func GetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error {
+// SetSchemaDiffForCreateTables set SchemaDiff for ActionCreateTables.
+func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error {
 	var tableInfos []*model.TableInfo
 	err := job.DecodeArgs(&tableInfos)
 	if err != nil {
@@ -46,8 +46,8 @@ func GetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error 
 	return nil
 }
 
-// GetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
-func GetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
+// SetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
+func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
 	// Truncate table has two table ID, should be handled differently.
 	err := job.DecodeArgs(&diff.TableID)
 	if err != nil {
@@ -64,8 +64,8 @@ func GetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error
 	return nil
 }
 
-// GetSchemaDiffForCreateView set SchemaDiff for ActionCreateView.
-func GetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
+// SetSchemaDiffForCreateView set SchemaDiff for ActionCreateView.
+func SetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
 	var orReplace bool
 	var oldTbInfoID int64
@@ -81,8 +81,8 @@ func GetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
 	return nil
 }
 
-// GetSchemaDiffForRenameTable set SchemaDiff for ActionRenameTable.
-func GetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
+// SetSchemaDiffForRenameTable set SchemaDiff for ActionRenameTable.
+func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
 	err := job.DecodeArgs(&diff.OldSchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -91,8 +91,8 @@ func GetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
 	return nil
 }
 
-// GetSchemaDiffForRenameTables set SchemaDiff for ActionRenameTables.
-func GetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
+// SetSchemaDiffForRenameTables set SchemaDiff for ActionRenameTables.
+func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
 	var (
 		oldSchemaIDs, newSchemaIDs, tableIDs []int64
 		tableNames, oldSchemaNames           []*model.CIStr
@@ -121,8 +121,8 @@ func GetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error 
 	return nil
 }
 
-// GetSchemaDiffForExchangeTablePartition set SchemaDiff for ActionExchangeTablePartition.
-func GetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.Job, multiInfos ...schemaIDAndTableInfo) error {
+// SetSchemaDiffForExchangeTablePartition set SchemaDiff for ActionExchangeTablePartition.
+func SetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.Job, multiInfos ...schemaIDAndTableInfo) error {
 	// From start of function: diff.SchemaID = job.SchemaID
 	// Old is original non partitioned table
 	diff.OldTableID = job.TableID
@@ -165,8 +165,8 @@ func GetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.J
 	return nil
 }
 
-// GetSchemaDiffForTruncateTablePartition set SchemaDiff for ActionTruncateTablePartition.
-func GetSchemaDiffForTruncateTablePartition(diff *model.SchemaDiff, job *model.Job) {
+// SetSchemaDiffForTruncateTablePartition set SchemaDiff for ActionTruncateTablePartition.
+func SetSchemaDiffForTruncateTablePartition(diff *model.SchemaDiff, job *model.Job) {
 	diff.TableID = job.TableID
 	if len(job.CtxVars) > 0 {
 		oldIDs := job.CtxVars[0].([]int64)
@@ -175,8 +175,8 @@ func GetSchemaDiffForTruncateTablePartition(diff *model.SchemaDiff, job *model.J
 	}
 }
 
-// GetSchemaDiffForDropTable set SchemaDiff for ActionDropTablePartition, ActionRecoverTable, ActionDropTable.
-func GetSchemaDiffForDropTable(diff *model.SchemaDiff, job *model.Job) {
+// SetSchemaDiffForDropTable set SchemaDiff for ActionDropTablePartition, ActionRecoverTable, ActionDropTable.
+func SetSchemaDiffForDropTable(diff *model.SchemaDiff, job *model.Job) {
 	// affects are used to update placement rule cache
 	diff.TableID = job.TableID
 	if len(job.CtxVars) > 0 {
@@ -186,8 +186,8 @@ func GetSchemaDiffForDropTable(diff *model.SchemaDiff, job *model.Job) {
 	}
 }
 
-// GetSchemaDiffForReorganizePartition set SchemaDiff for ActionReorganizePartition.
-func GetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job) {
+// SetSchemaDiffForReorganizePartition set SchemaDiff for ActionReorganizePartition.
+func SetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job) {
 	diff.TableID = job.TableID
 	// TODO: should this be for every state of Reorganize?
 	if len(job.CtxVars) > 0 {
@@ -206,8 +206,8 @@ func GetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job)
 	}
 }
 
-// GetSchemaDiffForPartitionModify set SchemaDiff for ActionRemovePartitioning, ActionAlterTablePartitioning.
-func GetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) error {
+// SetSchemaDiffForPartitionModify set SchemaDiff for ActionRemovePartitioning, ActionAlterTablePartitioning.
+func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) error {
 	diff.TableID = job.TableID
 	diff.OldTableID = job.TableID
 	if job.SchemaState == model.StateDeleteReorganization {
@@ -237,8 +237,8 @@ func GetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 	return nil
 }
 
-// GetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
-func GetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) {
+// SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
+func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) {
 	diff.TableID = job.TableID
 	if len(job.Args) > 0 {
 		tbInfo, _ := job.Args[0].(*model.TableInfo)
@@ -253,8 +253,8 @@ func GetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) {
 	}
 }
 
-// GetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
-func GetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error {
+// SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
+func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error {
 	var (
 		recoverSchemaInfo      *RecoverSchemaInfo
 		recoverSchemaCheckFlag int64
@@ -278,16 +278,16 @@ func GetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error
 	return nil
 }
 
-// GetSchemaDiffForFlashbackCluster set SchemaDiff for ActionFlashbackCluster.
-func GetSchemaDiffForFlashbackCluster(diff *model.SchemaDiff, job *model.Job) {
+// SetSchemaDiffForFlashbackCluster set SchemaDiff for ActionFlashbackCluster.
+func SetSchemaDiffForFlashbackCluster(diff *model.SchemaDiff, job *model.Job) {
 	diff.TableID = -1
 	if job.SchemaState == model.StatePublic {
 		diff.RegenerateSchemaMap = true
 	}
 }
 
-// GetSchemaDiffForMultiInfos set SchemaDiff for multiInfos.
-func GetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAndTableInfo) {
+// SetSchemaDiffForMultiInfos set SchemaDiff for multiInfos.
+func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAndTableInfo) {
 	if len(multiInfos) > 0 {
 		existsMap := make(map[int64]struct{})
 		existsMap[diff.TableID] = struct{}{}
@@ -323,38 +323,38 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	}
 	switch job.Type {
 	case model.ActionCreateTables:
-		err = GetSchemaDiffForCreateTables(diff, job)
+		err = SetSchemaDiffForCreateTables(diff, job)
 	case model.ActionTruncateTable:
-		err = GetSchemaDiffForTruncateTable(diff, job)
+		err = SetSchemaDiffForTruncateTable(diff, job)
 	case model.ActionCreateView:
-		err = GetSchemaDiffForCreateView(diff, job)
+		err = SetSchemaDiffForCreateView(diff, job)
 	case model.ActionRenameTable:
-		err = GetSchemaDiffForRenameTable(diff, job)
+		err = SetSchemaDiffForRenameTable(diff, job)
 	case model.ActionRenameTables:
-		err = GetSchemaDiffForRenameTables(diff, job)
+		err = SetSchemaDiffForRenameTables(diff, job)
 	case model.ActionExchangeTablePartition:
-		err = GetSchemaDiffForExchangeTablePartition(diff, job, multiInfos...)
+		err = SetSchemaDiffForExchangeTablePartition(diff, job, multiInfos...)
 	case model.ActionTruncateTablePartition:
-		GetSchemaDiffForTruncateTablePartition(diff, job)
+		SetSchemaDiffForTruncateTablePartition(diff, job)
 	case model.ActionDropTablePartition, model.ActionRecoverTable, model.ActionDropTable:
-		GetSchemaDiffForDropTable(diff, job)
+		SetSchemaDiffForDropTable(diff, job)
 	case model.ActionReorganizePartition:
-		GetSchemaDiffForReorganizePartition(diff, job)
+		SetSchemaDiffForReorganizePartition(diff, job)
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
-		err = GetSchemaDiffForPartitionModify(diff, job)
+		err = SetSchemaDiffForPartitionModify(diff, job)
 	case model.ActionCreateTable:
-		GetSchemaDiffForCreateTable(diff, job)
+		SetSchemaDiffForCreateTable(diff, job)
 	case model.ActionRecoverSchema:
-		err = GetSchemaDiffForRecoverSchema(diff, job)
+		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:
-		GetSchemaDiffForFlashbackCluster(diff, job)
+		SetSchemaDiffForFlashbackCluster(diff, job)
 	default:
 		diff.TableID = job.TableID
 	}
 	if err != nil {
 		return 0, err
 	}
-	GetSchemaDiffForMultiInfos(diff, multiInfos...)
+	SetSchemaDiffForMultiInfos(diff, multiInfos...)
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
 }
