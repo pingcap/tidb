@@ -36,9 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 type mockAutoIDRequirement struct {
@@ -1122,19 +1120,4 @@ func TestApplyDiff(t *testing.T) {
 		tc.clear()
 	}
 	// TODO(ywqzzy): check all actions.
-}
-
-func TestYWQ(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	variable.SchemaCacheSize.Store(1000000)
-	tk.MustExec("create database mytest")
-
-	tk.MustExec("drop database mytest")
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	logutil.BgLogger().Info("u", zap.Any("rows", tk.MustQuery("show databases")))
-
-	require.NoError(t, dom.Reload())
 }
