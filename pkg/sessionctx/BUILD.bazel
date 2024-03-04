@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/sessionctx",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/distsql/context",
         "//pkg/expression/context",
         "//pkg/extension",
         "//pkg/infoschema/context",
