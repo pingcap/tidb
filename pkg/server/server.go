@@ -289,7 +289,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
+	variable.RegisterStatistics(s)
+	return s, nil
+}
 
+func (s *Server) initTiDBListener() (err error) {
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
@@ -297,7 +301,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			tcpProto = "tcp4"
 		}
 		if s.listener, err = net.Listen(tcpProto, addr); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
 		if RunInGoTest && s.cfg.Port == 0 {
@@ -307,18 +311,18 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Socket != "" {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", s.cfg.Socket))
 	}
 
 	if s.socket == nil && s.listener == nil {
 		err = errors.New("Server not configured to listen on either -socket or -host and -port")
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	if s.cfg.ProxyProtocol.Networks != "" {
@@ -330,7 +334,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			int(s.cfg.ProxyProtocol.HeaderTimeout), s.cfg.ProxyProtocol.Fallbackable)
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if s.listener != nil {
 			s.listener = ppListener
@@ -340,10 +344,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("socket", s.cfg.Socket))
 		}
 	}
+	return nil
+}
 
+func (s *Server) initHTTPListener() (err error) {
 	if s.cfg.Status.ReportStatus {
 		if err = s.listenStatusHTTPServer(); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
@@ -364,10 +371,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}
-
-	variable.RegisterStatistics(s)
-
-	return s, nil
+	return
 }
 
 func cleanupStaleSocket(socket string) error {
@@ -434,6 +438,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
 	errChan := make(chan error, 2)
+	s.initTiDBListener()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
 	err := <-errChan

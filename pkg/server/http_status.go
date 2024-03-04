@@ -68,6 +68,7 @@ import (
 const defaultStatusPort = 10080
 
 func (s *Server) startStatusHTTP() {
+	s.initHTTPListener()
 	go s.startHTTPServer()
 }
 
