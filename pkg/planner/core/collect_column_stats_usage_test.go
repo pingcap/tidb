@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/maps"
 )
 
 func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableItemID, comment string) string {
@@ -70,12 +69,9 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableI
 func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment string) {
 	var tblColIDs []model.TableItemID
 	if histNeededOnly {
-		_, tblColIDsMap := CollectColumnStatsUsage(lp, false, true)
-		for _, tblColID := range tblColIDsMap {
-			tblColIDs = append(tblColIDs, maps.Keys(tblColID)...)
-		}
+		_, tblColIDs, _ = CollectColumnStatsUsage(lp, false, true)
 	} else {
-		tblColIDs, _ = CollectColumnStatsUsage(lp, true, false)
+		tblColIDs, _, _ = CollectColumnStatsUsage(lp, true, false)
 	}
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
