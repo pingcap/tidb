@@ -40,6 +40,8 @@ func (t EventType) String() string {
 		return "Del"
 	case EventErr:
 		return "Err"
+	case EventPause:
+		return "Pause"
 	}
 	return "Unknown"
 }

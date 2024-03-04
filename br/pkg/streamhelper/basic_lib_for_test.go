@@ -625,7 +625,7 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
 		},
 		Ranges: rngs,
 	}
