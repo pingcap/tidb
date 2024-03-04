@@ -380,7 +380,7 @@ func CheckIndexesNeedAnalyze(
 	indexes := make([]string, 0, len(tblInfo.Indices))
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := tblStats.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+		if _, ok := tblStats.Indices[idx.ID]; !ok && tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			indexes = append(indexes, idx.Name.O)
 		}
 	}
@@ -508,7 +508,7 @@ func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		names := make([]string, 0, len(defs))
 		for _, def := range defs {
 			tblStats := partitionStats[def.ID]
-			if _, ok := tblStats.Indices[idx.ID]; !ok {
+			if _, ok := tblStats.Indices[idx.ID]; !ok && tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				names = append(names, def.Name.O)
 			}
 		}
