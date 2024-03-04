@@ -3579,39 +3579,15 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' select * from thash use index(idx_ac, idx_bc) where a = 1 or b = 1 order by c limit 2;
 id	estRows	task	access object	operator info
-TopN	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.c, offset:0, count:2
-└─PartitionUnion	8.00	root		
-  ├─Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
-  │ └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p0, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p0, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
-  │   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash, partition:p0	keep order:false, stats:pseudo
-  ├─Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
-  │ └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p1, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p1, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
-  │   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash, partition:p1	keep order:false, stats:pseudo
-  ├─Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
-  │ └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p2, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-  │   ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-  │   │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p2, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
-  │   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash, partition:p2	keep order:false, stats:pseudo
-  └─Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
-    └─IndexMerge	2.00	root		type: union, limit embedded(offset:0, count:2)
-      ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-      │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p3, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-      ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
-      │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, partition:p3, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
-      └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash, partition:p3	keep order:false, stats:pseudo
+Projection	2.00	root		planner__core__casetest__physicalplantest__physical_plan.thash.a, planner__core__casetest__physicalplantest__physical_plan.thash.b, planner__core__casetest__physicalplantest__physical_plan.thash.c
+└─IndexMerge	2.00	root	partition:all	type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, index:idx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	1.00	cop[tikv]	table:thash, index:idx_bc(b, c)	range:[1,1], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:thash	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Warning	1105	disable dynamic pruning due to thash has no global stats
 set tidb_cost_model_version=DEFAULT;
 drop table if exists t, t2, t3;
 set tidb_cost_model_version=1;

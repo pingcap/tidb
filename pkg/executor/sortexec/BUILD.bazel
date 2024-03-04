@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sortexec",
     srcs = [
+        "parallel_sort_worker.go",
         "sort.go",
         "sort_partition.go",
         "sort_spill.go",
@@ -31,10 +32,27 @@ go_library(
 )
 
 go_test(
+    name = "sort_exec_test",
+    timeout = "short",
+    srcs = ["sort_test.go"],
+    flaky = True,
+    shard_count = 8,
+    deps = [
+        "//pkg/config",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/util",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
     name = "sortexec_test",
     timeout = "short",
     srcs = [
         "benchmark_test.go",
+        "parallel_sort_test.go",
         "sort_spill_test.go",
         "sort_test.go",
         "sortexec_pkg_test.go",

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lock"
+	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -179,7 +180,7 @@ type logicalOptRule interface {
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
-	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, utilhint.NewQBHintHandler(nil))
+	builder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), infoSchema, utilhint.NewQBHintHandler(nil))
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
@@ -281,7 +282,7 @@ func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
 }
 
 // CheckTableLock checks the table lock.
-func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
+func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema, vs []visitInfo) error {
 	if !config.TableLockEnabled() {
 		return nil
 	}
@@ -528,12 +529,13 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 
 func prunePhysicalColumnForHashJoinChild(sctx PlanContext, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
 	var err error
-	joinUsed := expression.GetUsedList(sctx, joinUsedCols, sender.Schema())
+	exprCtx := sctx.GetExprCtx()
+	joinUsed := expression.GetUsedList(exprCtx, joinUsedCols, sender.Schema())
 	hashCols := make([]*expression.Column, len(sender.HashCols))
 	for i, mppCol := range sender.HashCols {
 		hashCols[i] = mppCol.Col
 	}
-	hashUsed := expression.GetUsedList(sctx, hashCols, sender.Schema())
+	hashUsed := expression.GetUsedList(exprCtx, hashCols, sender.Schema())
 
 	needPrune := false
 	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))

@@ -62,9 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -176,8 +174,6 @@ var (
 	GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
 	// NewClientWithContext returns a kv.Client.
 	NewClientWithContext = pd.NewClientWithContext
-	// NewPDHttpClient returns a pdhttp.Client.
-	NewPDHttpClient = pdhttp.NewClient
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
@@ -433,16 +429,6 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	return p, nil
 }
 
-// InitTiKVConfigs initializes some TiKV related configs.
-func (p *Plan) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
-	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
-	if err != nil {
-		return err
-	}
-	p.IsRaftKV2 = isRaftKV2
-	return nil
-}
-
 // ASTArgsFromPlan creates ASTArgs from plan.
 func ASTArgsFromPlan(plan *plannercore.LoadData) *ASTArgs {
 	return &ASTArgs{
@@ -505,6 +491,16 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		return nil, err
 	}
 	return c, nil
+}
+
+// InitTiKVConfigs initializes some TiKV related configs.
+func (e *LoadDataController) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
+	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
+	if err != nil {
+		return err
+	}
+	e.Plan.IsRaftKV2 = isRaftKV2
+	return nil
 }
 
 func (e *LoadDataController) checkFieldParams() error {
@@ -598,7 +594,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalString(seCtx, chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -609,7 +605,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalInt(seCtx, chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -1290,7 +1286,7 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	allWarnings := []stmtctx.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
-		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx, assign.Expr, nil, nil, false)
+		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		allWarnings = append(allWarnings, sctx.GetSessionVars().StmtCtx.GetWarnings()...)
@@ -1358,35 +1354,11 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 	return DataSourceTypeFile
 }
 
-// JobImportParam is the param of the job import.
-type JobImportParam struct {
-	Job      *Job
-	Group    *errgroup.Group
-	GroupCtx context.Context
-	// should be closed in the end of the job.
-	Done chan struct{}
-
-	Progress *Progress
-}
-
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
 	Affected   uint64
 	Warnings   []stmtctx.SQLWarn
 	ColSizeMap map[int64]int64
-}
-
-// JobImporter is the interface for importing a job.
-type JobImporter interface {
-	// Param returns the param of the job import.
-	Param() *JobImportParam
-	// Import imports the job.
-	// import should run in routines using param.Group, when import finished, it should close param.Done.
-	// during import, we should use param.GroupCtx, so this method has no context param.
-	Import()
-	// Result returns the result of the job import.
-	Result() JobImportResult
-	io.Closer
 }
 
 // GetMsgFromBRError get msg from BR error.

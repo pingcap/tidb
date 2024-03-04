@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -449,6 +450,9 @@ func (c *RPCClient) Close() error {
 func (c *RPCClient) CloseAddr(addr string) error {
 	return nil
 }
+
+// SetEventListener implements tikv.Client interface.
+func (c *RPCClient) SetEventListener(listener tikv.ClientEventListener) {}
 
 type mockClientStream struct{}
 

@@ -31,8 +31,8 @@ func TestRestoreConfigAdjust(t *testing.T) {
 
 	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
-	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount)
-	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes)
+	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount.Value)
+	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes.Value)
 }
 
 type mockPDClient struct {
@@ -152,6 +152,18 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
 				"TesT":                      {"table", "TaBLE2"},
 				"__TiDB_BR_Temporary_mysql": {"tablE"},
+			}),
+		},
+		{
+			cfgSchemas: map[string]struct{}{
+				utils.EncloseName("sys"): {},
+			},
+			cfgTables: map[string]struct{}{
+				utils.EncloseDBAndTable("sys", "t"):  {},
+				utils.EncloseDBAndTable("sys", "t2"): {},
+			},
+			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
+				"__TiDB_BR_Temporary_sys": {"T", "T2"},
 			}),
 		},
 	}

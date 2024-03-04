@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -54,7 +53,7 @@ const (
 // `lead` and `lag`.
 type valueEvaluator interface {
 	// evaluateRow evaluates the expression using row and stores the result inside.
-	evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error)
+	evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error)
 	// appendResult appends the result to chunk.
 	appendResult(chk *chunk.Chunk, colIdx int)
 }
@@ -64,7 +63,7 @@ type value4Int struct {
 	isNull bool
 }
 
-func (v *value4Int) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+func (v *value4Int) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalInt(ctx, row)
 	return 0, err
 }
@@ -82,7 +81,7 @@ type value4Float32 struct {
 	isNull bool
 }
 
-func (v *value4Float32) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+func (v *value4Float32) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	var val float64
 	val, v.isNull, err = expr.EvalReal(ctx, row)
 	v.val = float32(val)
@@ -102,7 +101,7 @@ type value4Decimal struct {
 	isNull bool
 }
 
-func (v *value4Decimal) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+func (v *value4Decimal) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalDecimal(ctx, row)
 	return 0, err
 }
@@ -120,7 +119,7 @@ type value4Float64 struct {
 	isNull bool
 }
 
-func (v *value4Float64) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+func (v *value4Float64) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalReal(ctx, row)
 	return 0, err
 }
@@ -138,7 +137,7 @@ type value4String struct {
 	isNull bool
 }
 
-func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+func (v *value4String) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	originalLength := len(v.val)
 	v.val, v.isNull, err = expr.EvalString(ctx, row)
 	return int64(len(v.val) - originalLength), err
@@ -157,7 +156,7 @@ type value4Time struct {
 	isNull bool
 }
 
-func (v *value4Time) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+func (v *value4Time) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalTime(ctx, row)
 	return 0, err
 }
@@ -175,7 +174,7 @@ type value4Duration struct {
 	isNull bool
 }
 
-func (v *value4Duration) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+func (v *value4Duration) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalDuration(ctx, row)
 	return 0, err
 }
@@ -193,7 +192,7 @@ type value4JSON struct {
 	isNull bool
 }
 
-func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+func (v *value4JSON) evaluateRow(ctx expression.EvalContext, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	originalLength := len(v.val.Value)
 	v.val, v.isNull, err = expr.EvalJSON(ctx, row)
 	v.val = v.val.Copy() // deep copy to avoid content change.
@@ -259,7 +258,7 @@ func (*firstValue) ResetPartialResult(pr PartialResult) {
 	p.gotFirstValue = false
 }
 
-func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (v *firstValue) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstValue)(pr)
 	if p.gotFirstValue {
 		return 0, nil
@@ -274,7 +273,7 @@ func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	return memDelta, nil
 }
 
-func (v *firstValue) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (v *firstValue) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstValue)(pr)
 	if !p.gotFirstValue {
 		chk.AppendNull(v.ordinal)
@@ -306,7 +305,7 @@ func (*lastValue) ResetPartialResult(pr PartialResult) {
 	p.gotLastValue = false
 }
 
-func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (v *lastValue) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4LastValue)(pr)
 	if len(rowsInGroup) > 0 {
 		p.gotLastValue = true
@@ -318,7 +317,7 @@ func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []c
 	return memDelta, nil
 }
 
-func (v *lastValue) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (v *lastValue) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4LastValue)(pr)
 	if !p.gotLastValue {
 		chk.AppendNull(v.ordinal)
@@ -351,7 +350,7 @@ func (*nthValue) ResetPartialResult(pr PartialResult) {
 	p.seenRows = 0
 }
 
-func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (v *nthValue) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	if v.nth == 0 {
 		return 0, nil
 	}
@@ -367,7 +366,7 @@ func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []ch
 	return memDelta, nil
 }
 
-func (v *nthValue) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (v *nthValue) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4NthValue)(pr)
 	if v.nth == 0 || p.seenRows < v.nth {
 		chk.AppendNull(v.ordinal)

@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/internal/session"
-	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -84,8 +83,9 @@ type OperatorCtx struct {
 }
 
 // NewOperatorCtx creates a new OperatorCtx.
-func NewOperatorCtx(ctx context.Context) *OperatorCtx {
+func NewOperatorCtx(ctx context.Context, taskID, subtaskID int64) *OperatorCtx {
 	opCtx, cancel := context.WithCancel(ctx)
+	opCtx = logutil.WithFields(opCtx, zap.Int64("task-id", taskID), zap.Int64("subtask-id", subtaskID))
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,
@@ -472,7 +472,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for !done {
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
-			if err != nil || util2.IsContextDone(w.ctx) {
+			if err != nil || w.ctx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err
@@ -528,11 +528,12 @@ func NewWriteExternalStoreOperator(
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
-			for _, index := range indexes {
+			for i, index := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(index.Meta().Unique).
-					SetMemorySizeLimit(memoryQuota)
+					SetMemorySizeLimit(memoryQuota).
+					SetGroupOffset(i)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
@@ -796,7 +797,7 @@ func (s *indexWriteResultSink) flush() error {
 				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
 				return err
 			}
-			logutil.BgLogger().Error("flush error",
+			logutil.Logger(s.ctx).Error("flush error",
 				zap.String("category", "ddl"), zap.Error(err))
 			return err
 		}

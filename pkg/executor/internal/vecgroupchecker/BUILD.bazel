@@ -7,7 +7,6 @@ go_library(
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/expression",
-        "//pkg/sessionctx",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",

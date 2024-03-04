@@ -15,80 +15,50 @@
 package expression
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // EvalContext is used to evaluate an expression
-type EvalContext interface {
-	// GetSessionVars gets the session variables.
-	GetSessionVars() *variable.SessionVars
-	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) any
-	// IsDDLOwner checks whether this session is DDL owner.
-	IsDDLOwner() bool
-	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
-	GetAdvisoryLock(string, int64) error
-	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
-	IsUsedAdvisoryLock(string) uint64
-	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
-	ReleaseAdvisoryLock(string) bool
-	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
-	ReleaseAllAdvisoryLocks() int
-	// GetStore returns the store of session.
-	GetStore() kv.Storage
-	// GetInfoSchema returns the current infoschema
-	GetInfoSchema() sessionctx.InfoschemaMetaVersion
-	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion
-}
+type EvalContext = context.EvalContext
+
+// BuildContext is used to build an expression
+type BuildContext = context.BuildContext
 
 func sqlMode(ctx EvalContext) mysql.SQLMode {
-	return ctx.GetSessionVars().SQLMode
+	return ctx.SQLMode()
 }
 
 func typeCtx(ctx EvalContext) types.Context {
-	return ctx.GetSessionVars().StmtCtx.TypeCtx()
+	return ctx.TypeCtx()
 }
 
 func errCtx(ctx EvalContext) errctx.Context {
-	return ctx.GetSessionVars().StmtCtx.ErrCtx()
+	return ctx.ErrCtx()
 }
 
-func location(ctx EvalContext) *time.Location {
-	vars := ctx.GetSessionVars()
-	sc := vars.StmtCtx
-	tc := sc.TypeCtx()
-	intest.Assert(vars.Location() == sc.TimeZone())
-	intest.Assert(sc.TimeZone() == tc.Location())
-	return tc.Location()
+func location(ctx EvalContext) (loc *time.Location) {
+	loc = ctx.Location()
+	intest.AssertFunc(func() bool {
+		vars := ctx.GetSessionVars()
+		tc := ctx.TypeCtx()
+		intest.Assert(tc.Location() == loc)
+		intest.Assert(vars.Location() == loc)
+		return true
+	})
+	return
 }
 
 func warningCount(ctx EvalContext) int {
-	return int(ctx.GetSessionVars().StmtCtx.WarningCount())
+	return ctx.WarningCount()
 }
 
 func truncateWarnings(ctx EvalContext, start int) []stmtctx.SQLWarn {
-	return ctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
-}
-
-// BuildContext is used to build an expression
-type BuildContext interface {
-	EvalContext
-	// GetSessionVars gets the session variables.
-	GetSessionVars() *variable.SessionVars
-	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value any)
-	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
-	// Notice that this is a thread safe function
-	BuiltinFunctionUsageInc(scalarFuncSigName string)
+	return ctx.TruncateWarnings(start)
 }

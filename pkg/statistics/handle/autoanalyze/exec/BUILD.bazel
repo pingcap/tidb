@@ -9,6 +9,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
