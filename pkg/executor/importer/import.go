@@ -101,6 +101,7 @@ const (
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
+	forceMergeStep      = "__force_merge_step"
 )
 
 var (
@@ -123,6 +124,7 @@ var (
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
+		forceMergeStep:              false,
 		cloudStorageURIOption:       true,
 		disablePrecheckOption:       false,
 	}
@@ -257,6 +259,8 @@ type Plan struct {
 	IsRaftKV2 bool
 	// total data file size in bytes.
 	TotalFileSize int64
+	// used in tests to force enable merge-step when using global sort.
+	ForceMergeStep bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -748,6 +752,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[disablePrecheckOption]; ok {
 		p.DisablePrecheck = true
+	}
+	if _, ok := specifiedOptions[forceMergeStep]; ok {
+		p.ForceMergeStep = true
 	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.
