@@ -170,7 +170,7 @@ set session tidb_skip_missing_partition_stats=0;
 set session tidb_opt_fix_control = "";
 explain format='brief' select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
 id	estRows	task	access object	operator info
-Batch_Point_Get	2.00	root	table:tkey, index:col1(col1, col2)	keep order:false, desc:false
+Batch_Point_Get	2.00	root	table:tkey, partition:p3, index:col1(col1, col2)	keep order:false, desc:false
 select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
 col1	col2	col3
 1	a	1
