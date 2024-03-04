@@ -458,34 +458,6 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	return tblIDs, nil
 }
 
-// TODO: more UT to check the correctness, refine the code.
-func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
-	if !ok {
-		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
-		)
-	}
-
-	oldTableID, newTableID := b.getTableIDs(diff)
-	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
-
-	tblIDs, allocs, err := b.dropTableForUpdate(newTableID, oldTableID, oldDBInfo, diff)
-	if err != nil {
-		return nil, err
-	}
-
-	if tableIDIsValid(newTableID) {
-		// All types except DropTableOrView.
-		var err error
-		tblIDs, err = b.applyCreateTable(m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return tblIDs, nil
-}
-
 func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID int64) {
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
@@ -564,9 +536,17 @@ func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model
 				)
 			}
 			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
-			tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
+			if b.enableV2 {
+				tmpIDs = b.applyDropTableV2(diff, oldDBInfo, oldTableID, tmpIDs)
+			} else {
+				tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
+			}
 		} else {
-			tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
+			if b.enableV2 {
+				tmpIDs = b.applyDropTableV2(diff, dbInfo, oldTableID, tmpIDs)
+			} else {
+				tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
+			}
 		}
 
 		if oldTableID != newTableID {
@@ -578,6 +558,9 @@ func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model
 }
 
 func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyTableUpdateV2(m, diff)
+	}
 	roDBInfo, ok := b.infoSchema.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -598,6 +581,34 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		// All types except DropTableOrView.
 		var err error
 		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return tblIDs, nil
+}
+
+// TODO: more UT to check the correctness, refine the code.
+func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+
+	oldTableID, newTableID := b.getTableIDs(diff)
+	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+
+	tblIDs, allocs, err := b.dropTableForUpdate(newTableID, oldTableID, oldDBInfo, diff)
+	if err != nil {
+		return nil, err
+	}
+
+	if tableIDIsValid(newTableID) {
+		// All types except DropTableOrView.
+		var err error
+		tblIDs, err = b.applyCreateTable(m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
