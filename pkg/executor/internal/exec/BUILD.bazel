@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//pkg/domain",
         "//pkg/expression",
+        "//pkg/parser",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
@@ -26,6 +27,7 @@ go_library(
         "//pkg/util/topsql/state",
         "//pkg/util/tracing",
         "@com_github_ngaut_pools//:pools",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 

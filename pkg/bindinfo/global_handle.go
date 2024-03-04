@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -110,12 +109,7 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool SessionPool
 
-	bindingCache atomic.Value
-
-	// fuzzyDigestMap is used to support fuzzy matching.
-	// fuzzyDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> fuzzyDigest.
-	// exactDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
-	fuzzyDigestMap atomic.Value // map[string][]string fuzzyDigest --> exactDigests
+	fuzzyBindingCache atomic.Value
 
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
@@ -156,44 +150,20 @@ func NewGlobalBindingHandle(sPool SessionPool) GlobalBindingHandle {
 	return handle
 }
 
-func (h *globalBindingHandle) getCache() BindingCache {
-	return h.bindingCache.Load().(BindingCache)
+func (h *globalBindingHandle) getCache() FuzzyBindingCache {
+	return h.fuzzyBindingCache.Load().(FuzzyBindingCache)
 }
 
-func (h *globalBindingHandle) setCache(c BindingCache) {
+func (h *globalBindingHandle) setCache(c FuzzyBindingCache) {
 	// TODO: update the global cache in-place instead of replacing it and remove this function.
-	h.bindingCache.Store(c)
-}
-
-func (h *globalBindingHandle) getFuzzyDigestMap() map[string][]string {
-	return h.fuzzyDigestMap.Load().(map[string][]string)
-}
-
-func (h *globalBindingHandle) setFuzzyDigestMap(m map[string][]string) {
-	h.fuzzyDigestMap.Store(m)
-}
-
-func buildFuzzyDigestMap(bindings Bindings) map[string][]string {
-	m := make(map[string][]string)
-	p := parser.New()
-	for _, binding := range bindings {
-		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-		if err != nil {
-			logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
-			p = parser.New()
-			continue
-		}
-		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
-	}
-	return m
+	h.fuzzyBindingCache.Store(c)
 }
 
 // Reset is to reset the BindHandle and clean old info.
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindings = newInvalidBindingCache()
-	h.setCache(newBindCache())
+	h.setCache(newFuzzyBindingCache())
 	variable.RegisterStatistics(h)
 }
 
@@ -209,11 +179,11 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
 	var timeCondition string
-	var newCache BindingCache
+	var newCache FuzzyBindingCache
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
-		newCache = newBindCache()
+		newCache = newFuzzyBindingCache()
 	} else {
 		lastUpdateTime = h.getLastUpdateTime()
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
@@ -235,8 +205,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 
 		defer func() {
 			h.setLastUpdateTime(lastUpdateTime)
-			h.setCache(newCache) // TODO: update it in place
-			h.setFuzzyDigestMap(buildFuzzyDigestMap(newCache.GetAllBindings()))
+			h.setCache(newCache)
 		}()
 
 		for _, row := range rows {
@@ -493,35 +462,7 @@ func (h *globalBindingHandle) Size() int {
 
 // MatchGlobalBinding returns the matched binding for this statement.
 func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	bindingCache := h.getCache()
-	if bindingCache.Size() == 0 {
-		return
-	}
-	fuzzyDigestMap := h.getFuzzyDigestMap()
-	if len(fuzzyDigestMap) == 0 {
-		return
-	}
-
-	leastWildcards := len(tableNames) + 1
-	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
-	for _, exactDigest := range fuzzyDigestMap[fuzzyDigest] {
-		sqlDigest := exactDigest
-		if bindings := bindingCache.GetBinding(sqlDigest); bindings != nil {
-			for _, binding := range bindings {
-				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
-				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
-					continue // fuzzy binding is disabled, skip this binding
-				}
-				if matched && numWildcards < leastWildcards {
-					matchedBinding = binding
-					isMatched = true
-					leastWildcards = numWildcards
-					break
-				}
-			}
-		}
-	}
-	return
+	return h.getCache().FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
@@ -552,32 +493,21 @@ func newBinding(sctx sessionctx.Context, row chunk.Row) (string, Binding, error)
 	if status == Using {
 		status = Enabled
 	}
-	defaultDB := row.GetString(2)
-
-	bindSQL := row.GetString(1)
-	charset, collation := row.GetString(6), row.GetString(7)
-	stmt, err := parser.New().ParseOneStmt(bindSQL, charset, collation)
-	if err != nil {
-		return "", Binding{}, err
-	}
-	tableNames := CollectTableNames(stmt)
-
 	binding := Binding{
 		OriginalSQL: row.GetString(0),
-		Db:          strings.ToLower(defaultDB),
-		BindSQL:     bindSQL,
+		Db:          strings.ToLower(row.GetString(2)),
+		BindSQL:     row.GetString(1),
 		Status:      status,
 		CreateTime:  row.GetTime(4),
 		UpdateTime:  row.GetTime(5),
-		Charset:     charset,
-		Collation:   collation,
+		Charset:     row.GetString(6),
+		Collation:   row.GetString(7),
 		Source:      row.GetString(8),
 		SQLDigest:   row.GetString(9),
 		PlanDigest:  row.GetString(10),
-		TableNames:  tableNames,
 	}
 	sqlDigest := parser.DigestNormalized(binding.OriginalSQL)
-	err = prepareHints(sctx, &binding)
+	err := prepareHints(sctx, &binding)
 	sctx.GetSessionVars().CurrentDB = binding.Db
 	return sqlDigest.String(), binding, err
 }
@@ -696,7 +626,7 @@ func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 
 // Clear resets the bind handle. It is only used for test.
 func (h *globalBindingHandle) Clear() {
-	h.setCache(newBindCache())
+	h.setCache(newFuzzyBindingCache())
 	h.setLastUpdateTime(types.ZeroTimestamp)
 	h.invalidBindings.reset()
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -105,6 +106,9 @@ type Context interface {
 
 	// GetPlanCtx gets the plan context of the current session.
 	GetPlanCtx() planctx.PlanContext
+
+	// GetDistSQLCtx gets the distsql ctx of the current session
+	GetDistSQLCtx() distsqlctx.DistSQLContext
 
 	GetSessionManager() util.SessionManager
 

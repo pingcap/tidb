@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
@@ -278,13 +279,6 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		__DEPRECATED_ActionAlterTableAlterPartition,
 	},
 }
-
-const (
-	// TiDBDDLV1 is the version 1 of DDL.
-	TiDBDDLV1 int64 = iota + 1
-	// TiDBDDLV2 is the version 2 of DDL.
-	TiDBDDLV2
-)
 
 // String return current ddl action in string
 func (action ActionType) String() string {
@@ -568,8 +562,11 @@ type Job struct {
 	CDCWriteSource uint64 `json:"cdc_write_source"`
 
 	// LocalMode indicates whether the job is running in local TiDB.
-	// Only happens when tidb_ddl_version = 2.
+	// Only happens when tidb_enable_fast_ddl = on
 	LocalMode bool `json:"local_mode"`
+
+	// SQLMode for executing DDL query.
+	SQLMode mysql.SQLMode `json:"sql_mode"`
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job.

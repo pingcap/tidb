@@ -24,12 +24,13 @@ import (
 
 func TestImportTaskExecutor(t *testing.T) {
 	ctx := context.Background()
-	executor := newImportExecutor(
+	executor := NewImportExecutor(
 		ctx,
 		":4000",
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 1},
 		},
+		nil,
 		nil,
 	).(*importExecutor)
 
