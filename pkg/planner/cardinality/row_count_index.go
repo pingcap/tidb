@@ -335,7 +335,7 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			if idx.StatsVer == statistics.Version2 {
 				c, ok := coll.Columns[idx.Histogram.ID]
 				if isSingleColRange && !isSingleColIdx && ok && c != nil && c.Histogram.NDV > 0 {
-					histNDV = c.Histogram.NDV
+					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
 				} else {
 					// Exclude the TopN
 					histNDV -= int64(idx.TopN.Num())
