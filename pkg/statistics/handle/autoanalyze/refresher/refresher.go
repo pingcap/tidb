@@ -260,7 +260,8 @@ func CreateTableAnalysisJob(
 	indexes := CheckIndexesNeedAnalyze(tblInfo, tblStats)
 
 	// No need to analyze.
-	// We perform a separate check because users may set the auto analyze ratio to 0, yet still wish to analyze indexes.
+	// We perform a separate check because users may set the auto analyze ratio to 0,
+	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
 	if changePercentage == 0 && len(indexes) == 0 {
 		return nil
 	}
@@ -414,7 +415,8 @@ func createTableAnalysisJobForPartitions(
 		partitionStats,
 	)
 	// No need to analyze.
-	// We perform a separate check because users may set the auto analyze ratio to 0, yet still wish to analyze indexes.
+	// We perform a separate check because users may set the auto analyze ratio to 0,
+	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
 	if len(partitionNames) == 0 && len(partitionIndexes) == 0 {
 		return nil
 	}
