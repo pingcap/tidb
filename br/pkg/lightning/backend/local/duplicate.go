@@ -489,10 +489,6 @@ func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKV
 			return errors.Trace(err)
 		}
 
-		if algorithm == config.DupeResAlgErr {
-			return NewErrFoundConflictRecords(ctx, key, val, m.tbl)
-		}
-
 		conflictInfo := errormanager.DataConflictInfo{
 			RawKey:   key,
 			RawValue: val,
@@ -505,6 +501,10 @@ func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKV
 				return errors.Trace(err)
 			}
 			dataConflictInfos = dataConflictInfos[:0]
+		}
+
+		if algorithm == config.DupeResAlgErr {
+			return errors.Trace(common.ErrFoundDataConflictRecords.FastGenByArgs(m.tbl.Meta().Name, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val)))
 		}
 	}
 	if len(dataConflictInfos) > 0 {
@@ -563,10 +563,6 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 			return errors.Trace(err)
 		}
 
-		if algorithm == config.DupeResAlgErr {
-			return NewErrFoundConflictRecords(ctx, key, val, m.tbl)
-		}
-
 		conflictInfo := errormanager.DataConflictInfo{
 			RawKey:   key,
 			RawValue: val,
@@ -581,6 +577,10 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 			}
 			indexHandles.truncate()
 		}
+
+		if algorithm == config.DupeResAlgErr {
+			return NewErrFoundConflictRecords(ctx, key, val, m.tbl, indexInfo)
+		}
 	}
 	if indexHandles.Len() > 0 {
 		if err := m.saveIndexHandles(ctx, indexHandles); err != nil {
@@ -593,6 +593,9 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
 func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
+	if !common.ErrFoundDuplicateKeys.Equal(err) {
+		return nil, nil, err
+	}
 	tErr, ok := errors.Cause(err).(*terror.Error)
 	if !ok {
 		return nil, nil, err
@@ -610,7 +613,7 @@ func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, er
 
 // NewErrFoundConflictRecords generate an error ErrFoundDuplicateKeys
 // according to key and value.
-func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, tbl table.Table) error {
+func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, tbl table.Table, idxInfo *model.IndexInfo) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tbl.Meta().Name.L)).Begin(zap.InfoLevel, "[new-ErrFoundConflictRecords] new ErrFoundConflictRecords")
 	if tablecodec.IsRecordKey(key) {
 		// for data KV
@@ -638,7 +641,9 @@ func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, t
 		return errors.Trace(err)
 	}
 
-	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
+	if idxInfo == nil {
+		idxInfo = model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
+	}
 
 	idxColLen := len(idxInfo.Columns)
 	indexName := fmt.Sprintf("%s.%s", tbl.Meta().Name.String(), idxInfo.Name.String())
@@ -678,7 +683,7 @@ func ConvertToErrFoundConflictRecords(ctx context.Context, originalErr error, tb
 		return errors.Trace(err)
 	}
 
-	return NewErrFoundConflictRecords(ctx, rawKey, rawValue, tbl)
+	return NewErrFoundConflictRecords(ctx, rawKey, rawValue, tbl, nil)
 }
 
 // BuildDuplicateTaskForTest is only used for test.

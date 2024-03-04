@@ -140,7 +140,7 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
-		}, lightning.DupeResAlgNone)
+		}, lightning.DupeResAlgErr)
 		if err != nil {
 			logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))

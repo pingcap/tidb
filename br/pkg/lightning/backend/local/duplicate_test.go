@@ -16,6 +16,7 @@ package local_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -116,6 +117,13 @@ func TestRetrieveKeyAndValueFromErrFoundDuplicateKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, data1RowKey, rawKey)
 	require.Equal(t, data1RowValue, rawValue)
+}
+
+func TestNewErrFoundConflictRecords(t *testing.T) {
+	//ctx := context.Background()
+	strs := []string{"xxx", "yyy"}
+	err := common.ErrFoundIndexConflictRecords.FastGenByArgs("test", "x", strs)
+	fmt.Print(err.Error())
 }
 
 func TestConvertToErrFoundConflictRecords(t *testing.T) {
