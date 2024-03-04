@@ -257,8 +257,11 @@ func (ic *importClient) cachedConnectionFrom(
 		return import_sstpb.NewImportSSTClient(conn), nil
 	}
 	conn, err := ic.createGrpcConn(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	caches[storeID] = conn
-	return import_sstpb.NewImportSSTClient(conn), errors.Trace(err)
+	return import_sstpb.NewImportSSTClient(conn), nil
 }
 
 func (ic *importClient) GetImportClient(
