@@ -260,6 +260,8 @@ func CreateTableAnalysisJob(
 	indexes := CheckIndexesNeedAnalyze(tblInfo, tblStats)
 
 	// No need to analyze.
+	// We perform a separate check because users may set the auto analyze ratio to 0,
+	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
 	if changePercentage == 0 && len(indexes) == 0 {
 		return nil
 	}
@@ -293,6 +295,13 @@ func CalculateChangePercentage(
 
 	if !exec.TableAnalyzed(tblStats) {
 		return unanalyzedTableDefaultChangePercentage
+	}
+
+	// Auto analyze based on the change percentage is disabled.
+	// However, this check should not affect the analysis of indexes,
+	// as index analysis is still needed for query performance.
+	if autoAnalyzeRatio == 0 {
+		return 0
 	}
 
 	tblCnt := float64(tblStats.RealtimeCount)
@@ -406,6 +415,8 @@ func createTableAnalysisJobForPartitions(
 		partitionStats,
 	)
 	// No need to analyze.
+	// We perform a separate check because users may set the auto analyze ratio to 0,
+	// yet still wish to analyze newly added indexes and tables that have not been analyzed.
 	if len(partitionNames) == 0 && len(partitionIndexes) == 0 {
 		return nil
 	}
@@ -452,7 +463,8 @@ func CalculateIndicatorsForPartitions(
 	for _, def := range defs {
 		tblStats := partitionStats[def.ID]
 		changePercent := CalculateChangePercentage(tblStats, autoAnalyzeRatio)
-		// No need to analyze the partition because it doesn't meet the threshold or stats are not loaded yet.
+		// Skip partition analysis if it doesn't meet the threshold, stats are not yet loaded,
+		// or the auto analyze ratio is set to 0 by the user.
 		if changePercent == 0 {
 			continue
 		}
