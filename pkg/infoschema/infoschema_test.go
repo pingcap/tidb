@@ -36,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 type mockAutoIDRequirement struct {
@@ -991,7 +993,7 @@ func (tc *infoschemaTestContext) runDropSchema() infoschema.InfoSchema {
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn),
-		&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID})
+		&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID, Version: 100})
 	require.NoError(tc.t, err)
 	is := builder.Build()
 
@@ -1101,6 +1103,7 @@ func TestApplyDiff(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		if i == 1 {
+			// enable infoschema v2.
 			variable.SchemaCacheSize.Store(1000000)
 		}
 		tc := &infoschemaTestContext{
@@ -1118,5 +1121,20 @@ func TestApplyDiff(t *testing.T) {
 		tc.runDropTable("test")
 		tc.clear()
 	}
-	// TODO check all actions..
+	// TODO(ywqzzy): check all actions.
+}
+
+func TestYWQ(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	variable.SchemaCacheSize.Store(1000000)
+	tk.MustExec("create database mytest")
+
+	tk.MustExec("drop database mytest")
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	logutil.BgLogger().Info("u", zap.Any("rows", tk.MustQuery("show databases")))
+
+	require.NoError(t, dom.Reload())
 }

@@ -815,7 +815,7 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 		return nil
 	}
 
-	b.infoData.deleteDB(diff.Version, di)
+	b.infoData.deleteDB(di.Name)
 	tableIDs := make([]int64, 0, len(di.Tables))
 	for _, tbl := range di.Tables {
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
