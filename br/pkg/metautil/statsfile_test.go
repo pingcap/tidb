@@ -139,17 +139,19 @@ func TestStatsWriter(t *testing.T) {
 		controlWorker := utils.NewWorkerPool(2, "test")
 		eg, ectx := errgroup.WithContext(ctx)
 		taskCh := make(chan *types.PartitionStatisticLoadTask)
-		controlWorker.ApplyOnErrorGroup(eg, func() error {
+		ctxErr := controlWorker.ApplyOnErrorGroup(ectx, eg, func() error {
 			return downloadStats(ectx, stg, &cipher, statsFileIndexes, rewriteIDs, taskCh)
 		})
-		controlWorker.ApplyOnErrorGroup(eg, func() error {
+		require.NoError(t, ctxErr)
+		ctxErr = controlWorker.ApplyOnErrorGroup(ectx, eg, func() error {
 			for task := range taskCh {
 				expectedJsonTable := fakeJsonTables[rerewriteIDs[task.PhysicalID]]
 				require.Equal(t, expectedJsonTable, task.JSONTable)
 			}
 			return nil
 		})
-		err = eg.Wait()
+		require.NoError(t, ctxErr)
+		err = controlWorker.Wait(eg, ectx)
 		require.NoError(t, err)
 	}
 }

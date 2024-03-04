@@ -130,7 +130,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 			log.Info("exclude volume list", zap.Stringp("ec2", ec2InstanceId), zap.Any("exclude volume list", excludedVolumeIDs))
 
 			// create snapshots for volumes on this ec2 instance
-			workerPool.ApplyOnErrorGroup(eg, func() error {
+			_ = workerPool.ApplyOnErrorGroup(context.TODO(), eg, func() error {
 				// Prepare for aws requests
 				instanceSpecification := ec2.InstanceSpecification{}
 				createSnapshotInput := ec2.CreateSnapshotsInput{}
@@ -277,7 +277,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
 	for i := range pendingSnaps {
 		snapID := pendingSnaps[i]
-		workerPool.ApplyOnErrorGroup(eg, func() error {
+		_ = workerPool.ApplyOnErrorGroup(context.TODO(), eg, func() error {
 			_, err2 := e.ec2.DeleteSnapshot(&ec2.DeleteSnapshotInput{
 				SnapshotId: snapID,
 			})
@@ -562,7 +562,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		store := meta.TiKVComponent.Stores[i]
 		for j := range store.Volumes {
 			oldVol := store.Volumes[j]
-			workerPool.ApplyOnErrorGroup(eg, func() error {
+			_ = workerPool.ApplyOnErrorGroup(context.TODO(), eg, func() error {
 				log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
 				req := template
 
@@ -665,7 +665,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
 	for i := range pendingVolumes {
 		volID := pendingVolumes[i]
-		workerPool.ApplyOnErrorGroup(eg, func() error {
+		_ = workerPool.ApplyOnErrorGroup(context.TODO(), eg, func() error {
 			_, err2 := e.ec2.DeleteVolume(&ec2.DeleteVolumeInput{
 				VolumeId: volID,
 			})

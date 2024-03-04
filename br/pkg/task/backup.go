@@ -381,7 +381,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
-	defer cancel()
+	defer func() {
+		// To confirm who cancel the context: whether the parent context of BR task or BR task itself?
+		log.Info("BR task exits, and check the context status", zap.Error(ctx.Err()))
+		cancel()
+	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("task.RunBackup", opentracing.ChildOf(span.Context()))

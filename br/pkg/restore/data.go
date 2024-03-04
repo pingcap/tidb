@@ -232,11 +232,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 		storeId := recovery.allStores[i].GetId()
 		storeAddr := recovery.allStores[i].GetAddress()
 
-		if err := ectx.Err(); err != nil {
-			break
-		}
-
-		workers.ApplyOnErrorGroup(eg, func() error {
+		if ctxErr := workers.ApplyOnErrorGroup(ectx, eg, func() error {
 			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
 			if err != nil {
 				return errors.Trace(err)
@@ -265,7 +261,10 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 
 			metaChan <- storeMeta
 			return nil
-		})
+		}); ctxErr != nil {
+			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
+			break
+		}
 	}
 
 	for i := 0; i < totalStores; i++ {
@@ -280,7 +279,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 		recovery.progress.Inc()
 	}
 
-	return eg.Wait()
+	return workers.Wait(eg, ectx)
 }
 
 func (recovery *Recovery) GetTotalRegions() int {
@@ -337,18 +336,18 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	workers := utils.NewWorkerPool(uint(min(totalRecoveredStores, common.MaxStoreConcurrency)), "Recover Regions")
 
 	for storeId, plan := range recovery.RecoveryPlan {
-		if err := ectx.Err(); err != nil {
-			break
-		}
 		storeId := storeId
 		plan := plan
 
-		workers.ApplyOnErrorGroup(eg, func() error {
+		if ctxErr := workers.ApplyOnErrorGroup(ectx, eg, func() error {
 			return recovery.RecoverRegionOfStore(ectx, storeId, plan)
-		})
+		}); ctxErr != nil {
+			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
+			break
+		}
 	}
 	// Wait for all TiKV instances force leader and wait apply to last log.
-	return eg.Wait()
+	return workers.Wait(eg, ectx)
 }
 
 func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {

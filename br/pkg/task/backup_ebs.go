@@ -353,10 +353,7 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 	}
 	for i := range allStores {
 		store := allStores[i]
-		if ectx.Err() != nil {
-			break
-		}
-		workerPool.ApplyOnErrorGroup(eg, func() error {
+		if ctxErr := workerPool.ApplyOnErrorGroup(ectx, eg, func() error {
 			backupClient, connection, err := newBackupClient(ctx, store.Address, cfg, mgr.GetTLSConfig())
 			if err != nil {
 				return errors.Trace(err)
@@ -394,9 +391,12 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 			}
 			addRegionsFunc(storeLeaderRegions)
 			return nil
-		})
+		}); ctxErr != nil {
+			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
+			break
+		}
 	}
-	return allRegions, eg.Wait()
+	return allRegions, workerPool.Wait(eg, ectx)
 }
 
 func newBackupClient(ctx context.Context, storeAddr string, cfg Config, tlsConfig *tls.Config) (

@@ -639,6 +639,10 @@ func DefaultRestoreConfig() RestoreConfig {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	defer func() {
+		// To confirm who cancel the context: whether the parent context of BR task or BR task itself?
+		log.Info("BR task exits, and check the context status", zap.Error(c.Err()))
+	}()
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err

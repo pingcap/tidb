@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -92,7 +93,7 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 			return nil
 		}
 
-		pool.ApplyOnErrorGroup(eg, func() error {
+		if ctxErr := pool.ApplyOnErrorGroup(egCtx, eg, func() error {
 			m := &backuppb.Metadata{}
 			b, err := s.storage.ReadFile(egCtx, path)
 			if err != nil {
@@ -106,16 +107,15 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 			s.resolveMetaData(egCtx, m, ch)
 			log.Debug("read backup meta file", zap.String("path", path))
 			return nil
-		})
+		}); ctxErr != nil {
+			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
+			return errors.Trace(ctxErr)
+		}
 
 		return nil
 	})
 
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return eg.Wait()
+	return errors.Trace(multierr.Append(err, pool.Wait(eg, egCtx)))
 }
 
 func (s *StreamBackupSearch) resolveMetaData(ctx context.Context, metaData *backuppb.Metadata, ch chan<- *backuppb.DataFileInfo) {

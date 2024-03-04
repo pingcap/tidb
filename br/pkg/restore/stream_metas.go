@@ -156,7 +156,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 		sync.Mutex
 	}
 	worker := utils.NewWorkerPool(ms.MetadataDownloadBatchSize, "delete files")
-	eg, cx := errgroup.WithContext(ctx)
+	eg, ectx := errgroup.WithContext(ctx)
 	for path, metaInfo := range ms.metadataInfos {
 		path := path
 		minTS := metaInfo.MinTS
@@ -167,12 +167,12 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 			// so that the metadata is skipped.
 			continue
 		}
-		worker.ApplyOnErrorGroup(eg, func() error {
-			if cx.Err() != nil {
-				return cx.Err()
+		if ctxErr := worker.ApplyOnErrorGroup(ectx, eg, func() error {
+			if ectx.Err() != nil {
+				return context.Cause(ectx)
 			}
 
-			data, err := storage.ReadFile(ctx, path)
+			data, err := storage.ReadFile(ectx, path)
 			if err != nil {
 				return err
 			}
@@ -182,7 +182,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 				return err
 			}
 
-			num, notDeletedItems, err := ms.removeDataFilesAndUpdateMetadata(ctx, storage, from, meta, path)
+			num, notDeletedItems, err := ms.removeDataFilesAndUpdateMetadata(ectx, storage, from, meta, path)
 			if err != nil {
 				return err
 			}
@@ -193,10 +193,13 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 			notDeleted.item = append(notDeleted.item, notDeletedItems...)
 			notDeleted.Unlock()
 			return nil
-		})
+		}); ctxErr != nil {
+			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
+			break
+		}
 	}
 
-	if err := eg.Wait(); err != nil {
+	if err := worker.Wait(eg, ectx); err != nil {
 		return nil, errors.Trace(err)
 	}
 

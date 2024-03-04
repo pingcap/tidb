@@ -350,7 +350,8 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// And worker 2 finished its job before worker 1 done. Note the table wasn't restored fully,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
-			pool.ApplyOnErrorGroup(eg, func() error {
+			// just consume the channel when context done
+			_ = pool.ApplyOnErrorGroup(ectx, eg, func() error {
 				err := b.client.SplitRanges(ectx, result.Ranges, result.RewriteRules, b.updateCh, false)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
