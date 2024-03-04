@@ -937,7 +937,11 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 
 	// Querying may take some time and it takes a context.Context as argument, which is not available here.
 	// We simply create a context with a timeout here.
+<<<<<<< HEAD
 	timeout := time.Duration(b.ctx.GetSessionVars().MaxExecutionTime) * time.Millisecond
+=======
+	timeout := time.Duration(ctx.GetSessionVars().GetMaxExecutionTime()) * time.Millisecond
+>>>>>>> 13bff87d08c (variable: unifiy MaxExecuteTime usage and fix some problem (#50915))
 	if timeout == 0 || timeout > 20*time.Second {
 		timeout = 20 * time.Second
 	}

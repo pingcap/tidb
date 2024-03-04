@@ -346,7 +346,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
-		maxExecutionTime := getMaxExecutionTime(sctx)
+		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -553,7 +553,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.getSQLForProcessInfo()
-		maxExecutionTime := getMaxExecutionTime(sctx)
+		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
@@ -824,14 +824,6 @@ func isNoResultPlan(p plannercore.Plan) bool {
 		}
 	}
 	return false
-}
-
-// getMaxExecutionTime get the max execution timeout value.
-func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
-	if sctx.GetSessionVars().StmtCtx.HasMaxExecutionTime {
-		return sctx.GetSessionVars().StmtCtx.MaxExecutionTime
-	}
-	return sctx.GetSessionVars().MaxExecutionTime
 }
 
 type chunkRowRecordSet struct {
