@@ -50,11 +50,9 @@ const (
 )
 
 type SplitContext struct {
-	isRawKv     bool
-	needScatter bool
-	waitScatter bool
-	storeCount  int
-	onSplit     OnSplitFunc
+	isRawKv    bool
+	storeCount int
+	onSplit    OnSplitFunc
 }
 
 // RegionSplitter is a executor of region split by rules.
@@ -83,7 +81,6 @@ func (rs *RegionSplitter) ExecuteSplit(
 	ranges []rtree.Range,
 	rewriteRules *RewriteRules,
 	storeCount int,
-	granularity string,
 	isRawKv bool,
 	onSplit OnSplitFunc,
 ) error {
@@ -118,13 +115,11 @@ func (rs *RegionSplitter) ExecuteSplit(
 	// and the range size must be greater than 0 here
 	scanStartKey := sortedRanges[0].StartKey
 	sctx := SplitContext{
-		isRawKv:     isRawKv,
-		needScatter: true,
-		waitScatter: false,
-		onSplit:     onSplit,
-		storeCount:  storeCount,
+		isRawKv:    isRawKv,
+		onSplit:    onSplit,
+		storeCount: storeCount,
 	}
-	return rs.executeSplitByRanges(ctx, sctx, scanStartKey, sortedKeys, granularity)
+	return rs.executeSplitByRanges(ctx, sctx, scanStartKey, sortedKeys)
 }
 
 func (rs *RegionSplitter) executeSplitByRanges(
@@ -132,10 +127,8 @@ func (rs *RegionSplitter) executeSplitByRanges(
 	splitContext SplitContext,
 	scanStartKey []byte,
 	sortedKeys [][]byte,
-	granularity string,
 ) error {
 	startTime := time.Now()
-	splitContext.needScatter = true
 	// Choose the rough region split keys,
 	// each splited region contains 128 regions to be splitted.
 	const regionIndexStep = 128
@@ -204,8 +197,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 			sctx := splitContext
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Info("get split keys for split regions",
-					logutil.Region(region.Region), logutil.Keys(keys),
-					zap.Bool("need scatter", sctx.needScatter))
+					logutil.Region(region.Region), logutil.Keys(keys))
 				newRegions, err := rs.splitAndScatterRegions(ectx, sctx, region, keys)
 				if err != nil {
 					return err
@@ -215,14 +207,12 @@ func (rs *RegionSplitter) executeSplitByKeys(
 						zap.Int("new region count", len(newRegions)),
 						zap.Int("split key count", len(keys)))
 				}
-				if sctx.needScatter {
-					log.Info("scattered regions", zap.Int("count", len(newRegions)))
-					mutex.Lock()
-					for _, r := range newRegions {
-						regionsMap[r.Region.Id] = r
-					}
-					mutex.Unlock()
+				log.Info("scattered regions", zap.Int("count", len(newRegions)))
+				mutex.Lock()
+				for _, r := range newRegions {
+					regionsMap[r.Region.Id] = r
 				}
+				mutex.Unlock()
 				sctx.onSplit(keys)
 				return nil
 			})
@@ -257,7 +247,7 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 		return []*split.RegionInfo{regionInfo}, nil
 	}
 
-	newRegions, err := rs.splitRegionsSync(ctx, regionInfo, keys)
+	newRegions, err := rs.splitRegions(ctx, regionInfo, keys)
 	if err != nil {
 		if strings.Contains(err.Error(), "no valid key") {
 			for _, key := range keys {
@@ -271,20 +261,13 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 		}
 		return nil, errors.Trace(err)
 	}
-	if splitContext.needScatter {
-		// To make region leader balanced. need scatter origin one too
-		if splitContext.waitScatter {
-			rs.ScatterRegionsSync(ctx, append(newRegions, regionInfo))
-		} else {
-			rs.ScatterRegionsAsync(ctx, append(newRegions, regionInfo))
-		}
-	}
+	rs.scatterRegions(ctx, append(newRegions, regionInfo))
 	return newRegions, nil
 }
 
-// splitRegionsSync perform batchSplit on a region by keys
+// splitRegions perform batchSplit on a region by keys
 // and then check the batch split success or not.
-func (rs *RegionSplitter) splitRegionsSync(
+func (rs *RegionSplitter) splitRegions(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
 ) ([]*split.RegionInfo, error) {
 	if len(keys) == 0 {
@@ -298,10 +281,10 @@ func (rs *RegionSplitter) splitRegionsSync(
 	return newRegions, nil
 }
 
-// ScatterRegionsAsync scatter the regions.
+// scatterRegions scatter the regions.
 // for same reason just log and ignore error.
 // See the comments of function waitRegionScattered.
-func (rs *RegionSplitter) ScatterRegionsAsync(ctx context.Context, newRegions []*split.RegionInfo) {
+func (rs *RegionSplitter) scatterRegions(ctx context.Context, newRegions []*split.RegionInfo) {
 	log.Info("start to scatter regions", zap.Int("regions", len(newRegions)))
 	// the retry is for the temporary network errors during sending request.
 	err := utils.WithRetry(ctx, func() error {
@@ -322,14 +305,6 @@ func (rs *RegionSplitter) ScatterRegionsAsync(ctx context.Context, newRegions []
 	if err != nil {
 		log.Warn("failed to scatter regions", logutil.ShortError(err))
 	}
-}
-
-// ScatterRegionsSync scatter the regions and wait these region scattered from PD.
-// for same reason just log and ignore error.
-// See the comments of function waitRegionScattered.
-func (rs *RegionSplitter) ScatterRegionsSync(ctx context.Context, newRegions []*split.RegionInfo) {
-	rs.ScatterRegionsAsync(ctx, newRegions)
-	rs.waitRegionsScattered(ctx, newRegions, split.ScatterWaitUpperInterval)
 }
 
 // waitRegionsSplitted check multiple regions have finished the split.
@@ -529,7 +504,7 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 		}
 
 		if len(reScatterRegions) > 0 {
-			rs.ScatterRegionsAsync(ctx1, reScatterRegions)
+			rs.scatterRegions(ctx1, reScatterRegions)
 		}
 
 		if time.Since(startTime) > timeout {
@@ -764,7 +739,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 				startKey = point
 			}
 
-			return regionSplitter.ExecuteSplit(ctx, ranges, nil, 3, "", false, func([][]byte) {})
+			return regionSplitter.ExecuteSplit(ctx, ranges, nil, 3, false, func([][]byte) {})
 		}
 		select {
 		case <-ctx.Done():

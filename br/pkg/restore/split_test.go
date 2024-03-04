@@ -298,7 +298,7 @@ func TestScanEmptyRegion(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, "", false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -310,7 +310,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, "", false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -468,7 +468,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, "", false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -514,7 +514,7 @@ func TestRawSplit(t *testing.T) {
 	ctx := context.Background()
 
 	regionSplitter := restore.NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges, nil, 1, "", true, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, nil, 1, true, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
