@@ -615,11 +615,12 @@ func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, er
 // according to key and value.
 func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, tbl table.Table, idxInfo *model.IndexInfo) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tbl.Meta().Name.L)).Begin(zap.InfoLevel, "[new-ErrFoundConflictRecords] new ErrFoundConflictRecords")
+	sessionOpts := encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+	}
+
 	if tablecodec.IsRecordKey(key) {
 		// for data KV
-		sessionOpts := encode.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-		}
 		se := kv.NewSession(&sessionOpts, log.Logger{})
 
 		handle, err := tablecodec.DecodeRowKey(key)
@@ -636,13 +637,27 @@ func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, t
 	}
 
 	// for index KV
-	_, idxID, idxValues, err := tablecodec.DecodeIndexKey(key)
+	_, idxID, _, err := tablecodec.DecodeIndexKey(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	logger2 := logger.With(zap.String("tableName", tbl.Meta().Name.L))
+	decoder, err := kv.NewTableKVDecoder(tbl, tbl.Meta().Name.L, &sessionOpts, logger2)
+
 	if idxInfo == nil {
 		idxInfo = model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
+	}
+
+	h, err := decoder.DecodeHandleFromIndex(idxInfo, key, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, h)
+	handle, err := tablecodec.DecodeRowKey(rowKey)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	idxColLen := len(idxInfo.Columns)
@@ -672,7 +687,7 @@ func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, t
 		valueStr = append(valueStr, str)
 	}
 
-	return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, idxValues[0], valueStr[0]))
+	return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, valueStr, handle))
 }
 
 // ConvertToErrFoundConflictRecords converts ErrFoundDuplicateKeys

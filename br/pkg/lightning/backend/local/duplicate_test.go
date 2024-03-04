@@ -16,7 +16,6 @@ package local_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -119,16 +118,9 @@ func TestRetrieveKeyAndValueFromErrFoundDuplicateKeys(t *testing.T) {
 	require.Equal(t, data1RowValue, rawValue)
 }
 
-func TestNewErrFoundConflictRecords(t *testing.T) {
-	//ctx := context.Background()
-	strs := []string{"xxx", "yyy"}
-	err := common.ErrFoundIndexConflictRecords.FastGenByArgs("test", "x", strs)
-	fmt.Print(err.Error())
-}
-
 func TestConvertToErrFoundConflictRecords(t *testing.T) {
 	p := parser.New()
-	node, _, err := p.ParseSQL("create table a (a int primary key, b int not null, c text, key key_b(b));")
+	node, _, err := p.ParseSQL("create table a (a int primary key, b int not null, c text, unique key key_b(b));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
@@ -162,7 +154,7 @@ func TestConvertToErrFoundConflictRecords(t *testing.T) {
 	}
 	data3 := []types.Datum{
 		types.NewIntDatum(3),
-		types.NewIntDatum(3),
+		types.NewIntDatum(7),
 		types.NewStringDatum("3.csv"),
 	}
 	tctx := encoder.SessionCtx.GetTableCtx()
@@ -189,5 +181,74 @@ func TestConvertToErrFoundConflictRecords(t *testing.T) {
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
 	newErr = local.ConvertToErrFoundConflictRecords(ctx, originalErr, tbl)
-	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, unique key is '3', primary key is '3'")
+	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, unique key is '[7]', primary key is '3'")
+}
+
+func TestConvertToErrFoundConflictRecordsMultipleColumnsIndex(t *testing.T) {
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table a (a int primary key, b int not null, c text, d int, unique key key_bd(b,d));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), info)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(6),
+		types.NewStringDatum("1.csv"),
+		types.NewIntDatum(101),
+	}
+	data2 := []types.Datum{
+		types.NewIntDatum(2),
+		types.NewIntDatum(6),
+		types.NewStringDatum("2.csv"),
+		types.NewIntDatum(102),
+	}
+	data3 := []types.Datum{
+		types.NewIntDatum(3),
+		types.NewIntDatum(7),
+		types.NewStringDatum("3.csv"),
+		types.NewIntDatum(103),
+	}
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(tctx, data2)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(tctx, data3)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	data2RowKey := kvPairs.Pairs[2].Key
+	data2RowValue := kvPairs.Pairs[2].Val
+	data3IndexKey := kvPairs.Pairs[5].Key
+	data3IndexValue := kvPairs.Pairs[5].Val
+
+	ctx := context.Background()
+
+	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data2RowKey, data2RowValue)
+
+	newErr := local.ConvertToErrFoundConflictRecords(ctx, originalErr, tbl)
+	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '[KindInt64 2 KindInt64 6 KindString 2.csv KindInt64 102]'")
+
+	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
+
+	newErr = local.ConvertToErrFoundConflictRecords(ctx, originalErr, tbl)
+	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, unique key is '[7 103]', primary key is '3'")
 }
