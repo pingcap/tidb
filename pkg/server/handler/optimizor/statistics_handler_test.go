@@ -280,7 +280,7 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 	var dbName, tableName string
 	var modifyCount, count int64
 	var other any
-	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count, &other)
 	require.NoError(t, err)
 	require.Equal(t, "tidb", dbName)
 	require.Equal(t, "test", tableName)

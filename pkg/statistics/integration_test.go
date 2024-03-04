@@ -554,37 +554,3 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, lastAnalyzeVer, statsTbl.LastAnalyzeVersion)
 }
-
-func TestTableLastAnalyzeVersionWithLocked(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	h := dom.StatsHandle()
-	tk := testkit.NewTestKit(t, store)
-
-	// Only create table should not set the last_analyze_version
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int);")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("analyze table t;")
-	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
-	is = dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl, found := h.Get(tbl.Meta().ID)
-	require.True(t, found)
-	lastAnalyzeVersion := statsTbl.LastAnalyzeVersion
-	require.NotEqual(t, uint64(0), lastAnalyzeVersion)
-
-	// Simulate the case for upgrading. Case of update stats delta.
-	tk.MustExec(fmt.Sprintf("update mysql.stats_meta set last_analyze_version = 0 where table_id = %v", tbl.Meta().ID))
-	tk.MustExec("lock stats t")
-
-	// INSERT and updating the modify_count.
-	tk.MustExec("insert into t values(1)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
-	statsTbl, found = h.Get(tbl.Meta().ID)
-	require.True(t, found)
-	require.Equal(t, lastAnalyzeVersion, statsTbl.LastAnalyzeVersion)
-	tk.MustQuery(fmt.Sprintf("select last_analyze_version from mysql.stats_meta where table_id = %v", tbl.Meta().ID)).Check(testkit.Rows(fmt.Sprintf("%v", lastAnalyzeVersion)))
-}

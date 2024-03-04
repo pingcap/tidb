@@ -67,9 +67,6 @@ func UpdateStatsMeta(
 		if err != nil {
 			return err
 		}
-		// We add this SQL since the last_analyze_version is added via alter table in bootstrap's upgrading.
-		// We only need a UPDATE since the stats_meta must exists if we already analyzed this table.
-		_, err = statsutil.Exec(sctx, "update mysql.stats_meta set last_analyze_version = %? where table_id = %? and last_analyze_version = 0", lastAnalyzeVersion, id)
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.

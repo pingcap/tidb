@@ -143,9 +143,9 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 			tblName,
 			partitionName,
 			e.versionToTime(statsTbl.Version),
-			nil,
 			statsTbl.ModifyCount,
 			statsTbl.RealtimeCount,
+			nil,
 		})
 	} else {
 		e.appendRow([]any{
@@ -153,9 +153,9 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 			tblName,
 			partitionName,
 			e.versionToTime(statsTbl.Version),
-			e.versionToTime(statsTbl.LastAnalyzeVersion),
 			statsTbl.ModifyCount,
 			statsTbl.RealtimeCount,
+			e.versionToTime(statsTbl.LastAnalyzeVersion),
 		})
 	}
 }

@@ -370,6 +370,7 @@ func TestGetTableLastAnalyzeDuration(t *testing.T) {
 				},
 			},
 		},
+		LastAnalyzeVersion: lastUpdateTs,
 	}
 	// 2024-01-01 10:00:00
 	currentTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
@@ -557,7 +558,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 				2: {
 					HistColl: statistics.HistColl{
@@ -579,7 +581,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -639,7 +642,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 				2: {
 					HistColl: statistics.HistColl{
@@ -661,7 +665,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
