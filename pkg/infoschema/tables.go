@@ -1990,6 +1990,7 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		resp, err := util.InternalHTTPClient().Do(req)
 		// PD is not in the microservice mode
 		if resp.StatusCode == http.StatusNotFound {
+			terror.Log(resp.Body.Close())
 			return servers, nil
 		}
 		if err != nil {
