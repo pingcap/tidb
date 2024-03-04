@@ -3061,3 +3061,8 @@ func TestPrepareCount(t *testing.T) {
 	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
 	require.NoError(t, qctx.Close())
 }
+
+func TestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestSQLModeIsLoadedBeforeQuery(t)
+}
