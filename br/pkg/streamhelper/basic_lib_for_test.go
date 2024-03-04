@@ -100,6 +100,7 @@ type fakeCluster struct {
 	testCtx   *testing.T
 
 	onGetClient        func(uint64) error
+	onClearCache       func(uint64) error
 	serviceGCSafePoint uint64
 }
 
@@ -320,8 +321,8 @@ func (f *fakeCluster) GetLogBackupClient(ctx context.Context, storeID uint64) (l
 }
 
 func (f *fakeCluster) ClearCache(ctx context.Context, storeID uint64) error {
-	if f.onGetClient != nil {
-		err := f.onGetClient(storeID)
+	if f.onClearCache != nil {
+		err := f.onClearCache(storeID)
 		if err != nil {
 			return err
 		}
