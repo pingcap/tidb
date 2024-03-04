@@ -1883,14 +1883,9 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 // GetPDServerInfo returns all PD nodes information of cluster
 func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
-	store := ctx.GetStore()
-	etcd, ok := store.(kv.EtcdBackend)
-	if !ok {
-		return nil, errors.Errorf("%T not an etcd backend", store)
-	}
-	members, err := etcd.EtcdAddrs()
+	members, err := getEtcdMembers(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	// TODO: maybe we should unify the PD API request interface.
 	var (
@@ -1971,15 +1966,9 @@ func GetSchedulingServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 }
 
 func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]ServerInfo, error) {
-	// Get servers info.
-	store := ctx.GetStore()
-	etcd, ok := store.(kv.EtcdBackend)
-	if !ok {
-		return nil, errors.Errorf("%T not an etcd backend", store)
-	}
-	members, err := etcd.EtcdAddrs()
+	members, err := getEtcdMembers(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	// TODO: maybe we should unify the PD API request interface.
 	var servers []ServerInfo
@@ -1994,7 +1983,7 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			logutil.BgLogger().Warn("create server info request error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			logutil.BgLogger().Warn("create microservice server info request error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
 			continue
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
@@ -2005,7 +1994,7 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		}
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			logutil.BgLogger().Warn("request server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			logutil.BgLogger().Warn("request microservice server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
 			continue
 		}
 		var content = []struct {
@@ -2019,7 +2008,7 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		terror.Log(resp.Body.Close())
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			logutil.BgLogger().Warn("close server info request error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			logutil.BgLogger().Warn("close microservice server info request error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
 			continue
 		}
 
@@ -2041,6 +2030,19 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		return servers, nil
 	}
 	return servers, nil
+}
+
+func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
+	store := ctx.GetStore()
+	etcd, ok := store.(kv.EtcdBackend)
+	if !ok {
+		return nil, errors.Errorf("%T not an etcd backend", store)
+	}
+	members, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return members, nil
 }
 
 func isTiFlashStore(store *metapb.Store) bool {
