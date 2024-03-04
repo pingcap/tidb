@@ -544,6 +544,22 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 	return c.subscriber.PendingErrors()
 }
 
+func (c *CheckpointAdvancer) isCheckpointLagged() bool {
+	if c.cfg.CheckPointLagLimit <= 0 {
+		return false
+	}
+	
+	// log.Warn("last checkpoint", zap.Stringer("category", oracle.GetTimeFromTS(c.lastCheckpoint.TS)))
+	lagDuration := time.Since(oracle.GetTimeFromTS(c.lastCheckpoint.TS))
+	
+	if lagDuration > c.cfg.CheckPointLagLimit {
+		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
+			zap.Stringer("lag", lagDuration))
+		return true
+	}
+	return false
+}
+
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
 	c.setCheckpoint(ctx, c.checkpoints.Min())
@@ -551,10 +567,9 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
-	if lag := oracle.GetTimeFromTS(c.lastCheckpoint.safeTS()); time.Since(lag) > c.cfg.CheckPointLagLimit {
-		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
-			zap.Stringer("lag", time.Since(lag)))
+	if c.isCheckpointLagged() {
 		c.env.PauseTask(ctx, c.task.Name)
+		return errors.Annotate(errors.Errorf("check point lagged too large"),"check point lagged too large")
 	}
 	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
 	if err != nil {

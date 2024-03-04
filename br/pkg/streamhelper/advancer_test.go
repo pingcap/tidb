@@ -463,3 +463,26 @@ func TestRemoveTaskAndFlush(t *testing.T) {
 		return !adv.HasSubscribion()
 	}, 10*time.Second, 100*time.Millisecond)
 }
+
+func TestEnableCheckPointLimit(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1*time.Minute
+	})
+	adv.StartTaskListener(ctx)
+	c.advanceCheckpoints()
+	require.NoError(t, adv.OnTick(ctx))
+	for i := 0; i < 5; i++ {
+		cp := c.advanceCheckpoints()
+		require.NoError(t, adv.OnTick(ctx))
+		require.Equal(t, env.getCheckpoint(), cp)
+	}
+}

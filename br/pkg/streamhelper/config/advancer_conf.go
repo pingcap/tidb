@@ -17,6 +17,7 @@ const (
 
 	DefaultConsistencyCheckTick = 5
 	DefaultTryAdvanceThreshold  = 4 * time.Minute
+	DefaultCheckPointLagLimit   = 0
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4
@@ -52,6 +53,7 @@ func Default() Config {
 		BackoffTime:         DefaultBackOffTime,
 		TickDuration:        DefaultTickInterval,
 		TryAdvanceThreshold: DefaultTryAdvanceThreshold,
+		CheckPointLagLimit:  DefaultCheckPointLagLimit,
 	}
 }
 
