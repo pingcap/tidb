@@ -2185,3 +2185,37 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 
 	dom.Close()
 }
+
+func TestTiDBUpgradeToVer186(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver185 := version185
+	seV185 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver185))
+	require.NoError(t, err)
+	MustExec(t, seV185, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver185))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV185)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver185), ver)
+
+	MustExec(t, seV185, "alter table mysql.stats_meta drop column last_analyze_version")
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV185)
+	require.NoError(t, err)
+	require.Less(t, int64(ver185), ver)
+
+	MustExec(t, seV185, "select * from mysql.stats_meta where last_analyze_version = 0")
+
+	dom.Close()
+}

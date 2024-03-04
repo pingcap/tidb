@@ -87,6 +87,7 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 				variable.TableDelta{Count: count, Delta: delta},
 				globalTableInfo.ID,
 				isLocked,
+				0,
 			)
 			if err != nil {
 				fields := truncatePartitionsLogFields(

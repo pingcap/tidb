@@ -62,6 +62,8 @@ type Table struct {
 	Name          string
 	HistColl
 	Version uint64
+	// It's the timestamp of the last analyze time.
+	LastAnalyzeVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,

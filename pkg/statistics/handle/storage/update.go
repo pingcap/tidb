@@ -56,6 +56,7 @@ func UpdateStatsMeta(
 	delta variable.TableDelta,
 	id int64,
 	isLocked bool,
+	lastAnalyzeVersion uint64,
 ) (err error) {
 	if isLocked {
 		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
@@ -63,17 +64,23 @@ func UpdateStatsMeta(
 		_, err = statsutil.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
 			startTS, id, delta.Count, delta.Delta)
+		if err != nil {
+			return err
+		}
+		// We add this SQL since the last_analyze_version is added via alter table in bootstrap's upgrading.
+		// We only need a UPDATE since the stats_meta must exists if we already analyzed this table.
+		_, err = statsutil.Exec(sctx, "update mysql.stats_meta set last_analyze_version = %? where table_id = %? and last_analyze_version = 0", lastAnalyzeVersion, id)
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
-				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
+			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count, last_analyze_version) values (%?, %?, %?, 0, %?) on duplicate key "+
+				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0), last_analyze_version = greatest(last_analyze_version, values(last_analyze_version))",
+				startTS, id, delta.Count, lastAnalyzeVersion, -delta.Delta, -delta.Delta)
 		} else {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
-				id, delta.Count, delta.Delta)
+			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count, last_analyze_version) values (%?, %?, %?, %?, %?) on duplicate key "+
+				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count), last_analyze_version = greatest(last_analyze_version, values(last_analyze_version))",
+				startTS, id, delta.Count, delta.Delta, lastAnalyzeVersion)
 		}
 		cache.TableRowStatsCache.Invalidate(id)
 	}

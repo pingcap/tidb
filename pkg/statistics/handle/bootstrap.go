@@ -55,9 +55,10 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
 		}
 		tbl := &statistics.Table{
-			HistColl: newHistColl,
-			Version:  row.GetUint64(0),
-			Name:     util.GetFullTableName(is, tableInfo),
+			HistColl:           newHistColl,
+			Version:            row.GetUint64(0),
+			Name:               util.GetFullTableName(is, tableInfo),
+			LastAnalyzeVersion: row.GetUint64(4),
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -65,7 +66,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
+	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, last_analyze_version from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -128,6 +129,8 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			if index.IsAnalyzed() {
 				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			table.Indices[hist.ID] = index
 		} else {
@@ -154,6 +157,8 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			table.Columns[hist.ID] = col
 		}
@@ -200,6 +205,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			if statsVer != statistics.Version0 {
 				index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.Indices[hist.ID] = index
@@ -226,6 +233,10 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
+			if statsVer != statistics.Version0 {
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
+			}
 		}
 		cache.Put(tblID, table) // put this table again since it is updated
 	}

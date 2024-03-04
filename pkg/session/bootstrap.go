@@ -209,11 +209,12 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 		BIGINT(64) UNSIGNED NOT NULL,
-		table_id 		BIGINT(64) NOT NULL,
-		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
-		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 		     BIGINT(64) UNSIGNED NOT NULL,
+		table_id 		     BIGINT(64) NOT NULL,
+		modify_count	     BIGINT(64) NOT NULL DEFAULT 0,
+		count 			     BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot             BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		last_analyze_version BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -1074,11 +1075,15 @@ const (
 	//   create `sys` schema
 	//   create `sys.schema_unused_indexes` table
 	version185 = 185
+
+	// version 186
+	//   alter table `mysql.stats_meta` to add the column `lastAnalyzeVersion`.
+	version186 = 186
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version185
+var currentBootstrapVersion int64 = version186
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1239,6 +1244,7 @@ var (
 		upgradeToVer183,
 		upgradeToVer184,
 		upgradeToVer185,
+		upgradeToVer186,
 	}
 )
 
@@ -3010,6 +3016,14 @@ func upgradeToVer185(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
+func upgradeToVer186(s sessiontypes.Session, ver int64) {
+	if ver >= version186 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN `last_analyze_version` bigint unsigned default 0", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
