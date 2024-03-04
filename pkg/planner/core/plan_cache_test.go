@@ -1293,7 +1293,7 @@ func randValueForMVIndex(colType string) string {
 	colType = strings.ToLower(colType)
 	switch colType {
 	case "int":
-		return fmt.Sprintf("%v", rand.Intn(randSize)-randSize)
+		return fmt.Sprintf("%v", randSize-rand.Intn(randSize))
 	case "string":
 		return fmt.Sprintf("\"%v\"", rand.Intn(randSize))
 	case "json-string":
