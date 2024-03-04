@@ -49,9 +49,9 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	is := plan.SCtx().GetInfoSchema().(infoschema.InfoSchema)
 	statsHandle := domain.GetDomain(plan.SCtx()).StatsHandle()
 	tblID2Tbl := make(map[int64]table.Table)
-	PhysTblIDsWithNeededCols := intset.NewFastIntSet()
+	physTblIDsWithNeededCols := intset.NewFastIntSet()
 	for _, neededCol := range histNeededColumns {
-		PhysTblIDsWithNeededCols.Insert(int(neededCol.TableID))
+		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
 	}
 	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
 		// 1. collect table metadata
@@ -69,7 +69,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		if plan.SCtx().GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate ||
 			// If we already collected some columns that need trigger sync laoding on this table, we don't need to
 			// additionally do anything for determinate mode.
-			PhysTblIDsWithNeededCols.Has(physicalTblID) ||
+			physTblIDsWithNeededCols.Has(physicalTblID) ||
 			statsHandle == nil {
 			return
 		}

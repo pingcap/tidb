@@ -41,13 +41,13 @@ type columnStatsUsageCollector struct {
 	// we don't know `ndv(t.a, t.b)`(see (*LogicalAggregation).DeriveStats and getColsNDV for details). So when calculating the statistics
 	// of column `e`, we may use the statistics of column `t.a` and `t.b`.
 	colMap map[int64]map[model.TableItemID]struct{}
-	// histNeededCols records histogram-needed columns. It's a map of ds.physicalTableID -> needed columns in this table.
-	// A table will have an entry in the map as long as it appears in any DataSource, even if there are no needed columns
-	// in this table.
+	// histNeededCols records histogram-needed columns
 	histNeededCols map[model.TableItemID]struct{}
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
 
+	// visitedPhysTblIDs all ds.physicalTableID that have been visited.
+	// It's always collected, even collectHistNeededColumns is not set.
 	visitedPhysTblIDs *intset.FastIntSet
 
 	// collectVisitedTable indicates whether to collect visited table
@@ -167,13 +167,13 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *Logica
 }
 
 func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
-	if c.collectVisitedTable {
-		tblID := ds.TableInfo().ID
-		c.visitedtbls[tblID] = struct{}{}
-	}
 	c.visitedPhysTblIDs.Insert(int(ds.physicalTableID))
 	if c.collectMode&collectHistNeededColumns == 0 {
 		return
+	}
+	if c.collectVisitedTable {
+		tblID := ds.TableInfo().ID
+		c.visitedtbls[tblID] = struct{}{}
 	}
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
 	for _, col := range columns {
@@ -288,6 +288,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 	// We don't consider LogicalCTE because seedLogicalPlan and recursiveLogicalPlan haven't got logical optimization
 	// yet(seedLogicalPlan and recursiveLogicalPlan are optimized in DeriveStats phase). Without logical optimization,
 	// there is no condition pushed down to DataSource so no histogram-needed column can be collected.
+	//
+	// Since c.visitedPhysTblIDs is also collected here and needs to be collected even collectHistNeededColumns is not set,
+	// so we do the c.collectMode check in addHistNeededColumns() after collecting c.visitedPhysTblIDs.
 	switch x := lp.(type) {
 	case *DataSource:
 		c.addHistNeededColumns(x)
