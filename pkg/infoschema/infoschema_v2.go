@@ -166,7 +166,6 @@ func (isd *Data) delete(item tableItem) {
 }
 
 func (isd *Data) deleteDB(name model.CIStr) {
-	// won't take effect
 	dbInfo, schemaVersion := isd.schemaByName(name)
 	isd.schemaMap.Delete(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
