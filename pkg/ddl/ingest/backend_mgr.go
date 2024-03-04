@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -43,7 +42,6 @@ type BackendCtxMgr interface {
 		ctx context.Context,
 		jobID int64,
 		unique bool,
-		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
 		instanceID string,
@@ -123,7 +121,6 @@ func (m *litBackendCtxMgr) Register(
 	ctx context.Context,
 	jobID int64,
 	unique bool,
-	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
 	instanceID string,
