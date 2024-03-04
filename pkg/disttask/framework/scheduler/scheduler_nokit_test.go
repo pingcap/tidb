@@ -239,6 +239,7 @@ func TestTaskStateTransition(t *testing.T) {
 		},
 	}
 	cloneTask := task
+	cloneTask.TaskBase = task.TaskBase
 	sch := createScheduler(&cloneTask, taskMgr)
 	schExt := mockScheduler.NewMockExtension(ctrl)
 	schExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
@@ -266,157 +267,162 @@ func TestTaskStateTransition(t *testing.T) {
 	).AnyTimes()
 	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	sch.Extension = schExt
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
-		return &cloneTask, nil
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), sch.task.Load(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
-	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil).AnyTimes()
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateRunning
 		cloneTask.Step = proto.StepOne
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepOne).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStateSucceed: 3}, nil)
 	taskMgr.EXPECT().SucceedTask(gomock.Any(), cloneTask.ID).Return(nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateSucceed
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	sch.scheduleTask()
 	require.True(t, ctrl.Satisfied())
 
 	// pending->running->reverting->reverted.
 	cloneTask = task
+	cloneTask.TaskBase = task.TaskBase
 	sch = createScheduler(&cloneTask, taskMgr)
 	sch.Extension = schExt
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
-		return &cloneTask, nil
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), sch.task.Load(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
-	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil).AnyTimes()
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateRunning
 		cloneTask.Step = proto.StepOne
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepOne).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStateSucceed: 2,
 		proto.SubtaskStatePending: 1}, nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateReverting
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepOne).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStatePending: 0,
 		proto.SubtaskStateRunning: 0}, nil)
 	taskMgr.EXPECT().RevertedTask(gomock.Any(), cloneTask.ID).Return(nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateReverted
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	sch.scheduleTask()
 	require.True(t, ctrl.Satisfied())
 	// pending->running->pausing->paused.
 	cloneTask = task
+	cloneTask.TaskBase = task.TaskBase
 	sch = createScheduler(&cloneTask, taskMgr)
 	sch.Extension = schExt
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
-		return &cloneTask, nil
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), sch.task.Load(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
-	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil).AnyTimes()
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStatePausing
 		cloneTask.Step = proto.StepOne
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepOne).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStateRunning: 0,
 		proto.SubtaskStatePending: 0}, nil)
 	taskMgr.EXPECT().PausedTask(gomock.Any(), cloneTask.ID).Return(nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStatePaused
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	sch.scheduleTask()
 	require.True(t, ctrl.Satisfied())
 
 	// pending->running->cancelling->reverting->reverted.
 	cloneTask = task
+	cloneTask.TaskBase = task.TaskBase
 	sch = createScheduler(&cloneTask, taskMgr)
 	sch.Extension = schExt
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
-		return &cloneTask, nil
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), sch.task.Load(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
-	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil).AnyTimes()
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateCancelling
 		cloneTask.Step = proto.StepOne
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().RevertTask(gomock.Any(), cloneTask.ID, proto.TaskStateCancelling, gomock.Any()).Return(nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateReverting
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepOne).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStatePending: 0,
 		proto.SubtaskStateRunning: 0}, nil)
 	taskMgr.EXPECT().RevertedTask(gomock.Any(), cloneTask.ID).Return(nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateReverted
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	sch.scheduleTask()
 	require.True(t, ctrl.Satisfied())
 
 	// pending->pausing->paused.
 	cloneTask = task
+	cloneTask.TaskBase = task.TaskBase
 	sch = createScheduler(&cloneTask, taskMgr)
 	sch.Extension = schExt
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStatePausing
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepInit).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStateRunning: 0,
 		proto.SubtaskStatePending: 0}, nil)
 	taskMgr.EXPECT().PausedTask(gomock.Any(), cloneTask.ID).Return(nil)
 
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStatePaused
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	sch.scheduleTask()
+	require.True(t, ctrl.Satisfied())
 
 	// resuming->running.
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateResuming
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepInit).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStatePaused: 0}, nil)
 	taskMgr.EXPECT().ResumedTask(gomock.Any(), cloneTask.ID).Return(nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateRunning
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepInit).Return(map[proto.SubtaskState]int64{}, nil)
-	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), sch.task.Load(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
-	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
+	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{"node1": 0}, nil).AnyTimes()
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateRunning
 		cloneTask.Step = proto.StepOne
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, proto.StepOne).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStateSucceed: 3}, nil)
 	taskMgr.EXPECT().SucceedTask(gomock.Any(), cloneTask.ID).Return(nil)
-	taskMgr.EXPECT().GetTaskByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.Task, error) {
+	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		cloneTask.State = proto.TaskStateSucceed
-		return &cloneTask, nil
+		return &cloneTask.TaskBase, nil
 	})
 	sch.scheduleTask()
 	require.True(t, ctrl.Satisfied())
