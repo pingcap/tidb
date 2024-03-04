@@ -187,6 +187,48 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges
 	return res, nil
 }
 
+func (c *RegionCache) locateKeyRange(bo *tikv.Backoffer, startKey, endKey []byte) ([]*tikv.KeyLocation, error) {
+	var res []*tikv.KeyLocation
+	for {
+		// 1. find location from cache
+		for {
+			loc := c.TryLocateKey(startKey)
+			if loc != nil {
+				res = append(res, loc)
+				if loc.Contains(endKey) || bytes.Equal(loc.EndKey, endKey) {
+					return res, nil
+				}
+				startKey = loc.EndKey
+			} else {
+				break
+			}
+		}
+		// 2. load remaining regions from pd client
+		batchRegions, err := c.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, 128)
+		if err != nil {
+			return nil, err
+		}
+		if len(batchRegions) == 0 {
+			// should never happen
+			break
+		}
+		for _, r := range batchRegions {
+			res = append(res, &tikv.KeyLocation{
+				Region:   r.VerID(),
+				StartKey: r.StartKey(),
+				EndKey:   r.EndKey(),
+				Buckets:  nil,
+			})
+		}
+		endRegion := batchRegions[len(batchRegions)-1]
+		if endRegion.ContainsByEnd(endKey) {
+			break
+		}
+		startKey = endRegion.EndKey()
+	}
+	return res, nil
+}
+
 // SplitKeyRangesByLocationsWithoutBuckets splits the KeyRanges by logical info in the cache.
 // The buckets in the returned LocationKeyRanges are empty, regardless of whether the region is split by bucket.
 func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ranges *KeyRanges, limit int) ([]*LocationKeyRanges, error) {
@@ -195,7 +237,7 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 	}
 	// Currently, LocationKeyRanges returned by `LocateKeyRange` doesn't contains buckets,
 	// because of https://github.com/tikv/client-go/blob/09ecb550d383c1b048119b586fb5cda658312262/internal/locate/region_cache.go#L1550-L1551.
-	locs, err := c.LocateKeyRange(bo.TiKVBackoffer(), ranges.RefAt(0).StartKey, ranges.RefAt(ranges.Len()-1).EndKey)
+	locs, err := c.locateKeyRange(bo.TiKVBackoffer(), ranges.RefAt(0).StartKey, ranges.RefAt(ranges.Len()-1).EndKey)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
