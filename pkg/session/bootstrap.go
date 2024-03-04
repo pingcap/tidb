@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1302,6 +1303,38 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
+func checkDistTaskVer(s sessiontypes.Session) (bool, error) {
+	sVal, isNull, err := getTiDBVar(s, variable.TiDBEnableDistTask)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if isNull {
+		return true, nil
+	}
+	if sVal == variable.On {
+		return false, nil
+	}
+	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, `SELECT id FROM %n.%n WHERE state not in (%s, %s, %s)`,
+		mysql.SystemDB,
+		"tidb_global_task",
+		proto.TaskStateSucceed,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+	)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return req.NumRows() > 0, nil
+}
+
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s sessiontypes.Session) {
@@ -1311,6 +1344,11 @@ func upgrade(s sessiontypes.Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
+
+	if ok, err := checkDistTaskVer(s); err != nil || !ok {
+		logutil.BgLogger().Fatal("[upgrade] check dist task failed", zap.Error(err), zap.Bool("ok", ok))
+	}
+
 	printClusterState(s, ver)
 
 	// Only upgrade from under version92 and this TiDB is not owner set.
