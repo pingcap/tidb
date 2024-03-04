@@ -30,6 +30,46 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
+	exec.AutoAnalyzeMinCnt = 0
+	defer func() {
+		exec.AutoAnalyzeMinCnt = 1000
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4), partition p2 values less than (16))")
+	tk.MustExec("create table t2 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4), partition p2 values less than (16))")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
+	// Set the auto analyze ratio to 0.
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0")
+	handle := dom.StatsHandle()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(dom.InfoSchema()))
+	// Analyze those tables first.
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	// Insert more data into t1.
+	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(dom.InfoSchema()))
+	sysProcTracker := dom.SysProcTracker()
+	r := refresher.NewRefresher(handle, sysProcTracker)
+	r.RebuildTableAnalysisJobQueue()
+	// No jobs are added.
+	require.Equal(t, 0, r.Jobs.Len())
+	require.False(t, r.PickOneTableAndAnalyzeByPriority())
+	// Enable the auto analyze.
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.2")
+	r.RebuildTableAnalysisJobQueue()
+	// Jobs are added.
+	require.Equal(t, 1, r.Jobs.Len())
+	require.True(t, r.PickOneTableAndAnalyzeByPriority())
+}
+
 func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
