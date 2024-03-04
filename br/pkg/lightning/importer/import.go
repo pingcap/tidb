@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -2027,11 +2026,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			for _, engine := range largeEngines {
 				// Use a larger split region size to avoid split the same region by many times.
 				if err := localBackend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
-					engineIns := localBackend.EngineMgr.RLockEngine(engine)
-					tbl, err2 := tables.TableFromMeta(autoid.NewAllocators(false), engineIns.TableInfo.Core)
-					if err2 == nil && common.ErrFoundDuplicateKeys.Equal(err) {
-						err = local.ConvertToErrFoundConflictRecords(err, tbl)
-					}
+					// TODO: if importErr is ErrFoundDuplicateKeys error, convert it to ErrFoundDataConflictRecords/ErrFoundIndexConflictRecords error
 					importErr = multierr.Append(importErr, err)
 				}
 			}

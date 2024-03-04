@@ -103,8 +103,8 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 	}, nil
 }
 
-// RLockEngine read locks a local file and returns the Engine instance if it exists.
-func (em *engineManager) RLockEngine(engineID uuid.UUID) *Engine {
+// rlock read locks a local file and returns the Engine instance if it exists.
+func (em *engineManager) rLockEngine(engineID uuid.UUID) *Engine {
 	if e, ok := em.engines.Load(engineID); ok {
 		engine := e.(*Engine)
 		engine.rLock()
@@ -157,7 +157,7 @@ func (em *engineManager) lockAllEnginesUnless(newState, ignoreStateMask importMu
 
 // flushEngine ensure the written data is saved successfully, to make sure no data lose after restart
 func (em *engineManager) flushEngine(ctx context.Context, engineID uuid.UUID) error {
-	engine := em.RLockEngine(engineID)
+	engine := em.rLockEngine(engineID)
 
 	// the engine cannot be deleted after while we've acquired the lock identified by UUID.
 	if engine == nil {
@@ -247,7 +247,7 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 		ctx:                engineCtx,
 		cancel:             cancel,
 		config:             cfg.Local,
-		TableInfo:          cfg.TableInfo,
+		tableInfo:          cfg.TableInfo,
 		duplicateDetection: em.DupeDetectEnabled,
 		dupDetectOpt:       em.DuplicateDetectOpt,
 		duplicateDB:        em.duplicateDB,
@@ -329,7 +329,7 @@ func (em *engineManager) closeEngine(
 		engine := &Engine{
 			UUID:               engineUUID,
 			sstMetasChan:       make(chan metaOrFlush),
-			TableInfo:          cfg.TableInfo,
+			tableInfo:          cfg.TableInfo,
 			keyAdapter:         em.keyAdapter,
 			duplicateDetection: em.DupeDetectEnabled,
 			dupDetectOpt:       em.DuplicateDetectOpt,

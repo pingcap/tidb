@@ -1264,7 +1264,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		tikvCodec: keyspace.CodecV1,
 	}
 	var err error
-	local.EngineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
 	data := mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("b"), []byte("b")}}
@@ -1387,7 +1387,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		tikvCodec: keyspace.CodecV1,
 	}
 	var err error
-	local.EngineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
 	data := mockIngestData{{[]byte("a"), []byte("a")}}
@@ -1485,7 +1485,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 		},
 	}
 	var err error
-	local.EngineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
 	data := mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("a2"), []byte("a2")}}
@@ -1581,7 +1581,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		},
 	}
 	var err error
-	local.EngineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
 	db, tmpPath := makePebbleDB(t, nil)
@@ -2338,7 +2338,7 @@ func TestExternalEngine(t *testing.T) {
 		}, nil),
 		pdCli: &mockPdClient{},
 	}
-	local.EngineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 	jobs := make([]*regionJob, 0, 5)
 

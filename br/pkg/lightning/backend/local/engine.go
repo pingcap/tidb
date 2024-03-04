@@ -132,7 +132,7 @@ type Engine struct {
 	finishedMetaSeq atomic.Int32
 
 	config    backend.LocalEngineConfig
-	TableInfo *checkpoints.TidbTableInfo
+	tableInfo *checkpoints.TidbTableInfo
 
 	dupDetectOpt common.DupDetectOpt
 
@@ -985,8 +985,8 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *m
 		return &pebbleIter{Iterator: e.getDB().NewIter(opts), buf: buf}
 	}
 	logger := log.FromContext(ctx).With(
-		zap.String("table", common.UniqueTable(e.TableInfo.DB, e.TableInfo.Name)),
-		zap.Int64("tableID", e.TableInfo.ID),
+		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
+		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
 	return newDupDetectIter(
 		e.getDB(),
