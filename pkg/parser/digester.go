@@ -145,9 +145,6 @@ type sqlDigester struct {
 	lexer  *Scanner
 	hasher hash2.Hash
 	tokens tokenDeque
-	// when mark==true, content will not be replaced by '?'
-	// but it we wrapped by unicode `<>`
-	marker bool
 }
 
 func (d *sqlDigester) doDigestNormalized(normalized string) (digest *Digest) {
