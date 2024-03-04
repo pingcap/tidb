@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -1304,6 +1305,15 @@ var (
 )
 
 func checkDistTaskVer(s sessiontypes.Session) (bool, error) {
+	err := util.LoadGlobalVars(context.Background(), s, []string{variable.TiDBEnableDistTask})
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	if variable.EnableDistTask.Load() {
+		return false, nil
+	}
+
 	sVal, isNull, err := getTiDBVar(s, variable.TiDBEnableDistTask)
 	if err != nil {
 		return false, errors.Trace(err)
