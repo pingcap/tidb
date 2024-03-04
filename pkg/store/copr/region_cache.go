@@ -193,15 +193,14 @@ func (c *RegionCache) locateKeyRange(bo *tikv.Backoffer, startKey, endKey []byte
 		// 1. find location from cache
 		for {
 			loc := c.TryLocateKey(startKey)
-			if loc != nil {
-				res = append(res, loc)
-				if loc.Contains(endKey) || bytes.Equal(loc.EndKey, endKey) {
-					return res, nil
-				}
-				startKey = loc.EndKey
-			} else {
+			if loc == nil {
 				break
 			}
+			res = append(res, loc)
+			if loc.Contains(endKey) || bytes.Equal(loc.EndKey, endKey) {
+				return res, nil
+			}
+			startKey = loc.EndKey
 		}
 		// 2. load remaining regions from pd client
 		batchRegions, err := c.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, 128)
