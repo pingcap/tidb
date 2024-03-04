@@ -72,7 +72,7 @@ type PointGetPlan struct {
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
-	PGPPartitionIdx  *int
+	PartitionIdx     *int
 	Handle           kv.Handle
 	HandleConstant   *expression.Constant
 	handleFieldType  *types.FieldType
@@ -275,7 +275,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
 	}
-	if p.PGPPartitionIdx != nil {
+	if p.PartitionIdx != nil {
 		sum += size.SizeOfInt
 	}
 	if p.HandleConstant != nil {
@@ -312,7 +312,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 // LoadTableStats preloads the stats data for the physical table
 func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	tableID := p.TblInfo.ID
-	if idx := p.PGPPartitionIdx; idx != nil {
+	if idx := p.PartitionIdx; idx != nil {
 		if *idx < 0 {
 			// No matching partitions
 			return
@@ -343,7 +343,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	// 2) Converted to PointGet from checkTblIndexForPointPlan
 	//    and it does not have the PartitionIdx set
 	if !p.SCtx().GetSessionVars().StmtCtx.UseCache &&
-		p.PGPPartitionIdx != nil {
+		p.PartitionIdx != nil {
 		return false
 	}
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
@@ -377,7 +377,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx(), row)
 	if err != nil {
 		partIdx = -1
-		p.PGPPartitionIdx = &partIdx
+		p.PartitionIdx = &partIdx
 		return true
 	}
 	if len(p.PartitionNames) > 0 {
@@ -391,11 +391,11 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		}
 		if !found {
 			partIdx = -1
-			p.PGPPartitionIdx = &partIdx
+			p.PartitionIdx = &partIdx
 			return true
 		}
 	}
-	p.PGPPartitionIdx = &partIdx
+	p.PartitionIdx = &partIdx
 	return false
 }
 

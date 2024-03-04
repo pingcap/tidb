@@ -134,7 +134,7 @@ type PointGetExecutor struct {
 	tblInfo          *model.TableInfo
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
-	partitionPGEDef  *int
+	partitionDefIdx  *int
 	partitionNames   []model.CIStr
 	idxKey           kv.Key
 	handleVal        []byte
@@ -191,7 +191,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	e.partitionPGEDef = p.PGPPartitionIdx
+	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 }
@@ -231,7 +231,7 @@ func (e *PointGetExecutor) Close() error {
 	}
 	if e.indexUsageReporter != nil && e.idxInfo != nil {
 		tableID := e.tblInfo.ID
-		physicalTableID := GetPhysID(e.tblInfo, e.partitionPGEDef)
+		physicalTableID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
 		e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
 	}
@@ -248,7 +248,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.done = true
 
 	var err error
-	tblID := GetPhysID(e.tblInfo, e.partitionPGEDef)
+	tblID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 	if e.lock {
 		e.UpdateDeltaForTableID(tblID)
 	}
@@ -551,9 +551,9 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
 	tblInfo, _ := is.TableByID((e.tblInfo.ID))
 	tblName := tblInfo.Meta().Name.String()
-	tblID := GetPhysID(tblInfo.Meta(), e.partitionPGEDef)
+	tblID := GetPhysID(tblInfo.Meta(), e.partitionDefIdx)
 	if tblID != tblInfo.Meta().ID {
-		partName = tblInfo.Meta().GetPartitionInfo().Definitions[*e.partitionPGEDef].Name.String()
+		partName = tblInfo.Meta().GetPartitionInfo().Definitions[*e.partitionDefIdx].Name.String()
 	}
 	valid := distsql.VerifyTxnScope(e.txnScope, tblID, is)
 	if valid {

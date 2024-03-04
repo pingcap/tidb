@@ -1849,7 +1849,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
 			v.PrunePartitions(sctx)
-			tableID = executor.GetPhysID(v.TblInfo, v.PGPPartitionIdx)
+			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
 				idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)

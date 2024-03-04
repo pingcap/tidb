@@ -49,10 +49,10 @@ type BatchPointGetExec struct {
 	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo
 	handles []kv.Handle
-	// IDs for handle or index read (can be secondary unique key, and need lookup through handle)
+	// table/partition IDs for handle or index read
+	// (can be secondary unique key,
+	// and need lookup through handle)
 	planPhysIDs []int64
-	// IDs for handle lookup from index. Used if plan uses non-clustered/secondary index lookup
-	physIDs []int64
 	// If != 0 then it is a single partition under Static Prune mode.
 	singlePartID   int64
 	partitionNames []model.CIStr
@@ -274,8 +274,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 		e.handles = make([]kv.Handle, 0, len(toFetchIndexKeys))
 		if e.tblInfo.Partition != nil {
-			// TODO: reuse e.planPhysIDs, since it is no longer needed here
-			e.physIDs = make([]int64, 0, len(toFetchIndexKeys))
+			e.planPhysIDs = e.planPhysIDs[:0]
 		}
 		for _, key := range toFetchIndexKeys {
 			handleVal := handleVals[string(key)]
@@ -294,6 +293,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					if err != nil {
 						return err
 					}
+					if e.singlePartID != 0 && e.singlePartID != pid {
+						continue
+					}
 					if len(e.partitionNames) > 0 {
 						found := false
 						for _, name := range e.partitionNames {
@@ -308,10 +310,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 							continue
 						}
 					}
-					e.physIDs = append(e.physIDs, pid)
+					e.planPhysIDs = append(e.planPhysIDs, pid)
 				} else {
 					pid = tablecodec.DecodeTableID(key)
-					e.physIDs = append(e.physIDs, pid)
+					e.planPhysIDs = append(e.planPhysIDs, pid)
 				}
 				if e.lock {
 					e.UpdateDeltaForTableID(pid)
@@ -375,10 +377,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	newHandles := make([]kv.Handle, 0, len(e.handles))
 	for i, handle := range e.handles {
 		tID := e.tblInfo.ID
-		if len(e.physIDs) > 0 {
-			// Key lookup, read the row by handle
-			tID = e.physIDs[i]
-		} else if e.singlePartID != 0 {
+		if e.singlePartID != 0 {
 			tID = e.singlePartID
 		} else if len(e.planPhysIDs) > 0 {
 			// Direct handle read

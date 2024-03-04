@@ -1538,7 +1538,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		physicalTableID: ds.physicalTableID,
 		HandleCols:      ds.handleCols,
 		tblCols:         ds.TblCols,
@@ -1780,7 +1780,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
-			isPartition:     ds.isPartition,
+			isPartition:     ds.partitionDefIdx != nil,
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
@@ -2054,7 +2054,7 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		Columns:         ds.Columns,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		physicalTableID: ds.physicalTableID,
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
@@ -2080,7 +2080,7 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *pro
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
 		dataSourceSchema: ds.schema,
-		isPartition:      ds.isPartition,
+		isPartition:      ds.partitionDefIdx != nil,
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
@@ -2309,15 +2309,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
 	}.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
-	if ds.isPartition {
-		defs := pointGetPlan.TblInfo.Partition.Definitions
-		// TODO: propagate the index or partition def instead of this loop
-		for i := range defs {
-			if defs[i].ID == ds.physicalTableID {
-				idx := i
-				pointGetPlan.PGPPartitionIdx = &idx
-			}
-		}
+	if ds.partitionDefIdx != nil {
+		pointGetPlan.PartitionIdx = ds.partitionDefIdx
 	}
 	pointGetPlan.PartitionNames = ds.partitionNames
 	rTsk := &rootTask{p: pointGetPlan}
@@ -2376,17 +2369,9 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		Columns:          ds.Columns,
 		PartitionNames:   ds.partitionNames,
 	}
-	if ds.isPartition {
+	if ds.partitionDefIdx != nil {
 		batchPointGetPlan.SinglePartition = true
-		// TODO: propagate the partition definition index
-		// to avoid this loop!
-		defs := ds.TableInfo().Partition.Definitions
-		for i := range defs {
-			if defs[i].ID == ds.physicalTableID {
-				batchPointGetPlan.PartitionIdxs = []int{i}
-				break
-			}
-		}
+		batchPointGetPlan.PartitionIdxs = []int{*ds.partitionDefIdx}
 	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
@@ -2494,7 +2479,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		physicalTableID: ds.physicalTableID,
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
@@ -2543,7 +2528,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
 		dataSourceSchema: ds.schema,
-		isPartition:      ds.isPartition,
+		isPartition:      ds.partitionDefIdx != nil,
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),

@@ -306,7 +306,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		pointExecutor, ok := executor.(*PointGetExecutor)
 
 		// Don't cache the executor for non point-get (table dual) or partitioned tables
-		if ok && useMaxTS && pointExecutor.partitionPGEDef == nil {
+		if ok && useMaxTS && pointExecutor.partitionDefIdx == nil {
 			a.PsStmt.Executor = pointExecutor
 		}
 	}

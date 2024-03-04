@@ -307,7 +307,7 @@ func (p *PointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	if idxPointer := p.PGPPartitionIdx; idxPointer != nil {
+	if idxPointer := p.PartitionIdx; idxPointer != nil {
 		idx := *idxPointer
 		if idx < 0 {
 			res.Partitions = []string{"dual"}

@@ -1784,7 +1784,8 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource.schema = ds.schema.Clone()
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
-			newDataSource.isPartition = true
+			idx := i
+			newDataSource.partitionDefIdx = &idx
 			newDataSource.physicalTableID = pi.Definitions[i].ID
 
 			// There are many expression nodes in the plan tree use the original datasource

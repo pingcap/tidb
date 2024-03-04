@@ -570,7 +570,11 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					panic("FIXME!!!")
+					/*
+						if len(ranges) > 0 {
+						panic("FIXME!!!")
+						}
+					*/
 					if len(ranges) != len(x.Handles) || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
