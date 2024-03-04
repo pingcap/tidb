@@ -303,7 +303,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 
 // CollectColumnStatsUsage collects column stats usage from logical plan.
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
-// The first return value is predicate columns(nil if predicate is false) and the second return value is histogram-needed columns(nil if histNeeded is false).
+// First return value: predicate columns (nil if predicate is false)
+// Second return value: histogram-needed columns(nil if histNeeded is false)
+// Third return value: ds.physicalTableID from all DataSource (always collected)
 func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) (
 	[]model.TableItemID,
 	[]model.TableItemID,
