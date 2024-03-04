@@ -1442,6 +1442,7 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk.MustQuery(`select * from tk where a = 2`).Check(testkit.Rows("2 abc"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
+
 func TestFixControl33031(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1488,4 +1489,58 @@ func TestFixControl33031(t *testing.T) {
 	tk.MustExec(`set @a = 2, @b = 3`)
 	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("2 2", "3 3"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+}
+
+func TestPlanCachePartitionDuplicates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int unique key, b int) partition by range (a) (
+			partition p0 values less than (10000),
+			partition p1 values less than (20000),
+			partition p2 values less than (30000),
+			partition p3 values less than (40000))`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7)`)
+	tk.MustExec(`insert into t select a + 10000, b + 10000 from t`)
+	tk.MustExec(`insert into t select a + 20000, b + 20000 from t`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select @@session.tidb_enable_prepared_plan_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`prepare stmt from 'select * from t use index(a) where a in (?,?,?)'`)
+	tk.MustExec(`set @a0 = 1, @a1 = 10001, @a2 = 2`)
+	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("1 1", "10001 10001", "2 2"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustExec(`set @a0 = 3, @a1 = 20001, @a2 = 50000`)
+	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20001 20001", "3 3"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustExec(`set @a0 = 30003, @a1 = 20002, @a2 = 4`)
+	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20002 20002", "30003 30003", "4 4"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{{"Batch_Point_Get_1"}})
+}
+
+func TestPreparedStmtIndexLookup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, unique key (a))
+partition by hash (a) partitions 3`)
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("analyze table t")
+	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`select b from t where a = 1 or a = 10 or a = 10 or a = 999999`).Sort().Check(testkit.Rows("1", "10"))
+	tk.MustQuery(`explain format='brief' select b from t where a = 1 or a = 10 or a = 10 or a = 999999`).Check(testkit.Rows(""+
+		"PartitionUnion 6.00 root  ",
+		"├─Projection 3.00 root  test.t.b",
+		"│ └─Batch_Point_Get 3.00 root table:t, partition:p0, index:a(a) keep order:false, desc:false",
+		"└─Projection 3.00 root  test.t.b",
+		"  └─Batch_Point_Get 3.00 root table:t, partition:p1, index:a(a) keep order:false, desc:false"))
+	tk.MustExec(`prepare stmt from 'select b from t where a = 1 or a = 10 or a = 10 or a = 999999'`)
+	tk.MustQuery(`execute stmt`)
+	tk.MustQuery(`execute stmt`)
 }

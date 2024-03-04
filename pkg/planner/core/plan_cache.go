@@ -544,10 +544,14 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
+				if len(ranges.Ranges) != len(x.IndexValues) {
+					// Previous run may have removed duplicates or non matching partitions
+					x.IndexValues = x.IndexValues[:cap(x.IndexValues)]
+				}
 				if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(x.AccessConditions, ranges, false, nil) {
 					return errors.New("rebuild to get an unsafe range")
 				}
-				for i := range x.IndexValues {
+				for i := range ranges.Ranges {
 					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
 			} else {
@@ -566,6 +570,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
+					panic("FIXME!!!")
 					if len(ranges) != len(x.Handles) || !isSafeRange(x.AccessConditions, &ranger.DetachRangeResult{
 						Ranges:        ranges,
 						AccessConds:   accessConds,
@@ -574,7 +579,13 @@ func rebuildRange(p Plan) error {
 						return errors.New("rebuild to get an unsafe range")
 					}
 					for i := range ranges {
-						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
+						if i >= len(x.Handles) {
+							// Previous execution might have removed duplicates,
+							// so Handles are not the same length as HandleParams
+							x.Handles = append(x.Handles, kv.IntHandle(ranges[i].LowVal[0].GetInt64()))
+						} else {
+							x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
+						}
 					}
 				}
 			}
@@ -602,14 +613,16 @@ func rebuildRange(p Plan) error {
 			if len(params) < 1 {
 				continue
 			}
+			if i >= len(x.IndexValues) {
+				// Previous execution had duplicates or non-matching partitions
+				x.IndexValues = x.IndexValues[:cap(x.IndexValues)]
+			}
 			for j, param := range params {
 				if param != nil {
 					dVal, err := convertConstant2Datum(sctx, param, x.IndexColTypes[j])
 					if err != nil {
 						return err
 					}
-					// TODO: Handle all other cases when the previous run had duplicates
-					// and IndexValues and/or handles are not the original length
 					x.IndexValues[i][j] = *dVal
 				}
 			}

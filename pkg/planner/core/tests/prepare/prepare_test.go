@@ -1154,10 +1154,16 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_pointget from 'select * from %v use index(primary) where a = ?'`, tbl, tbl))
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget from 'select * from %v use index(primary) where a in (?, ?, ?)'`, tbl, tbl))
 	}
-	for i := 0; i < 100; i++ {
+	loops := 100
+	for i := 0; i < loops; i++ {
 		mina, maxa := rand.Intn(40000), rand.Intn(40000)
 		pointa := mina
-		a0, a1, a2 := mina, maxa, rand.Intn(40000)
+		// Allow out-of-range to trigger edge cases for non-matching partition
+		a0, a1, a2 := mina, maxa, rand.Intn(41000)
+		if i == 1 {
+			// test what happens if we have duplicates
+			a2 = a0
+		}
 		if mina > maxa {
 			mina, maxa = maxa, mina
 		}
@@ -1209,7 +1215,6 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_pointget_idx from 'select * from %v use index(a) where a = ?'`, tbl, tbl))
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget_idx from 'select * from %v use index(a) where a in (?, ?, ?)'`, tbl, tbl))
 	}
-	loops := 100
 	for i := 0; i < loops; i++ {
 		mina, maxa := rand.Intn(40000), rand.Intn(40000)
 		if mina > maxa {
@@ -1217,7 +1222,13 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		}
 		tk.MustExec(fmt.Sprintf(`set @mina=%v, @maxa=%v`, mina, maxa))
 		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
-		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
+		// Allow out-of-range to trigger edge cases for non-matching partition
+		a0, a1, a2 := rand.Intn(40000), rand.Intn(40000), rand.Intn(41000)
+		if i == 1 {
+			// test what happens if we have duplicates
+			a2 = a0
+		}
+		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, a0, a1, a2))
 
 		var rscan, rlookup, rpoint, rbatch [][]any
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {

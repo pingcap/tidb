@@ -4936,11 +4936,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			numDualRows:    0,
 		}
 	}
-	baseExec := exec.NewBaseExecutor(b.ctx, plan.Schema(), plan.ID())
 
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
-		BaseExecutor:       baseExec,
+		BaseExecutor:       exec.NewBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
 		indexUsageReporter: b.buildIndexUsageReporter(plan),
 		tblInfo:            plan.TblInfo,
 		idxInfo:            plan.IndexInfo,

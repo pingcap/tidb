@@ -712,12 +712,13 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					curr := i - skipped
 					next := curr + 1
 					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[next:]...)
+					skipped++
 				} else if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
-			intest.Assert(p.SinglePartition || partitionsFound-skipped == len(p.PartitionIdxs))
-			intest.Assert(partitionsFound-skipped == len(p.IndexValues))
+			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(partitionsFound == len(p.IndexValues))
 		}
 		return nil, false
 	}

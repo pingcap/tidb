@@ -3097,7 +3097,7 @@ func TestPruningOverflow(t *testing.T) {
 	tk.MustQuery(`SELECT a, b FROM t WHERE a IN (0,14158354938390,0) AND b IN (3522101843073676459,-2846203247576845955,838395691793635638)`).Check(testkit.Rows("0 3522101843073676459"))
 }
 
-func TestTmpPart(t *testing.T) {
+func TestPartitionCoverage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
