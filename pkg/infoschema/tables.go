@@ -232,11 +232,12 @@ const (
 	DataLockWaitsColumnSQLDigestText = "SQL_DIGEST_TEXT"
 )
 
+// The following variables will only be used when PD in the microservice mode.
 const (
-	// TSOServiceName is the name of TSO service.
-	TSOServiceName = "tso"
-	// SchedulingServiceName is the name of scheduling service.
-	SchedulingServiceName = "scheduling"
+	// tsoServiceName is the name of TSO service.
+	tsoServiceName = "tso"
+	// schedulingServiceName is the name of scheduling service.
+	schedulingServiceName = "scheduling"
 )
 
 var tableIDMap = map[string]int64{
@@ -1961,12 +1962,12 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 // GetTSOServerInfo returns all TSO nodes information of cluster
 func GetTSOServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
-	return getMicroServiceServerInfo(ctx, TSOServiceName)
+	return getMicroServiceServerInfo(ctx, tsoServiceName)
 }
 
 // GetSchedulingServerInfo returns all scheduling nodes information of cluster
 func GetSchedulingServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
-	return getMicroServiceServerInfo(ctx, SchedulingServiceName)
+	return getMicroServiceServerInfo(ctx, schedulingServiceName)
 }
 
 func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]ServerInfo, error) {
@@ -1998,6 +1999,10 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
+		// PD is not in the microservice mode
+		if resp.StatusCode == http.StatusNotFound {
+			return servers, nil
+		}
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			logutil.BgLogger().Warn("request server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
