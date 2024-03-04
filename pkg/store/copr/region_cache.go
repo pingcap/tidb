@@ -48,7 +48,7 @@ func NewRegionCache(rc *tikv.RegionCache) *RegionCache {
 func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange, limit int) ([]kv.KeyRange, error) {
 	ranges := NewKeyRanges(keyRanges)
 
-	locations, err := c.SplitKeyRangesByLocations(bo, ranges, limit)
+	locations, err := c.SplitKeyRangesByLocationsWithoutBuckets(bo, ranges, limit)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
