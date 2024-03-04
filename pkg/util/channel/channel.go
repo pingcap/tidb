@@ -20,3 +20,14 @@ func Clear[T any, V chan T | <-chan T](ch V) {
 	for range ch {
 	}
 }
+
+// IsClosed is to check if the channel is closed
+func IsClosed[T any, V chan T | <-chan T](ch V) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+	}
+
+	return false
+}

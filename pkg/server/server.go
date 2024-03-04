@@ -49,6 +49,7 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -67,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -83,6 +85,8 @@ var (
 	osVersion string
 	// RunInGoTest represents whether we are run code in test.
 	RunInGoTest bool
+	// RunInGoTestChan is used to control the RunInGoTest.
+	RunInGoTestChan chan struct{}
 )
 
 func init() {
@@ -430,7 +434,11 @@ func (s *Server) Run(dom *domain.Domain) error {
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
-		s.startStatusHTTP()
+		err := s.startStatusHTTP()
+		if err != nil {
+			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
+			return err
+		}
 	}
 	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
 		<-dom.StatsHandle().InitStatsDone
@@ -438,10 +446,21 @@ func (s *Server) Run(dom *domain.Domain) error {
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
 	errChan := make(chan error, 2)
-	s.initTiDBListener()
+	err := s.initTiDBListener()
+	if err != nil {
+		log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
+		return err
+	}
+	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
+	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
+	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
+	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
-	err := <-errChan
+	if RunInGoTest && !channel.IsClosed(RunInGoTestChan) {
+		close(RunInGoTestChan)
+	}
+	err = <-errChan
 	if err != nil {
 		return err
 	}
