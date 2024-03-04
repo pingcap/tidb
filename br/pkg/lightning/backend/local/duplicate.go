@@ -53,7 +53,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -491,7 +490,7 @@ func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKV
 		}
 
 		if algorithm == config.DupeResAlgErr {
-			return NewErrFoundConflictRecords(key, val, m.tbl)
+			return NewErrFoundConflictRecords(ctx, key, val, m.tbl)
 		}
 
 		conflictInfo := errormanager.DataConflictInfo{
@@ -565,7 +564,7 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 		}
 
 		if algorithm == config.DupeResAlgErr {
-			return NewErrFoundConflictRecords(key, val, m.tbl)
+			return NewErrFoundConflictRecords(ctx, key, val, m.tbl)
 		}
 
 		conflictInfo := errormanager.DataConflictInfo{
@@ -611,26 +610,20 @@ func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, er
 
 // NewErrFoundConflictRecords generate an error ErrFoundDuplicateKeys
 // according to key and value.
-func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error {
+func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, tbl table.Table) error {
+	logger := log.FromContext(ctx).With(zap.String("table", tbl.Meta().Name.L)).Begin(zap.InfoLevel, "[new-ErrFoundConflictRecords] new ErrFoundConflictRecords")
 	if tablecodec.IsRecordKey(key) {
 		// for data KV
 		sessionOpts := encode.SessionOptions{
 			SQLMode: mysql.ModeStrictAllTables,
 		}
-		encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
-			Table:          tbl,
-			SessionOptions: sessionOpts,
-			Logger:         log.Logger{},
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
+		se := kv.NewSession(&sessionOpts, log.Logger{})
 
 		handle, err := tablecodec.DecodeRowKey(key)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+		rowData, _, err := tables.DecodeRawRowData(se,
 			tbl.Meta(), handle, tbl.Cols(), value)
 		if err != nil {
 			return errors.Trace(err)
@@ -645,17 +638,14 @@ func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error
 		return errors.Trace(err)
 	}
 
-	idxInfo, err := GetIndexInfoByIndexID(tbl, idxID)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
 
 	idxColLen := len(idxInfo.Columns)
 	indexName := fmt.Sprintf("%s.%s", tbl.Meta().Name.String(), idxInfo.Name.String())
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tbl.Meta())
 	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
 	if err != nil {
-		tidblogutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
+		logger.Warn("decode index key value failed", zap.String("index", indexName),
 			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
 		return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, key, value))
 	}
@@ -663,7 +653,7 @@ func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error
 	for i, val := range values[:idxColLen] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
-			tidblogutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
+			logger.Warn("decode column value failed", zap.String("index", indexName),
 				zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
 			return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, key, value))
 		}
@@ -682,24 +672,13 @@ func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error
 
 // ConvertToErrFoundConflictRecords converts ErrFoundDuplicateKeys
 // to ErrFoundDuplicateKeys error.
-func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error {
+func ConvertToErrFoundConflictRecords(ctx context.Context, originalErr error, tbl table.Table) error {
 	rawKey, rawValue, err := RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return NewErrFoundConflictRecords(rawKey, rawValue, tbl)
-}
-
-// GetIndexInfoByIndexID get index info from table.Table
-// by index ID.
-func GetIndexInfoByIndexID(tbl table.Table, indexID int64) (*model.IndexInfo, error) {
-	for _, indexInfo := range tbl.Meta().Indices {
-		if indexInfo.ID == indexID {
-			return indexInfo, nil
-		}
-	}
-	return nil, common.ErrGetIndexInfoByIndexID
+	return NewErrFoundConflictRecords(ctx, rawKey, rawValue, tbl)
 }
 
 // BuildDuplicateTaskForTest is only used for test.

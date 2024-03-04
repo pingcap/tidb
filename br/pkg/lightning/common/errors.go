@@ -104,7 +104,6 @@ var (
 	ErrDropIndexFailed           = errors.Normalize("drop index %s on table %s failed", errors.RFCCodeText("Lightning:Restore:ErrDropIndexFailed"))
 	ErrFoundDataConflictRecords  = errors.Normalize("found data conflict records in table %s, primary key is '%s', row data is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundDataConflictRecords"))
 	ErrFoundIndexConflictRecords = errors.Normalize("found index conflict records in table %s, unique key is '%s', primary key is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundIndexConflictRecords"))
-	ErrGetIndexInfoByIndexID     = errors.Normalize("fail to get index info by index id", errors.RFCCodeText("Lightning:Restore:ErrGetIndexInfoByIndexId"))
 )
 
 type withStack struct {

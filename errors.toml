@@ -581,11 +581,6 @@ error = '''
 found index conflict records in table %s, unique key is '%s', primary key is '%s'
 '''
 
-["Lightning:Restore:ErrGetIndexInfoByIndexId"]
-error = '''
-fail to get index info by index id
-'''
-
 ["Lightning:Restore:ErrInvalidMetaStatus"]
 error = '''
 invalid meta status: '%s'

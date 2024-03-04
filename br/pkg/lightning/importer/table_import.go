@@ -1341,7 +1341,7 @@ func (tr *TableImporter) importKV(
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
 	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = local.ConvertToErrFoundConflictRecords(err, tr.encTable)
+		err = local.ConvertToErrFoundConflictRecords(ctx, err, tr.encTable)
 	}
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
