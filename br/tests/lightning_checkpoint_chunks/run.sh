@@ -33,7 +33,11 @@ verify_checkpoint_noop() {
     run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
     check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
     check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
+<<<<<<< HEAD
     run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cpch.1234567890.bak`.table_v7 WHERE status >= 200'
+=======
+    run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cpch.1234567890.bak`.table_v9 WHERE status >= 200'
+>>>>>>> ac057ebbc37 (lightning: raise field length of checkpoint (#51460))
     check_contains "count(*): 1"
 }
 
