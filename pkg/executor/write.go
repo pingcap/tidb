@@ -82,7 +82,7 @@ func updateRecord(
 	// Handle exchange partition
 	tbl := t.Meta()
 	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(sctx, newData, tbl); err != nil {
+		if err := checkRowForExchangePartition(sctx.GetTableCtx(), newData, tbl); err != nil {
 			return false, err
 		}
 	}
@@ -103,7 +103,7 @@ func updateRecord(
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
+				if err = t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
 					return false, err
 				}
 			}
@@ -144,7 +144,7 @@ func updateRecord(
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
-			v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+			v, err := expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return false, err
 			}
@@ -175,11 +175,11 @@ func updateRecord(
 			sh := memBuffer.Staging()
 			defer memBuffer.Cleanup(sh)
 
-			if err = t.RemoveRecord(sctx, h, oldData); err != nil {
+			if err = t.RemoveRecord(sctx.GetTableCtx(), h, oldData); err != nil {
 				return false, err
 			}
 
-			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
+			_, err = t.AddRecord(sctx.GetTableCtx(), newData, table.IsUpdate, table.WithCtx(ctx))
 			if err != nil {
 				return false, err
 			}
@@ -194,7 +194,7 @@ func updateRecord(
 		}
 	} else {
 		// Update record to new value and update index.
-		if err := t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
+		if err := t.UpdateRecord(ctx, sctx.GetTableCtx(), h, oldData, newData, modified); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
 				return false, ec.HandleError(err)
@@ -246,7 +246,7 @@ func addUnchangedKeysForLockByRow(
 	count := 0
 	physicalID := t.Meta().ID
 	if pt, ok := t.(table.PartitionedTable); ok {
-		p, err := pt.GetPartitionByRow(sctx, row)
+		p, err := pt.GetPartitionByRow(sctx.GetExprCtx(), row)
 		if err != nil {
 			return 0, err
 		}
@@ -306,7 +306,7 @@ func rebaseAutoRandomValue(
 	shardFmt := autoid.NewShardIDFormat(&col.FieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & shardFmt.IncrementalMask()
-	return t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
+	return t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.
@@ -319,7 +319,7 @@ func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 
 // checkRowForExchangePartition is only used for ExchangePartition by non-partitionTable during write only state.
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
-func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tbl *model.TableInfo) error {
+func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, tbl *model.TableInfo) error {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {
@@ -330,7 +330,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 		return errors.Errorf("exchange partition process assert table partition failed")
 	}
 	err := p.CheckForExchangePartition(
-		sctx,
+		sctx.GetExprCtx(),
 		pt.Meta().Partition,
 		row,
 		tbl.ExchangePartitionInfo.ExchangePartitionDefID,
@@ -341,7 +341,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 	}
 	if variable.EnableCheckConstraint.Load() {
 		type CheckConstraintTable interface {
-			CheckRowConstraint(ctx expression.EvalContext, rowToCheck []types.Datum) error
+			CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error
 		}
 		cc, ok := pt.(CheckConstraintTable)
 		if !ok {

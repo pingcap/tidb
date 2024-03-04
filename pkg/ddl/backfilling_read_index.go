@@ -113,7 +113,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	opCtx := NewOperatorCtx(ctx)
+	opCtx := NewOperatorCtx(ctx, subtask.TaskID, subtask.ID)
 	defer opCtx.Cancel()
 	r.curRowCount.Store(0)
 

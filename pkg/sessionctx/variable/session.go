@@ -688,9 +688,6 @@ type SessionVars struct {
 	}
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
-	// stmtVars variables are temporarily set by SET_VAR hint
-	// It only take effect for the duration of a single statement
-	stmtVars map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
@@ -1574,6 +1571,9 @@ type SessionVars struct {
 	CompressionAlgorithm int
 	CompressionLevel     int
 
+	// EnableParallelSort indicates whether use parallel sort. Default is false.
+	EnableParallelSort bool
+
 	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
 	// overwritten if this value is not 0.
 	TxnEntrySizeLimit uint64
@@ -1938,7 +1938,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 			types:  make(map[string]*types.FieldType),
 		},
 		systems:                       make(map[string]string),
-		stmtVars:                      make(map[string]string),
 		PreparedStmts:                 make(map[uint32]any),
 		PreparedStmtNameToID:          make(map[string]uint32),
 		PlanCacheParams:               NewPlanCacheParamList(),
@@ -2401,9 +2400,6 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
-	if val, ok := s.stmtVars[name]; ok {
-		return val, ok
-	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -2479,17 +2475,6 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	}
 	afterMinus := atomic.AddInt64(&PreparedStmtCount, -int64(psCount))
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
-}
-
-// SetStmtVar sets the value of a system variable temporarily
-func (s *SessionVars) setStmtVar(name string, val string) error {
-	s.stmtVars[name] = val
-	return nil
-}
-
-// ClearStmtVars clear temporarily system variables.
-func (s *SessionVars) ClearStmtVars() {
-	s.stmtVars = make(map[string]string)
 }
 
 // GetSessionOrGlobalSystemVar gets a system variable.

@@ -44,12 +44,19 @@ const defaultFailedAnalysisWaitTime = 30 * time.Minute
 // TableAnalysisJob defines the structure for table analysis job information.
 type TableAnalysisJob struct {
 	// Only set when partitions's indexes need to be analyzed.
+	// It looks like: {"indexName": ["partitionName1", "partitionName2"]}
+	// This is only for newly added indexes.
+	// The reason why we need to record the partition names is that we need to analyze partitions in batch mode
+	// and we don't want to analyze the same partition multiple times.
+	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
 	PartitionIndexes map[string][]string
 	TableSchema      string
 	TableName        string
 	// Only set when table's indexes need to be analyzed.
+	// This is only for newly added indexes.
 	Indexes []string
 	// Only set when table's partitions need to be analyzed.
+	// This will analyze all indexes and columns of the specified partitions.
 	Partitions           []string
 	TableID              int64
 	TableStatsVer        int
@@ -57,6 +64,11 @@ type TableAnalysisJob struct {
 	TableSize            float64
 	LastAnalysisDuration time.Duration
 	Weight               float64
+}
+
+// HasNewlyAddedIndex checks whether the table has newly added index.
+func (j *TableAnalysisJob) HasNewlyAddedIndex() bool {
+	return len(j.PartitionIndexes) > 0 || len(j.Indexes) > 0
 }
 
 // IsValidToAnalyze checks whether the table is valid to analyze.
@@ -112,7 +124,7 @@ func isValidToAnalyze(
 	partitionNames ...string,
 ) (bool, string) {
 	lastFailedAnalysisDuration, err :=
-		getLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
+		GetLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
 		statslogutil.StatsLogger().Warn(
 			"Fail to get last failed analysis duration",
@@ -125,7 +137,7 @@ func isValidToAnalyze(
 	}
 
 	averageAnalysisDuration, err :=
-		getAverageAnalysisDuration(sctx, schema, table, partitionNames...)
+		GetAverageAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
 		statslogutil.StatsLogger().Warn(
 			"Fail to get average analysis duration",
@@ -151,7 +163,7 @@ func isValidToAnalyze(
 
 	// Failed analysis duration is less than 2 times the average analysis duration.
 	// Skip this table to avoid too much failed analysis.
-	onlyFailedAnalysis := lastFailedAnalysisDuration != noRecord && averageAnalysisDuration == noRecord
+	onlyFailedAnalysis := lastFailedAnalysisDuration != NoRecord && averageAnalysisDuration == NoRecord
 	if onlyFailedAnalysis && lastFailedAnalysisDuration < defaultFailedAnalysisWaitTime {
 		statslogutil.StatsLogger().Info(
 			fmt.Sprintf("Skip analysis because the last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime),
@@ -164,7 +176,7 @@ func isValidToAnalyze(
 		return false, fmt.Sprintf("last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime)
 	}
 	// Failed analysis duration is less than 2 times the average analysis duration.
-	meetSkipCondition := lastFailedAnalysisDuration != noRecord &&
+	meetSkipCondition := lastFailedAnalysisDuration != NoRecord &&
 		lastFailedAnalysisDuration < 2*averageAnalysisDuration
 	if meetSkipCondition {
 		statslogutil.StatsLogger().Info(
@@ -187,12 +199,18 @@ func (j *TableAnalysisJob) Execute(
 	sysProcTracker sessionctx.SysProcTracker,
 ) error {
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		j.analyze(sctx, statsHandle, sysProcTracker)
+		j.Analyze(sctx, statsHandle, sysProcTracker)
 		return nil
 	})
 }
 
-func (j *TableAnalysisJob) analyze(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, sysProcTracker sessionctx.SysProcTracker) {
+// Analyze performs analysis on the specified table, indexes, partitions, or partition indexes.
+// Exported for testing purposes.
+func (j *TableAnalysisJob) Analyze(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
+) {
 	switch j.getAnalyzeType() {
 	case analyzeTable:
 		j.analyzeTable(sctx, statsHandle, sysProcTracker)
@@ -201,7 +219,7 @@ func (j *TableAnalysisJob) analyze(sctx sessionctx.Context, statsHandle statstyp
 	case analyzePartition:
 		j.analyzePartitions(sctx, statsHandle, sysProcTracker)
 	case analyzePartitionIndex:
-		j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
+		j.AnalyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
 	}
 }
 
@@ -223,7 +241,7 @@ func (j *TableAnalysisJob) analyzeTable(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 ) {
-	sql, params := j.genSQLForAnalyzeTable()
+	sql, params := j.GenSQLForAnalyzeTable()
 	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
@@ -233,7 +251,7 @@ func (j *TableAnalysisJob) analyzeIndexes(
 	sysProcTracker sessionctx.SysProcTracker,
 ) {
 	for _, index := range j.Indexes {
-		sql, params := j.genSQLForAnalyzeIndex(index)
+		sql, params := j.GenSQLForAnalyzeIndex(index)
 		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 	}
 }
@@ -265,8 +283,8 @@ func (j *TableAnalysisJob) analyzePartitions(
 	}
 }
 
-// analyzePartitionIndexes performs analysis on the specified partition indexes.
-func (j *TableAnalysisJob) analyzePartitionIndexes(
+// AnalyzePartitionIndexes performs analysis on the specified partition indexes.
+func (j *TableAnalysisJob) AnalyzePartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
@@ -306,16 +324,16 @@ func getPartitionSQL(prefix, suffix string, numPartitions int) string {
 	return sqlBuilder.String()
 }
 
-// genSQLForAnalyzeTable generates the SQL for analyzing the specified table.
-func (j *TableAnalysisJob) genSQLForAnalyzeTable() (string, []any) {
+// GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
+func (j *TableAnalysisJob) GenSQLForAnalyzeTable() (string, []any) {
 	sql := "analyze table %n.%n"
 	params := []any{j.TableSchema, j.TableName}
 
 	return sql, params
 }
 
-// genSQLForAnalyzeIndex generates the SQL for analyzing the specified index.
-func (j *TableAnalysisJob) genSQLForAnalyzeIndex(index string) (string, []any) {
+// GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.
+func (j *TableAnalysisJob) GenSQLForAnalyzeIndex(index string) (string, []any) {
 	sql := "analyze table %n.%n index %n"
 	params := []any{j.TableSchema, j.TableName, index}
 
