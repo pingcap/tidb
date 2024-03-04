@@ -493,32 +493,21 @@ func newBinding(sctx sessionctx.Context, row chunk.Row) (string, Binding, error)
 	if status == Using {
 		status = Enabled
 	}
-	defaultDB := row.GetString(2)
-
-	bindSQL := row.GetString(1)
-	charset, collation := row.GetString(6), row.GetString(7)
-	stmt, err := parser.New().ParseOneStmt(bindSQL, charset, collation)
-	if err != nil {
-		return "", Binding{}, err
-	}
-	tableNames := CollectTableNames(stmt)
-
 	binding := Binding{
 		OriginalSQL: row.GetString(0),
-		Db:          strings.ToLower(defaultDB),
-		BindSQL:     bindSQL,
+		Db:          strings.ToLower(row.GetString(2)),
+		BindSQL:     row.GetString(1),
 		Status:      status,
 		CreateTime:  row.GetTime(4),
 		UpdateTime:  row.GetTime(5),
-		Charset:     charset,
-		Collation:   collation,
+		Charset:     row.GetString(6),
+		Collation:   row.GetString(7),
 		Source:      row.GetString(8),
 		SQLDigest:   row.GetString(9),
 		PlanDigest:  row.GetString(10),
-		TableNames:  tableNames,
 	}
 	sqlDigest := parser.DigestNormalized(binding.OriginalSQL)
-	err = prepareHints(sctx, &binding)
+	err := prepareHints(sctx, &binding)
 	sctx.GetSessionVars().CurrentDB = binding.Db
 	return sqlDigest.String(), binding, err
 }

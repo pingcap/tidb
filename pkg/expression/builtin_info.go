@@ -118,7 +118,7 @@ func (b *builtinDatabaseSig) Clone() builtinFunc {
 // evalString evals a builtinDatabaseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	currentDB := ctx.GetSessionVars().CurrentDB
+	currentDB := ctx.CurrentDB()
 	return currentDB, currentDB == "", nil
 }
 
@@ -1120,7 +1120,7 @@ func (b *builtinNextValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1176,7 +1176,7 @@ func (b *builtinLastValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1226,7 +1226,7 @@ func (b *builtinSetValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))

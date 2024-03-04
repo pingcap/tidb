@@ -82,7 +82,7 @@ func (e *baseGroupConcat4String) handleTruncateError(tc types.Context) (err erro
 func (e *baseGroupConcat4String) truncatePartialResultIfNeed(ctx AggFuncUpdateContext, buffer *bytes.Buffer) (err error) {
 	if e.maxLen > 0 && uint64(buffer.Len()) > e.maxLen {
 		buffer.Truncate(int(e.maxLen))
-		return e.handleTruncateError(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		return e.handleTruncateError(ctx.TypeCtx())
 	}
 	return nil
 }
@@ -323,7 +323,7 @@ func (h topNRows) Len() int {
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
 	for k := 0; k < n; k++ {
-		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
+		ret, err := h.rows[i].byItems[k].Compare(h.sctx.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
 		if err != nil {
 			h.err = err
 			return false
@@ -492,7 +492,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx AggFuncUpdateContext, rowsIn
 			return memDelta, p.topN.err
 		}
 		if truncated {
-			if err := e.handleTruncateError(sctx.GetSessionVars().StmtCtx.TypeCtx()); err != nil {
+			if err := e.handleTruncateError(sctx.TypeCtx()); err != nil {
 				return memDelta, err
 			}
 		}
@@ -616,7 +616,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx AggFuncUpdateContext
 			return memDelta, p.topN.err
 		}
 		if truncated {
-			if err := e.handleTruncateError(sctx.GetSessionVars().StmtCtx.TypeCtx()); err != nil {
+			if err := e.handleTruncateError(sctx.TypeCtx()); err != nil {
 				return memDelta, err
 			}
 		}
