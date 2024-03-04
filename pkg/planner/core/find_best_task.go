@@ -1022,9 +1022,12 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
 	for _, path := range determinedIndexPartialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-		if len(path.TableFilters) > 0 || (len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.TableFilters, ds.SCtx().GetClient(), kv.TiKV)) {
+		if len(path.TableFilters) > 0 {
+			if !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
+				// if this table filters can't be pushed down, all of them should be kept in the table side, cleaning the lookup side here.
+				path.TableFilters = nil
+			}
 			shouldKeepCurrentFilter = true
-			path.TableFilters = nil
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
 		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
