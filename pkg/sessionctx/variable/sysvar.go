@@ -3065,15 +3065,15 @@ var defaultSysVars = []*SysVar{
 			vars.EnableParallelSort = TiDBOptOn(s)
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDMLType, Value: DefTiDBDMLType, Type: TypeStr,
+	{Scope: ScopeSession, Name: TiDBDMLType, Value: DefTiDBDMLType, Type: TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
 			lowerVal := strings.ToLower(val)
 			if strings.EqualFold(lowerVal, "standard") {
-				s.BulkDMLParallelism = 0
+				s.BulkDMLEnabled = false
 				return nil
 			}
 			if strings.EqualFold(lowerVal, "bulk") {
-				s.BulkDMLParallelism = 1
+				s.BulkDMLEnabled = true
 				return nil
 			}
 			return errors.Errorf("unsupport DML type: %s", val)

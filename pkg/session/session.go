@@ -3822,7 +3822,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future = txnFailFuture{}
 	})
 
-	pipelined := s.sessionVars.BulkDMLParallelism == 1 && s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
+	pipelined := s.sessionVars.BulkDMLEnabled && s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
 		!config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
 	s.txn.changeToPending(&txnFuture{
 		future:    future,
