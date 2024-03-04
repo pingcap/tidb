@@ -114,9 +114,11 @@ func RequestLoadStats(ctx PlanContext, neededHistItems []model.StatsLoadItem, sy
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
+			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
+		logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
 		return err
 	}
 	return nil
