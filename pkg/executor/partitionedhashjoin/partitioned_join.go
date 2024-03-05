@@ -80,8 +80,8 @@ type PartitionedHashJoinCtx struct {
 	buildFinished   chan error
 	JoinType        plannercore.JoinType
 	stats           *hashJoinRuntimeStats
-	probeTypes      []*types.FieldType
-	buildTypes      []*types.FieldType
+	ProbeTypes      []*types.FieldType
+	BuildTypes      []*types.FieldType
 	memTracker      *memory.Tracker // track memory usage.
 	diskTracker     *disk.Tracker   // track disk usage.
 
@@ -117,10 +117,10 @@ type ProbeWorker struct {
 }
 
 type BuildWorker struct {
-	hashJoinCtx      *PartitionedHashJoinCtx
-	buildSideExec    exec.Executor
-	buildKeyColIdx   []int
-	buildNAKeyColIdx []int
+	HashJoinCtx    *PartitionedHashJoinCtx
+	BuildSideExec  exec.Executor
+	BuildKeyColIdx []int
+	WorkerID       uint
 }
 
 // PartitionedHashJoinExec implements the hash join algorithm.
@@ -130,7 +130,7 @@ type PartitionedHashJoinExec struct {
 
 	ProbeSideTupleFetcher *ProbeSideTupleFetcher
 	ProbeWorkers          []*ProbeWorker
-	BuildWorker           *BuildWorker
+	BuildWorkers          []*BuildWorker
 
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
@@ -314,20 +314,20 @@ func (w *BuildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 	})
 	failpoint.Inject("issue42662_1", func(val failpoint.Value) {
 		if val.(bool) {
-			if w.hashJoinCtx.SessCtx.GetSessionVars().ConnectionID != 0 {
+			if w.HashJoinCtx.SessCtx.GetSessionVars().ConnectionID != 0 {
 				// consume 170MB memory, this sql should be tracked into MemoryTop1Tracker
-				w.hashJoinCtx.memTracker.Consume(170 * 1024 * 1024)
+				w.HashJoinCtx.memTracker.Consume(170 * 1024 * 1024)
 			}
 			return
 		}
 	})
-	sessVars := w.hashJoinCtx.SessCtx.GetSessionVars()
+	sessVars := w.HashJoinCtx.SessCtx.GetSessionVars()
 	for {
-		if w.hashJoinCtx.finished.Load() {
+		if w.HashJoinCtx.finished.Load() {
 			return
 		}
-		chk := w.hashJoinCtx.allocPool.Alloc(w.buildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
-		err = exec.Next(ctx, w.buildSideExec, chk)
+		chk := w.HashJoinCtx.allocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
+		err = exec.Next(ctx, w.BuildSideExec, chk)
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return
@@ -340,7 +340,7 @@ func (w *BuildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 		select {
 		case <-doneCh:
 			return
-		case <-w.hashJoinCtx.closeCh:
+		case <-w.HashJoinCtx.closeCh:
 			return
 		case chkCh <- chk:
 		}
@@ -560,10 +560,10 @@ func (e *PartitionedHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 			e.buildFinished = make(chan error, 1)
 			hCtx := &hashContext{
 				allTypes:    e.buildTypes,
-				keyColIdx:   e.BuildWorker.buildKeyColIdx,
+				keyColIdx:   e.BuildWorker.BuildKeyColIdx,
 				naKeyColIdx: e.BuildWorker.buildNAKeyColIdx,
 			}
-			e.rowContainer = newHashRowContainer(e.Ctx(), hCtx, exec.RetTypes(e.BuildWorker.buildSideExec))
+			e.rowContainer = newHashRowContainer(e.Ctx(), hCtx, exec.RetTypes(e.BuildWorker.BuildSideExec))
 			// we shallow copies rowContainer for each probe worker to avoid lock contention
 			for i := uint(0); i < e.Concurrency; i++ {
 				if i == 0 {
@@ -622,7 +622,7 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.BuildWorker.fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
+			e.BuildWorkers[0].fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r any) {
 			if r != nil {
@@ -633,7 +633,7 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	)
 
 	// TODO: Parallel build hash table. Currently not support because `unsafeHashTable` is not thread-safe.
-	err := e.BuildWorker.buildHashTableForList(buildSideResultCh)
+	err := e.BuildWorkers[0].buildHashTableForList(buildSideResultCh)
 	if err != nil {
 		e.buildFinished <- errors.Trace(err)
 		close(doneCh)
