@@ -1,0 +1,129 @@
+# TestDefaultColumnWithDateFormatAndReplaceAndUpperAndStrToDate
+# Different data types for data_format.
+drop table if exists t0, t1, t2, t3;
+create table t0 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')));
+create table t1 (c int(10), c1 JSON default (date_format(now(),'%Y-%m-%d')));
+create table t2 (c int(10), c1 ENUM('y','n') default (date_format(now(),'%Y-%m-%d')));
+create table t3 (c int(10), c1 SET('y','n') default (date_format(now(),'%Y-%m-%d')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+select count(1) from t0 where c1 = date_format(now(), '%Y-%m-%d');
+-- error 3140
+INSERT INTO t1 values ();
+-- error 3140
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+-- error 1265
+INSERT INTO t2 values ();
+-- error 1265
+INSERT INTO t2 values (1, DEFAULT);
+SELECT * from t2;
+-- error 1265
+INSERT INTO t3 values ();
+-- error 1265
+INSERT INTO t3 values (1, DEFAULT);
+SELECT * from t3;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+drop table t0, t1, t2, t3;
+# Different data types for replace.
+create table t0 (c int(10), c1 BLOB default (REPLACE(UPPER(UUID()), '-', '')));
+create table t1 (c int(10), c1 JSON default (REPLACE(UPPER(UUID()), '-', '')));
+create table t2 (c int(10), c1 ENUM('y','n') default (REPLACE(UPPER(UUID()), '-', '')));
+create table t3 (c int(10), c1 SET('y','n') default (REPLACE(UPPER(UUID()), '-', '')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT count(1) FROM t0 WHERE c1 REGEXP '^[A-Z0-9]+$';
+-- error 3140
+INSERT INTO t1 values ();
+-- error 3140
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+-- error 1265
+INSERT INTO t2 values ();
+-- error 1265
+INSERT INTO t2 values (1, DEFAULT);
+SELECT * from t2;
+-- error 1265
+INSERT INTO t3 values ();
+-- error 1265
+INSERT INTO t3 values (1, DEFAULT);
+SELECT * from t3;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+drop table t0, t1, t2, t3;
+# Different data types for str_to_date.
+create table t0 (c int(10), c1 BLOB default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t1 (c int(10), c1 JSON default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t2 (c int(10), c1 ENUM('y','n') default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t3 (c int(10), c1 SET('y','n') default (str_to_date('1980-01-01','%Y-%m-%d')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT * from t0;
+# MySQL will return an error. Related issue: https://github.com/pingcap/tidb/issues/51275.
+INSERT INTO t1 values ();
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+-- error 1265
+INSERT INTO t2 values ();
+-- error 1265
+INSERT INTO t2 values (1, DEFAULT);
+SELECT * from t2;
+-- error 1265
+INSERT INTO t3 values ();
+-- error 1265
+INSERT INTO t3 values (1, DEFAULT);
+SELECT * from t3;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+drop table t0, t1, t2, t3;
+# Different data types for upper.
+create table t0 (c int(10), c1 BLOB default (upper(substring_index(user(),'@',1))));
+create table t1 (c int(10), c1 JSON default (upper(substring_index(user(),'@',1))));
+create table t2 (c int(10), c1 ENUM('y','n') default (upper(substring_index(user(),'@',1))));
+create table t3 (c int(10), c1 SET('y','n') default (upper(substring_index(user(),'@',1))));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT * from t0;
+-- error 3140
+INSERT INTO t1 values ();
+-- error 3140
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+-- error 1265
+INSERT INTO t2 values ();
+-- error 1265
+INSERT INTO t2 values (1, DEFAULT);
+SELECT * from t2;
+-- error 1265
+INSERT INTO t3 values ();
+-- error 1265
+INSERT INTO t3 values (1, DEFAULT);
+SELECT * from t3;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+drop table t0, t1, t2, t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
