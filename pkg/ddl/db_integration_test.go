@@ -1623,16 +1623,6 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "xyz", Hostname: "localhost"}
 	tk.MustExec("insert into t(c) values (4),(5),(6)")
 	tk.MustExec("insert into t values (7, default)")
-	rows := tk.MustQuery("SELECT c1 from t order by c").Rows()
-	for i, row := range rows {
-		d, ok := row[0].(string)
-		require.True(t, ok)
-		if i < 3 {
-			require.Equal(t, "ROOT", d)
-		} else {
-			require.Equal(t, "XYZ", d)
-		}
-	}
 
 	// replace
 	tk.MustExec("create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')))")

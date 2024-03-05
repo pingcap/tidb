@@ -41,7 +41,7 @@ insert into t5 values (2, default);
 SELECT * FROM t5 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
 c	c1
 insert into t6(c) values (1);
-Error 1292 (22007): Truncated incorrect DOUBLE value: '2024-03-05 14:53:28'
+Error 1292 (22007): Truncated incorrect DOUBLE value: '2024-03-05 16:37:25'
 insert into t7(c) values (1);
 Error 1292 (22007): Incorrect date value: '2024-03'
 show create table t0;
@@ -85,6 +85,12 @@ t1	CREATE TABLE `t1` (
   `c` int(10) DEFAULT NULL,
   `c1` datetime DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+show columns from test.t1 where field='c1';
+Field	Type	Null	Key	Default	Extra
+c1	datetime	YES		date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 drop table if exists t, t1, t2;
 create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')));
 create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')));
@@ -105,10 +111,10 @@ insert into t(c) values (1),(2),(3);
 insert into t values (4, default)
 SELECT c1 from t WHERE c REGEXP '^[A-Z0-9]+$';
 c1
-126DF796DABD11EE9E1D3C7D0A09BA5A
-126E0042DABD11EE9E1D3C7D0A09BA5A
-126E025EDABD11EE9E1D3C7D0A09BA5A
-126E4C78DABD11EE9E1D3C7D0A09BA5A
+9874F462DACB11EEB5853C7D0A09BA5A
+9874FD40DACB11EEB5853C7D0A09BA5A
+9874FF66DACB11EEB5853C7D0A09BA5A
+98754502DACB11EEB5853C7D0A09BA5A
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
@@ -141,6 +147,9 @@ t1	CREATE TABLE `t1` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(32) DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
 drop table if exists t0, t1, t2, t3, t4, t5;
 create table t0 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')), c2 date default (str_to_date('9999-01-01','%Y-%m-%d')));
 create table t1 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), c2 int default (str_to_date('9999-01-01','%Y-%m-%d')));
@@ -174,6 +183,9 @@ insert into t2 values (4, default, default);
 set session sql_mode=@sqlMode;
 insert into t2(c) values (5);
 Error 1292 (22007): Incorrect datetime value: '0000-00-00 00:00:00'
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 drop table if exists t, t1, t2;
 create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))));
 create table t1 (c int(10), c1 int default (upper(substring_index(user(),_utf8mb4'@',1))));
@@ -215,3 +227,261 @@ t1	CREATE TABLE `t1` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(32) DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+upper(substring_index(user(), _utf8mb4'@', 1))	DEFAULT_GENERATED
+drop table if exists t0, t1, t2, t3;
+create table t0 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')));
+create table t1 (c int(10), c1 JSON default (date_format(now(),'%Y-%m-%d')));
+create table t2 (c int(10), c1 ENUM('y','n') default (date_format(now(),'%Y-%m-%d')));
+create table t3 (c int(10), c1 SET('y','n') default (date_format(now(),'%Y-%m-%d')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+select count(1) from t0 where c1 = date_format(now(), '%Y-%m-%d');
+count(1)
+2
+INSERT INTO t1 values ();
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+INSERT INTO t1 values (1, DEFAULT);
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT * from t1;
+c	c1
+INSERT INTO t2 values ();
+Error 1265 (01000): Data truncated for column '%s' at row %d
+INSERT INTO t2 values (1, DEFAULT);
+Error 1265 (01000): Data truncated for column '%s' at row %d
+SELECT * from t2;
+c	c1
+INSERT INTO t3 values ();
+Error 1265 (01000): Data truncated for column '%s' at row %d
+INSERT INTO t3 values (1, DEFAULT);
+Error 1265 (01000): Data truncated for column '%s' at row %d
+SELECT * from t3;
+c	c1
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` blob DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` json DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `c` int(10) DEFAULT NULL,
+  `c1` enum('y','n') DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `c` int(10) DEFAULT NULL,
+  `c1` set('y','n') DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+drop table t0, t1, t2, t3;
+create table t0 (c int(10), c1 BLOB default (REPLACE(UPPER(UUID()), '-', '')));
+create table t1 (c int(10), c1 JSON default (REPLACE(UPPER(UUID()), '-', '')));
+create table t2 (c int(10), c1 ENUM('y','n') default (REPLACE(UPPER(UUID()), '-', '')));
+create table t3 (c int(10), c1 SET('y','n') default (REPLACE(UPPER(UUID()), '-', '')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT count(1) FROM t0 WHERE c1 REGEXP '^[A-Z0-9]+$';
+count(1)
+2
+INSERT INTO t1 values ();
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+INSERT INTO t1 values (1, DEFAULT);
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT * from t1;
+c	c1
+INSERT INTO t2 values ();
+Error 1265 (01000): Data truncated for column '%s' at row %d
+INSERT INTO t2 values (1, DEFAULT);
+Error 1265 (01000): Data truncated for column '%s' at row %d
+SELECT * from t2;
+c	c1
+INSERT INTO t3 values ();
+Error 1265 (01000): Data truncated for column '%s' at row %d
+INSERT INTO t3 values (1, DEFAULT);
+Error 1265 (01000): Data truncated for column '%s' at row %d
+SELECT * from t3;
+c	c1
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` blob DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` json DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `c` int(10) DEFAULT NULL,
+  `c1` enum('y','n') DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `c` int(10) DEFAULT NULL,
+  `c1` set('y','n') DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
+drop table t0, t1, t2, t3;
+create table t0 (c int(10), c1 BLOB default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t1 (c int(10), c1 JSON default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t2 (c int(10), c1 ENUM('y','n') default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t3 (c int(10), c1 SET('y','n') default (str_to_date('1980-01-01','%Y-%m-%d')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT * from t0;
+c	c1
+NULL	1980-01-01
+1	1980-01-01
+INSERT INTO t1 values ();
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+c	c1
+NULL	"1980-01-01"
+1	"1980-01-01"
+INSERT INTO t2 values ();
+Error 1265 (01000): Data truncated for column '%s' at row %d
+INSERT INTO t2 values (1, DEFAULT);
+Error 1265 (01000): Data truncated for column '%s' at row %d
+SELECT * from t2;
+c	c1
+INSERT INTO t3 values ();
+Error 1265 (01000): Data truncated for column '%s' at row %d
+INSERT INTO t3 values (1, DEFAULT);
+Error 1265 (01000): Data truncated for column '%s' at row %d
+SELECT * from t3;
+c	c1
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` blob DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` json DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `c` int(10) DEFAULT NULL,
+  `c1` enum('y','n') DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `c` int(10) DEFAULT NULL,
+  `c1` set('y','n') DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+drop table t0, t1, t2, t3;
+create table t0 (c int(10), c1 BLOB default (upper(substring_index(user(),'@',1))));
+create table t1 (c int(10), c1 JSON default (upper(substring_index(user(),'@',1))));
+create table t2 (c int(10), c1 ENUM('y','n') default (upper(substring_index(user(),'@',1))));
+create table t3 (c int(10), c1 SET('y','n') default (upper(substring_index(user(),'@',1))));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT * from t0;
+c	c1
+NULL	ROOT
+1	ROOT
+INSERT INTO t1 values ();
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+INSERT INTO t1 values (1, DEFAULT);
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT * from t1;
+c	c1
+INSERT INTO t2 values ();
+Error 1265 (01000): Data truncated for column '%s' at row %d
+INSERT INTO t2 values (1, DEFAULT);
+Error 1265 (01000): Data truncated for column '%s' at row %d
+SELECT * from t2;
+c	c1
+INSERT INTO t3 values ();
+Error 1265 (01000): Data truncated for column '%s' at row %d
+INSERT INTO t3 values (1, DEFAULT);
+Error 1265 (01000): Data truncated for column '%s' at row %d
+SELECT * from t3;
+c	c1
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` blob DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` json DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `c` int(10) DEFAULT NULL,
+  `c1` enum('y','n') DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `c` int(10) DEFAULT NULL,
+  `c1` set('y','n') DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t0, t1, t2, t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+column_default	extra
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+column_default	extra
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+column_default	extra
