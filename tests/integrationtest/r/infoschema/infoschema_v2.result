@@ -5,7 +5,7 @@ Database
 INFORMATION_SCHEMA
 METRICS_SCHEMA
 PERFORMANCE_SCHEMA
-infoschema__infoschemaV2
+infoschema__infoschema_v2
 mysql
 sys
 test
@@ -16,7 +16,7 @@ Database
 INFORMATION_SCHEMA
 METRICS_SCHEMA
 PERFORMANCE_SCHEMA
-infoschema__infoschemaV2
+infoschema__infoschema_v2
 mysql
 sys
 test
@@ -34,3 +34,4 @@ show tables;
 Tables_in_tt
 drop table test;
 Error 1051 (42S02): Unknown table 'tt.test'
+set global tidb_schema_cache_size = 0;
