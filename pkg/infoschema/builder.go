@@ -105,7 +105,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 }
 
 func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff)
+	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
+
 }
 
 func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -291,12 +292,12 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 	return err
 }
 
-func (b *Builder) applyAffectedOpts(m *meta.Meta, tblIDs []int64, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyAffectedOpts(m *meta.Meta, tblIDs []int64, diff *model.SchemaDiff, tp model.ActionType) ([]int64, error) {
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
 			affectedDiff := &model.SchemaDiff{
 				Version:     diff.Version,
-				Type:        diff.Type,
+				Type:        tp,
 				SchemaID:    opt.SchemaID,
 				TableID:     opt.TableID,
 				OldSchemaID: opt.OldSchemaID,
@@ -318,7 +319,7 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 		return nil, errors.Trace(err)
 	}
 
-	return b.applyAffectedOpts(m, tblIDs, diff)
+	return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
 }
 
 func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID int64) {
