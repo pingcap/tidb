@@ -1,0 +1,21 @@
+# TestDefaultColumnWithDateFormatAndReplaceAndUpperAndStrToDate
+# date_format
+use test;
+drop table if exists t0, t1, t2, t3, t4, t5, t6, t7;
+create table t0 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m')));
+create table t1 (c int(10), c1 datetime default (date_format(now(),'%Y-%m-%d')));
+create table t2 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H.%i.%s')));
+create table t3 (c int(10), c1 timestamp default (date_format(now(),'%Y-%m-%d %H.%i.%s')));
+create table t4 (c int(10), c1 date default (date_format(now(),'%Y-%m-%d %H:%i:%s')));
+create table t5 (c int(10), c1 date default (date_format(now(),_utf8mb4'%Y-%m-%d %H:%i:%s')));
+create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')));
+create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')));
+-- error 3770
+create table t8 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
+-- error 3770
+create table t9 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
+-- error 1674
+alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
+insert into t0(c) values (1)
+insert into t0(c) values (1),(default)
+
