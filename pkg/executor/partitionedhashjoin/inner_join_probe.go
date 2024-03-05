@@ -24,7 +24,7 @@ type innerJoinProbe struct {
 	baseJoinProbe
 }
 
-func (j *innerJoinProbe) probe(joinResult *util.HashjoinWorkerResult) (ok bool, _ *util.HashjoinWorkerResult) {
+func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, _ *util.HashjoinWorkerResult) {
 	if joinResult.Chk.IsFull() {
 		return true, joinResult
 	}
@@ -64,7 +64,7 @@ func (j *innerJoinProbe) probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		// eval other condition, and construct final chunk
 		j.selected = j.selected[:0]
-		j.selected, joinResult.Err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.otherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		j.selected, joinResult.Err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
 		if joinResult.Err != nil {
 			return false, joinResult
 		}
@@ -77,15 +77,15 @@ func (j *innerJoinProbe) probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 	return true, joinResult
 }
 
-func (j *innerJoinProbe) needScanHT() bool {
+func (j *innerJoinProbe) NeedScanHT() bool {
 	return false
 }
 
-func (j *innerJoinProbe) scanHT(*util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
+func (j *innerJoinProbe) ScanHT(*util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
 	panic("should not reach here")
 }
 
-func (j *innerJoinProbe) isScanHTDone() bool {
+func (j *innerJoinProbe) IsScanHTDone() bool {
 	panic("should not reach here")
 }
 
