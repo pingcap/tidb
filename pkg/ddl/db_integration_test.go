@@ -1616,6 +1616,13 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
 
+	// date_format
+	tk.MustExec("create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')))")
+	tk.MustExec("create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')))")
+	// Error message like: Error 1292 (22007): Truncated incorrect DOUBLE value: '2024-03-05 16:37:25'.
+	tk.MustGetErrCode("insert into t6(c) values (1)", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("insert into t7(c) values (1)", errno.ErrTruncatedWrongValue)
+
 	// user
 	tk.MustExec("create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))));")
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}

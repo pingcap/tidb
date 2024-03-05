@@ -6,11 +6,9 @@ create table t2 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d
 create table t3 (c int(10), c1 timestamp default (date_format(now(),'%Y-%m-%d %H.%i.%s')));
 create table t4 (c int(10), c1 date default (date_format(now(),'%Y-%m-%d %H:%i:%s')));
 create table t5 (c int(10), c1 date default (date_format(now(),_utf8mb4'%Y-%m-%d %H:%i:%s')));
-create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')));
-create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')));
-create table t8 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
+create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString %b %d %Y %h:%i %p`.
-create table t9 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
+create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString %Y-%m-%d %H:%i:%s %p`.
 alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
 Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
@@ -40,10 +38,6 @@ insert into t5(c) values (1);
 insert into t5 values (2, default);
 SELECT * FROM t5 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
 c	c1
-insert into t6(c) values (1);
-Error 1292 (22007): Truncated incorrect DOUBLE value: '2024-03-05 16:37:25'
-insert into t7(c) values (1);
-Error 1292 (22007): Incorrect date value: '2024-03'
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
@@ -109,12 +103,9 @@ alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')
 Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
 insert into t(c) values (1),(2),(3);
 insert into t values (4, default)
-SELECT c1 from t WHERE c REGEXP '^[A-Z0-9]+$';
-c1
-9874F462DACB11EEB5853C7D0A09BA5A
-9874FD40DACB11EEB5853C7D0A09BA5A
-9874FF66DACB11EEB5853C7D0A09BA5A
-98754502DACB11EEB5853C7D0A09BA5A
+SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
+count(1)
+4
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (

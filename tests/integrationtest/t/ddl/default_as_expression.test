@@ -8,12 +8,10 @@ create table t2 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d
 create table t3 (c int(10), c1 timestamp default (date_format(now(),'%Y-%m-%d %H.%i.%s')));
 create table t4 (c int(10), c1 date default (date_format(now(),'%Y-%m-%d %H:%i:%s')));
 create table t5 (c int(10), c1 date default (date_format(now(),_utf8mb4'%Y-%m-%d %H:%i:%s')));
-create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')));
-create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')));
 -- error 3770
-create table t8 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
+create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
 -- error 3770
-create table t9 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
+create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
 -- error 1674
 alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
 # insert records
@@ -37,10 +35,6 @@ SELECT * FROM t4 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_forma
 insert into t5(c) values (1);
 insert into t5 values (2, default);
 SELECT * FROM t5 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
--- error 1292
-insert into t6(c) values (1);
--- error 1292
-insert into t7(c) values (1);
 show create table t0;
 show create table t1;
 show create table t2;
@@ -81,7 +75,7 @@ alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')
 insert into t(c) values (1),(2),(3);
 insert into t values (4, default)
 # It consists of uppercase letters or numbers.
-SELECT c1 from t WHERE c REGEXP '^[A-Z0-9]+$';
+SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
 
 # Some MySQL versions of "show create table" have different results. For example, MySQL 8.0.18 has the following results:
 # `c1` varchar(16) DEFAULT (replace(convert(upper(uuid()) using utf8mb4),_utf8mb4'-',_utf8mb4''))
