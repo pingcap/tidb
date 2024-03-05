@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 func main() {
@@ -92,14 +95,24 @@ func run() error {
 		return err
 	}
 
+	var opts []pdhttp.ClientOption
+	if tls != nil {
+		opts = append(opts, pdhttp.WithTLSConfig(tls.TLSConfig()))
+	}
+	cli := pdhttp.NewClient(
+		"lightning-ctl",
+		strings.Split(cfg.TiDB.PdAddr, ","),
+		opts...)
+	defer cli.Close()
+
 	if *compact {
-		return errors.Trace(compactCluster(ctx, cfg, tls))
+		return errors.Trace(compactCluster(ctx, cli, tls))
 	}
 	if *flagFetchMode {
-		return errors.Trace(fetchMode(ctx, cfg, tls))
+		return errors.Trace(fetchMode(ctx, cli, tls))
 	}
 	if len(*mode) != 0 {
-		return errors.Trace(lightning.SwitchMode(ctx, cfg, tls, *mode))
+		return errors.Trace(lightning.SwitchMode(ctx, cli, tls.TLSConfig(), *mode))
 	}
 
 	if len(*cpRemove) != 0 {
@@ -122,23 +135,23 @@ func run() error {
 	return nil
 }
 
-func compactCluster(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
+func compactCluster(ctx context.Context, cli pdhttp.Client, tls *common.TLS) error {
 	return tikv.ForAllStores(
 		ctx,
-		tls.WithHost(cfg.TiDB.PdAddr),
-		tikv.StoreStateDisconnected,
-		func(c context.Context, store *tikv.Store) error {
-			return tikv.Compact(c, tls, store.Address, importer.FullLevelCompact)
+		cli,
+		metapb.StoreState_Offline,
+		func(c context.Context, store *pdhttp.MetaStore) error {
+			return tikv.Compact(c, tls, store.Address, importer.FullLevelCompact, "")
 		},
 	)
 }
 
-func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
+func fetchMode(ctx context.Context, cli pdhttp.Client, tls *common.TLS) error {
 	return tikv.ForAllStores(
 		ctx,
-		tls.WithHost(cfg.TiDB.PdAddr),
-		tikv.StoreStateDisconnected,
-		func(c context.Context, store *tikv.Store) error {
+		cli,
+		metapb.StoreState_Offline,
+		func(c context.Context, store *pdhttp.MetaStore) error {
 			mode, err := tikv.FetchMode(c, tls, store.Address)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%-30s | Error: %v\n", store.Address, err)
@@ -200,7 +213,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 		for _, table := range targetTables {
 			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
 				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
-				_, eID := backend.MakeUUID(table.TableName, engineID)
+				_, eID := backend.MakeUUID(table.TableName, int64(engineID))
 				engine := local.Engine{UUID: eID}
 				err := engine.Cleanup(cfg.TikvImporter.SortedKVDir)
 				if err != nil {

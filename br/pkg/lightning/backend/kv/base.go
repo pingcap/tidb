@@ -24,16 +24,21 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+)
+
+const (
+	maxLogLength = 512 * 1024
 )
 
 // ExtraHandleColumnInfo is the column info of extra handle column.
@@ -76,6 +81,7 @@ var kindStr = [...]string{
 
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
 func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
+	var totalLength = 0
 	for _, datum := range row {
 		kind := datum.Kind()
 		var str string
@@ -92,6 +98,14 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 			if err != nil {
 				return err
 			}
+		}
+		if len(str) > maxLogLength {
+			str = str[0:1024] + " (truncated)"
+		}
+		totalLength += len(str)
+		if totalLength >= maxLogLength {
+			encoder.AppendString("The row has been truncated, and the log has exited early.")
+			return nil
 		}
 		if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
 			enc.AddString("kind", kindStr[kind])
@@ -116,9 +130,6 @@ type BaseKVEncoder struct {
 
 	logger      *zap.Logger
 	recordCache []types.Datum
-	// the first auto-generated ID in the current encoder.
-	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	LastInsertID uint64
 }
 
 // NewBaseKVEncoder creates a new BaseKVEncoder.
@@ -178,7 +189,7 @@ func (e *BaseKVEncoder) GetOrCreateRecord() []types.Datum {
 
 // Record2KV converts a row into a KV pair.
 func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64) (*Pairs, error) {
-	_, err := e.Table.AddRecord(e.SessionCtx, record)
+	_, err := e.Table.AddRecord(e.SessionCtx.GetTableCtx(), record)
 	if err != nil {
 		e.logger.Error("kv encode failed",
 			zap.Array("originalRow", RowArrayMarshaller(originalRow)),
@@ -207,13 +218,14 @@ func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDat
 		meta := e.Table.Meta()
 		shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
 		// this allocator is the same as the allocator in table importer, i.e. PanickingAllocators. below too.
-		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoRandomType)
+		alloc := e.Table.Allocators(e.SessionCtx.GetTableCtx()).Get(autoid.AutoRandomType)
 		if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
 			return value, errors.Trace(err)
 		}
 	}
 	if IsAutoIncCol(col.ToInfo()) {
-		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoIncrementType)
+		// same as RowIDAllocType, since SepAutoInc is always false when initializing allocators of Table.
+		alloc := e.Table.Allocators(e.SessionCtx.GetTableCtx()).Get(autoid.AutoIncrementType)
 		if err := alloc.Rebase(context.Background(), GetAutoRecordID(value, &col.FieldType), false); err != nil {
 			return value, errors.Trace(err)
 		}
@@ -244,9 +256,6 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
 		value, err = table.CastValue(e.SessionCtx,
 			types.NewIntDatum(rowID), col.ToInfo(), false, false)
-		if err == nil && e.LastInsertID == 0 {
-			e.LastInsertID = value.GetUint64()
-		}
 	case e.IsAutoRandomCol(col.ToInfo()):
 		var val types.Datum
 		realRowID := e.AutoIDFn(rowID)
@@ -256,17 +265,22 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 			val = types.NewIntDatum(realRowID)
 		}
 		value, err = table.CastValue(e.SessionCtx, val, col.ToInfo(), false, false)
-		if err == nil && e.LastInsertID == 0 {
-			e.LastInsertID = value.GetUint64()
-		}
 	case col.IsGenerated():
 		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
 		value = types.GetMinValue(&col.FieldType)
 	case isBadNullValue:
-		err = col.HandleBadNull(&value, e.SessionCtx.Vars.StmtCtx, 0)
+		err = col.HandleBadNull(e.SessionCtx.Vars.StmtCtx.ErrCtx(), &value, 0)
 	default:
-		value, err = table.GetColDefaultValue(e.SessionCtx, col.ToInfo())
+		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
+		if col.DefaultIsExpr {
+			// the expression rewriter requires a non-nil TxnCtx.
+			e.SessionCtx.Vars.TxnCtx = new(variable.TransactionContext)
+			defer func() {
+				e.SessionCtx.Vars.TxnCtx = nil
+			}()
+		}
+		value, err = table.GetColDefaultValue(e.SessionCtx.GetExprCtx(), col.ToInfo())
 	}
 	return value, err
 }
@@ -298,9 +312,16 @@ func (e *BaseKVEncoder) LogKVConvertFailed(row []types.Datum, j int, colInfo *mo
 		log.ShortError(err),
 	)
 
-	e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
-		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
-		zap.Int("columnID", j+1))
+	if len(original.GetString()) >= maxLogLength {
+		originalPrefix := original.GetString()[0:1024] + " (truncated)"
+		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", originalPrefix),
+			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+			zap.Int("columnID", j+1))
+	} else {
+		e.logger.Error("failed to convert kv value", logutil.RedactAny("origVal", original.GetValue()),
+			zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+			zap.Int("columnID", j+1))
+	}
 	return errors.Annotatef(
 		err,
 		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldType, colInfo.Name.O, j+1,
@@ -322,12 +343,17 @@ func (e *BaseKVEncoder) LogEvalGenExprFailed(row []types.Datum, colInfo *model.C
 	)
 }
 
+// TruncateWarns resets the warnings in session context.
+func (e *BaseKVEncoder) TruncateWarns() {
+	e.SessionCtx.Vars.StmtCtx.TruncateWarnings(0)
+}
+
 func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,
 	genCols []GeneratedCol) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.Index].ToInfo()
-		evaluated, err := gc.Expr.Eval(mutRow.ToRow())
+		evaluated, err := gc.Expr.Eval(se.GetExprCtx(), mutRow.ToRow())
 		if err != nil {
 			return col, err
 		}

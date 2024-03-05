@@ -1,0 +1,590 @@
+drop table if exists t;
+create table t(a varchar(100), b int, c int, index idx_ab(a, b));
+insert into t values ('kk', 1, 10), ('kk', 1, 20), ('hh', 2, 10), ('hh', 3, 10), ('xx', 4, 10), ('yy', 5, 10), ('yy', 6, 20), ('zz', 7, 10);
+set @@tidb_opt_fix_control = '44389:ON';
+explain format='brief' select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1));
+id	estRows	task	access object	operator info
+IndexLookUp	0.01	root		
+├─IndexRangeScan(Build)	10.10	cop[tikv]	table:t, index:idx_ab(a, b)	range:["kk" 1,"kk" 1], ["xx","xx"], keep order:false, stats:pseudo
+└─Selection(Probe)	0.01	cop[tikv]		eq(util__ranger.t.c, 10)
+  └─TableRowIDScan	10.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1));
+a	b	c
+kk	1	10
+xx	4	10
+explain format='brief' select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
+id	estRows	task	access object	operator info
+IndexLookUp	0.02	root		
+├─IndexRangeScan(Build)	20.20	cop[tikv]	table:t, index:idx_ab(a, b)	range:["hh" 2,"hh" 2], ["kk" 1,"kk" 1], ["xx","xx"], ["yy","yy"], keep order:false, stats:pseudo
+└─Selection(Probe)	0.02	cop[tikv]		eq(util__ranger.t.c, 10)
+  └─TableRowIDScan	20.20	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)));
+a	b	c
+hh	2	10
+kk	1	10
+xx	4	10
+yy	5	10
+set @@tidb_opt_fix_control = default;
+DROP TABLE IF EXISTS IDT_20755;
+CREATE TABLE `IDT_20755` (
+`COL1` varchar(20) DEFAULT NULL,
+`COL2` tinyint(16) DEFAULT NULL,
+`COL3` timestamp NULL DEFAULT NULL,
+KEY `u_m_col` (`COL1`(10),`COL2`,`COL3`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO IDT_20755 VALUES("牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆", 73, "2010-06-03 07:29:05");
+INSERT INTO IDT_20755 VALUES("xxxxxxxxxxxxxxx", 73, "2010-06-03 07:29:05");
+explain format = 'brief' select * from IDT_20755 use index (u_m_col) where col1 in ("牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆", "物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒", "剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠") and col2 in (72, 39, 73) and col3 != "2024-10-19 08:55:32";
+id	estRows	task	access object	operator info
+IndexLookUp	5.99	root		
+├─IndexRangeScan(Build)	5.99	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:["剮毵樍穋摻瀽鬦擀钟鷫" 39 -inf,"剮毵樍穋摻瀽鬦擀钟鷫" 39 2024-10-19 08:55:32), ("剮毵樍穋摻瀽鬦擀钟鷫" 39 2024-10-19 08:55:32,"剮毵樍穋摻瀽鬦擀钟鷫" 39 +inf], ["剮毵樍穋摻瀽鬦擀钟鷫" 72 -inf,"剮毵樍穋摻瀽鬦擀钟鷫" 72 2024-10-19 08:55:32), ("剮毵樍穋摻瀽鬦擀钟鷫" 72 2024-10-19 08:55:32,"剮毵樍穋摻瀽鬦擀钟鷫" 72 +inf], ["剮毵樍穋摻瀽鬦擀钟鷫" 73 -inf,"剮毵樍穋摻瀽鬦擀钟鷫" 73 2024-10-19 08:55:32), ("剮毵樍穋摻瀽鬦擀钟鷫" 73 2024-10-19 08:55:32,"剮毵樍穋摻瀽鬦擀钟鷫" 73 +inf], ["物碃貞枕騫摨聫嚣蜻禼" 39 -inf,"物碃貞枕騫摨聫嚣蜻禼" 39 2024-10-19 08:55:32), ("物碃貞枕騫摨聫嚣蜻禼" 39 2024-10-19 08:55:32,"物碃貞枕騫摨聫嚣蜻禼" 39 +inf], ["物碃貞枕騫摨聫嚣蜻禼" 72 -inf,"物碃貞枕騫摨聫嚣蜻禼" 72 2024-10-19 08:55:32), ("物碃貞枕騫摨聫嚣蜻禼" 72 2024-10-19 08:55:32,"物碃貞枕騫摨聫嚣蜻禼" 72 +inf], ["物碃貞枕騫摨聫嚣蜻禼" 73 -inf,"物碃貞枕騫摨聫嚣蜻禼" 73 2024-10-19 08:55:32), ("物碃貞枕騫摨聫嚣蜻禼" 73 2024-10-19 08:55:32,"物碃貞枕騫摨聫嚣蜻禼" 73 +inf], ["牾窓螎刳闌蜹瑦詬鍖湪" 39 -inf,"牾窓螎刳闌蜹瑦詬鍖湪" 39 2024-10-19 08:55:32), ("牾窓螎刳闌蜹瑦詬鍖湪" 39 2024-10-19 08:55:32,"牾窓螎刳闌蜹瑦詬鍖湪" 39 +inf], ["牾窓螎刳闌蜹瑦詬鍖湪" 72 -inf,"牾窓螎刳闌蜹瑦詬鍖湪" 72 2024-10-19 08:55:32), ("牾窓螎刳闌蜹瑦詬鍖湪" 72 2024-10-19 08:55:32,"牾窓螎刳闌蜹瑦詬鍖湪" 72 +inf], ["牾窓螎刳闌蜹瑦詬鍖湪" 73 -inf,"牾窓螎刳闌蜹瑦詬鍖湪" 73 2024-10-19 08:55:32), ("牾窓螎刳闌蜹瑦詬鍖湪" 73 2024-10-19 08:55:32,"牾窓螎刳闌蜹瑦詬鍖湪" 73 +inf], keep order:false, stats:pseudo
+└─Selection(Probe)	5.99	cop[tikv]		in(util__ranger.idt_20755.col1, "牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆", "物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒", "剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠")
+  └─TableRowIDScan	5.99	cop[tikv]	table:IDT_20755	keep order:false, stats:pseudo
+select * from IDT_20755 use index (u_m_col) where col1 in ("牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆", "物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒", "剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠") and col2 in (72, 39, 73) and col3 != "2024-10-19 08:55:32";
+COL1	COL2	COL3
+牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆	73	2010-06-03 07:29:05
+explain format = 'brief' select * from IDT_20755 use index (u_m_col) where col1 = "xxxxxxxxxxxxxxx" and col2 in (72, 73) and col3 != "2024-10-19 08:55:32";
+id	estRows	task	access object	operator info
+IndexLookUp	1.33	root		
+├─IndexRangeScan(Build)	1.33	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:["xxxxxxxxxx" 72 -inf,"xxxxxxxxxx" 72 2024-10-19 08:55:32), ("xxxxxxxxxx" 72 2024-10-19 08:55:32,"xxxxxxxxxx" 72 +inf], ["xxxxxxxxxx" 73 -inf,"xxxxxxxxxx" 73 2024-10-19 08:55:32), ("xxxxxxxxxx" 73 2024-10-19 08:55:32,"xxxxxxxxxx" 73 +inf], keep order:false, stats:pseudo
+└─Selection(Probe)	1.33	cop[tikv]		eq(util__ranger.idt_20755.col1, "xxxxxxxxxxxxxxx")
+  └─TableRowIDScan	1.33	cop[tikv]	table:IDT_20755	keep order:false, stats:pseudo
+select * from IDT_20755 use index (u_m_col) where col1 = "xxxxxxxxxxxxxxx" and col2 in (72, 73) and col3 != "2024-10-19 08:55:32";
+COL1	COL2	COL3
+xxxxxxxxxxxxxxx	73	2010-06-03 07:29:05
+explain format = 'brief' select * from IDT_20755 use index (u_m_col) where col1 = "xxxxxxxxxxxxxxx" and col2 in (72, 73, 74) and col3 != "2024-10-19 08:55:32";
+id	estRows	task	access object	operator info
+IndexLookUp	2.00	root		
+├─IndexRangeScan(Build)	2.00	cop[tikv]	table:IDT_20755, index:u_m_col(COL1, COL2, COL3)	range:["xxxxxxxxxx" 72 -inf,"xxxxxxxxxx" 72 2024-10-19 08:55:32), ("xxxxxxxxxx" 72 2024-10-19 08:55:32,"xxxxxxxxxx" 72 +inf], ["xxxxxxxxxx" 73 -inf,"xxxxxxxxxx" 73 2024-10-19 08:55:32), ("xxxxxxxxxx" 73 2024-10-19 08:55:32,"xxxxxxxxxx" 73 +inf], ["xxxxxxxxxx" 74 -inf,"xxxxxxxxxx" 74 2024-10-19 08:55:32), ("xxxxxxxxxx" 74 2024-10-19 08:55:32,"xxxxxxxxxx" 74 +inf], keep order:false, stats:pseudo
+└─Selection(Probe)	2.00	cop[tikv]		eq(util__ranger.idt_20755.col1, "xxxxxxxxxxxxxxx")
+  └─TableRowIDScan	2.00	cop[tikv]	table:IDT_20755	keep order:false, stats:pseudo
+select * from IDT_20755 use index (u_m_col) where col1 = "xxxxxxxxxxxxxxx" and col2 in (72, 73, 74) and col3 != "2024-10-19 08:55:32";
+COL1	COL2	COL3
+xxxxxxxxxxxxxxx	73	2010-06-03 07:29:05
+drop table if exists t1, t2;
+create table t1(a decimal unsigned, key(a));
+insert into t1 values(0),(null);
+create table t2(a int, b decimal unsigned, key idx(a,b));
+insert into t2 values(1,0),(1,null);
+explain format = 'brief' select * from t1 use index(a) where a in (-1,0);
+id	estRows	task	access object	operator info
+IndexReader	10.00	root		index:IndexRangeScan
+└─IndexRangeScan	10.00	cop[tikv]	table:t1, index:a(a)	range:[0,0], keep order:false, stats:pseudo
+select * from t1 use index(a) where a in (-1,0);
+a
+0
+explain format = 'brief' select * from t1 use index(a) where a = -1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t1 use index(a) where a = -1;
+a
+explain format = 'brief' select * from t1 use index(a) where a > -1;
+id	estRows	task	access object	operator info
+IndexReader	3333.33	root		index:IndexRangeScan
+└─IndexRangeScan	3333.33	cop[tikv]	table:t1, index:a(a)	range:[0,+inf], keep order:false, stats:pseudo
+select * from t1 use index(a) where a > -1;
+a
+0
+explain format = 'brief' select * from t1 use index(a) where a < -1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t1 use index(a) where a < -1;
+a
+explain format = 'brief' select * from t1 use index(a) where a <= -1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t1 use index(a) where a <= -1;
+a
+explain format = 'brief' select * from t1 use index(a) where a >= -1;
+id	estRows	task	access object	operator info
+IndexReader	3333.33	root		index:IndexRangeScan
+└─IndexRangeScan	3333.33	cop[tikv]	table:t1, index:a(a)	range:[0,+inf], keep order:false, stats:pseudo
+select * from t1 use index(a) where a >= -1;
+a
+0
+explain format = 'brief' select * from t2 use index(idx) where a = 1 and b in (-1,0);
+id	estRows	task	access object	operator info
+IndexReader	0.10	root		index:IndexRangeScan
+└─IndexRangeScan	0.10	cop[tikv]	table:t2, index:idx(a, b)	range:[1 0,1 0], keep order:false, stats:pseudo
+select * from t2 use index(idx) where a = 1 and b in (-1,0);
+a	b
+1	0
+explain format = 'brief' select * from t2 use index(idx) where a = 1 and b = -1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t2 use index(idx) where a = 1 and b = -1;
+a	b
+explain format = 'brief' select * from t2 use index(idx) where a = 1 and b > -1;
+id	estRows	task	access object	operator info
+IndexReader	33.33	root		index:IndexRangeScan
+└─IndexRangeScan	33.33	cop[tikv]	table:t2, index:idx(a, b)	range:[1 0,1 +inf], keep order:false, stats:pseudo
+select * from t2 use index(idx) where a = 1 and b > -1;
+a	b
+1	0
+explain format = 'brief' select * from t2 use index(idx) where a = 1 and b < -1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t2 use index(idx) where a = 1 and b < -1;
+a	b
+explain format = 'brief' select * from t2 use index(idx) where a = 1 and b <= -1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t2 use index(idx) where a = 1 and b <= -1;
+a	b
+explain format = 'brief' select * from t2 use index(idx) where a = 1 and b >= -1;
+id	estRows	task	access object	operator info
+IndexReader	33.33	root		index:IndexRangeScan
+└─IndexRangeScan	33.33	cop[tikv]	table:t2, index:idx(a, b)	range:[1 0,1 +inf], keep order:false, stats:pseudo
+select * from t2 use index(idx) where a = 1 and b >= -1;
+a	b
+1	0
+set @@tidb_partition_prune_mode = 'static';
+set @@tidb_executor_concurrency = 1;
+drop table if exists t;
+CREATE TABLE `t` (a bit(1) DEFAULT NULL,b int(11) DEFAULT NULL) PARTITION BY HASH(a)PARTITIONS 3;
+insert ignore into t values(-1, -1), (0, 0), (1, 1), (3, 3);
+analyze table t;
+explain format='brief' select * from t;
+id	estRows	task	access object	operator info
+PartitionUnion	4.00	root		
+├─TableReader	1.00	root		data:TableFullScan
+│ └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+└─TableReader	3.00	root		data:TableFullScan
+  └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
+select * from t;
+a	b
+ 	0
+	-1
+	1
+	3
+explain format='brief' select * from t where a = 0;
+id	estRows	task	access object	operator info
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(util__ranger.t.a, 0)
+  └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+select * from t where a = 0;
+a	b
+ 	0
+explain format='brief' select * from t where a = 0 or a = 4;
+id	estRows	task	access object	operator info
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		or(eq(util__ranger.t.a, 0), eq(util__ranger.t.a, 4))
+  └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+select * from t where a = 0 or a = 4;
+a	b
+ 	0
+explain format='brief' select * from t where a = 1;
+id	estRows	task	access object	operator info
+TableReader	3.00	root		data:Selection
+└─Selection	3.00	cop[tikv]		eq(util__ranger.t.a, 1)
+  └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
+select * from t where a = 1;
+a	b
+	-1
+	1
+	3
+explain format='brief' select * from t where a = -1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t where a = -1;
+a	b
+explain format='brief' select * from t where a = 3;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t where a = 3;
+a	b
+explain format='brief' select * from t where a < 1;
+id	estRows	task	access object	operator info
+PartitionUnion	1.00	root		
+├─TableReader	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		lt(util__ranger.t.a, 1)
+│   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+└─TableReader	0.00	root		data:Selection
+  └─Selection	0.00	cop[tikv]		lt(util__ranger.t.a, 1)
+    └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
+select * from t where a < 1;
+a	b
+ 	0
+explain format='brief' select * from t where a < 3;
+id	estRows	task	access object	operator info
+PartitionUnion	4.00	root		
+├─TableReader	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		lt(util__ranger.t.a, 3)
+│   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+└─TableReader	3.00	root		data:Selection
+  └─Selection	3.00	cop[tikv]		lt(util__ranger.t.a, 3)
+    └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
+select * from t where a < 3;
+a	b
+ 	0
+	-1
+	1
+	3
+explain format='brief' select * from t where a < -1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t where a < -1;
+a	b
+explain format='brief' select * from t where a > 0;
+id	estRows	task	access object	operator info
+PartitionUnion	3.00	root		
+├─TableReader	0.00	root		data:Selection
+│ └─Selection	0.00	cop[tikv]		gt(util__ranger.t.a, 0)
+│   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+└─TableReader	3.00	root		data:Selection
+  └─Selection	3.00	cop[tikv]		gt(util__ranger.t.a, 0)
+    └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
+select * from t where a > 0;
+a	b
+	-1
+	1
+	3
+explain format='brief' select * from t where a > -1;
+id	estRows	task	access object	operator info
+PartitionUnion	4.00	root		
+├─TableReader	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		gt(util__ranger.t.a, -1)
+│   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+└─TableReader	3.00	root		data:Selection
+  └─Selection	3.00	cop[tikv]		gt(util__ranger.t.a, -1)
+    └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
+select * from t where a > -1;
+a	b
+ 	0
+	-1
+	1
+	3
+explain format='brief' select * from t where a > 3;
+id	estRows	task	access object	operator info
+PartitionUnion	0.00	root		
+├─TableReader	0.00	root		data:Selection
+│ └─Selection	0.00	cop[tikv]		gt(util__ranger.t.a, 3)
+│   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
+└─TableReader	0.00	root		data:Selection
+  └─Selection	0.00	cop[tikv]		gt(util__ranger.t.a, 3)
+    └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
+select * from t where a > 3;
+a	b
+set @@tidb_partition_prune_mode = default;
+set @@tidb_executor_concurrency = default;
+drop table if exists t2;
+create table t2 (id int unsigned not null auto_increment primary key, t text, index(t(3)));
+insert into t2 (t) values ('aaaa'),('a');
+explain format='brief' select * from t2 where t='aaaa';
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:t(t)	range:["aaa","aaa"], keep order:false, stats:pseudo
+└─Selection(Probe)	10.00	cop[tikv]		eq(util__ranger.t2.t, "aaaa")
+  └─TableRowIDScan	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select * from t2 where t='aaaa';
+id	t
+1	aaaa
+explain format='brief' select * from t2 where t='aaaa' or t = 'a';
+id	estRows	task	access object	operator info
+IndexLookUp	16.00	root		
+├─IndexRangeScan(Build)	20.00	cop[tikv]	table:t2, index:t(t)	range:["a","a"], ["aaa","aaa"], keep order:false, stats:pseudo
+└─Selection(Probe)	16.00	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
+  └─TableRowIDScan	20.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select * from t2 where t='aaaa' or t = 'a';
+id	t
+1	aaaa
+2	a
+analyze table t2;
+explain format='brief' select * from t2 where t='aaaa';
+id	estRows	task	access object	operator info
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(util__ranger.t2.t, "aaaa")
+  └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
+select * from t2 where t='aaaa';
+id	t
+1	aaaa
+explain format='brief' select * from t2 where t='aaaa' or t = 'a';
+id	estRows	task	access object	operator info
+TableReader	1.60	root		data:Selection
+└─Selection	1.60	cop[tikv]		or(eq(util__ranger.t2.t, "aaaa"), eq(util__ranger.t2.t, "a"))
+  └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
+select * from t2 where t='aaaa' or t = 'a';
+id	t
+1	aaaa
+2	a
+drop table if exists t;
+create table t(a varchar(100), b int, c int, d int, index idx(a, b, c));
+insert into t values ('t',1,1,1),('t',1,3,3),('t',2,1,3),('t',2,3,1),('w',0,3,3),('z',0,1,1);
+explain format='brief' select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and c > 2;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:idx(a, b, c)	range:("t" 1 2,"t" 1 +inf], ("t" 2 2,"t" 2 +inf], ("w" 0 2,"w" 0 +inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and c > 2;
+a	b	c	d
+t	1	3	3
+t	2	3	1
+w	0	3	3
+explain format='brief' select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2;
+id	estRows	task	access object	operator info
+IndexLookUp	0.10	root		
+├─IndexRangeScan(Build)	0.30	cop[tikv]	table:t, index:idx(a, b, c)	range:["t" 1,"t" 1], ["t" 2,"t" 2], ["w" 0,"w" 0], keep order:false, stats:pseudo
+└─Selection(Probe)	0.10	cop[tikv]		gt(util__ranger.t.d, 2)
+  └─TableRowIDScan	0.30	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx) where ((a = 't' and b = 1) or (a = 't' and b = 2) or (a = 'w' and b = 0)) and d > 2;
+a	b	c	d
+t	1	3	3
+t	2	1	3
+w	0	3	3
+drop table if exists t;
+create table t(a int, b int, c int, primary key(a,b,c));
+insert into t values(1,1,1),(2,2,3);
+analyze table t;
+explain format='brief' select * from t where a = 1 and (b,c) in ((1,1),(2,3));
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b, c)	keep order:false, desc:false
+select * from t where a = 1 and (b,c) in ((1,1),(2,3));
+a	b	c
+1	1	1
+explain format='brief' select * from t where a = 1 and ((b = 1 and c = 1) or (b = 2 and c = 3));
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b, c)	keep order:false, desc:false
+select * from t where a = 1 and ((b = 1 and c = 1) or (b = 2 and c = 3));
+a	b	c
+1	1	1
+explain format='brief' select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));
+id	estRows	task	access object	operator info
+IndexReader	2.00	root		index:IndexRangeScan
+└─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:[1 1,1 1], [1 2 3,1 2 3], keep order:false
+select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));
+a	b	c
+1	1	1
+explain format='brief' select * from t where (a,b) in ((1,1),(2,2)) and c = 3;
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b, c)	keep order:false, desc:false
+select * from t where (a,b) in ((1,1),(2,2)) and c = 3;
+a	b	c
+2	2	3
+explain format='brief' select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b, c)	keep order:false, desc:false
+select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;
+a	b	c
+2	2	3
+explain format='brief' select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
+id	estRows	task	access object	operator info
+IndexReader	0.75	root		index:Selection
+└─Selection	0.75	cop[tikv]		eq(util__ranger.t.c, 3), or(eq(util__ranger.t.a, 1), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
+  └─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:[1,1], [2,2], keep order:false
+select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
+a	b	c
+2	2	3
+explain format='brief' select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));
+id	estRows	task	access object	operator info
+Selection	0.75	root		gt(util__ranger.t.c, 2), or(and(eq(util__ranger.t.a, 1), eq(util__ranger.t.b, 1)), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
+└─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b, c)	keep order:false, desc:false
+select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));
+a	b	c
+2	2	3
+explain format='brief' select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
+id	estRows	task	access object	operator info
+IndexReader	2.00	root		index:IndexRangeScan
+└─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false
+select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
+a	b	c
+2	2	3
+explain format='brief' select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;
+id	estRows	task	access object	operator info
+IndexReader	2.00	root		index:IndexRangeScan
+└─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false
+select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;
+a	b	c
+2	2	3
+drop table if exists t;
+create table t(a int, b int, c int, primary key(a,b));
+insert into t values(1,1,1),(2,2,3);
+analyze table t;
+explain format='brief' select * from t where (a,b) in ((1,1),(2,2)) and c = 3;
+id	estRows	task	access object	operator info
+Selection	1.00	root		eq(util__ranger.t.c, 3)
+└─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b)	keep order:false, desc:false
+select * from t where (a,b) in ((1,1),(2,2)) and c = 3;
+a	b	c
+2	2	3
+explain format='brief' select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;
+id	estRows	task	access object	operator info
+Selection	1.00	root		eq(util__ranger.t.c, 3)
+└─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b)	keep order:false, desc:false
+select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;
+a	b	c
+2	2	3
+explain format='brief' select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
+id	estRows	task	access object	operator info
+IndexLookUp	0.75	root		
+├─Selection(Build)	2.00	cop[tikv]		or(eq(util__ranger.t.a, 1), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
+│ └─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:[1,1], [2,2], keep order:false
+└─Selection(Probe)	0.75	cop[tikv]		eq(util__ranger.t.c, 3)
+  └─TableRowIDScan	2.00	cop[tikv]	table:t	keep order:false
+select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
+a	b	c
+2	2	3
+explain format='brief' select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);
+id	estRows	task	access object	operator info
+Selection	1.00	root		eq(util__ranger.t.c, 3), or(eq(util__ranger.t.a, 1), eq(util__ranger.t.a, 2))
+└─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b)	keep order:false, desc:false
+select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);
+a	b	c
+2	2	3
+explain format='brief' select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
+id	estRows	task	access object	operator info
+Selection	1.00	root		gt(util__ranger.t.c, 2)
+└─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b)	keep order:false, desc:false
+select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
+a	b	c
+2	2	3
+explain format='brief' select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;
+id	estRows	task	access object	operator info
+Selection	1.00	root		gt(util__ranger.t.c, 2)
+└─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b)	keep order:false, desc:false
+select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;
+a	b	c
+2	2	3
+set @@session.tidb_regard_null_as_point=false;
+drop table if exists t;
+create table t(a int, b int, c int, key(a,b,c));
+insert into t values(1,2,2);
+explain format='brief' select * from t where a = 1 and b in (1, 2) and c > 1;
+id	estRows	task	access object	operator info
+IndexReader	0.67	root		index:IndexRangeScan
+└─IndexRangeScan	0.67	cop[tikv]	table:t, index:a(a, b, c)	range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo
+select * from t where a = 1 and b in (1, 2) and c > 1;
+a	b	c
+1	2	2
+explain format='brief' select * from t where a = 1 and (b = 1 or b = 2) and c > 1;
+id	estRows	task	access object	operator info
+IndexReader	0.67	root		index:IndexRangeScan
+└─IndexRangeScan	0.67	cop[tikv]	table:t, index:a(a, b, c)	range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo
+select * from t where a = 1 and (b = 1 or b = 2) and c > 1;
+a	b	c
+1	2	2
+explain format='brief' select * from t where a = 1 and (b = 1 or b in (2, 3)) and c > 1;
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:IndexRangeScan
+└─IndexRangeScan	1.00	cop[tikv]	table:t, index:a(a, b, c)	range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], (1 3 1,1 3 +inf], keep order:false, stats:pseudo
+select * from t where a = 1 and (b = 1 or b in (2, 3)) and c > 1;
+a	b	c
+1	2	2
+explain format='brief' select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;
+a	b	c
+explain format='brief' select * from t where a = 1 and (b is null or b = 2);
+id	estRows	task	access object	operator info
+IndexReader	0.20	root		index:IndexRangeScan
+└─IndexRangeScan	0.20	cop[tikv]	table:t, index:a(a, b, c)	range:[1 NULL,1 NULL], [1 2,1 2], keep order:false, stats:pseudo
+select * from t where a = 1 and (b is null or b = 2);
+a	b	c
+1	2	2
+explain format='brief' select * from t where a = 1 and (b is null or b = 2) and c > 1;
+id	estRows	task	access object	operator info
+IndexReader	0.07	root		index:Selection
+└─Selection	0.07	cop[tikv]		gt(util__ranger.t.c, 1)
+  └─IndexRangeScan	0.20	cop[tikv]	table:t, index:a(a, b, c)	range:[1 NULL,1 NULL], [1 2,1 2], keep order:false, stats:pseudo
+select * from t where a = 1 and (b is null or b = 2) and c > 1;
+a	b	c
+1	2	2
+explain format='brief' select * from t where a = 1 and b is null and c > 1;
+id	estRows	task	access object	operator info
+IndexReader	0.03	root		index:Selection
+└─Selection	0.03	cop[tikv]		gt(util__ranger.t.c, 1)
+  └─IndexRangeScan	0.10	cop[tikv]	table:t, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
+select * from t where a = 1 and b is null and c > 1;
+a	b	c
+explain format='brief' select * from t where a = 1 and b is null and b is null and c > 1;
+id	estRows	task	access object	operator info
+IndexReader	0.03	root		index:Selection
+└─Selection	0.03	cop[tikv]		gt(util__ranger.t.c, 1)
+  └─IndexRangeScan	0.10	cop[tikv]	table:t, index:a(a, b, c)	range:[1 NULL,1 NULL], keep order:false, stats:pseudo
+select * from t where a = 1 and b is null and b is null and c > 1;
+a	b	c
+explain format='brief' select * from t where a = 1 and b is null and b = 1 and c > 1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t where a = 1 and b is null and b = 1 and c > 1;
+a	b	c
+set @@session.tidb_regard_null_as_point=default;
+set tidb_cost_model_version=2;
+drop table if exists t0;
+CREATE TABLE t0(c0 TEXT(10));
+INSERT INTO t0(c0) VALUES (1);
+CREATE INDEX i0 ON t0(c0(255));
+analyze table t0;
+explain format = 'brief' select * from t0 where c0;
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		util__ranger.t0.c0
+  └─IndexFullScan	1.00	cop[tikv]	table:t0, index:i0(c0)	keep order:false
+explain format = 'brief' select * from t0 where c0 and c0 > '123';
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		util__ranger.t0.c0
+  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:("123",+inf], keep order:false
+explain format = 'brief' select * from t0 where c0 and c0 <> '123';
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		util__ranger.t0.c0
+  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:[-inf,"123"), ("123",+inf], keep order:false
+explain format = 'brief' select * from t0 where c0 is true;
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		istrue(cast(util__ranger.t0.c0, double BINARY))
+  └─IndexFullScan	1.00	cop[tikv]	table:t0, index:i0(c0)	keep order:false
+explain format = 'brief' select * from t0 where c0 is false;
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		isfalse(cast(util__ranger.t0.c0, double BINARY))
+  └─IndexFullScan	1.00	cop[tikv]	table:t0, index:i0(c0)	keep order:false
+explain format = 'brief' select * from t0 where c0 and c0 in ('123','456','789');
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		util__ranger.t0.c0
+  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:["123","123"], ["456","456"], ["789","789"], keep order:false
+explain format = 'brief' select * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:Selection
+└─Selection	1.00	cop[tikv]		util__ranger.t0.c0
+  └─IndexRangeScan	1.00	cop[tikv]	table:t0, index:i0(c0)	range:[-inf,"a"), ("a",+inf], keep order:false
+set tidb_cost_model_version=default;
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d));
+insert into t values(1,1,1,1,2),(2,1,2,1,0);
+analyze table t;
+explain format = 'brief' select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t;
+id	estRows	task	access object	operator info
+Projection	2.00	root		Column#27
+└─Apply	2.00	root		CARTESIAN left outer semi join, other cond:eq(util__ranger.t.e, Column#26)
+  ├─TableReader(Build)	2.00	root		data:TableFullScan
+  │ └─TableFullScan	2.00	cop[tikv]	table:t	keep order:false
+  └─StreamAgg(Probe)	2.00	root		funcs:count(1)->Column#26
+    └─HashJoin	4.00	root		inner join, equal:[eq(util__ranger.t.a, util__ranger.t.a)]
+      ├─IndexReader(Build)	4.00	root		index:IndexFullScan
+      │ └─IndexFullScan	4.00	cop[tikv]	table:t1, index:idx(b, c, d)	keep order:false
+      └─IndexReader(Probe)	4.00	root		index:IndexRangeScan
+        └─IndexRangeScan	4.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(util__ranger.t.b, 1) in(util__ranger.t.c, 1, 2) eq(util__ranger.t.d, util__ranger.t.a)], keep order:false
+select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t;
+t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a)
+1
+1
+set tidb_cost_model_version=default;
+drop table if exists t;
+create table t(a int not null, b int not null, primary key(a,b));
+insert into t values(1,2);
+analyze table t;
+explain format = 'brief' select * from (select * from t union all select a, b from t) sub where a > 0;
+id	estRows	task	access object	operator info
+Union	2.00	root		
+├─IndexReader	1.00	root		index:IndexRangeScan
+│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:(0,+inf], keep order:false
+└─IndexReader	1.00	root		index:IndexRangeScan
+  └─IndexRangeScan	1.00	cop[tikv]	table:t, index:PRIMARY(a, b)	range:(0,+inf], keep order:false
+select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0;
+a	b
+1	2
+1	2

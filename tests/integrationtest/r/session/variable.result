@@ -1,0 +1,242 @@
+set @@default_week_format = 4;
+select week('2020-02-02'), @@default_week_format, week('2020-02-02');
+week('2020-02-02')	@@default_week_format	week('2020-02-02')
+6	4	6
+set @@default_week_format = default;
+set @@tidb_current_ts=1;
+Error 1238 (HY000): Variable 'tidb_current_ts' is a read only variable
+set @@last_plan_from_binding='123';
+Error 1238 (HY000): Variable 'last_plan_from_binding' is a read only variable
+set @@last_plan_from_cache='123';
+Error 1238 (HY000): Variable 'last_plan_from_cache' is a read only variable
+set @@global.collation_server=utf8mb4_general_ci;
+show global variables like 'collation_server';
+Variable_name	Value
+collation_server	utf8mb4_general_ci
+show global variables like 'collation_server';
+Variable_name	Value
+collation_server	utf8mb4_general_ci
+show variables like 'collation_server';
+Variable_name	Value
+collation_server	utf8mb4_general_ci
+set @@global.collation_server=default;
+set @@global.tidb_memory_usage_alarm_ratio=1;
+select @@global.tidb_memory_usage_alarm_ratio;
+@@global.tidb_memory_usage_alarm_ratio
+1
+set @@global.tidb_memory_usage_alarm_ratio=0;
+select @@global.tidb_memory_usage_alarm_ratio;
+@@global.tidb_memory_usage_alarm_ratio
+0
+set @@global.tidb_memory_usage_alarm_ratio=0.7;
+select @@global.tidb_memory_usage_alarm_ratio;
+@@global.tidb_memory_usage_alarm_ratio
+0.7
+set @@global.tidb_memory_usage_alarm_ratio=1.1;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_memory_usage_alarm_ratio value: '1.1'
+select @@global.tidb_memory_usage_alarm_ratio;
+@@global.tidb_memory_usage_alarm_ratio
+1
+set @@global.tidb_memory_usage_alarm_ratio=-1;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_memory_usage_alarm_ratio value: '-1'
+select @@global.tidb_memory_usage_alarm_ratio;
+@@global.tidb_memory_usage_alarm_ratio
+0
+set @@session.tidb_memory_usage_alarm_ratio=0.8;
+Error 1229 (HY000): Variable 'tidb_memory_usage_alarm_ratio' is a GLOBAL variable and should be set with SET GLOBAL
+set @@global.tidb_memory_usage_alarm_keep_record_num=1;
+select @@global.tidb_memory_usage_alarm_keep_record_num;
+@@global.tidb_memory_usage_alarm_keep_record_num
+1
+set @@global.tidb_memory_usage_alarm_keep_record_num=100;
+select @@global.tidb_memory_usage_alarm_keep_record_num;
+@@global.tidb_memory_usage_alarm_keep_record_num
+100
+set @@global.tidb_memory_usage_alarm_keep_record_num=0;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_memory_usage_alarm_keep_record_num value: '0'
+select @@global.tidb_memory_usage_alarm_keep_record_num;
+@@global.tidb_memory_usage_alarm_keep_record_num
+1
+set @@global.tidb_memory_usage_alarm_keep_record_num=10001;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_memory_usage_alarm_keep_record_num value: '10001'
+select @@global.tidb_memory_usage_alarm_keep_record_num;
+@@global.tidb_memory_usage_alarm_keep_record_num
+10000
+set @@global.tidb_memory_usage_alarm_keep_record_num=default;
+set @@global.tidb_memory_usage_alarm_ratio=default;
+DROP TABLE IF EXISTS t_sel_in_share;
+CREATE TABLE t_sel_in_share (id int DEFAULT NULL);
+insert into t_sel_in_share values (11);
+select * from t_sel_in_share lock in share mode;
+Error 1235 (42000): function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
+set @@tidb_enable_noop_functions = 1;
+select * from t_sel_in_share lock in share mode;
+id
+11
+DROP TABLE t_sel_in_share;
+set @@tidb_enable_noop_functions = default;
+set tidb_enable_table_partition=off;
+show variables like 'tidb_enable_table_partition';
+Variable_name	Value
+tidb_enable_table_partition	OFF
+set global tidb_enable_table_partition = on;
+show variables like 'tidb_enable_table_partition';
+Variable_name	Value
+tidb_enable_table_partition	OFF
+show global variables like 'tidb_enable_table_partition';
+Variable_name	Value
+tidb_enable_table_partition	ON
+set tidb_enable_list_partition=off;
+show variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	OFF
+set global tidb_enable_list_partition=on;
+show global variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	ON
+show variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	OFF
+set tidb_enable_list_partition=1;
+show variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	ON
+set tidb_enable_list_partition=on;
+show variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	ON
+show global variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	ON
+set global tidb_enable_list_partition=off;
+show global variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	OFF
+show variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	ON
+set tidb_enable_list_partition=off;
+show variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	OFF
+set global tidb_enable_list_partition=on;
+show global variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	ON
+show variables like 'tidb_enable_table_partition';
+Variable_name	Value
+tidb_enable_table_partition	ON
+show variables like 'tidb_enable_list_partition';
+Variable_name	Value
+tidb_enable_list_partition	ON
+set global tidb_enable_table_partition = default;
+set @@foreign_key_checks=0;
+CREATE TABLE address (
+id bigint(20) NOT NULL AUTO_INCREMENT,
+user_id bigint(20) NOT NULL,
+PRIMARY KEY (id),
+CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
+INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
+) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;
+set @@foreign_key_checks=default;
+set @@tidb_sysdate_is_now=false;
+show variables like '%tidb_sysdate_is_now%';
+Variable_name	Value
+tidb_sysdate_is_now	OFF
+set @@tidb_sysdate_is_now=true;
+show variables like '%tidb_sysdate_is_now%';
+Variable_name	Value
+tidb_sysdate_is_now	ON
+set @@tidb_sysdate_is_now=default;
+select @@tidb_session_alias;
+@@tidb_session_alias
+
+set @@tidb_session_alias='alias123';
+select @@tidb_session_alias;
+@@tidb_session_alias
+alias123
+set @@tidb_session_alias='中文';
+select @@tidb_session_alias;
+@@tidb_session_alias
+中文
+set @@tidb_session_alias='0123456789012345678901234567890123456789012345678901234567890123456789';
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_session_alias value: '0123456789012345678901234567890123456789012345678901234567890123456789'
+select @@tidb_session_alias;
+@@tidb_session_alias
+0123456789012345678901234567890123456789012345678901234567890123
+set @@tidb_session_alias='中文测试1中文测试2中文测试3中文测试4中文测试5中文测试6中文测试7中文测试8中文测试9中文测试0中文测试a中文测试b中文测试c';
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_session_alias value: '中文测试1中文测试2中文测试3中文测试4中文测试5中文测试6中文测试7中文测试8中文测试9中文测试0中文测试a中文测试b中文测试c'
+select @@tidb_session_alias;
+@@tidb_session_alias
+中文测试1中文测试2中文测试3中文测试4中文测试5中文测试6中文测试7中文测试8中文测试9中文测试0中文测试a中文测试b中文测试
+set @@tidb_session_alias='abc  ';
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_session_alias value: 'abc  '
+select @@tidb_session_alias;
+@@tidb_session_alias
+abc
+set @@tidb_session_alias='abc                                                                    1';
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_session_alias value: 'abc                                                                    1'
+select @@tidb_session_alias;
+@@tidb_session_alias
+abc
+set @@tidb_session_alias='';
+select @@tidb_session_alias;
+@@tidb_session_alias
+
+set @@tidb_session_alias=default;
+set @@tidb_read_staleness='-5';
+set @@tidb_read_staleness='-100';
+set @@tidb_read_staleness='-5s';
+Error 1232 (42000): Incorrect argument type to variable 'tidb_read_staleness'
+set @@tidb_read_staleness='foo';
+Error 1232 (42000): Incorrect argument type to variable 'tidb_read_staleness'
+set @@tidb_read_staleness='';
+set @@tidb_read_staleness='0';
+set @@tidb_read_staleness=default;
+set global group_concat_max_len = 100;
+set @@session.group_concat_max_len = 50;
+show global variables  where variable_name='group_concat_max_len';
+Variable_name	Value
+group_concat_max_len	100
+show session variables  where variable_name='group_concat_max_len';
+Variable_name	Value
+group_concat_max_len	50
+select @@group_concat_max_len;
+@@group_concat_max_len
+50
+select @@global.group_concat_max_len;
+@@global.group_concat_max_len
+100
+select @@session.group_concat_max_len;
+@@session.group_concat_max_len
+50
+set @@group_concat_max_len = 1024;
+select @@group_concat_max_len;
+@@group_concat_max_len
+1024
+select @@global.group_concat_max_len;
+@@global.group_concat_max_len
+100
+select @@session.group_concat_max_len;
+@@session.group_concat_max_len
+1024
+set @@group_concat_max_len=1;
+Level	Code	Message
+Warning	1292	Truncated incorrect group_concat_max_len value: '1'
+select @@group_concat_max_len;
+@@group_concat_max_len
+4
+set @@group_concat_max_len = 18446744073709551616;
+Error 1232 (42000): Incorrect argument type to variable 'group_concat_max_len'
+set @@group_concat_max_len='hello';
+Error 1232 (42000): Incorrect argument type to variable 'group_concat_max_len'
+set global group_concat_max_len = default;
+set @@session.group_concat_max_len = default;

@@ -63,11 +63,12 @@ func TestRun(t *testing.T) {
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
+	logger, buffer := log.MakeTestLogger()
 	require.NoError(t, err)
 	o := &options{
 		promRegistry: lightning.promRegistry,
 		promFactory:  lightning.promFactory,
-		logger:       log.L(),
+		logger:       logger,
 		db:           db,
 	}
 	cfgCheckpoint := config.Config{
@@ -91,10 +92,12 @@ func TestRun(t *testing.T) {
 	cfgKeyspaceName.Checkpoint = cfgCheckpoint.Checkpoint
 	err = lightning.run(ctx, cfgKeyspaceName, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+	require.Contains(t, buffer.String(), `"acquired keyspace name","keyspaceName":""`)
 
-	err = lightning.run(ctx, cfgKeyspaceName, o)
 	cfgKeyspaceName.TikvImporter.KeyspaceName = "test"
+	err = lightning.run(ctx, cfgKeyspaceName, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+	require.Contains(t, buffer.String(), `"acquired keyspace name","keyspaceName":"test"`)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	err = lightning.run(ctx, &config.Config{

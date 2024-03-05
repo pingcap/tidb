@@ -23,6 +23,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -265,4 +267,22 @@ func TestReplicationWriter(t *testing.T) {
 	require.Equal(t, err.Error(), ReadOnlyErrMsg)
 	<-timer.C
 	done <- struct{}{}
+}
+
+func TestInternalSQL(t *testing.T) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	defer func() {
+		tk.MustExec("set global tidb_restricted_read_only=default")
+		tk.MustExec("set global tidb_super_read_only=default")
+	}()
+
+	tk.MustExec("set global tidb_restricted_read_only=On")
+	tk.MustExec("set global tidb_super_read_only=On")
+
+	sql := "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (874, 0, 1, 'a', 3)"
+	_, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
 }

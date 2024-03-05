@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "binaryplan_test",
+    timeout = "short",
+    srcs = [
+        "binary_plan_test.go",
+        "main_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/logutil",
+        "@com_github_golang_snappy//:snappy",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

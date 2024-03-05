@@ -1,2 +1,2 @@
 [tikv-importer]
-incremental-import = true
+parallel-import = true

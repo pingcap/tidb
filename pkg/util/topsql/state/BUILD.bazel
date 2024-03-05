@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "state",
+    srcs = ["state.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/topsql/state",
+    visibility = ["//visibility:public"],
+    deps = ["@org_uber_go_atomic//:atomic"],
+)

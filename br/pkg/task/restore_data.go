@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	tidbconfig "github.com/pingcap/tidb/config"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +77,13 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	tc.EnableGlobalKill = false
 	tidbconfig.StoreGlobalConfig(tc)
 
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	client := restore.NewRestoreClient(
+		mgr.GetPDClient(),
+		mgr.GetPDHTTPClient(),
+		mgr.GetTLSConfig(),
+		keepaliveCfg,
+		false,
+	)
 
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
@@ -159,23 +165,17 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	//TODO: restore volume type into origin type
 	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
-	// this is used for cloud restoration
+
 	err = client.Init(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer client.Close()
-	log.Info("start to clear system user for cloud")
-	err = client.ClearSystemUsers(ctx, cfg.ResetSysUsers)
-
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// since we cannot reset tiflash automaticlly. so we should start it manually
 	if err = client.ResetTiFlashReplicas(ctx, g, mgr.GetStorage()); err != nil {
 		return errors.Trace(err)
 	}
+
 	progress.Close()
 	summary.CollectDuration("restore duration", time.Since(startAll))
 	summary.SetSuccessStatus(true)

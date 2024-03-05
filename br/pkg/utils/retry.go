@@ -4,16 +4,21 @@ package utils
 
 import (
 	"context"
+	stderrs "errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/terror"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 var retryableServerError = []string{
@@ -26,13 +31,169 @@ var retryableServerError = []string{
 	"body write aborted",
 	"error during dispatch",
 	"put object timeout",
+	"timeout after",
 	"internalerror",
 	"not read from or written to within the timeout period",
 	"<code>requesttimeout</code>",
+	"<code>invalidpart</code>",
+	"end of file before message length reached",
+}
+
+type ErrorResult struct {
+	Strategy ErrorStrategy
+	Reason   string
+}
+
+type ErrorStrategy int
+
+const (
+	// This type can be retry but consume the backoffer attempts.
+	RetryStrategy ErrorStrategy = iota
+	// This type means unrecoverable error and the whole progress should exits
+	// for example:
+	// 1. permission not valid.
+	// 2. data has not found.
+	// 3. retry too many times
+	GiveUpStrategy
+	// This type represents Unknown error
+	UnknownStrategy
+)
+
+type ErrorContext struct {
+	mu sync.Mutex
+	// encounter times for one context on a store
+	// we may use this value to determine the retry policy
+	encounterTimes map[uint64]int
+	// unknown error retry limitation.
+	// encouter many times error makes Retry to GiveUp.
+	encounterTimesLimitation int
+	// whether in backup or restore
+	scenario string
+}
+
+func NewErrorContext(scenario string, limitation int) *ErrorContext {
+	return &ErrorContext{
+		scenario:                 scenario,
+		encounterTimes:           make(map[uint64]int),
+		encounterTimesLimitation: limitation,
+	}
+}
+
+func NewDefaultContext() *ErrorContext {
+	return &ErrorContext{
+		scenario:                 "default",
+		encounterTimes:           make(map[uint64]int),
+		encounterTimesLimitation: 1,
+	}
+}
+
+func (ec *ErrorContext) HandleError(err *backuppb.Error, uuid uint64) ErrorResult {
+	if err == nil {
+		return ErrorResult{RetryStrategy, "unreachable retry"}
+	}
+	res := ec.handleErrorPb(err, uuid)
+	// try the best effort to save progress from error here
+	if res.Strategy == UnknownStrategy && len(err.Msg) != 0 {
+		return ec.HandleErrorMsg(err.Msg, uuid)
+	}
+	return res
+}
+
+func (ec *ErrorContext) HandleIgnorableError(err *backuppb.Error, uuid uint64) ErrorResult {
+	if err == nil {
+		return ErrorResult{RetryStrategy, "unreachable retry"}
+	}
+	res := ec.handleIgnorableErrorPb(err, uuid)
+	// try the best effort to save progress from error here
+	if res.Strategy == UnknownStrategy && len(err.Msg) != 0 {
+		return ec.HandleErrorMsg(err.Msg, uuid)
+	}
+	return res
+}
+
+func (ec *ErrorContext) HandleErrorMsg(msg string, uuid uint64) ErrorResult {
+	// UNSAFE! TODO: use meaningful error code instead of unstructured message to find failed to write error.
+	logger := log.L().With(zap.String("scenario", ec.scenario))
+	if messageIsNotFoundStorageError(msg) {
+		reason := fmt.Sprintf("File or directory not found on TiKV Node (store id: %v). "+
+			"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
+			uuid)
+		return ErrorResult{GiveUpStrategy, reason}
+	}
+	if messageIsPermissionDeniedStorageError(msg) {
+		reason := fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v). "+
+			"work around:please ensure tikv has permission to read from & write to the storage.",
+			uuid)
+		return ErrorResult{GiveUpStrategy, reason}
+	}
+	msgLower := strings.ToLower(msg)
+	if strings.Contains(msgLower, "context canceled") {
+		return ErrorResult{GiveUpStrategy, "context canceled, give up"}
+	}
+
+	if MessageIsRetryableStorageError(msg) {
+		logger.Warn("occur storage error", zap.String("error", msg))
+		return ErrorResult{RetryStrategy, "retrable error"}
+	}
+	// retry enough on same store
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	ec.encounterTimes[uuid]++
+	if ec.encounterTimes[uuid] <= ec.encounterTimesLimitation {
+		return ErrorResult{RetryStrategy, "unknown error, retry it for few times"}
+	}
+	return ErrorResult{GiveUpStrategy, "unknown error and retry too many times, give up"}
+}
+
+func (ec *ErrorContext) handleIgnorableErrorPb(e *backuppb.Error, uuid uint64) ErrorResult {
+	switch e.Detail.(type) {
+	case *backuppb.Error_KvError:
+		return ErrorResult{RetryStrategy, "retry outside because the error can be ignored"}
+	case *backuppb.Error_RegionError:
+		return ErrorResult{RetryStrategy, "retry outside because the error can be ignored"}
+	case *backuppb.Error_ClusterIdError:
+		return ErrorResult{GiveUpStrategy, "cluster ID mismatch"}
+	}
+	return ErrorResult{UnknownStrategy, "unreachable code"}
+}
+
+func (ec *ErrorContext) handleErrorPb(e *backuppb.Error, uuid uint64) ErrorResult {
+	logger := log.L().With(zap.String("scenario", ec.scenario))
+	switch v := e.Detail.(type) {
+	case *backuppb.Error_KvError:
+		// should not meet error other than KeyLocked.
+		return ErrorResult{GiveUpStrategy, "unknown kv error"}
+
+	case *backuppb.Error_RegionError:
+		regionErr := v.RegionError
+		// Ignore following errors.
+		if !(regionErr.EpochNotMatch != nil ||
+			regionErr.NotLeader != nil ||
+			regionErr.RegionNotFound != nil ||
+			regionErr.ServerIsBusy != nil ||
+			regionErr.StaleCommand != nil ||
+			regionErr.StoreNotMatch != nil ||
+			regionErr.ReadIndexNotReady != nil ||
+			regionErr.ProposalInMergingMode != nil) {
+			logger.Error("unexpect region error", zap.Reflect("RegionError", regionErr))
+			return ErrorResult{GiveUpStrategy, "unknown kv error"}
+		}
+		logger.Warn("occur region error",
+			zap.Reflect("RegionError", regionErr),
+			zap.Uint64("uuid", uuid))
+		return ErrorResult{RetryStrategy, "retrable error"}
+
+	case *backuppb.Error_ClusterIdError:
+		logger.Error("occur cluster ID error", zap.Reflect("error", v), zap.Uint64("uuid", uuid))
+		return ErrorResult{GiveUpStrategy, "cluster ID mismatch"}
+	}
+	return ErrorResult{UnknownStrategy, "unreachable code"}
 }
 
 // RetryableFunc presents a retryable operation.
 type RetryableFunc func() error
+
+type RetryableFuncV2[T any] func(context.Context) (T, error)
 
 // Backoffer implements a backoff policy for retrying operations.
 type Backoffer interface {
@@ -51,21 +212,37 @@ func WithRetry(
 	retryableFunc RetryableFunc,
 	backoffer Backoffer,
 ) error {
+	_, err := WithRetryV2[struct{}](ctx, backoffer, func(ctx context.Context) (struct{}, error) {
+		innerErr := retryableFunc()
+		return struct{}{}, innerErr
+	})
+	return err
+}
+
+// WithRetryV2 retries a given operation with a backoff policy.
+//
+// Returns the returned value if `retryableFunc` succeeded at least once. Otherwise, returns a
+// multierr that containing all errors encountered.
+// Comparing with `WithRetry`, this function reordered the argument order and supports catching the return value.
+func WithRetryV2[T any](
+	ctx context.Context,
+	backoffer Backoffer,
+	fn RetryableFuncV2[T],
+) (T, error) {
 	var allErrors error
 	for backoffer.Attempt() > 0 {
-		err := retryableFunc()
-		if err != nil {
-			allErrors = multierr.Append(allErrors, err)
-			select {
-			case <-ctx.Done():
-				return allErrors // nolint:wrapcheck
-			case <-time.After(backoffer.NextBackoff(err)):
-			}
-		} else {
-			return nil
+		res, err := fn(ctx)
+		if err == nil {
+			return res, nil
+		}
+		allErrors = multierr.Append(allErrors, err)
+		select {
+		case <-ctx.Done():
+			return *new(T), allErrors
+		case <-time.After(backoffer.NextBackoff(err)):
 		}
 	}
-	return allErrors // nolint:wrapcheck
+	return *new(T), allErrors // nolint:wrapcheck
 }
 
 // MessageIsRetryableStorageError checks whether the message returning from TiKV is retryable ExternalStorageError.
@@ -152,11 +329,85 @@ func (r *RetryWithBackoffer) BackOff() error {
 // That intent will be fulfilled when calling `BackOff`.
 func (r *RetryWithBackoffer) RequestBackOff(ms int) {
 	r.mu.Lock()
-	r.nextBackoff = mathutil.Max(r.nextBackoff, ms)
+	r.nextBackoff = max(r.nextBackoff, ms)
 	r.mu.Unlock()
 }
 
 // Inner returns the reference to the inner `backoffer`.
 func (r *RetryWithBackoffer) Inner() *tikv.Backoffer {
 	return r.bo
+}
+
+type verboseBackoffer struct {
+	inner   Backoffer
+	logger  *zap.Logger
+	groupID uuid.UUID
+}
+
+func (v *verboseBackoffer) NextBackoff(err error) time.Duration {
+	nextBackoff := v.inner.NextBackoff(err)
+	v.logger.Warn("Encountered err, retrying.",
+		zap.Stringer("nextBackoff", nextBackoff),
+		zap.String("err", err.Error()),
+		zap.Stringer("gid", v.groupID))
+	return nextBackoff
+}
+
+// Attempt returns the remain attempt times
+func (v *verboseBackoffer) Attempt() int {
+	attempt := v.inner.Attempt()
+	if attempt > 0 {
+		v.logger.Debug("Retry attempt hint.", zap.Int("attempt", attempt), zap.Stringer("gid", v.groupID))
+	} else {
+		v.logger.Warn("Retry limit exceeded.", zap.Stringer("gid", v.groupID))
+	}
+	return attempt
+}
+
+func VerboseRetry(bo Backoffer, logger *zap.Logger) Backoffer {
+	if logger == nil {
+		logger = log.L()
+	}
+	vlog := &verboseBackoffer{
+		inner:   bo,
+		logger:  logger,
+		groupID: uuid.New(),
+	}
+	return vlog
+}
+
+type failedOnErr struct {
+	inner    Backoffer
+	failed   bool
+	failedOn []error
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (f *failedOnErr) NextBackoff(err error) time.Duration {
+	for _, fatalErr := range f.failedOn {
+		if stderrs.Is(errors.Cause(err), fatalErr) {
+			f.failed = true
+			return 0
+		}
+	}
+	if !f.failed {
+		return f.inner.NextBackoff(err)
+	}
+	return 0
+}
+
+// Attempt returns the remain attempt times
+func (f *failedOnErr) Attempt() int {
+	if f.failed {
+		return 0
+	}
+	return f.inner.Attempt()
+}
+
+func GiveUpRetryOn(bo Backoffer, errs ...error) Backoffer {
+	return &failedOnErr{
+		inner:    bo,
+		failed:   false,
+		failedOn: errs,
+	}
 }

@@ -1,0 +1,356 @@
+[
+  {
+    "name": "TestCollationColumnEstimate",
+    "cases": [
+      "show stats_topn",
+      "explain select * from t where a='aÄa'",
+      "explain select * from t where a > 'aÄa'"
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimation",
+    "Cases": [
+      {
+        "Start": 800,
+        "End": 900
+      },
+      {
+        "Start": 900,
+        "End": 950
+      },
+      {
+        "Start": 950,
+        "End": 1000
+      },
+      {
+        "Start": 1000,
+        "End": 1050
+      },
+      {
+        "Start": 1050,
+        "End": 1100
+      },
+      {
+        "Start": 1150,
+        "End": 1200
+      },
+      {
+        "Start": 1200,
+        "End": 1300
+      },
+      {
+        "Start": 1300,
+        "End": 1400
+      },
+      {
+        "Start": 1400,
+        "End": 1500
+      },
+      {
+        "Start": 1500,
+        "End": 1600
+      },
+      {
+        "Start": 300,
+        "End": 899
+      },
+      {
+        "Start": 800,
+        "End": 1000
+      },
+      {
+        "Start": 900,
+        "End": 1500
+      },
+      {
+        "Start": 300,
+        "End": 1500
+      },
+      {
+        "Start": 200,
+        "End": 300
+      },
+      {
+        "Start": 100,
+        "End": 200
+      },
+      {
+        "Start": 200,
+        "End": 400
+      },
+      {
+        "Start": 200,
+        "End": 1000
+      },
+      {
+        "Start": 0,
+        "End": 100
+      },
+      {
+        "Start": -100,
+        "End": 100
+      },
+      {
+        "Start": -100,
+        "End": 0
+      }
+    ]
+  },
+  {
+    "name": "TestOutOfRangeEstimationAfterDelete",
+    "cases": [
+      "explain format = 'brief' select * from t where a <= 300",
+      "explain format = 'brief' select * from t where a < 300",
+      "explain format = 'brief' select * from t where a <= 500",
+      "explain format = 'brief' select * from t where a >= 300 and a <= 900",
+      "explain format = 'brief' select * from t where a >= 900",
+      "explain format = 'brief' select * from t where a > 900",
+      "explain format = 'brief' select * from t where a >= 300",
+      "explain format = 'brief' select * from t where a <= 900",
+      "explain format = 'brief' select * from t where a > 800 and a < 1000",
+      "explain format = 'brief' select * from t where a > 900 and a < 1000",
+      "explain format = 'brief' select * from t where a > 900 and a < 1100",
+      "explain format = 'brief' select * from t where a > 200 and a < 300",
+      "explain format = 'brief' select * from t where a > 100 and a < 300",
+      "set @@tidb_opt_objective = 'determinate'",
+      "explain format = 'brief' select * from t where a <= 300",
+      "explain format = 'brief' select * from t where a <= 500",
+      "explain format = 'brief' select * from t where a > 900",
+      "explain format = 'brief' select * from t where a <= 900"
+    ]
+  },
+  {
+    "name": "TestColumnIndexNullEstimation",
+    "cases": [
+      "explain select b from t where b is null",
+      "explain select b from t where b is not null",
+      "explain select b from t where b is null or b > 3",
+      "explain select b from t use index(idx_b)",
+      "explain select b from t where b < 4",
+      "explain select * from t where a is null",
+      "explain select * from t where a is not null",
+      "explain select * from t where a is null or a > 3",
+      "explain select * from t",
+      "explain select * from t where a < 4"
+    ]
+  },
+  {
+    "name": "TestUniqCompEqualEst",
+    "cases": [
+      "explain select * from t where a = 1 and b = 5 and 1 = 1"
+    ]
+  },
+  {
+    "name": "TestDNFCondSelectivity",
+    "cases": [
+      "select * from t where b > 7 or c < 4",
+      "select * from t where d < 5 or b > 6",
+      "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
+      "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2"
+    ]
+  },
+  {
+    "Name": "TestSmallRangeEstimation",
+    "Cases": [
+      {
+        "Start": 5,
+        "End": 5
+      },
+      {
+        "Start": 5,
+        "End": 6
+      },
+      {
+        "Start": 5,
+        "End": 10
+      },
+      {
+        "Start": 5,
+        "End": 15
+      },
+      {
+        "Start": 10,
+        "End": 15
+      },
+      {
+        "Start": 5,
+        "End": 25
+      },
+      {
+        "Start": 25,
+        "End": 25
+      }
+    ]
+  },
+  {
+    "name": "TestTopNAssistedEstimationWithoutNewCollation",
+    "cases": [
+      "explain format = 'brief' select * from t where a like '%111%'",
+      "explain format = 'brief' select * from t where a not like '%111%'",
+      "explain format = 'brief' select * from t where a regexp '.*111.*'",
+      "explain format = 'brief' select * from t where a not regexp '.*111.*'",
+      "explain format = 'brief' select * from t where ifnull(a, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where f like '%111%'",
+      "explain format = 'brief' select * from t where f not like '%111%'",
+      "explain format = 'brief' select * from t where f regexp '.*111.*'",
+      "explain format = 'brief' select * from t where f not regexp '.*111.*'",
+      "explain format = 'brief' select * from t where ifnull(f, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where a like '%111%' and f rlike '.*111.*'",
+      "explain format = 'brief' select * from t where a like '%111%' or f like '%111%'",
+      "explain format = 'brief' select * from t where b like '%111%'",
+      "explain format = 'brief' select * from t where b not like '%111%'",
+      "explain format = 'brief' select * from t where b regexp '.*111.*'",
+      "explain format = 'brief' select * from t where b not regexp '.*111.*'",
+      "explain format = 'brief' select * from t where ifnull(b, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where b like '%111%' and f like '%111%'",
+      "explain format = 'brief' select * from t where b like '%111%' or f like '%111%'",
+      "explain format = 'brief' select * from t where c like '%111%'",
+      "explain format = 'brief' select * from t where c not like '%111%'",
+      "explain format = 'brief' select * from t where ifnull(c, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where d like '%111%'",
+      "explain format = 'brief' select * from t where d not like '%111%'",
+      "explain format = 'brief' select * from t where ifnull(c, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where e like '%111%'",
+      "explain format = 'brief' select * from t where e not like '%111%'",
+      "explain format = 'brief' select * from t where ifnull(e, '1111') like '%111%'"
+    ]
+  },
+  {
+    "name": "TestTopNAssistedEstimationWithNewCollation",
+    "cases": [
+      "explain format = 'brief' select * from t where a like '%111%'",
+      "explain format = 'brief' select * from t where a not like '%111%'",
+      "explain format = 'brief' select * from t where a regexp '.*111.*'",
+      "explain format = 'brief' select * from t where a not regexp '.*111.*'",
+      "explain format = 'brief' select * from t where ifnull(a, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where f like '%111%'",
+      "explain format = 'brief' select * from t where f not like '%111%'",
+      "explain format = 'brief' select * from t where f regexp '.*111.*'",
+      "explain format = 'brief' select * from t where f not regexp '.*111.*'",
+      "explain format = 'brief' select * from t where ifnull(f, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where a like '%111%' and f rlike '.*111.*'",
+      "explain format = 'brief' select * from t where a like '%111%' or f like '%111%'",
+      "explain format = 'brief' select * from t where b like '%111%'",
+      "explain format = 'brief' select * from t where b not like '%111%'",
+      "explain format = 'brief' select * from t where b regexp '.*111.*'",
+      "explain format = 'brief' select * from t where b not regexp '.*111.*'",
+      "explain format = 'brief' select * from t where ifnull(b, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where b like '%111%' and f like '%111%'",
+      "explain format = 'brief' select * from t where b like '%111%' or f like '%111%'",
+      "explain format = 'brief' select * from t where c like '%111%'",
+      "explain format = 'brief' select * from t where c not like '%111%'",
+      "explain format = 'brief' select * from t where ifnull(c, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where d like '%111%'",
+      "explain format = 'brief' select * from t where d not like '%111%'",
+      "explain format = 'brief' select * from t where ifnull(c, '1111') like '%111%'",
+      "explain format = 'brief' select * from t where e like '%111%'",
+      "explain format = 'brief' select * from t where e not like '%111%'",
+      "explain format = 'brief' select * from t where ifnull(e, '1111') like '%111%'"
+    ]
+  },
+  {
+    "name": "TestGlobalStatsOutOfRangeEstimationAfterDelete",
+    "cases": [
+      "explain format = 'brief' select * from t where a <= 300",
+      "explain format = 'brief' select * from t where a < 300",
+      "explain format = 'brief' select * from t where a <= 500",
+      "explain format = 'brief' select * from t where a >= 300 and a <= 900",
+      "explain format = 'brief' select * from t where a >= 900",
+      "explain format = 'brief' select * from t where a > 900",
+      "explain format = 'brief' select * from t where a >= 300",
+      "explain format = 'brief' select * from t where a <= 900",
+      "explain format = 'brief' select * from t where a > 800 and a < 1000",
+      "explain format = 'brief' select * from t where a > 900 and a < 1000",
+      "explain format = 'brief' select * from t where a > 900 and a < 1100",
+      "explain format = 'brief' select * from t where a > 200 and a < 300",
+      "explain format = 'brief' select * from t where a > 100 and a < 300"
+    ]
+  },
+  {
+    "name": "TestOrderingIdxSelectivityThreshold",
+    "cases": [
+      "set @@tidb_opt_ordering_index_selectivity_ratio = -1",
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 0",
+      "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
+      "explain format = 'brief' select * from t where b >= 8999 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9000 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9001 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 10001 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 10000 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 0 and b <= 100 or c >= 0 and c <= 100 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 0.1",
+      "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
+      "explain format = 'brief' select * from t where b >= 8999 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9000 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9001 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 10001 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 10000 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 0 and b <= 50 or c >= 0 and c <= 50 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9950 and c >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where b >= 9950 and c >= 9900 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1"
+    ]
+  },
+  {
+    "name": "TestOrderingIdxSelectivityRatio",
+    "cases": [
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 0",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = -1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = 0",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = 0.1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = 0.5",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1"
+    ]
+  },
+  {
+    "name": "TestTraceCE",
+    "cases": [
+      "a > 0 and a < 2",
+      "a >= 1 and a < 10",
+      "a < 3 or b < 4",
+      "a = 1 and b = 2",
+      "a < 5 or a > 10"
+    ]
+  },
+  {
+    "name": "TestTraceDebugSelectivity",
+    "cases": [
+      "select * from t where a = 100 and b = 350",
+      "select * from t where a < -1500 and b > 400 and b < 403"
+    ]
+  },
+  {
+    "name": "TestIndexJoinInnerRowCountUpperBound",
+    "cases": [
+      "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
+      "set @@tidb_opt_fix_control = '44855:ON'",
+      "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b"
+    ]
+  },
+  {
+    "name": "TestSubsetIdxCardinality",
+    "cases": [
+      "explain format = 'brief' select distinct a from t",
+      "explain format = 'brief' select distinct b from t",
+      "explain format = 'brief' select distinct a, b, c from t",
+      "explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1",
+      "explain format = 'brief' select a, b from t where a = 1 and b = 1"
+    ]
+  }
+]

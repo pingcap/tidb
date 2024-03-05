@@ -27,7 +27,13 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
+BUILD_FLAG	:= -tags codes
+GOEXPERIMENT=
+ifeq ("${ENABLE_FIPS}", "1")
+	BUILD_FLAG = -tags codes,boringcrypto
+	GOEXPERIMENT = GOEXPERIMENT=boringcrypto
+endif
+GOBUILD         := $(GOEXPERIMENT) $(GO) build $(BUILD_FLAG)
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
@@ -60,19 +66,19 @@ UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 FAILPOINT_ENABLE  := find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl enable
 FAILPOINT_DISABLE := find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable
 
-LDFLAGS += -X "github.com/pingcap/tidb/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
 EXTENSION_FLAG =
-ifeq ($(shell if [ -d extension/enterprise/.git ]; then echo "true"; fi),true)
-	EXTENSION_FLAG += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd extension/enterprise && git rev-parse HEAD)"
+ifeq ($(shell if [ -f pkg/extension/enterprise/.git ]; then echo "true"; fi),true)
+	EXTENSION_FLAG += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd pkg/extension/enterprise && git rev-parse HEAD)"
 endif
 
-TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
-COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
+TEST_LDFLAGS =  -X "github.com/pingcap/tidb/pkg/config.checkBeforeDropLDFlag=1"
+COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/cmd/tidb-server.isCoverageServer=1"
 
 CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
@@ -119,7 +125,9 @@ DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LD
 
 TEST_COVERAGE_DIR := "test_coverage"
 
-ifneq ("$(CI)", "0")
+ifneq ("$(CI)", "")
 	BAZEL_GLOBAL_CONFIG := --output_user_root=/home/jenkins/.tidb/tmp
 	BAZEL_CMD_CONFIG := --config=ci --repository_cache=/home/jenkins/.tidb/tmp
+	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
 endif
+BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...

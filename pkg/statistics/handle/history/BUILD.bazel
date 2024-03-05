@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "history",
+    srcs = ["history_stats.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/history",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/statistics/handle/cache",
+        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)

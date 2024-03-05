@@ -18,9 +18,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,7 +77,7 @@ func noItem(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 	return errors.Errorf("should no items, but have one: [%d, %d, %v]", tableID, indexID, info)
 }
 
-func hasOneItem(idxID int64, columnList string, columnArgs []interface{}) (iterateFunc, *int) {
+func hasOneItem(idxID int64, columnList string, columnArgs []any) (iterateFunc, *int) {
 	count := 0
 	return func(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		count += 1
@@ -138,7 +138,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	}
 	recorder := ingestrec.New()
 	// no ingest job, should ignore it
-	err := recorder.AddJob(fakeJob(
+	err := recorder.TryAddJob(fakeJob(
 		model.ReorgTypeTxn,
 		model.ActionAddIndex,
 		model.JobStateSynced,
@@ -147,14 +147,14 @@ func TestAddIngestRecorder(t *testing.T) {
 			getIndex(1, []string{"x", "y"}),
 		},
 		nil,
-	))
+	), false)
 	require.NoError(t, err)
 	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 
 	// no add-index job, should ignore it
-	err = recorder.AddJob(fakeJob(
+	err = recorder.TryAddJob(fakeJob(
 		model.ReorgTypeLitMerge,
 		model.ActionDropIndex,
 		model.JobStateSynced,
@@ -163,14 +163,14 @@ func TestAddIngestRecorder(t *testing.T) {
 			getIndex(1, []string{"x", "y"}),
 		},
 		nil,
-	))
+	), false)
 	require.NoError(t, err)
 	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 
 	// no synced job, should ignore it
-	err = recorder.AddJob(fakeJob(
+	err = recorder.TryAddJob(fakeJob(
 		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateRollbackDone,
@@ -179,7 +179,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			getIndex(1, []string{"x", "y"}),
 		},
 		nil,
-	))
+	), false)
 	require.NoError(t, err)
 	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
@@ -188,7 +188,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	{
 		recorder := ingestrec.New()
 		// a normal ingest add index job
-		err = recorder.AddJob(fakeJob(
+		err = recorder.TryAddJob(fakeJob(
 			model.ReorgTypeLitMerge,
 			model.ActionAddIndex,
 			model.JobStateSynced,
@@ -197,9 +197,9 @@ func TestAddIngestRecorder(t *testing.T) {
 				getIndex(1, []string{"x", "y"}),
 			},
 			json.RawMessage(`[1, "a"]`),
-		))
+		), false)
 		require.NoError(t, err)
-		f, cnt := hasOneItem(1, "%n,%n", []interface{}{"x", "y"})
+		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
 		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	{
 		recorder := ingestrec.New()
 		// a normal ingest add primary index job
-		err = recorder.AddJob(fakeJob(
+		err = recorder.TryAddJob(fakeJob(
 			model.ReorgTypeLitMerge,
 			model.ActionAddPrimaryKey,
 			model.JobStateSynced,
@@ -218,9 +218,29 @@ func TestAddIngestRecorder(t *testing.T) {
 				getIndex(1, []string{"x", "y"}),
 			},
 			json.RawMessage(`[1, "a"]`),
-		))
+		), false)
 		require.NoError(t, err)
-		f, cnt := hasOneItem(1, "%n,%n", []interface{}{"x", "y"})
+		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
+		recorder.UpdateIndexInfo(allSchemas)
+		err = recorder.Iterate(f)
+		require.NoError(t, err)
+		require.Equal(t, *cnt, 1)
+	}
+
+	{
+		// a sub job as add primary index job
+		err = recorder.TryAddJob(fakeJob(
+			model.ReorgTypeLitMerge,
+			model.ActionAddPrimaryKey,
+			model.JobStateDone,
+			1000,
+			[]*model.IndexInfo{
+				getIndex(1, []string{"x", "y"}),
+			},
+			json.RawMessage(`[1, "a"]`),
+		), true)
+		require.NoError(t, err)
+		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
 		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
@@ -284,7 +304,7 @@ func TestIndexesKind(t *testing.T) {
 	}
 
 	recorder := ingestrec.New()
-	err := recorder.AddJob(fakeJob(
+	err := recorder.TryAddJob(fakeJob(
 		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateSynced,
@@ -293,7 +313,7 @@ func TestIndexesKind(t *testing.T) {
 			getIndex(1, []string{"x"}),
 		},
 		json.RawMessage(`[1, "a"]`),
-	))
+	), false)
 	require.NoError(t, err)
 	recorder.UpdateIndexInfo(allSchemas)
 	var (
@@ -312,9 +332,9 @@ func TestIndexesKind(t *testing.T) {
 	require.Equal(t, 1, count)
 	require.Equal(t, TableID, tableID)
 	require.Equal(t, int64(1), indexID)
-	require.Equal(t, SchemaName, info.SchemaName)
+	require.Equal(t, model.NewCIStr(SchemaName), info.SchemaName)
 	require.Equal(t, "%n,(`x` * 2),%n(4)", info.ColumnList)
-	require.Equal(t, []interface{}{"x", "z"}, info.ColumnArgs)
+	require.Equal(t, []any{"x", "z"}, info.ColumnArgs)
 	require.Equal(t, TableName, info.IndexInfo.Table.O)
 }
 
@@ -362,7 +382,7 @@ func TestRewriteTableID(t *testing.T) {
 		},
 	}
 	recorder := ingestrec.New()
-	err := recorder.AddJob(fakeJob(
+	err := recorder.TryAddJob(fakeJob(
 		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateSynced,
@@ -371,7 +391,7 @@ func TestRewriteTableID(t *testing.T) {
 			getIndex(1, []string{"x", "y"}),
 		},
 		json.RawMessage(`[1, "a"]`),
-	))
+	), false)
 	require.NoError(t, err)
 	recorder.UpdateIndexInfo(allSchemas)
 	recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {

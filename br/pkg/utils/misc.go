@@ -20,9 +20,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/types"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -34,7 +37,9 @@ const (
 	// (How about network partition between TiKV and PD? Even that is rare.)
 	// Also note that the offline threshold in PD is 20s, see
 	// https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
-	storeDisconnectionDuration = 100 * time.Second
+
+	// After talk to PD members 100s is not a safe number. set it to 600s
+	storeDisconnectionDuration = 600 * time.Second
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
@@ -130,4 +135,25 @@ func CheckStoreLiveness(s *metapb.Store) error {
 		}
 	}
 	return nil
+}
+
+// WithCleanUp runs a function with a timeout, and register its error to its argument if there is one.
+// This is useful while you want to run some must run but error-prone code in a defer context.
+// Simple usage:
+//
+//	func foo() (err error) {
+//		defer WithCleanUp(&err, time.Second, func(ctx context.Context) error {
+//			// do something
+//			return nil
+//		})
+//	}
+func WithCleanUp(errOut *error, timeout time.Duration, fn func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err := fn(ctx)
+	if errOut != nil {
+		*errOut = multierr.Combine(err, *errOut)
+	} else if err != nil {
+		log.Warn("Encountered but ignored error while cleaning up.", zap.Error(err))
+	}
 }

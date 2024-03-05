@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
+set -eux
 DB="$TEST_NAME"
 
 run_sql "CREATE DATABASE $DB;"
@@ -36,6 +36,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB"
 
 # Test debug decode
 run_br -s "local://$TEST_DIR/$DB" debug decode --field "Schemas"
+run_br -s "local://$TEST_DIR/$DB" debug decode --field "SchemaIndex"
 run_br -s "local://$TEST_DIR/$DB" debug decode --field "EndVersion"
 # Ensure compatibility
 run_br -s "local://$TEST_DIR/$DB" validate decode --field "end-version"
@@ -43,6 +44,8 @@ run_br -s "local://$TEST_DIR/$DB" validate decode --field "end-version"
 # Test redact-log and redact-info-log compalibility
 run_br -s "local://$TEST_DIR/$DB" debug decode --field "Schemas" --redact-log=true
 run_br -s "local://$TEST_DIR/$DB" debug decode --field "Schemas" --redact-info-log=true
+run_br -s "local://$TEST_DIR/$DB" debug decode --field "SchemaIndex" --redact-log=true
+run_br -s "local://$TEST_DIR/$DB" debug decode --field "SchemaIndex" --redact-info-log=true
 
 # Test validate backupmeta
 run_br debug backupmeta validate -s "local://$TEST_DIR/$DB"
@@ -93,16 +96,14 @@ run_curl https://$PD_ADDR/pd/api/v1/config/schedule | grep '"disable": false'
 # after apply the pause api. these configs won't change any more.
 # run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."enable-location-replacement"' | grep "false"
 # run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-pending-peer-count"' | grep "2147483647"
-# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-size"' | grep -E "^0$"
-# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-keys"' | grep -E "^0$"
+# run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."merge-schedule-limit"' | grep -E "^0$"
 
 # after https://github.com/tikv/pd/pull/4781 merged.
 # we can use a hack way to check whether we pause config succeed.
 # By setting a paused config again and expect to fail with a clear message.
-run_pd_ctl -u https://$PD_ADDR config set max-merge-region-size 0 | grep -q "need to clean up TTL first for schedule.max-merge-region-size"
-run_pd_ctl -u https://$PD_ADDR config set max-merge-region-keys 0 | grep -q "need to clean up TTL first for schedule.max-merge-region-keys"
 run_pd_ctl -u https://$PD_ADDR config set max-pending-peer-count 0 | grep -q "need to clean up TTL first for schedule.max-pending-peer-count"
 run_pd_ctl -u https://$PD_ADDR config set enable-location-replacement false | grep -q "need to clean up TTL first for schedule.enable-location-replacement"
+run_pd_ctl -u https://$PD_ADDR config set merge-schedule-limit 0 | grep -q "need to clean up TTL first for schedule.merge-schedule-limit"
 run_pd_ctl -u https://$PD_ADDR config set leader-schedule-limit 0 | grep -q "need to clean up TTL first for schedule.leader-schedule-limit"
 run_pd_ctl -u https://$PD_ADDR config set region-schedule-limit 0 | grep -q "need to clean up TTL first for schedule.region-schedule-limit"
 run_pd_ctl -u https://$PD_ADDR config set max-snapshot-count 0 | grep -q "need to clean up TTL first for schedule.max-snapshot-count"
@@ -147,8 +148,7 @@ fi
 
 
 default_pd_values='{
-  "max-merge-region-keys": 200000,
-  "max-merge-region-size": 20,
+  "merge-schedule-limit": 8,
   "leader-schedule-limit": 4,
   "region-schedule-limit": 2048
 }'
@@ -170,7 +170,7 @@ pause_schedulers=$(curl https://$PD_ADDR/pd/api/v1/schedulers?status="paused" | 
   exit 1
 fi
 
-pd_settings=6
+pd_settings=5
 
 # balance-region scheduler enabled
 run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."schedulers-v2"[] | {disable: .disable, type: ."type" | select (.=="balance-region")}' | grep '"disable": false' || ((pd_settings--))
@@ -185,13 +185,10 @@ run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."enable-location-repl
 # until pd has the solution to temporary set these scheduler/configs.
 run_br validate reset-pd-config-as-default --pd $PD_ADDR
 
-# max-merge-region-size set to default 20
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-size"' | grep "20" || ((pd_settings--))
+# merge-schedule-limit set to default 8
+run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."merge-schedule-limit"' | grep "8" || ((pd_settings--))
 
-# max-merge-region-keys set to default 200000
-run_curl https://$PD_ADDR/pd/api/v1/config/schedule | jq '."max-merge-region-keys"' | grep "200000" || ((pd_settings--))
-
-if [ "$pd_settings" -ne "6" ];then
+if [ "$pd_settings" -ne "5" ];then
     echo "TEST: [$TEST_NAME] test validate reset pd config failed!"
     exit 1
 fi

@@ -1,0 +1,7 @@
+[conflict]
+strategy = "ignore"
+threshold = 5
+max-record-rows = 1
+
+[mydumper.csv]
+header = true

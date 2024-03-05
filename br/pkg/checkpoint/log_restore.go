@@ -16,12 +16,16 @@ package checkpoint
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"go.uber.org/zap"
 )
 
 type LogRestoreKeyType = string
@@ -38,6 +42,62 @@ func (l LogRestoreValueType) IdentKey() []byte {
 	return []byte(fmt.Sprint(l.Goff, '.', l.Foff, '.', l.TableID))
 }
 
+type LogRestoreValueMarshaled struct {
+	// group index in the metadata
+	Goff int `json:"goff"`
+	// downstream table id -> file indexes in the group
+	Foffs map[int64][]int `json:"foffs"`
+}
+
+func (l LogRestoreValueMarshaled) IdentKey() []byte {
+	log.Fatal("unimplement!")
+	return nil
+}
+
+// valueMarshalerForLogRestore convert the checkpoint data‘s format to an smaller space-used format
+// input format :
+//
+//	"group-key":"...",
+//	"groups":[
+//	  ["TableId": 1, "Goff": 0, "Foff": 0],
+//	  ["TableId": 1, "Goff": 0, "Foff": 1],
+//	  ...
+//	],
+//
+// converted format :
+//
+//	"group-key":"...",
+//	"groups":[
+//	  ["Goff": 0, "Foffs":{"1", [0, 1]}],
+//	  ...
+//	],
+func valueMarshalerForLogRestore(group *RangeGroup[LogRestoreKeyType, LogRestoreValueType]) ([]byte, error) {
+	// goff -> table-id -> []foff
+	gMap := make(map[int]map[int64][]int)
+	for _, g := range group.Group {
+		fMap, exists := gMap[g.Goff]
+		if !exists {
+			fMap = make(map[int64][]int)
+			gMap[g.Goff] = fMap
+		}
+
+		fMap[g.TableID] = append(fMap[g.TableID], g.Foff)
+	}
+
+	logValues := make([]LogRestoreValueMarshaled, 0, len(gMap))
+	for goff, foffs := range gMap {
+		logValues = append(logValues, LogRestoreValueMarshaled{
+			Goff:  goff,
+			Foffs: foffs,
+		})
+	}
+
+	return json.Marshal(&RangeGroup[LogRestoreKeyType, LogRestoreValueMarshaled]{
+		GroupKey: group.GroupKey,
+		Group:    logValues,
+	})
+}
+
 // only for test
 func StartCheckpointLogRestoreRunnerForTest(
 	ctx context.Context,
@@ -47,9 +107,9 @@ func StartCheckpointLogRestoreRunnerForTest(
 	taskName string,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+		ctx, storage, cipher, nil, flushPositionForRestore(taskName), valueMarshalerForLogRestore)
 
-	runner.startCheckpointMainLoop(ctx, tick, 0)
+	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
 }
 
@@ -59,10 +119,10 @@ func StartCheckpointRunnerForLogRestore(ctx context.Context,
 	taskName string,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		ctx, storage, cipher, nil, flushPositionForRestore(taskName))
+		ctx, storage, cipher, nil, flushPositionForRestore(taskName), valueMarshalerForLogRestore)
 
 	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(ctx, tickDurationForFlush, 0)
+	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
 	return runner, nil
 }
 
@@ -88,10 +148,15 @@ func AppendRangeForLogRestore(
 
 const (
 	CheckpointTaskInfoForLogRestorePathFormat = CheckpointDir + "/restore-%d/taskInfo.meta"
+	CheckpointIngestIndexRepairSQLPathFormat  = CheckpointDir + "/restore-%s/ingest-repair.meta"
 )
 
 func getCheckpointTaskInfoPathByID(clusterID uint64) string {
 	return fmt.Sprintf(CheckpointTaskInfoForLogRestorePathFormat, clusterID)
+}
+
+func getCheckpointIngestIndexRepairPathByTaskName(taskName string) string {
+	return fmt.Sprintf(CheckpointIngestIndexRepairSQLPathFormat, taskName)
 }
 
 // A progress type for snapshot + log restore.
@@ -164,4 +229,76 @@ func ExistsCheckpointTaskInfo(
 	clusterID uint64,
 ) (bool, error) {
 	return s.FileExists(ctx, getCheckpointTaskInfoPathByID(clusterID))
+}
+
+func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.ExternalStorage, clusterID uint64) error {
+	fileName := getCheckpointTaskInfoPathByID(clusterID)
+	exists, err := s.FileExists(ctx, fileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !exists {
+		log.Warn("the task info file doesn't exist", zap.String("file", fileName))
+		return nil
+	}
+
+	return s.DeleteFile(ctx, fileName)
+}
+
+type CheckpointIngestIndexRepairSQL struct {
+	IndexID    int64       `json:"index-id"`
+	SchemaName model.CIStr `json:"schema-name"`
+	TableName  model.CIStr `json:"table-name"`
+	IndexName  string      `json:"index-name"`
+	AddSQL     string      `json:"add-sql"`
+	AddArgs    []any       `json:"add-args"`
+}
+
+type CheckpointIngestIndexRepairSQLs struct {
+	SQLs []CheckpointIngestIndexRepairSQL
+}
+
+func LoadCheckpointIngestIndexRepairSQLs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+) (*CheckpointIngestIndexRepairSQLs, error) {
+	m := &CheckpointIngestIndexRepairSQLs{}
+	err := loadCheckpointMeta(ctx, s, getCheckpointIngestIndexRepairPathByTaskName(taskName), m)
+	return m, err
+}
+
+func ExistsCheckpointIngestIndexRepairSQLs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+) (bool, error) {
+	return s.FileExists(ctx, getCheckpointIngestIndexRepairPathByTaskName(taskName))
+}
+
+func SaveCheckpointIngestIndexRepairSQLs(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	meta *CheckpointIngestIndexRepairSQLs,
+	taskName string,
+) error {
+	return saveCheckpointMetadata(ctx, s, meta, getCheckpointIngestIndexRepairPathByTaskName(taskName))
+}
+
+func RemoveCheckpointDataForLogRestore(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	taskName string,
+	clusterID uint64,
+) error {
+	if err := removeCheckpointTaskInfoForLogRestore(ctx, s, clusterID); err != nil {
+		return errors.Annotatef(err,
+			"failed to remove the task info file: clusterId is %d, taskName is %s",
+			clusterID,
+			taskName,
+		)
+	}
+	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
+	return removeCheckpointData(ctx, s, prefix)
 }

@@ -10,14 +10,13 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -154,11 +153,21 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
+func DefaultOutputTableChan() chan *CreatedTable {
+	return make(chan *CreatedTable, defaultChannelSize)
+}
+
 // TableWithRange is a CreatedTable that has been bind to some of key ranges.
 type TableWithRange struct {
 	CreatedTable
 
 	Range []rtree.Range
+}
+
+type TableIDWithFiles struct {
+	TableID int64
+
+	Files []*backuppb.File
 }
 
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
@@ -199,7 +208,7 @@ type TiKVRestorer interface {
 		isRawKv bool) error
 	// RestoreSSTFiles import the files to the TiKV.
 	RestoreSSTFiles(ctx context.Context,
-		files []*backuppb.File,
+		tableIDWithFiles []TableIDWithFiles,
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error
 }
@@ -234,7 +243,7 @@ func NewTiKVSender(
 	cli TiKVRestorer,
 	updateCh glue.Progress,
 	splitConcurrency uint,
-	runner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
+	granularity string,
 ) (BatchSender, error) {
 	inCh := make(chan DrainResult, defaultChannelSize)
 	midCh := make(chan drainResultAndDone, defaultChannelSize)
@@ -249,7 +258,17 @@ func NewTiKVSender(
 
 	sender.wg.Add(2)
 	go sender.splitWorker(ctx, inCh, midCh, splitConcurrency)
-	go sender.restoreWorker(ctx, midCh, runner)
+	if granularity == string(CoarseGrained) {
+		outCh := make(chan drainResultAndDone, defaultChannelSize)
+		// block on splitting and scattering regions.
+		// in coarse-grained mode, wait all regions are split and scattered is
+		// no longer a time-consuming operation, then we can batch download files
+		// as much as enough and reduce the time of blocking restore.
+		go sender.blockPipelineWorker(ctx, midCh, outCh)
+		go sender.restoreWorker(ctx, outCh)
+	} else {
+		go sender.restoreWorker(ctx, midCh)
+	}
 	return sender, nil
 }
 
@@ -262,6 +281,26 @@ func (b *tikvSender) Close() {
 type drainResultAndDone struct {
 	result DrainResult
 	done   func()
+}
+
+func (b *tikvSender) blockPipelineWorker(ctx context.Context,
+	inCh <-chan drainResultAndDone,
+	outCh chan<- drainResultAndDone,
+) {
+	defer close(outCh)
+	res := make([]drainResultAndDone, 0, defaultChannelSize)
+	for dr := range inCh {
+		res = append(res, dr)
+	}
+
+	for _, dr := range res {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			outCh <- dr
+		}
+	}
 }
 
 func (b *tikvSender) splitWorker(ctx context.Context,
@@ -358,26 +397,7 @@ func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
 	}
 }
 
-func appendRangesToCheckpoint(ctx context.Context, runner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType], result DrainResult) error {
-	if runner == nil {
-		return nil
-	}
-	var startOffset int = 0
-	for i, endOffset := range result.TableEndOffsetInRanges {
-		table := result.TablesToSend[i]
-		ranges := result.Ranges[startOffset:endOffset]
-		// The checkpoint range shows this ranges of kvs has been restored into
-		// the table corresponding to the table-id.
-		if err := checkpoint.AppendRangesForRestore(ctx, runner, table.Table.ID, ranges); err != nil {
-			return errors.Trace(err)
-		}
-		// update start offset
-		startOffset = endOffset
-	}
-	return nil
-}
-
-func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone, runner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) {
+func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
 		log.Info("TiKV Sender: restore worker prepare to close.")
@@ -396,23 +416,18 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			if !ok {
 				return
 			}
+
 			files := r.result.Files()
 			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
 			eg.Go(func() error {
 				e := b.client.RestoreSSTFiles(ectx, files, r.result.RewriteRules, b.updateCh)
 				if e != nil {
-					log.Error("restore batch meet error", logutil.ShortError(e), logutil.Files(files))
+					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()
 					return e
 				}
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
-				e = appendRangesToCheckpoint(ctx, runner, r.result)
-				if e != nil {
-					log.Error("restore batch meet error, caused by checkpoint", logutil.ShortError(e))
-					r.done()
-					return errors.Annotate(e, "restore batch meet error, caused by checkpoint")
-				}
 				r.done()
 				b.waitTablesDone(r.result.BlankTablesAfterSend)
 				b.sink.EmitTables(r.result.BlankTablesAfterSend...)

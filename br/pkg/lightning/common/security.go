@@ -20,10 +20,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
@@ -88,8 +89,15 @@ func NewTLSFromMockServer(server *httptest.Server) *TLS {
 	}
 }
 
+// GetMockTLSUrl returns tls's host for mock test
+func GetMockTLSUrl(tls *TLS) string {
+	return tls.url
+}
+
 // WithHost creates a new TLS instance with the host replaced.
 func (tc *TLS) WithHost(host string) *TLS {
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
 	var url string
 	if tc.inner != nil {
 		url = "https://" + host
@@ -103,8 +111,13 @@ func (tc *TLS) WithHost(host string) *TLS {
 
 // ToGRPCDialOption constructs a gRPC dial option.
 func (tc *TLS) ToGRPCDialOption() grpc.DialOption {
-	if tc.inner != nil {
-		return grpc.WithTransportCredentials(credentials.NewTLS(tc.inner))
+	return ToGRPCDialOption(tc.inner)
+}
+
+// ToGRPCDialOption constructs a gRPC dial option from tls.Config.
+func ToGRPCDialOption(tls *tls.Config) grpc.DialOption {
+	if tls != nil {
+		return grpc.WithTransportCredentials(credentials.NewTLS(tls))
 	}
 	return grpc.WithTransportCredentials(insecure.NewCredentials())
 }
@@ -118,7 +131,7 @@ func (tc *TLS) WrapListener(l net.Listener) net.Listener {
 }
 
 // GetJSON performs a GET request to the given path and unmarshals the response
-func (tc *TLS) GetJSON(ctx context.Context, path string, v interface{}) error {
+func (tc *TLS) GetJSON(ctx context.Context, path string, v any) error {
 	return GetJSON(ctx, tc.client, tc.url+path, v)
 }
 

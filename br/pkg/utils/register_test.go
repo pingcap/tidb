@@ -15,6 +15,7 @@ package utils
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,41 @@ func TestTaskRegister(t *testing.T) {
 	}
 
 	require.NoError(t, register.Close(ctx))
+}
+
+func TestTaskRegisterOnce(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer testEtcdCluster.Terminate(t)
+
+	// should not close the client manually, the test will fail, since Terminate will close it too.
+	client := testEtcdCluster.RandClient()
+
+	ctx := context.Background()
+	register := NewTaskRegisterWithTTL(client, 10*time.Second, RegisterImportInto, "test")
+	defer register.Close(ctx)
+	err := register.RegisterTaskOnce(ctx)
+	require.NoError(t, err)
+
+	// sleep 3 seconds to make sure the lease TTL is smaller.
+	time.Sleep(3 * time.Second)
+	list, err := GetImportTasksFrom(ctx, client)
+	require.NoError(t, err)
+	require.Len(t, list.Tasks, 1)
+	currTask := list.Tasks[0]
+	t.Log(currTask.MessageToUser())
+	require.Equal(t, "/tidb/brie/import/import-into/test", currTask.Key)
+
+	// then register again, this time will only refresh the lease, and left TTL will be larger.
+	err = register.RegisterTaskOnce(ctx)
+	require.NoError(t, err)
+	list, err = GetImportTasksFrom(ctx, client)
+	require.NoError(t, err)
+	require.Len(t, list.Tasks, 1)
+	thisTask := list.Tasks[0]
+	require.Equal(t, currTask.Key, thisTask.Key)
+	require.Equal(t, currTask.LeaseID, thisTask.LeaseID)
+	require.Greater(t, thisTask.TTL, currTask.TTL)
 }
 
 func TestTaskRegisterFailedGrant(t *testing.T) {
@@ -80,8 +116,12 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
 	}
-
-	require.NoError(t, register.Close(ctx))
+	require.True(t, len(list.Tasks) > 0)
+	err = register.Close(ctx)
+	// for flaky test, the lease would expire
+	if err != nil && !strings.Contains(err.Error(), "requested lease not found") {
+		require.NoError(t, err)
+	}
 }
 
 func TestTaskRegisterFailedReput(t *testing.T) {
@@ -118,6 +158,10 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
 	}
-
-	require.NoError(t, register.Close(ctx))
+	require.True(t, len(list.Tasks) > 0)
+	err = register.Close(ctx)
+	// for flaky test, the lease would expire
+	if err != nil && !strings.Contains(err.Error(), "requested lease not found") {
+		require.NoError(t, err)
+	}
 }

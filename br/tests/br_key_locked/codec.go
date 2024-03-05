@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -56,13 +56,14 @@ func (c *codecPDClient) ScanRegions(
 	startKey []byte,
 	endKey []byte,
 	limit int,
+	opts ...pd.GetRegionOption,
 ) ([]*pd.Region, error) {
 	startKey = codec.EncodeBytes(nil, startKey)
 	if len(endKey) > 0 {
 		endKey = codec.EncodeBytes(nil, endKey)
 	}
 
-	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
+	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

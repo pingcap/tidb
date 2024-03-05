@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "bootstraptest_test",
+    timeout = "short",
+    srcs = [
+        "bootstrap_upgrade_test.go",  #keep
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 11,
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/ddl/util/callback",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/parser/model",
+        "//pkg/parser/terror",
+        "//pkg/server/handler",
+        "//pkg/session",  #keep
+        "//pkg/session/types",
+        "//pkg/sessionctx",
+        "//pkg/testkit",  #keep
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",  #keep
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

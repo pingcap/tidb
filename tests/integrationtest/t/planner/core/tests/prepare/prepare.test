@@ -1,0 +1,519 @@
+# TestPreparePointGetWithDML
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a int, unique key(a));
+insert into t values(1), (2);
+begin;
+prepare stmt from 'update t set a = ? where  a = ?';
+set @a=1;
+execute stmt using @a, @a;
+commit;
+begin;
+prepare stmt from 'update t set a = ? where  a = ?';
+set @a=2;
+execute stmt using @a, @a;
+select @@last_plan_from_cache;
+rollback;
+
+# TestPrepareIgnoreCloseStmtCmd
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a int, unique key(a));
+set @@tidb_ignore_prepared_cache_close_stmt=0;
+select @@tidb_ignore_prepared_cache_close_stmt;
+prepare stmt from 'select * from t';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+prepare stmt from 'select * from t';
+execute stmt;
+select @@last_plan_from_cache;
+set tidb_ignore_prepared_cache_close_stmt=1;
+select @@tidb_ignore_prepared_cache_close_stmt;
+prepare stmt from 'select * from t';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+prepare stmt from 'select * from t';
+execute stmt;
+select @@last_plan_from_cache;
+
+# TestFlushPlanCache
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int, a int, b int, key(a));
+create table t2(id int, a int, b int, key(a));
+prepare stmt1 from 'SELECT * from t1,t2 where t1.id = t2.id';
+execute stmt1;
+execute stmt1;
+select @@last_plan_from_cache;
+prepare stmt2 from 'SELECT * from t1';
+execute stmt2;
+execute stmt2;
+select @@last_plan_from_cache;
+prepare stmt3 from 'SELECT * from t1 where id = 1';
+execute stmt3;
+execute stmt3;
+select @@last_plan_from_cache;
+admin flush session plan_cache;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+-- error 1105
+admin flush global plan_cache;
+
+# TestFlushPlanCacheWithoutPCEnable
+set tidb_enable_prepared_plan_cache=0;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int, a int, b int, key(a));
+create table t2(id int, a int, b int, key(a));
+prepare stmt1 from 'SELECT * from t1,t2 where t1.id = t2.id';
+execute stmt1;
+execute stmt1;
+select @@last_plan_from_cache;
+prepare stmt2 from 'SELECT * from t1';
+execute stmt2;
+execute stmt2;
+select @@last_plan_from_cache;
+prepare stmt3 from 'SELECT * from t1 where id = 1';
+execute stmt3;
+execute stmt3;
+select @@last_plan_from_cache;
+admin flush session plan_cache;
+show warnings;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+-- error 1105
+admin flush global plan_cache;
+
+# TestPrepareCacheIndexScan
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a int, b int, c int, primary key (a, b));
+insert into t values(1, 1, 2), (1, 2, 3), (1, 3, 3), (2, 1, 2), (2, 2, 3), (2, 3, 3);
+prepare stmt1 from "select a, c from t where a = ? and c = ?";
+set @a=1, @b=3;
+execute stmt1 using @a, @b;
+execute stmt1 using @a, @b;
+
+# TestPrepareCacheChangeCharsetCollation
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t (a varchar(64));
+set character_set_connection=utf8;
+prepare s from 'select * from t where a=?';
+set @x='a';
+execute s using @x;
+set @x='b';
+execute s using @x;
+select @@last_plan_from_cache;
+set character_set_connection=latin1;
+set @x='c';
+execute s using @x;
+select @@last_plan_from_cache;
+set @x='d';
+execute s using @x;
+select @@last_plan_from_cache;
+set collation_connection=binary;
+set @x='e';
+execute s using @x;
+select @@last_plan_from_cache;
+set @x='f';
+execute s using @x;
+select @@last_plan_from_cache;
+
+# TestPrepareTableAsNameOnGroupByWithCache
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t1;
+create table t1 (
+		id int(11) unsigned not null primary key auto_increment,
+		partner_id varchar(35) not null,
+		t1_status_id int(10) unsigned
+	  );
+insert into t1 values ("1", "partner1", "10"), ("2", "partner2", "10"), ("3", "partner3", "10"), ("4", "partner4", "10");
+drop table if exists t3;
+create table t3 (
+		id int(11) not null default '0',
+		preceding_id int(11) not null default '0',
+		primary key  (id,preceding_id)
+	  );
+prepare stmt from 'SELECT DISTINCT t1.partner_id
+	FROM t1
+		LEFT JOIN t3 ON t1.id = t3.id
+		LEFT JOIN t1 pp ON pp.id = t3.preceding_id
+	GROUP BY t1.id ;';
+-- sorted_result
+execute stmt;
+
+# TestPrepareCachePointGetInsert
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t1, t2;
+create table t1 (a int, b int, primary key(a));
+insert into t1 values (1, 1), (2, 2), (3, 3);
+create table t2 (a int, b int, primary key(a));
+prepare stmt1 from "insert into t2 select * from t1 where a=?";
+set @a=1;
+execute stmt1 using @a;
+select @@last_plan_from_cache;
+select * from t2 order by a;
+set @a=2;
+execute stmt1 using @a;
+select @@last_plan_from_cache;
+select * from t2 order by a;
+set @a=3;
+execute stmt1 using @a;
+select @@last_plan_from_cache;
+select * from t2 order by a;
+
+# TestPrepareWithWindowFunction
+set @@tidb_enable_window_function = 1;
+create table window_prepare(a int, b double);
+insert into window_prepare values(1, 1.1), (2, 1.9);
+prepare stmt1 from 'select row_number() over() from window_prepare';
+execute stmt1;
+prepare stmt2 from 'select count(a) over (order by a rows between ? preceding and ? preceding) from window_prepare';
+set @a=0, @b=1;
+execute stmt2 using @a, @b;
+set @@tidb_enable_window_function = 0;
+
+# TestPrepareWindowFunctionWithoutParamsCheck
+set tidb_enable_prepared_plan_cache=0;
+set @@tidb_enable_window_function = 1;
+drop table if exists t1;
+CREATE TABLE t1 (d DOUBLE, id INT, sex CHAR(1), n INT NOT NULL AUTO_INCREMENT, PRIMARY KEY(n));
+insert into t1(d, id, sex) values (1.0, 1, 'M'),(2.0, 2, 'F'),(3.0, 3, 'F'),(4.0, 4, 'F'),(5.0, 5, 'M');
+prepare p from "select id, sex, lead(id, ?) over () from t1";
+-- error 1210
+execute p using @p1;
+set @p1 = 3;
+execute p using @p1;
+PREPARE p FROM "SELECT id, sex, LEAD(id, ?) OVER (), ntile(?) over() FROM t1";
+set @p2 = 3;
+execute p using @p1, @p2;
+set @p2 = 0;
+-- error 1210
+execute p using @p1, @p2;
+set @@tidb_enable_window_function = 0;
+
+# TestPrepareForGroupByItems
+drop table if exists t;
+create table t(id int, v int);
+insert into t(id, v) values(1, 2),(1, 2),(2, 3);
+prepare s1 from 'select max(v) from t group by floor(id/?)';
+set @a=2;
+--sorted_result
+execute s1 using @a;
+prepare s1 from 'select max(v) from t group by ?';
+set @a=2;
+-- error 1105
+execute s1 using @a;
+set @a=2.0;
+--sorted_result
+execute s1 using @a;
+
+# TestPrepareCacheForClusteredIndex
+drop table if exists t1, t2;
+create table t1(k varchar(100) primary key clustered, v1 int, v2 int);
+insert into t1 (k, v1, v2) values('a', 1, 2), ('b', 1, 1);
+create table t2(k varchar(100) primary key clustered, v int);
+insert into t2 (k, v) values('c', 100);
+prepare prepare_1 from " select v2, v from t1 left join t2 on v1 != v2 ";
+execute prepare_1;
+execute prepare_1;
+
+# TestConstPropAndPPDWithCache
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a varchar(8) not null, b varchar(8) not null);
+insert into t values('1','1');
+prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t2.b = ? and t2.b = ?";
+set @p0 = '1', @p1 = '2';
+execute stmt using @p0, @p1;
+set @p0 = '1', @p1 = '1';
+execute stmt using @p0, @p1;
+prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and ?";
+set @p0 = 0;
+execute stmt using @p0;
+set @p0 = 1;
+execute stmt using @p0;
+prepare stmt from "select count(1) from t t1, t t2 where ?";
+set @p0 = 0;
+execute stmt using @p0;
+set @p0 = 1;
+execute stmt using @p0;
+prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t2.b = '1' and t2.b = ?";
+set @p0 = '1';
+execute stmt using @p0;
+set @p0 = '2';
+execute stmt using @p0;
+prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.a > ?";
+set @p0 = '1';
+execute stmt using @p0;
+set @p0 = '0';
+execute stmt using @p0;
+prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.b > ? and t1.b > ?";
+set @p0 = '0', @p1 = '0';
+execute stmt using @p0,@p1;
+set @p0 = '0', @p1 = '1';
+execute stmt using @p0,@p1;
+prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.b > ? and t1.b > '1'";
+set @p0 = '1';
+execute stmt using @p0;
+set @p0 = '0';
+execute stmt using @p0;
+drop table if exists t1;
+create table t1(c1 tinyint unsigned);
+insert into t1 values(111);
+prepare stmt from 'select 1 from t1 where c1 in (?)';
+set @a = '1.1';
+execute stmt using @a;
+set @a = '111';
+execute stmt using @a;
+
+# TestPlanCacheHitInfo
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(id int);
+insert into t values (1),(2),(3),(4);
+prepare stmt from 'select * from t where id=?';
+prepare stmt2 from 'select /*+ ignore_plan_cache() */ * from t where id=?';
+set @doma = 1;
+select @@last_plan_from_cache;
+execute stmt using @doma;
+select @@last_plan_from_cache;
+execute stmt using @doma;
+select @@last_plan_from_cache;
+execute stmt2 using @doma;
+select @@last_plan_from_cache;
+execute stmt using @doma;
+select @@last_plan_from_cache;
+select * from t where id=1;
+select @@last_plan_from_cache;
+
+# TestPlanCacheUnsignedHandleOverflow
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a bigint unsigned primary key);
+insert into t values(18446744073709551615);
+prepare stmt from 'select a from t where a=?';
+set @p = 1;
+execute stmt using @p;
+select @@last_plan_from_cache;
+execute stmt using @p;
+select @@last_plan_from_cache;
+set @p = 18446744073709551615;
+execute stmt using @p;
+select @@last_plan_from_cache;
+
+# TestParamMarker4FastPlan
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(pk int primary key);
+insert into t values(1);
+prepare stmt from 'select * from t where pk = ?';
+set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0';
+execute stmt using @a2;
+execute stmt using @a2;
+select @@last_plan_from_cache;
+execute stmt using @a3;
+execute stmt using @a3;
+select @@last_plan_from_cache;
+execute stmt using @a0;
+select @@last_plan_from_cache;
+execute stmt using @a4;
+execute stmt using @a4;
+select @@last_plan_from_cache;
+execute stmt using @a1;
+select @@last_plan_from_cache;
+drop table if exists t;
+create table t(pk int, unique index idx(pk));
+insert into t values(1);
+prepare stmt from 'select * from t where pk = ?';
+set @a0=1.1, @a1='1.1', @a2=1, @a3=1.0, @a4='1.0';
+execute stmt using @a2;
+execute stmt using @a2;
+select @@last_plan_from_cache;
+execute stmt using @a3;
+execute stmt using @a3;
+select @@last_plan_from_cache;
+execute stmt using @a0;
+select @@last_plan_from_cache;
+execute stmt using @a4;
+execute stmt using @a4;
+select @@last_plan_from_cache;
+execute stmt using @a1;
+select @@last_plan_from_cache;
+drop table if exists t;
+create table t (a int, b int);
+insert t values (1, 7), (1, 8), (1, 9);
+prepare stmt from 'select * from t where _tidb_rowid = ?';
+set @a=2;
+execute stmt using @a;
+set @a=1;
+execute stmt using @a;
+select @@last_plan_from_cache;
+drop table if exists t;
+create table t(pk int primary key);
+insert into t values (1), (2), (3), (4), (5);
+prepare stmt from 'select * from t where pk in (1, ?, ?)';
+set @a0=0, @a1=1, @a2=2, @a3=3, @a1_1=1.1, @a4=4, @a5=5;
+execute stmt using @a2, @a3;
+execute stmt using @a2, @a3;
+select @@last_plan_from_cache;
+execute stmt using @a0, @a4;
+select @@last_plan_from_cache;
+execute stmt using @a1_1, @a5;
+select @@last_plan_from_cache;
+drop table if exists t;
+create table t(pk int, unique index idx(pk));
+insert into t values (1), (2), (3), (4), (5);
+prepare stmt from 'select * from t where pk in (1, ?, ?)';
+set @a0=0, @a1=1, @a2=2, @a3=3, @a1_1=1.1, @a4=4, @a5=5;
+execute stmt using @a2, @a3;
+execute stmt using @a2, @a3;
+select @@last_plan_from_cache;
+execute stmt using @a0, @a4;
+select @@last_plan_from_cache;
+execute stmt using @a1_1, @a5;
+select @@last_plan_from_cache;
+drop table if exists t;
+create table t (a int, b int);
+insert t values (1, 7), (1, 8), (1, 9), (1, 10);
+prepare stmt from 'select * from t where _tidb_rowid in (1, ?, ?)';
+set @a2=2, @a3=3;
+execute stmt using @a2, @a3;
+set @a2=4, @a3=2;
+execute stmt using @a2, @a3;
+select @@last_plan_from_cache;
+
+# TestPrepareForGroupByMultiItems
+drop table if exists t;
+create table t(a int, b int, c int , index idx(a));
+insert into t values(1,2, -1), (1,2, 1), (1,2, -1), (4,4,3);
+set @a=1;
+set @b=3;
+set sql_mode="";
+prepare stmt from "select a, sum(b), c from t group by ?, ? order by ?, ?";
+select a, sum(b), c from t group by 1,3 order by 1,3;
+execute stmt using @a, @b, @a, @b;
+set @c=10;
+-- error 1105
+execute stmt using @a, @c, @a, @c;
+set @v1=1.0;
+set @v2=3.0;
+prepare stmt2 from "select sum(b) from t group by ?, ?";
+execute stmt2 using @v1, @v2;
+
+# TestPrepareCacheWithJoinTable
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists ta, tb;
+CREATE TABLE ta(k varchar(32) NOT NULL DEFAULT ' ');
+CREATE TABLE tb (k varchar(32) NOT NULL DEFAULT ' ', s varchar(1) NOT NULL DEFAULT ' ');
+insert into ta values ('a');
+set @a=2, @b=1;
+prepare stmt from "select * from ta a left join tb b on 1 where ? = 1 or b.s is not null";
+execute stmt using @a;
+execute stmt using @b;
+
+# TestPlanCachePointGetAndTableDual
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t0, t1, t2, t3, t4;
+create table t0(c1 varchar(20), c2 varchar(20), c3 bigint(20), primary key(c1, c2));
+insert into t0 values('0000','7777',1);
+prepare s0 from 'select * from t0 where c1=? and c2>=? and c2<=?';
+set @a0='0000', @b0='9999';
+execute s0 using @a0, @b0, @a0;
+select @@last_plan_from_cache;
+execute s0 using @a0, @a0, @b0;
+select @@last_plan_from_cache;
+create table t1(c1 varchar(20), c2 varchar(20), c3 bigint(20), primary key(c1, c2));
+insert into t1 values('0000','7777',1);
+prepare s1 from 'select * from t1 where c1=? and c2>=? and c2<=?';
+set @a1='0000', @b1='9999';
+execute s1 using @a1, @b1, @b1;
+select @@last_plan_from_cache;
+execute s1 using @a1, @a1, @b1;
+select @@last_plan_from_cache;
+create table t2(c1 bigint(20) primary key, c2 varchar(20));
+insert into t2 values(1,'7777');
+prepare s2 from 'select * from t2 where c1>=? and c1<=?';
+set @a2=0, @b2=9;
+execute s2 using @a2, @a2;
+select @@last_plan_from_cache;
+execute s2 using @a2, @b2;
+select @@last_plan_from_cache;
+create table t3(c1 int, c2 int, c3 int, unique key(c1), key(c2));
+insert into t3 values(2,1,1);
+prepare s3 from 'select /*+ use_index_merge(t3) */ * from t3 where (c1 >= ? and c1 <= ?) or c2 > 1';
+set @a3=1,@b3=3;
+execute s3 using @a3,@a3;
+select @@last_plan_from_cache;
+execute s3 using @a3,@b3;
+select @@last_plan_from_cache;
+prepare s3 from 'select /*+ use_index_merge(t3) */ * from t3 where (c1 >= ? and c1 <= ?) or c2 > 1';
+set @a3=1,@b3=3;
+execute s3 using @b3,@a3;
+select @@last_plan_from_cache;
+execute s3 using @a3,@b3;
+select @@last_plan_from_cache;
+create table t4(c1 int primary key, c2 int, c3 int, key(c2));
+insert into t4 values(2,1,1);
+prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1';
+set @a4=1,@b4=3;
+execute s4 using @a4,@a4;
+select @@last_plan_from_cache;
+execute s4 using @a4,@b4;
+select @@last_plan_from_cache;
+prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1';
+set @a4=1,@b4=3;
+execute s4 using @b4,@a4;
+select @@last_plan_from_cache;
+execute s4 using @a4,@b4;
+select @@last_plan_from_cache;
+
+# TestPreparedShowStatements
+prepare p1 from 'show variables like "tidb_snapshot"';
+execute p1;
+drop table if exists t, t1;
+create table t (a int, b int);
+prepare p2 from "show columns from t where field = 'a'";
+execute p2;
+create table t1 (a int, b int);
+prepare p3 from "show tables where tables_in_planner__core__tests__prepare__prepare = 't1'";
+execute p3;
+

@@ -7,6 +7,9 @@ null = '\N'
 backslash-escape = true
 trim-last-separator = false
 
+[conflict]
+strategy = 'ignore'
+
 [checkpoint]
 enable = true
 schema = "tidb_lightning_checkpoint_test"

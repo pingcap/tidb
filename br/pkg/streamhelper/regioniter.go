@@ -15,8 +15,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 )
 
 const (
@@ -80,6 +80,19 @@ func IterateRegion(cli TiKVClusterMeta, startKey, endKey []byte) *RegionIter {
 		currentStartKey: startKey,
 		PageSize:        defaultPageSize,
 	}
+}
+
+// locateKeyOfRegion locates the place of the region in the key.
+func locateKeyOfRegion(ctx context.Context, cli TiKVClusterMeta, key []byte) (RegionWithLeader, error) {
+	regions, err := cli.RegionScan(ctx, key, kv.Key(key).Next(), 1)
+	if err != nil {
+		return RegionWithLeader{}, err
+	}
+	if len(regions) == 0 {
+		return RegionWithLeader{}, errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"scanning the key %s returns empty region", redact.Key(key))
+	}
+	return regions[0], nil
 }
 
 func CheckRegionConsistency(startKey, endKey []byte, regions []RegionWithLeader) error {

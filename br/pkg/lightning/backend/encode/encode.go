@@ -19,9 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // EncodingConfig is the configuration for the encoding backend.
@@ -63,11 +63,6 @@ type SessionOptions struct {
 
 // Rows represents a collection of encoded rows.
 type Rows interface {
-	// SplitIntoChunks splits the rows into multiple consecutive parts, each
-	// part having total byte size less than `splitSize`. The meaning of "byte
-	// size" should be consistent with the value used in `Row.ClassifyAndAppend`.
-	SplitIntoChunks(splitSize int) []Rows
-
 	// Clear returns a new collection with empty content. It may share the
 	// capacity with the current instance. The typical usage is `x = x.Clear()`.
 	Clear() Rows

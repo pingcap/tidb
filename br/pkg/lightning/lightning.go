@@ -15,10 +15,12 @@
 package lightning
 
 import (
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"encoding/json"
@@ -29,6 +31,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +42,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -50,21 +54,22 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	_ "github.com/pingcap/tidb/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
-	_ "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/promutil"
+	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
+	_ "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/exp/slices"
 )
 
 // Lightning is the main struct of the lightning package.
@@ -426,6 +431,12 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	utils.LogEnvVariables()
 
+	if split.WaitRegionOnlineAttemptTimes != taskCfg.TikvImporter.RegionCheckBackoffLimit {
+		// it will cause data race if lightning is used as a library, but this is a
+		// hidden config so we ignore that case
+		split.WaitRegionOnlineAttemptTimes = taskCfg.TikvImporter.RegionCheckBackoffLimit
+	}
+
 	metrics := metric.NewMetrics(o.promFactory)
 	metrics.RegisterTo(o.promRegistry)
 	defer func() {
@@ -433,7 +444,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}()
 	l.metrics = metrics
 
-	ctx := metric.NewContext(taskCtx, metrics)
+	ctx := metric.WithMetric(taskCtx, metrics)
 	ctx = log.NewContext(ctx, o.logger)
 	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
@@ -550,7 +561,8 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	var keyspaceName string
 	if taskCfg.TikvImporter.Backend == config.BackendLocal {
-		if taskCfg.TikvImporter.KeyspaceName == "" {
+		keyspaceName = taskCfg.TikvImporter.KeyspaceName
+		if keyspaceName == "" {
 			keyspaceName, err = getKeyspaceName(db)
 			if err != nil {
 				o.logger.Warn("unable to get keyspace name, lightning will use empty keyspace name", zap.Error(err))
@@ -952,8 +964,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 				tableTotalSizes = append(tableTotalSizes, tb.TotalSize)
 			}
 		}
-		slices.SortFunc(tableTotalSizes, func(i, j int64) bool {
-			return i > j
+		slices.SortFunc(tableTotalSizes, func(i, j int64) int {
+			return cmp.Compare(j, i)
 		})
 		topNTotalSize := int64(0)
 		for i := 0; i < len(tableTotalSizes) && i < cfg.App.TableConcurrency; i++ {
@@ -1045,7 +1057,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 }
 
 // SwitchMode switches the mode of the TiKV cluster.
-func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
+func SwitchMode(ctx context.Context, cli pdhttp.Client, tls *tls.Config, mode string, ranges ...*import_sstpb.Range) error {
 	var m import_sstpb.SwitchMode
 	switch mode {
 	case config.ImportMode:
@@ -1058,10 +1070,10 @@ func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode s
 
 	return tikv.ForAllStores(
 		ctx,
-		tls.WithHost(cfg.TiDB.PdAddr),
-		tikv.StoreStateDisconnected,
-		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, m)
+		cli,
+		metapb.StoreState_Offline,
+		func(c context.Context, store *pdhttp.MetaStore) error {
+			return tikv.SwitchMode(c, tls, store.Address, m, ranges...)
 		},
 	)
 }

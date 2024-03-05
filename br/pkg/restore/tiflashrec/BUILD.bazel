@@ -8,10 +8,10 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/utils",
-        "//infoschema",
-        "//parser/ast",
-        "//parser/format",
-        "//parser/model",
+        "//pkg/infoschema",
+        "//pkg/parser/ast",
+        "//pkg/parser/format",
+        "//pkg/parser/model",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],
@@ -25,8 +25,8 @@ go_test(
     shard_count = 3,
     deps = [
         ":tiflashrec",
-        "//infoschema",
-        "//parser/model",
+        "//pkg/infoschema",
+        "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],
 )

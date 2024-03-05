@@ -16,9 +16,19 @@ error = '''
 backup range invalid
 '''
 
+["BR:Backup:ErrBackupKeyIsLocked"]
+error = '''
+backup key is locked
+'''
+
 ["BR:Backup:ErrBackupNoLeader"]
 error = '''
 backup no leader
+'''
+
+["BR:Backup:ErrBackupRegion"]
+error = '''
+backup region error
 '''
 
 ["BR:Common:ErrEnvNotSpecified"]
@@ -146,6 +156,11 @@ error = '''
 storage is not tikv
 '''
 
+["BR:KV:ErrPossibleInconsistency"]
+error = '''
+the cluster state might be inconsistent
+'''
+
 ["BR:PD:ErrPDBatchScanRegion"]
 error = '''
 batch scan region
@@ -159,6 +174,11 @@ PD invalid response
 ["BR:PD:ErrPDLeaderNotFound"]
 error = '''
 PD leader not found
+'''
+
+["BR:PD:ErrPDUknownScatterResult"]
+error = '''
+failed to wait region splitted
 '''
 
 ["BR:PD:ErrPDUpdateFailed"]
@@ -406,6 +426,11 @@ error = '''
 raft proposal dropped
 '''
 
+["Lightning:KV:ErrNoLeader"]
+error = '''
+write to tikv with no leader returned, region '%d', leader: %d
+'''
+
 ["Lightning:KV:NotLeader"]
 error = '''
 not leader
@@ -504,6 +529,11 @@ tidb-lightning pre-check failed: %s
 ["Lightning:PreCheck:ErrSystemRequirementNotMet"]
 error = '''
 system requirement not met
+'''
+
+["Lightning:PreDedup:ErrDuplicateKey"]
+error = '''
+duplicate key detected on indexID %d of KeyID: %v
 '''
 
 ["Lightning:Restore:ErrAddIndexFailed"]
@@ -986,6 +1016,11 @@ error = '''
 Partition column values of incorrect type
 '''
 
+["ddl:1656"]
+error = '''
+Cannot use MAXVALUE as value in VALUES IN
+'''
+
 ["ddl:1659"]
 error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
@@ -994,6 +1029,11 @@ Field '%-.192s' is of a not allowed type for this type of partitioning
 ["ddl:1674"]
 error = '''
 Statement is unsafe because it uses a system function that may return a different value on the slave
+'''
+
+["ddl:1681"]
+error = '''
+The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.
 '''
 
 ["ddl:1688"]
@@ -1186,6 +1226,56 @@ error = '''
 Expression of expression index '%s' cannot refer to a row value
 '''
 
+["ddl:3812"]
+error = '''
+An expression of non-boolean type specified to a check constraint '%s'.
+'''
+
+["ddl:3813"]
+error = '''
+Column check constraint '%s' references other column.
+'''
+
+["ddl:3814"]
+error = '''
+An expression of a check constraint '%s' contains disallowed function: %s.
+'''
+
+["ddl:3815"]
+error = '''
+An expression of a check constraint '%s' contains disallowed function.
+'''
+
+["ddl:3816"]
+error = '''
+An expression of a check constraint '%s' cannot refer to a user or system variable.
+'''
+
+["ddl:3818"]
+error = '''
+Check constraint '%s' cannot refer to an auto-increment column.
+'''
+
+["ddl:3819"]
+error = '''
+Check constraint '%s' is violated.
+'''
+
+["ddl:3820"]
+error = '''
+Check constraint '%s' refers to non-existing column '%s'.
+'''
+
+["ddl:3822"]
+error = '''
+Duplicate check constraint name '%s'.
+'''
+
+["ddl:3823"]
+error = '''
+Column '%s' cannot be used in a check constraint '%s': needed in a foreign key constraint referential action.
+'''
+
 ["ddl:3837"]
 error = '''
 Column '%s' has an expression index dependency and cannot be dropped or renamed
@@ -1194,6 +1284,16 @@ Column '%s' has an expression index dependency and cannot be dropped or renamed
 ["ddl:3855"]
 error = '''
 Column '%s' has a partitioning function dependency and cannot be dropped or renamed
+'''
+
+["ddl:3940"]
+error = '''
+Constraint '%s' does not exist.
+'''
+
+["ddl:3959"]
+error = '''
+Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.
 '''
 
 ["ddl:4135"]
@@ -1258,7 +1358,7 @@ Unsupported clustered primary key type FLOAT/DOUBLE for TTL
 
 ["ddl:8200"]
 error = '''
-Unsupported shard_row_id_bits for table with primary key as row id
+Unsupported tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first.
 '''
 
 ["ddl:8201"]
@@ -1406,6 +1506,31 @@ error = '''
 Ingest failed: %s
 '''
 
+["ddl:8256"]
+error = '''
+Check ingest environment failed: %s
+'''
+
+["ddl:8260"]
+error = '''
+Job [%v] can't be paused: %s
+'''
+
+["ddl:8261"]
+error = '''
+Job [%v] can't be resumed: %s
+'''
+
+["ddl:8262"]
+error = '''
+Job [%v] has already been paused
+'''
+
+["ddl:8263"]
+error = '''
+The operation is not allowed while the bdr role of this cluster is set to %s.
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1543,7 +1668,7 @@ SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication p
 
 ["executor:1819"]
 error = '''
-Your password does not satisfy the current policy requirements
+Your password does not satisfy the current policy requirements (%s)
 '''
 
 ["executor:1820"]
@@ -1564,6 +1689,11 @@ Foreign key cascade delete/update exceeds max depth of %v.
 ["executor:3016"]
 error = '''
 The password for anonymous user cannot be expired.
+'''
+
+["executor:3024"]
+error = '''
+Query execution was interrupted, maximum statement execution time exceeded
 '''
 
 ["executor:3523"]
@@ -1703,12 +1833,12 @@ The FORMAT '%s' is not supported
 
 ["executor:8158"]
 error = '''
-The URI of INFILE is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'
 '''
 
 ["executor:8159"]
 error = '''
-Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
+Access to the %s has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
 '''
 
 ["executor:8160"]
@@ -1738,7 +1868,7 @@ Option %s specified more than once
 
 ["executor:8166"]
 error = '''
-Unsupported option %s for %s import mode
+Unsupported option %s for %s
 '''
 
 ["executor:8170"]
@@ -1761,9 +1891,39 @@ error = '''
 PreCheck failed: %s
 '''
 
+["executor:8174"]
+error = '''
+BRIE Job %d not found
+'''
+
+["executor:8175"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]
+'''
+
+["executor:8176"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
+'''
+
+["executor:8253"]
+error = '''
+Query execution was interrupted, identified as runaway query
+'''
+
+["executor:8254"]
+error = '''
+Quarantined and interrupted because of being in runaway watch list
+'''
+
+["executor:8255"]
+error = '''
+Unknown background task name '%-.192s'
 '''
 
 ["expression:1139"]
@@ -1801,9 +1961,19 @@ error = '''
 Illegal mix of collations for operation '%s'
 '''
 
+["expression:1305"]
+error = '''
+%s %s does not exist
+'''
+
 ["expression:1365"]
 error = '''
 Division by 0
+'''
+
+["expression:1426"]
+error = '''
+Too big precision %d specified for column '%-.192s'. Maximum is %d.
 '''
 
 ["expression:1582"]
@@ -2351,9 +2521,19 @@ error = '''
 Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition
 '''
 
+["planner:3601"]
+error = '''
+Too many arguments for function %s; maximum allowed is %d
+'''
+
+["planner:3602"]
+error = '''
+Argument %s of GROUPING function is not in GROUP BY
+'''
+
 ["planner:3637"]
 error = '''
-Variable '%s' cannot be set using SET_VAR hint.
+Variable '%s' might not be affected by SET_VAR hint.
 '''
 
 ["planner:8006"]
@@ -2616,6 +2796,11 @@ error = '''
 Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.
 '''
 
+["schema:3822"]
+error = '''
+Duplicate check constraint name '%s'.
+'''
+
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
@@ -2654,6 +2839,66 @@ Unknown resource group '%-.192s'
 ["schema:8250"]
 error = '''
 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
+'''
+
+["server:1040"]
+error = '''
+Too many connections
+'''
+
+["server:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
+["server:1148"]
+error = '''
+The used command is not allowed with this MySQL version
+'''
+
+["server:1153"]
+error = '''
+Got a packet bigger than 'max_allowed_packet' bytes
+'''
+
+["server:1184"]
+error = '''
+Aborted connection %d to db: '%-.192s' user: '%-.48s' host: '%-.255s' (%-.64s)
+'''
+
+["server:1251"]
+error = '''
+Client does not support authentication protocol requested by server; consider upgrading MySQL client
+'''
+
+["server:1698"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s'
+'''
+
+["server:1820"]
+error = '''
+You must reset your password using ALTER USER statement before executing this statement
+'''
+
+["server:3159"]
+error = '''
+Connections using insecure transport are prohibited while --require_secure_transport=ON.
+'''
+
+["server:8052"]
+error = '''
+invalid sequence
+'''
+
+["server:8057"]
+error = '''
+invalid type
+'''
+
+["server:8130"]
+error = '''
+client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk
 '''
 
 ["session:8002"]
@@ -2739,6 +2984,11 @@ Unknown partition '%-.64s' in table '%-.64s'
 ["table:1748"]
 error = '''
 Found a row not matching the given partition set
+'''
+
+["table:3819"]
+error = '''
+Check constraint '%s' is violated.
 '''
 
 ["table:4135"]
@@ -3008,7 +3258,7 @@ Bad Number
 
 ["types:8030"]
 error = '''
-Cast to signed converted positive out-of-range integer to it's negative complement
+Cast to signed converted positive out-of-range integer to its negative complement
 '''
 
 ["types:8031"]
@@ -3094,6 +3344,16 @@ Can't create more than maxPreparedStmtCount statements (current value: %d)
 ["variable:1621"]
 error = '''
 %s variable '%s' is read-only. Use SET %s to assign the value
+'''
+
+["variable:1681"]
+error = '''
+Updating '%s' is deprecated. It will be made read-only in a future release.
+'''
+
+["variable:3721"]
+error = '''
+Invalid default collation %s: utf8mb4_0900_ai_ci or utf8mb4_general_ci or utf8mb4_bin expected
 '''
 
 ["variable:8047"]

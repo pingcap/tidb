@@ -16,13 +16,14 @@
 
 set -euE
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Populate the mydumper source
 DBPATH="$TEST_DIR/cpch.mydump"
 CHUNK_COUNT=5
 ROW_COUNT=1000
 
 do_run_lightning() {
-    run_lightning -d "$DBPATH" --enable-checkpoint=1 --config "tests/$TEST_NAME/$1.toml"
+    run_lightning -d "$DBPATH" --enable-checkpoint=1 --config "$CUR/$1.toml"
 }
 
 verify_checkpoint_noop() {
@@ -33,7 +34,7 @@ verify_checkpoint_noop() {
     run_sql 'SELECT count(i), sum(i) FROM cpch_tsr.tbl;'
     check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
     check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
-    run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cpch.1234567890.bak`.table_v8 WHERE status >= 200'
+    run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cpch.1234567890.bak`.table_v9 WHERE status >= 200'
     check_contains "count(*): 1"
 }
 
@@ -113,3 +114,10 @@ check_contains "count(i): $(($ROW_COUNT*$CHUNK_COUNT))"
 check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT + 1)/2 ))"
 [ ! -e "$TEST_DIR/cpch.pb" ]
 [ -e "$TEST_DIR/cpch.pb.1234567890.bak" ]
+
+# default auto analyze tick is 3s
+sleep 6
+run_sql "SHOW STATS_META WHERE Table_name = 'tbl';"
+check_contains "Row_count: 5000"
+check_contains "Modify_count: 0"
+

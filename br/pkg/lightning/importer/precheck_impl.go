@@ -14,10 +14,12 @@
 package importer
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,17 +39,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/set"
+	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
@@ -75,10 +75,14 @@ func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAv
 	}
 
 	for _, store := range storeInfo.Stores {
-		if engine.IsTiFlash(store.Store.Store) {
-			tiflashAvail += uint64(store.Status.Available)
+		avail, err := units.RAMInBytes(store.Status.Available)
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashAvail += uint64(avail)
 		} else {
-			tikvAvail += uint64(store.Status.Available)
+			tikvAvail += uint64(avail)
 		}
 	}
 	return
@@ -158,11 +162,11 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*precheck.CheckR
 		}
 	}
 
-	replicaCount, err := ci.preInfoGetter.GetReplicationConfig(ctx)
+	replicaCount, err := ci.preInfoGetter.GetMaxReplica(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tikvSourceSize = tikvSourceSize * replicaCount.MaxReplicas
+	tikvSourceSize = tikvSourceSize * replicaCount
 
 	if tikvSourceSize <= tikvAvail && tiflashSourceSize <= tiflashAvail {
 		theResult.Message = fmt.Sprintf("The storage space is rich, which TiKV/Tiflash is %s/%s. The estimated storage space is %s/%s.",
@@ -261,15 +265,16 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	regions := make(map[uint64]int)
-	stores := make(map[uint64]*pdtypes.StoreInfo)
+	regions := make(map[int64]int)
+	stores := make(map[int64]*pdhttp.StoreInfo)
 	for _, region := range emptyRegionsInfo.Regions {
 		for _, peer := range region.Peers {
-			regions[peer.StoreId]++
+			regions[peer.StoreID]++
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		stores[store.Store.GetId()] = store
+		store := store
+		stores[store.Store.ID] = &store
 	}
 	tableCount := 0
 	for _, db := range ci.dbMetas {
@@ -279,8 +284,8 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 		}
 		tableCount += len(info.Tables)
 	}
-	errorThrehold := mathutil.Max(errorEmptyRegionCntPerStore, tableCount*3)
-	warnThrehold := mathutil.Max(warnEmptyRegionCntPerStore, tableCount)
+	errorThrehold := max(errorEmptyRegionCntPerStore, tableCount*3)
+	warnThrehold := max(warnEmptyRegionCntPerStore, tableCount)
 	var (
 		errStores  []string
 		warnStores []string
@@ -290,7 +295,7 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 			if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 				continue
 			}
-			if engine.IsTiFlash(store.Store.Store) {
+			if engine.IsTiFlashHTTPResp(&store.Store) {
 				continue
 			}
 			if regionCnt > errorThrehold {
@@ -348,21 +353,22 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	stores := make([]*pdtypes.StoreInfo, 0, len(storesInfo.Stores))
+	stores := make([]*pdhttp.StoreInfo, 0, len(storesInfo.Stores))
 	for _, store := range storesInfo.Stores {
+		store := store
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
 		}
-		if engine.IsTiFlash(store.Store.Store) {
+		if engine.IsTiFlashHTTPResp(&store.Store) {
 			continue
 		}
-		stores = append(stores, store)
+		stores = append(stores, &store)
 	}
 	if len(stores) <= 1 {
 		return theResult, nil
 	}
-	slices.SortFunc(stores, func(i, j *pdtypes.StoreInfo) bool {
-		return i.Status.RegionCount < j.Status.RegionCount
+	slices.SortFunc(stores, func(i, j *pdhttp.StoreInfo) int {
+		return cmp.Compare(i.Status.RegionCount, j.Status.RegionCount)
 	})
 	minStore := stores[0]
 	maxStore := stores[len(stores)-1]
@@ -379,8 +385,8 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 		}
 		tableCount += len(info.Tables)
 	}
-	threhold := mathutil.Max(checkRegionCntRatioThreshold, tableCount)
-	if maxStore.Status.RegionCount <= threhold {
+	threhold := max(checkRegionCntRatioThreshold, tableCount)
+	if maxStore.Status.RegionCount <= int64(threhold) {
 		return theResult, nil
 	}
 	ratio := float64(minStore.Status.RegionCount) / float64(maxStore.Status.RegionCount)
@@ -388,11 +394,11 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 		theResult.Passed = false
 		theResult.Message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
-			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+			minStore.Store.ID, minStore.Status.RegionCount, maxStore.Store.ID, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
 	} else if ratio < warnRegionCntMinMaxRatio {
 		theResult.Message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
-			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
+			minStore.Store.ID, minStore.Status.RegionCount, maxStore.Store.ID, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
 	}
 	return theResult, nil
 }
@@ -463,7 +469,7 @@ func (ci *largeFileCheckItem) Check(_ context.Context) (*precheck.CheckResult, e
 		Item:     ci.GetCheckItemID(),
 		Severity: precheck.Warn,
 		Passed:   true,
-		Message:  "Source csv files size is proper",
+		Message:  "Source data files size is proper",
 	}
 
 	if !ci.cfg.Mydumper.StrictFormat {
@@ -471,14 +477,14 @@ func (ci *largeFileCheckItem) Check(_ context.Context) (*precheck.CheckResult, e
 			for _, t := range db.Tables {
 				for _, f := range t.DataFiles {
 					if f.FileMeta.RealSize > defaultCSVSize {
-						theResult.Message = fmt.Sprintf("large csv: %s file exists and it will slow down import performance", f.FileMeta.Path)
+						theResult.Message = fmt.Sprintf("large data file: %s file exists and it will slow down import performance", f.FileMeta.Path)
 						theResult.Passed = false
 					}
 				}
 			}
 		}
 	} else {
-		theResult.Message = "Skip the csv size check, because config.StrictFormat is true"
+		theResult.Message = "Skip the data file size check, because config.StrictFormat is true"
 	}
 	return theResult, nil
 }
@@ -746,17 +752,19 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 // CDCPITRCheckItem check downstream has enabled CDC or PiTR. It's exposed to let
 // caller override the Instruction message.
 type CDCPITRCheckItem struct {
-	cfg         *config.Config
-	Instruction string
+	cfg           *config.Config
+	Instruction   string
+	pdAddrsGetter func(context.Context) []string
 	// used in test
 	etcdCli *clientv3.Client
 }
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
-func NewCDCPITRCheckItem(cfg *config.Config) precheck.Checker {
+func NewCDCPITRCheckItem(cfg *config.Config, pdAddrsGetter func(context.Context) []string) precheck.Checker {
 	return &CDCPITRCheckItem{
-		cfg:         cfg,
-		Instruction: "local backend is not compatible with them. Please switch to tidb backend then try again.",
+		cfg:           cfg,
+		Instruction:   "local backend is not compatible with them. Please switch to tidb backend then try again.",
+		pdAddrsGetter: pdAddrsGetter,
 	}
 }
 
@@ -765,7 +773,11 @@ func (*CDCPITRCheckItem) GetCheckItemID() precheck.CheckItemID {
 	return precheck.CheckTargetUsingCDCPITR
 }
 
-func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client, error) {
+func dialEtcdWithCfg(
+	ctx context.Context,
+	cfg *config.Config,
+	addrs []string,
+) (*clientv3.Client, error) {
 	cfg2, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
@@ -774,7 +786,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client,
 
 	return clientv3.New(clientv3.Config{
 		TLS:              tlsConfig,
-		Endpoints:        []string{cfg.TiDB.PdAddr},
+		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -801,7 +813,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 
 	if ci.etcdCli == nil {
 		var err error
-		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg)
+		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.pdAddrsGetter(ctx))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1343,7 +1355,7 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 
 	var lock sync.Mutex
 	tableNames := make([]string, 0)
-	concurrency := mathutil.Min(tableCount, ci.cfg.App.RegionConcurrency)
+	concurrency := min(tableCount, ci.cfg.App.RegionConcurrency)
 	type tableNameComponents struct {
 		DBName    string
 		TableName string

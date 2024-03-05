@@ -16,6 +16,8 @@
 
 set -eu
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/LoggingImportBytes=return"
 
 mkdir -p "$TEST_DIR/data"
@@ -36,11 +38,11 @@ LOG_FILE1="$TEST_DIR/lightning-import-compress1.log"
 LOG_FILE2="$TEST_DIR/lightning-import-compress2.log"
 LOG_FILE3="$TEST_DIR/lightning-import-compress3.log"
 
-run_lightning --backend local -d "$TEST_DIR/data" --config "tests/$TEST_NAME/config.toml" --log-file "$LOG_FILE1" -L debug
+run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config.toml" --log-file "$LOG_FILE1" -L debug
 run_sql 'DROP DATABASE test;'
-run_lightning --backend local -d "$TEST_DIR/data" --config "tests/$TEST_NAME/config_gz.toml" --log-file "$LOG_FILE2" -L debug
+run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config_gz.toml" --log-file "$LOG_FILE2" -L debug
 run_sql 'DROP DATABASE test;'
-run_lightning --backend local -d "$TEST_DIR/data" --config "tests/$TEST_NAME/config_gzip.toml" --log-file "$LOG_FILE3" -L debug
+run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config_gzip.toml" --log-file "$LOG_FILE3" -L debug
 
 uncompress=$(grep "import write" /tmp/backup_restore_test/lightning-import-compress1.log |
   grep -Eo "bytes=[0-9]+" | sed 's/bytes=//g' | awk '{sum+=$1} END {print sum}')

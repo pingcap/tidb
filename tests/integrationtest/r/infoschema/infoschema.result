@@ -1,0 +1,132 @@
+use infoschema__infoschema;
+DROP TABLE IF EXISTS `t1`;
+create table test.t1 (c1 VARCHAR(10) NOT NULL COMMENT 'Abcdefghijabcd', c2 INTEGER COMMENT 'aBcdefghijab',c3 INTEGER COMMENT '01234567890', c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 VARCHAR(100), c9 CHAR(50), c10 DATETIME, c11 DATETIME, c12 DATETIME,c13 DATETIME, INDEX i1 (c1) COMMENT 'i1 comment',INDEX i2(c2) ) COMMENT='ABCDEFGHIJabc';
+SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' and table_schema="infoschema__infoschema" ORDER BY index_comment;
+index_comment	char_length(index_comment)	COLUMN_NAME
+SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' and table_schema="test" ORDER BY index_comment;
+index_comment	char_length(index_comment)	COLUMN_NAME
+	0	c2
+i1 comment	10	c1
+show create table information_schema.ddl_jobs;
+Table	Create Table
+DDL_JOBS	CREATE TABLE `DDL_JOBS` (
+  `JOB_ID` bigint(21) DEFAULT NULL,
+  `DB_NAME` varchar(64) DEFAULT NULL,
+  `TABLE_NAME` varchar(64) DEFAULT NULL,
+  `JOB_TYPE` varchar(64) DEFAULT NULL,
+  `SCHEMA_STATE` varchar(64) DEFAULT NULL,
+  `SCHEMA_ID` bigint(21) DEFAULT NULL,
+  `TABLE_ID` bigint(21) DEFAULT NULL,
+  `ROW_COUNT` bigint(21) DEFAULT NULL,
+  `CREATE_TIME` datetime DEFAULT NULL,
+  `START_TIME` datetime DEFAULT NULL,
+  `END_TIME` datetime DEFAULT NULL,
+  `STATE` varchar(64) DEFAULT NULL,
+  `QUERY` text DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select count(length(query)) from information_schema.ddl_jobs;
+count(length(query))
+x
+drop table if EXISTS t1;
+drop table if EXISTS mysql.t1, mysql.t2, mysql.t3;
+create table infoschema__infoschema.t1 (id int primary key, a text);
+insert infoschema__infoschema.t1 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
+rename table infoschema__infoschema.t1 to mysql.t1;
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't1');
+count(*)
+1
+create table infoschema__infoschema.t2 (id int primary key, a text);
+insert infoschema__infoschema.t2 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
+create table infoschema__infoschema.t3 (id int primary key, a text);
+insert infoschema__infoschema.t3 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
+rename table infoschema__infoschema.t2 to mysql.t2, infoschema__infoschema.t3 to mysql.t3;
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 't2';
+count(*)
+1
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 't3';
+count(*)
+1
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
+count(*)
+3
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
+count(*)
+3
+desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(1)->Column#26
+└─MemTableScan	10000.00	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
+desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(1)->Column#26
+└─MemTableScan	10000.00	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
+count(*)
+2
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE_NAME = 't2') and TABLE_SCHEMA = 'mysql';
+count(*)
+2
+drop table mysql.t1, mysql.t2, mysql.t3;
+create table infoschema__infoschema.t4(a int, INDEX i1 (a));
+create table infoschema__infoschema.t5(a int, INDEX i1 (a));
+insert into infoschema__infoschema.t4 values(1);
+insert into infoschema__infoschema.t5 values(1);
+SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'infoschema__infoschema' AND TABLE_NAME = 't4';
+count(*)
+1
+SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'infoschema__infoschema' AND TABLE_NAME != 't4';
+count(*)
+1
+analyze table infoschema__infoschema.t4;
+analyze table infoschema__infoschema.t5;
+select * from information_schema.STATISTICS where table_schema = 'infoschema__infoschema' and lower(table_name) != 't4';
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	INDEX_SCHEMA	INDEX_NAME	SEQ_IN_INDEX	COLUMN_NAME	COLLATION	CARDINALITY	SUB_PART	PACKED	NULLABLE	INDEX_TYPE	COMMENT	INDEX_COMMENT	IS_VISIBLE	Expression
+def	infoschema__infoschema	t5	1	infoschema__infoschema	i1	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL
+select table_type from information_schema.tables where (table_name='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+table_type
+BASE TABLE
+BASE TABLE
+select table_type, table_rows from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+table_type	table_rows
+BASE TABLE	1
+BASE TABLE	1
+select table_type, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+table_type	DATA_LENGTH
+BASE TABLE	8
+BASE TABLE	8
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+engine	DATA_LENGTH
+InnoDB	8
+InnoDB	8
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+id	estRows	task	access object	operator info
+MemTableScan_5	10000.00	root	table:TABLES	table_name:["t4","t5"], table_schema:["infoschema__infoschema"]
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+engine	DATA_LENGTH
+InnoDB	8
+InnoDB	8
+select engine, DATA_LENGTH from information_schema.tables where upper(table_name) = 'T5' and table_schema = 'infoschema__infoschema';
+engine	DATA_LENGTH
+InnoDB	8
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+id	estRows	task	access object	operator info
+Projection_4	8000.00	root		Column#5, Column#10
+└─Selection_5	8000.00	root		or(eq(Column#3, "t4"), eq(upper(Column#3), "T5"))
+  └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
+select engine, DATA_LENGTH from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+engine	DATA_LENGTH
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+id	estRows	task	access object	operator info
+Projection_4	8000.00	root		Column#5, Column#10
+└─Selection_5	8000.00	root		or(eq(Column#3, "t4"), eq(lower(Column#3), "t5"))
+  └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["INFOSCHEMA__INFOSCHEMA"]
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+engine	DATA_LENGTH
+InnoDB	8
+InnoDB	8
+explain select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
+id	estRows	task	access object	operator info
+MemTableScan_5	10000.00	root	table:TABLES	table_name:["T4","t4"], table_schema:["infoschema__infoschema"]
+select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
+engine	DATA_LENGTH
+InnoDB	8

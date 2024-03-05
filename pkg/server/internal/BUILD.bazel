@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "internal",
+    srcs = ["packetio.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/internal",
+    visibility = ["//pkg/server:__subpackages__"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/server/err",
+        "//pkg/server/internal/util",
+        "//pkg/server/metrics",
+        "//pkg/sessionctx/variable",
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "internal_test",
+    timeout = "short",
+    srcs = ["packetio_test.go"],
+    embed = [":internal"],
+    flaky = True,
+    shard_count = 8,
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/server/internal/testutil",
+        "//pkg/server/internal/util",
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_stretchr_testify//require",
+    ],
+)

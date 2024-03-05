@@ -1,0 +1,587 @@
+drop table if exists truncate_test;
+create table truncate_test (a int);
+insert truncate_test values (1),(2),(3);
+select * from truncate_test;
+a
+1
+2
+3
+truncate table truncate_test;
+select * from truncate_test;
+a
+drop table if exists t;
+drop view if exists recursive_view1, recursive_view2;
+create table if not exists t(a int);
+create definer='root'@'localhost' view recursive_view1 as select * from t;
+create definer='root'@'localhost' view recursive_view2 as select * from recursive_view1;
+drop table t;
+rename table recursive_view2 to t;
+select * from recursive_view1;
+Error 1462 (HY000): `executor__ddl`.`recursive_view1` contains view recursion
+drop view recursive_view1, t;
+drop table if exists t;
+drop view if exists recursive_view1, recursive_view2;
+create table if not exists t(a int);
+create view view_issue16250 as select * from t;
+truncate table view_issue16250;
+Error 1146 (42S02): Table 'executor__ddl.view_issue16250' doesn't exist
+drop table if exists t;
+drop view if exists view_issue16250;
+drop table if exists zy_tab;
+create table if not exists zy_tab (
+zy_code int,
+zy_name varchar(100)
+);
+drop table if exists bj_tab;
+create table if not exists bj_tab (
+bj_code int,
+bj_name varchar(100),
+bj_addr varchar(100),
+bj_person_count int,
+zy_code int
+);
+drop table if exists st_tab;
+create table if not exists st_tab (
+st_code int,
+st_name varchar(100),
+bj_code int
+);
+drop view if exists v_st_2;
+create definer='root'@'localhost' view v_st_2 as
+select st.st_name,bj.bj_name,zy.zy_name
+from (
+select bj_code,
+bj_name,
+zy_code
+from bj_tab as b
+where b.bj_code = 1
+) as bj
+left join zy_tab as zy on zy.zy_code = bj.zy_code
+left join st_tab as st on bj.bj_code = st.bj_code;
+show create view v_st_2;
+View	Create View	character_set_client	collation_connection
+v_st_2	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v_st_2` (`st_name`, `bj_name`, `zy_name`) AS SELECT `st`.`st_name` AS `st_name`,`bj`.`bj_name` AS `bj_name`,`zy`.`zy_name` AS `zy_name` FROM ((SELECT `bj_code` AS `bj_code`,`bj_name` AS `bj_name`,`zy_code` AS `zy_code` FROM `executor__ddl`.`bj_tab` AS `b` WHERE `b`.`bj_code`=1) AS `bj` LEFT JOIN `executor__ddl`.`zy_tab` AS `zy` ON `zy`.`zy_code`=`bj`.`zy_code`) LEFT JOIN `executor__ddl`.`st_tab` AS `st` ON `bj`.`bj_code`=`st`.`bj_code`	utf8mb4	utf8mb4_general_ci
+select * from v_st_2;
+st_name	bj_name	zy_name
+drop view if exists v_st_2;
+drop table if exists zy_tab;
+drop table if exists bj_tab;
+drop table if exists st_tab;
+drop sequence if exists seq;
+drop sequence if exists seq1;
+create sequence if not exists seq;
+truncate table seq;
+Error 1146 (42S02): Table 'executor__ddl.seq' doesn't exist
+create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle;
+truncate table seq1;
+Error 1146 (42S02): Table 'executor__ddl.seq1' doesn't exist
+drop sequence if exists seq;
+drop sequence if exists seq1;
+drop table if exists drop_test;
+create table if not exists drop_test (a int);
+create index idx_a on drop_test (a);
+drop index idx_a on drop_test;
+drop table drop_test;
+drop table if exists t;
+create table t (a bigint auto_random(5), b int, primary key (a, b) clustered);
+insert into t (b) values (1);
+set @@allow_auto_random_explicit_insert = 0;
+insert into t values (100, 2);
+Error 8216 (HY000): Invalid auto random: Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true.
+set @@allow_auto_random_explicit_insert = 1;
+insert into t values (100, 2);
+select b from t order by b;
+b
+1
+2
+alter table t modify column a bigint auto_random(6);
+drop table t;
+create table t (a bigint, b bigint auto_random(4, 32), primary key (b, a) clustered);
+insert into t (a) values (1);
+select a from t;
+a
+1
+drop table if exists t;
+set @@allow_auto_random_explicit_insert = default;
+drop table if exists t;
+create table t(a bigint PRIMARY KEY, b int);
+insert into t values(9223372036854775807, 1);
+insert into t values(-9223372036854775808, 1);
+alter table t add index idx_b(b);
+admin check table t;
+create table t1(a bigint UNSIGNED PRIMARY KEY, b int);
+insert into t1 values(18446744073709551615, 1);
+insert into t1 values(0, 1);
+alter table t1 add index idx_b(b);
+admin check table t1;
+drop table if exists t;
+drop table if exists t;
+create table t(c time DEFAULT '12:12:12.8');
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `c` time DEFAULT '12:12:13'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add column c1 time default '12:12:12.000000';
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `c` time DEFAULT '12:12:13',
+  `c1` time DEFAULT '12:12:12'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t alter column c1 set default '2019-02-01 12:12:10.4';
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `c` time DEFAULT '12:12:13',
+  `c1` time DEFAULT '12:12:10'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t modify c1 time DEFAULT '770:12:12.000000';
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `c` time DEFAULT '12:12:13',
+  `c1` time DEFAULT '770:12:12'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+drop table if exists t, t2, t3;
+create table t (  tt timestamp default now(1));
+Error 1067 (42000): Invalid default value for 'tt'
+create table t (  tt timestamp(1) default current_timestamp);
+Error 1067 (42000): Invalid default value for 'tt'
+create table t (  tt timestamp(1) default now(2));
+Error 1067 (42000): Invalid default value for 'tt'
+create table t (  tt timestamp(1) default now(1));
+create table t2 (  tt timestamp default current_timestamp());
+create table t3 (  tt timestamp default current_timestamp(0));
+alter table t add column ttt timestamp default now(2);
+Error 1067 (42000): Invalid default value for 'ttt'
+alter table t add column ttt timestamp(5) default current_timestamp;
+Error 1067 (42000): Invalid default value for 'ttt'
+alter table t add column ttt timestamp(5) default now(2);
+Error 1067 (42000): Invalid default value for 'ttt'
+alter table t modify column tt timestamp(1) default now();
+Error 1067 (42000): Invalid default value for 'tt'
+alter table t modify column tt timestamp(4) default now(5);
+Error 1067 (42000): Invalid default value for 'tt'
+alter table t change column tt tttt timestamp(4) default now(5);
+Error 1067 (42000): Invalid default value for 'tttt'
+alter table t change column tt tttt timestamp(1) default now();
+Error 1067 (42000): Invalid default value for 'tttt'
+drop table if exists t, t2, t3;
+drop table if exists tdv;
+create table tdv(a int);
+ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';
+drop table if exists tdv;
+drop table if exists t;
+CREATE TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 5 DAY */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+DROP TABLE t;
+CREATE TABLE t (id int) TTL = `id` + INTERVAL 5 DAY;
+Error 8148 (HY000): Field 'id' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP
+CREATE TABLE t (id int) TTL_ENABLE = 'ON';
+Error 8150 (HY000): Cannot set TTL_ENABLE on a table without TTL config
+CREATE TABLE t (id int) TTL_JOB_INTERVAL = '1h';
+Error 8150 (HY000): Cannot set TTL_JOB_INTERVAL on a table without TTL config
+CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1d';
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
+DROP TABLE t;
+CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL = `created_at` + INTERVAL 2 DAY TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF';
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+DROP TABLE t;
+drop table if exists t;
+CREATE TABLE t (created_at datetime, updated_at datetime, wrong_type int) TTL = `created_at` + INTERVAL 5 DAY;
+ALTER TABLE t TTL = `updated_at` + INTERVAL 2 YEAR;
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `wrong_type` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+ALTER TABLE t TTL_ENABLE = 'OFF';
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `wrong_type` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+ALTER TABLE t TTL_JOB_INTERVAL = '1d';
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `wrong_type` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
+ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR;
+Error 1054 (42S22): Unknown column 'not_exist' in 'TTL config'
+ALTER TABLE t TTL = `wrong_type` + INTERVAL 2 YEAR;
+Error 8148 (HY000): Field 'wrong_type' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP
+ALTER TABLE t DROP COLUMN updated_at;
+Error 8149 (HY000): Cannot drop column 'updated_at': needed in TTL config
+ALTER TABLE t CHANGE updated_at updated_at_new INT;
+Error 8148 (HY000): Field 'updated_at_new' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP
+ALTER TABLE t RENAME COLUMN `updated_at` TO `updated_at_2`;
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL,
+  `updated_at_2` datetime DEFAULT NULL,
+  `wrong_type` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_2` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
+ALTER TABLE t CHANGE `updated_at_2` `updated_at_3` date;
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL,
+  `updated_at_3` date DEFAULT NULL,
+  `wrong_type` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
+ALTER TABLE t TTL = `updated_at_3` + INTERVAL 3 YEAR;
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL,
+  `updated_at_3` date DEFAULT NULL,
+  `wrong_type` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 3 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
+ALTER TABLE t TTL_ENABLE = 'OFF' REMOVE TTL;
+Error 8200 (HY000): Unsupported multi schema change for alter table ttl
+ALTER TABLE t REMOVE TTL;
+SHOW CREATE TABLE t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL,
+  `updated_at_3` date DEFAULT NULL,
+  `wrong_type` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+ALTER TABLE t TTL_ENABLE = 'OFF';
+Error 8150 (HY000): Cannot set TTL_ENABLE on a table without TTL config
+ALTER TABLE t TTL_JOB_INTERVAL = '1h';
+Error 8150 (HY000): Cannot set TTL_JOB_INTERVAL on a table without TTL config
+drop table if exists t;
+drop table if exists t;
+CREATE TEMPORARY TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+Error 8151 (HY000): Set TTL for temporary table is not allowed
+set global tidb_enable_foreign_key='ON';
+drop table if exists t, t_1;
+CREATE TABLE t (id int primary key, created_at datetime);
+CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id));
+ALTER TABLE t TTL = created_at + INTERVAL 5 YEAR;
+Error 8152 (HY000): Set TTL for a table referenced by foreign key is not allowed
+drop table t,t_1;
+CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR;
+CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id));
+Error 8152 (HY000): Set TTL for a table referenced by foreign key is not allowed
+drop table t;
+CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR;
+CREATE TABLE t_1 (t_id int);
+ALTER TABLE t_1 ADD FOREIGN KEY fk_t_id(t_id) references t(id);
+Error 8152 (HY000): Set TTL for a table referenced by foreign key is not allowed
+drop table t,t_1;
+set global tidb_enable_foreign_key=default;
+drop table if exists source_table, t1, t2, test_v_nested;
+drop view if exists view_t, v, v1, v2, v3, v4, v5, v6, v7, v_nested, v_nested2;
+CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));
+CREATE VIEW view_t AS select id , name from source_table;
+CREATE VIEW view_t AS select id , name from source_table;
+Error 1050 (42S01): Table 'executor__ddl.view_t' already exists
+create view v1 (c,d) as select a,b from t1;
+Error 1146 (42S02): Table 'executor__ddl.t1' doesn't exist
+create table t1 (a int ,b int);
+insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10);
+create view v1 (c) as select b+1 from t1;
+create view v2 as select b+1 from t1;
+create view v3 as select b+1 as c from t1;
+create view v4 (c) as select b+1 as d from t1;
+create view v5 as select * from t1;
+create view v6 (c,d) as select * from t1;
+create view v7 (c,d,e) as select * from t1;
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+drop view v1,v2,v3,v4,v5,v6;
+create view v1 (c,d) as select a,b+@@global.max_user_connections from t1;
+create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections;
+Error 1050 (42S01): Table 'executor__ddl.v1' already exists
+drop view v1;
+create view v1 (c,d,e) as select a,b from t1 ;
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+create view v1 (c) as select a,b from t1 ;
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+drop view if exists v1;
+create view v1 (c,d) as select a,b from t1;
+create or replace view v1 (c,d) as select a,b from t1 ;
+create table if not exists t1 (a int ,b int);
+create or replace view t1 as select * from t1;
+Error 1347 (HY000): 'executor__ddl.t1' is not VIEW
+prepare stmt from "create view v10 (x) as select 1";
+execute stmt;
+drop table if exists t1, t2;
+drop view if exists v;
+create view v as select * from t1 union select * from t2;
+Error 1146 (42S02): Table 'executor__ddl.t1' doesn't exist
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 values(1,2), (1,1), (1,2);
+insert into t2 values(1,1),(1,3);
+create definer='root'@'localhost' view v as select * from t1 union select * from t2;
+select * from v;
+a	b
+1	1
+1	2
+1	3
+alter table t1 drop column a;
+select * from v;
+Error 1356 (HY000): View 'executor__ddl.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+alter table t1 add column a int;
+select * from v;
+a	b
+NULL	1
+NULL	2
+1	1
+1	3
+alter table t1 drop column a;
+alter table t2 drop column b;
+select * from v;
+Error 1356 (HY000): View 'executor__ddl.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+drop view v;
+create view v as (select * from t1);
+drop view v;
+create view v as (select * from t1 union select * from t2);
+drop view v;
+drop view if exists v_if_exists;
+show warnings;
+Level	Code	Message
+Note	1051	Unknown table 'executor__ddl.v_if_exists'
+create view v1_if_exists as (select * from t1);
+drop view if exists v1_if_exists,v2_if_exists,v3_if_exists;
+show warnings;
+Level	Code	Message
+Note	1051	Unknown table 'executor__ddl.v2_if_exists'
+Note	1051	Unknown table 'executor__ddl.v3_if_exists'
+create table test_v_nested(a int);
+create definer='root'@'localhost' view v_nested as select * from test_v_nested;
+create definer='root'@'localhost' view v_nested2 as select * from v_nested;
+create or replace definer='root'@'localhost' view v_nested as select * from v_nested2;
+Error 1146 (42S02): Table 'executor__ddl.v_nested' doesn't exist
+drop table test_v_nested;
+drop view v_nested, v_nested2;
+create view v_stale as select * from source_table as of timestamp current_timestamp(3);
+Error 1356 (HY000): View 'executor__ddl.v_stale' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+drop view if exists v1,v2;
+drop table if exists t1;
+CREATE TABLE t1(a INT, b INT);
+CREATE DEFINER=1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost VIEW v1 AS SELECT a FROM t1;
+Error 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)
+CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X VIEW v2 AS SELECT b FROM t1;
+Error 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)
+DROP VIEW IF EXISTS view_t;
+drop table if exists t;
+drop view if exists v;
+create table t(a int);
+create view v as select distinct'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', max('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'), 'cccccccccc', 'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+select * from v;
+name_exp_1	name_exp_2	cccccccccc	name_exp_4
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	cccccccccc	ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v;
+name_exp_1	name_exp_2	cccccccccc	name_exp_4
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	cccccccccc	ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+show create view v;
+View	Create View	character_set_client	collation_connection
+v	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS SELECT DISTINCT _UTF8MB4'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,MAX(_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') AS `max('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')`,_UTF8MB4'cccccccccc' AS `cccccccccc`,_UTF8MB4'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' AS `ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`	utf8mb4	utf8mb4_general_ci
+drop view v;
+CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS SELECT DISTINCT _UTF8MB4'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,MAX(_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') AS `max('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')`,_UTF8MB4'cccccccccc' AS `cccccccccc`,_UTF8MB4'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' AS `ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`;
+drop view v ;
+create definer='root'@'localhost' view v as select 'a', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' from t union select 'ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c');
+select * from v;
+a	name_exp_2
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc	1
+select a, name_exp_2 from v;
+a	name_exp_2
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc	1
+show create view v;
+View	Create View	character_set_client	collation_connection
+v	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS SELECT _UTF8MB4'a' AS `a`,_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' AS `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` FROM `executor__ddl`.`t` UNION SELECT _UTF8MB4'ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' AS `ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc`,COUNT(DISTINCT _UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', _UTF8MB4'c') AS `count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c')`	utf8mb4	utf8mb4_general_ci
+drop view v;
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS SELECT _UTF8MB4'a' AS `a`,_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' AS `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` FROM `executor__ddl`.`t` UNION SELECT _UTF8MB4'ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' AS `ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc`,COUNT(DISTINCT _UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', _UTF8MB4'c') AS `count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c')`;
+drop view v ;
+create definer='root'@'localhost' view v as select 'a' as 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' from t;
+select * from v;
+name_exp_1
+select name_exp_1 from v;
+name_exp_1
+show create view v;
+View	Create View	character_set_client	collation_connection
+v	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`) AS SELECT _UTF8MB4'a' AS `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` FROM `executor__ddl`.`t`	utf8mb4	utf8mb4_general_ci
+drop view v;
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`) AS SELECT _UTF8MB4'a' AS `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` FROM `executor__ddl`.`t`;
+drop view v ;
+create view v(`bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`) as select a from t;
+Error 1059 (42000): Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long
+drop table t;
+drop table if exists drop_test;
+create table if not exists drop_test (a int);
+drop table if exists drop_test;
+create table drop_test (a int);
+drop table drop_test;
+drop table mysql.gc_delete_range;
+Error 1105 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
+drop table if exists t_v, t_v1, t_v2;
+drop view if exists v;
+create or replace view drop_test as select 1,2;
+drop table drop_test;
+Error 1051 (42S02): Unknown table 'executor__ddl.drop_test'
+drop view if exists drop_test;
+drop view mysql.gc_delete_range;
+Error 1105 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
+drop view drop_test;
+Error 1051 (42S02): Unknown table 'executor__ddl.drop_test'
+create table t_v(a int);
+drop view t_v;
+Error 1347 (HY000): 'executor__ddl.t_v' is not VIEW
+create table t_v1(a int, b int);
+create table t_v2(a int, b int);
+create view v as select * from t_v1;
+create or replace view v  as select * from t_v2;
+select * from information_schema.views where table_name ='v' and table_schema='executor__ddl';
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	VIEW_DEFINITION	CHECK_OPTION	IS_UPDATABLE	DEFINER	SECURITY_TYPE	CHARACTER_SET_CLIENT	COLLATION_CONNECTION
+def	executor__ddl	v	SELECT `executor__ddl`.`t_v2`.`a` AS `a`,`executor__ddl`.`t_v2`.`b` AS `b` FROM `executor__ddl`.`t_v2`	CASCADED	NO	root@%	DEFINER	utf8mb4	utf8mb4_general_ci
+drop database if exists aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+drop database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long
+drop table if exists bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+create table bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(c int);
+drop table bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+create table bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(c int);
+Error 1059 (42000): Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long
+drop table if exists t;
+create table t(cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc int);
+drop table t;
+create table t(ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc int);
+Error 1059 (42000): Identifier name 'ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' is too long
+create table t(c int);
+create index dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd on t(c);
+drop index dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd on t;
+create index ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd on t(c);
+Error 1059 (42000): Identifier name 'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' is too long
+drop table t;
+create table t(c int, index ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd(c));
+Error 1059 (42000): Identifier name 'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' is too long
+drop table if exists t1;
+CREATE database test;
+Error 1007 (HY000): Can't create database 'test'; database exists
+create table t1 (b double generated always as (rand()) virtual);
+Error 3102 (HY000): Expression of generated column 'b' contains a disallowed function.
+create table t1 (a varchar(64), b varchar(1024) generated always as (load_file(a)) virtual);
+Error 3102 (HY000): Expression of generated column 'b' contains a disallowed function.
+create table t1 (a datetime generated always as (curdate()) virtual);
+Error 3102 (HY000): Expression of generated column 'a' contains a disallowed function.
+create table t1 (a datetime generated always as (current_time()) virtual);
+Error 3102 (HY000): Expression of generated column 'a' contains a disallowed function.
+create table t1 (a datetime generated always as (current_timestamp()) virtual);
+Error 3102 (HY000): Expression of generated column 'a' contains a disallowed function.
+create table t1 (a datetime, b varchar(10) generated always as (localtime()) virtual);
+Error 3102 (HY000): Expression of generated column 'b' contains a disallowed function.
+create table t1 (a varchar(1024) generated always as (uuid()) virtual);
+Error 3102 (HY000): Expression of generated column 'a' contains a disallowed function.
+create table t1 (a varchar(1024), b varchar(1024) generated always as (is_free_lock(a)) virtual);
+Error 3102 (HY000): Expression of generated column 'b' contains a disallowed function.
+create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));
+alter table t1 add column d varchar(1024) generated always as (database());
+Error 3102 (HY000): Expression of generated column 'd' contains a disallowed function.
+alter table t1 add column d bigint generated always as (b + 1);
+alter table t1 modify column d bigint generated always as (connection_id());
+Error 3102 (HY000): Expression of generated column 'd' contains a disallowed function.
+alter table t1 change column c cc bigint generated always as (connection_id());
+Error 3102 (HY000): Expression of generated column 'cc' contains a disallowed function.
+drop table if exists t1;
+create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));
+Error 3109 (HY000): Generated column 'b' cannot refer to auto-increment column.
+create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));
+alter table t1 add column d bigint generated always as (a + 1);
+Error 3109 (HY000): Generated column 'd' cannot refer to auto-increment column.
+alter table t1 add column d bigint generated always as (b + 1);
+alter table t1 modify column d bigint generated always as (a + 1);
+Error 3109 (HY000): Generated column 'd' cannot refer to auto-increment column.
+set session tidb_enable_auto_increment_in_generated = 1;
+alter table t1 modify column d bigint generated always as (a + 1);
+alter table t1 add column e bigint as (z + 1);
+Error 1054 (42S22): Unknown column 'z' in 'generated column function'
+drop table t1;
+create table t1(a int, b int as (a+1), c int as (b+1));
+insert into t1 (a) values (1);
+alter table t1 modify column c int as (b+1) first;
+Error 3107 (HY000): Generated column can refer only to generated columns defined prior to it.
+alter table t1 modify column b int as (a+1) after c;
+Error 3107 (HY000): Generated column can refer only to generated columns defined prior to it.
+select * from t1;
+a	b	c
+1	2	3
+set session tidb_enable_auto_increment_in_generated = default;
+drop table if exists t1;
+CREATE TABLE t1 (t1_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY);
+CREATE INDEX idx1 ON t1 ((t1_id + t1_id));
+Error 3754 (HY000): Expression index 'idx1' cannot refer to an auto-increment column
+SET SESSION tidb_enable_auto_increment_in_generated = 1;
+CREATE INDEX idx1 ON t1 ((t1_id + t1_id));
+SET SESSION tidb_enable_auto_increment_in_generated = default;
+set tidb_enable_clustered_index=on;
+drop table if exists t1, t2, t3, t4, t11, t12, t13, t21, t22, t23;
+create table t1(id float primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+create table t1(id double primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+create table t1(id1 int, id2 float, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+create table t1(id1 int, id2 double, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+create table t1(id float primary key, t timestamp);
+create table t2(id double primary key, t timestamp);
+create table t3(id1 int, id2 float, primary key(id1, id2), t timestamp);
+create table t4(id1 int, id2 double, primary key(id1, id2), t timestamp);
+alter table t1 TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+alter table t2 TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+alter table t3 TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+alter table t4 TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+create table t11(id float primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+create table t12(id double primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+create table t13(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered) TTL=`t`+INTERVAL 1 DAY;
+create table t21(id float primary key nonclustered, t timestamp);
+create table t22(id double primary key nonclustered, t timestamp);
+create table t23(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered);
+alter table t21 TTL=`t`+INTERVAL 1 DAY;
+alter table t22 TTL=`t`+INTERVAL 1 DAY;
+alter table t23 TTL=`t`+INTERVAL 1 DAY;
+set tidb_enable_clustered_index=default;
+drop table if exists t;
+create table t (c_int int, c_str varchar(40));
+insert into t values (1, 'quizzical hofstadter');
+begin;
+select c_int from t where c_str is not null for update;
+c_int
+1
+alter table t add index idx_4 (c_str);
+rollback;

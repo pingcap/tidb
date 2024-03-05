@@ -1,0 +1,28 @@
+ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b';
+Error 8200 (HY000): Unsupported multi schema change for set tiflash replica
+ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2;
+Error 8200 (HY000): Unsupported multi schema change for set tiflash replica
+ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2;
+Error 8200 (HY000): Unsupported multi schema change for set tiflash replica
+ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b';
+Error 8200 (HY000): Unsupported multi schema change for set tiflash replica
+set SESSION tidb_batch_pending_tiflash_count=5;
+set GLOBAL tidb_batch_pending_tiflash_count=6;
+show session variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='5';
+Variable_name	Value
+tidb_batch_pending_tiflash_count	5
+show global variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='6';
+Variable_name	Value
+tidb_batch_pending_tiflash_count	6
+show global variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='1.5';
+Variable_name	Value
+set GLOBAL tidb_batch_pending_tiflash_count=1.5;
+Error 1232 (42000): Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'
+show global variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='6';
+Variable_name	Value
+tidb_batch_pending_tiflash_count	6
+show session variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='6';
+Variable_name	Value
+tidb_batch_pending_tiflash_count	6
+set global tidb_batch_pending_tiflash_count = default;
+set session tidb_batch_pending_tiflash_count = default;

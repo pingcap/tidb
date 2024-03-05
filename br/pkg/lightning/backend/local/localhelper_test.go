@@ -28,15 +28,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 )
 
@@ -249,6 +251,13 @@ func (c *testSplitClient) GetOperator(ctx context.Context, regionID uint64) (*pd
 }
 
 func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if c.hook != nil {
 		key, endKey, limit = c.hook.BeforeScanRegions(ctx, key, endKey, limit)
 	}
@@ -269,11 +278,11 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	return regions, err
 }
 
-func (c *testSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
+func (c *testSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
 	return
 }
 
-func (c *testSplitClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
+func (c *testSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
 	return nil
 }
 
@@ -422,12 +431,9 @@ type batchSplitHook interface {
 type defaultHook struct{}
 
 func (d defaultHook) setup(t *testing.T) func() {
-	oldLimit := maxBatchSplitKeys
 	oldSplitBackoffTime := splitRegionBaseBackOffTime
-	maxBatchSplitKeys = 4
 	splitRegionBaseBackOffTime = time.Millisecond
 	return func() {
-		maxBatchSplitKeys = oldLimit
 		splitRegionBaseBackOffTime = oldSplitBackoffTime
 	}
 }
@@ -456,10 +462,11 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	client := initTestSplitClient(keys, hook)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
+	local.RegionSplitBatchSize = 4
+	local.RegionSplitConcurrency = 4
 
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("b"))
@@ -470,23 +477,21 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	checkRegionRanges(t, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
 
 	// generate:  ranges [b, ba), [ba, bb), [bb, bc), ... [by, bz)
-	ranges := make([]Range, 0)
+	ranges := make([]common.Range, 0)
 	start := []byte{'b'}
 	for i := byte('a'); i <= 'z'; i++ {
 		end := []byte{'b', i}
-		ranges = append(ranges, Range{start: start, end: end})
+		ranges = append(ranges, common.Range{Start: start, End: end})
 		start = end
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
-	if len(errPat) == 0 {
-		require.NoError(t, err)
-	} else {
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
+	if len(errPat) != 0 {
 		require.Error(t, err)
 		require.Regexp(t, errPat, err.Error())
 		return
 	}
-
+	require.NoError(t, err)
 	splitHook.check(t, client)
 
 	// check split ranges
@@ -504,6 +509,91 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 
 func TestBatchSplitRegionByRanges(t *testing.T) {
 	doTestBatchSplitRegionByRanges(context.Background(), t, nil, "", nil)
+}
+
+type checkScatterClient struct {
+	*testSplitClient
+
+	mu                sync.Mutex
+	notFoundFirstTime map[uint64]struct{}
+	scatterCounter    atomic.Int32
+}
+
+func newCheckScatterClient(inner *testSplitClient) *checkScatterClient {
+	return &checkScatterClient{
+		testSplitClient:   inner,
+		notFoundFirstTime: map[uint64]struct{}{},
+		scatterCounter:    atomic.Int32{},
+	}
+}
+
+func (c *checkScatterClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
+	c.scatterCounter.Add(1)
+	return nil
+}
+
+func (c *checkScatterClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.notFoundFirstTime[regionID]; !ok {
+		c.notFoundFirstTime[regionID] = struct{}{}
+		return nil, nil
+	}
+	return c.testSplitClient.GetRegionByID(ctx, regionID)
+}
+
+func TestMissingScatter(t *testing.T) {
+	ctx := context.Background()
+	splitHook := defaultHook{}
+	deferFunc := splitHook.setup(t)
+	defer deferFunc()
+
+	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
+	client := initTestSplitClient(keys, nil)
+	checkClient := newCheckScatterClient(client)
+	local := &Backend{
+		splitCli: checkClient,
+		logger:   log.L(),
+	}
+	local.RegionSplitBatchSize = 4
+	local.RegionSplitConcurrency = 4
+
+	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+	rangeStart := codec.EncodeBytes([]byte{}, []byte("b"))
+	rangeEnd := codec.EncodeBytes([]byte{}, []byte("c"))
+	regions, err := split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	require.NoError(t, err)
+	// regions is: [aay, bba), [bba, bbh), [bbh, cca)
+	checkRegionRanges(t, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
+
+	// generate:  ranges [b, ba), [ba, bb), [bb, bc), ... [by, bz)
+	ranges := make([]common.Range, 0)
+	start := []byte{'b'}
+	for i := byte('a'); i <= 'z'; i++ {
+		end := []byte{'b', i}
+		ranges = append(ranges, common.Range{Start: start, End: end})
+		start = end
+	}
+
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
+	require.NoError(t, err)
+
+	splitHook.check(t, client)
+
+	// check split ranges
+	regions, err = split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	require.NoError(t, err)
+	result := [][]byte{
+		[]byte("b"), []byte("ba"), []byte("bb"), []byte("bba"), []byte("bbh"), []byte("bc"),
+		[]byte("bd"), []byte("be"), []byte("bf"), []byte("bg"), []byte("bh"), []byte("bi"), []byte("bj"),
+		[]byte("bk"), []byte("bl"), []byte("bm"), []byte("bn"), []byte("bo"), []byte("bp"), []byte("bq"),
+		[]byte("br"), []byte("bs"), []byte("bt"), []byte("bu"), []byte("bv"), []byte("bw"), []byte("bx"),
+		[]byte("by"), []byte("bz"), []byte("cca"),
+	}
+	checkRegionRanges(t, regions, result)
+
+	// the old regions will not be scattered. They are [..., bba), [bba, bbh), [..., cca)
+	require.Equal(t, len(result)-3, int(checkClient.scatterCounter.Load()))
 }
 
 type batchSizeHook struct{}
@@ -554,10 +644,10 @@ func (h *scanRegionEmptyHook) AfterScanRegions(res []*split.RegionInfo, err erro
 }
 
 func TestBatchSplitRegionByRangesScanFailed(t *testing.T) {
-	backup := split.ScanRegionAttemptTimes
-	split.ScanRegionAttemptTimes = 3
+	backup := split.WaitRegionOnlineAttemptTimes
+	split.WaitRegionOnlineAttemptTimes = 3
 	defer func() {
-		split.ScanRegionAttemptTimes = backup
+		split.WaitRegionOnlineAttemptTimes = backup
 	}()
 	doTestBatchSplitRegionByRanges(context.Background(), t, &scanRegionEmptyHook{}, "scan region return empty result", defaultHook{})
 }
@@ -630,23 +720,24 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
 	client := initTestSplitClient(keys, nil)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
+	local.RegionSplitBatchSize = 4
+	local.RegionSplitConcurrency = 4
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var ranges []Range
+	var ranges []common.Range
 	for i := 0; i < 20; i++ {
-		ranges = append(ranges, Range{
-			start: []byte(fmt.Sprintf("a%02d", i)),
-			end:   []byte(fmt.Sprintf("a%02d", i+1)),
+		ranges = append(ranges, common.Range{
+			Start: []byte(fmt.Sprintf("a%02d", i)),
+			End:   []byte(fmt.Sprintf("a%02d", i+1)),
 		})
 	}
 
-	err := local.SplitAndScatterRegionInBatches(ctx, ranges, nil, true, 1000, 4)
+	err := local.SplitAndScatterRegionInBatches(ctx, ranges, true, 4)
 	require.NoError(t, err)
 
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
@@ -690,16 +781,13 @@ func TestBatchSplitByRangeCtxCanceled(t *testing.T) {
 }
 
 func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
-	oldLimit := maxBatchSplitKeys
 	oldSplitBackoffTime := splitRegionBaseBackOffTime
-	maxBatchSplitKeys = 10
 	splitRegionBaseBackOffTime = time.Millisecond
 	defer func() {
-		maxBatchSplitKeys = oldLimit
 		splitRegionBaseBackOffTime = oldSplitBackoffTime
 	}()
 
-	stmtCtx := new(stmtctx.StatementContext)
+	stmtCtx := stmtctx.NewStmtCtx()
 
 	tableID := int64(1)
 	tableStartKey := tablecodec.EncodeTablePrefix(tableID)
@@ -707,7 +795,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	keys := [][]byte{[]byte(""), tableStartKey}
 	// pre split 2 regions
 	for i := int64(0); i < 2; i++ {
-		keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(i))
+		keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(i))
 		require.NoError(t, err)
 		h, err := kv.NewCommonHandle(keyBytes)
 		require.NoError(t, err)
@@ -717,17 +805,18 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	keys = append(keys, tableEndKey, []byte(""))
 	client := initTestSplitClient(keys, hook)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
+	local.RegionSplitBatchSize = 10
+	local.RegionSplitConcurrency = 10
 	ctx := context.Background()
 
 	// we batch generate a batch of row keys for table 1 with common handle
 	rangeKeys := make([][]byte, 0, 20+1)
 	for i := int64(0); i < 2; i++ {
 		for j := int64(0); j < 10; j++ {
-			keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
+			keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
 			require.NoError(t, err)
 			h, err := kv.NewCommonHandle(keyBytes)
 			require.NoError(t, err)
@@ -737,13 +826,13 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	}
 
 	start := rangeKeys[0]
-	ranges := make([]Range, 0, len(rangeKeys)-1)
+	ranges := make([]common.Range, 0, len(rangeKeys)-1)
 	for _, e := range rangeKeys[1:] {
-		ranges = append(ranges, Range{start: start, end: e})
+		ranges = append(ranges, common.Range{Start: start, End: e})
 		start = e
 	}
 
-	err := local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
+	err := local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	require.NoError(t, err)
 
 	startKey := codec.EncodeBytes([]byte{}, rangeKeys[0])
@@ -859,4 +948,149 @@ func TestStoreWriteLimiter(t *testing.T) {
 		}(uint64(i))
 	}
 	wg.Wait()
+}
+
+type scatterRegionCli struct {
+	split.SplitClient
+
+	respM    map[uint64][]*pdpb.GetOperatorResponse
+	scatterM map[uint64]int
+}
+
+func newScatterRegionCli() *scatterRegionCli {
+	return &scatterRegionCli{
+		respM:    make(map[uint64][]*pdpb.GetOperatorResponse),
+		scatterM: make(map[uint64]int),
+	}
+}
+
+func (c *scatterRegionCli) ScatterRegion(_ context.Context, regionInfo *split.RegionInfo) error {
+	c.scatterM[regionInfo.Region.Id]++
+	return nil
+}
+
+func (c *scatterRegionCli) GetOperator(_ context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	ret := c.respM[regionID][0]
+	c.respM[regionID] = c.respM[regionID][1:]
+	return ret, nil
+}
+
+func TestWaitForScatterRegions(t *testing.T) {
+	ctx := context.Background()
+
+	regionCnt := 6
+	regions := make([]*split.RegionInfo, 0, regionCnt)
+	for i := 1; i <= regionCnt; i++ {
+		regions = append(regions, &split.RegionInfo{
+			Region: &metapb.Region{
+				Id: uint64(i),
+			},
+		})
+	}
+	checkRespDrained := func(cli *scatterRegionCli) {
+		for i := 1; i <= regionCnt; i++ {
+			require.Len(t, cli.respM[uint64(i)], 0)
+		}
+	}
+	checkNoRetry := func(cli *scatterRegionCli) {
+		for i := 1; i <= regionCnt; i++ {
+			require.Equal(t, 0, cli.scatterM[uint64(i)])
+		}
+	}
+
+	cli := newScatterRegionCli()
+	cli.respM[1] = []*pdpb.GetOperatorResponse{
+		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
+	}
+	cli.respM[2] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("not-scatter-region")},
+	}
+	cli.respM[3] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
+	}
+	cli.respM[4] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
+	}
+	cli.respM[5] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
+		{Desc: []byte("not-scatter-region")},
+	}
+	// should trigger a retry
+	cli.respM[6] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_REPLACE},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
+	}
+
+	local := &Backend{splitCli: cli}
+	cnt, err := local.waitForScatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 6, cnt)
+	for i := 1; i <= 4; i++ {
+		require.Equal(t, 0, cli.scatterM[uint64(i)])
+	}
+	require.Equal(t, 3, cli.scatterM[uint64(5)])
+	require.Equal(t, 1, cli.scatterM[uint64(6)])
+	checkRespDrained(cli)
+
+	// test non-retryable error
+
+	cli = newScatterRegionCli()
+	cli.respM[1] = []*pdpb.GetOperatorResponse{
+		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
+	}
+	cli.respM[2] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("not-scatter-region")},
+	}
+	// mimic non-retryable error
+	cli.respM[3] = []*pdpb.GetOperatorResponse{
+		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_DATA_COMPACTED}}},
+	}
+	local = &Backend{splitCli: cli}
+	cnt, err = local.waitForScatterRegions(ctx, regions)
+	require.ErrorContains(t, err, "failed to get region operator, error type: DATA_COMPACTED")
+	require.Equal(t, 2, cnt)
+	checkRespDrained(cli)
+	checkNoRetry(cli)
+
+	// test backoff is timed-out
+
+	backup := split.WaitRegionOnlineAttemptTimes
+	split.WaitRegionOnlineAttemptTimes = 2
+	t.Cleanup(func() {
+		split.WaitRegionOnlineAttemptTimes = backup
+	})
+
+	cli = newScatterRegionCli()
+	cli.respM[1] = []*pdpb.GetOperatorResponse{
+		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
+	}
+	cli.respM[2] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("not-scatter-region")},
+	}
+	cli.respM[3] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
+	}
+	cli.respM[4] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING}, // first retry
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING}, // second retry
+	}
+	cli.respM[5] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("not-scatter-region")},
+	}
+	cli.respM[6] = []*pdpb.GetOperatorResponse{
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
+	}
+	local = &Backend{splitCli: cli}
+	cnt, err = local.waitForScatterRegions(ctx, regions)
+	require.ErrorContains(t, err, "wait for scatter region timeout, print the first unfinished region id:4")
+	require.Equal(t, 5, cnt)
+	checkRespDrained(cli)
+	checkNoRetry(cli)
 }

@@ -19,7 +19,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/task/show"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -170,7 +170,7 @@ func cloneFS(f fs.FS, base string, target string) error {
 
 func TestShowViaSQL(t *testing.T) {
 	req := require.New(t)
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tempBackup := tempBackupDir(t)
@@ -178,9 +178,10 @@ func TestShowViaSQL(t *testing.T) {
 	err := os.WriteFile(metaPath, FullMeta, 0o444)
 	req.NoError(err)
 
+	tk.MustExec("set @@time_zone='+08:00'")
 	res := tk.MustQuery(fmt.Sprintf("SHOW BACKUP METADATA FROM 'local://%s'", tempBackup))
 	fmt.Printf("%#v", res.Sort().Rows())
-	res.Sort().Check([][]interface{}{
+	res.Sort().Check([][]any{
 		{"tpcc", "customer", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "district", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "history", "0", "0", "<nil>", "2023-04-10 11:18:21"},
@@ -190,5 +191,21 @@ func TestShowViaSQL(t *testing.T) {
 		{"tpcc", "orders", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "stock", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "warehouse", "0", "0", "<nil>", "2023-04-10 11:18:21"},
+	})
+
+	// Test result in different time_zone
+	tk.MustExec("set @@time_zone='-08:00'")
+	res = tk.MustQuery(fmt.Sprintf("SHOW BACKUP METADATA FROM 'local://%s'", tempBackup))
+	fmt.Printf("%#v", res.Sort().Rows())
+	res.Sort().Check([][]any{
+		{"tpcc", "customer", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "district", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "history", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "item", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "new_order", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "order_line", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "orders", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "stock", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "warehouse", "0", "0", "<nil>", "2023-04-09 19:18:21"},
 	})
 }

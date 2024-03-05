@@ -1,0 +1,316 @@
+prepare pr1 from 'select ? in (1,?,?)';
+set @a=1, @b=2, @c=3;
+execute pr1 using @a,@b,@c;
+? in (1,?,?)
+1
+prepare pr2 from 'select 3 in (1,?,?)';
+set @a=2, @b=3;
+execute pr2 using @a,@b;
+3 in (1,?,?)
+1
+prepare pr3 from 'select ? in (1,2,3)';
+set @a=4;
+execute pr3 using @a;
+? in (1,2,3)
+0
+prepare pr4 from 'select ? in (?,?,?)';
+set @a=1, @b=2, @c=3, @d=4;
+execute pr4 using @a,@b,@c,@d;
+? in (?,?,?)
+0
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'SELECT * FROM t order by rand()';
+execute stmt;
+a
+prepare stmt from 'SELECT * FROM t order by now()';
+execute stmt;
+a
+drop table if exists t;
+create table t(a int);
+insert into t values(1), (2), (3);
+set @@session.sql_select_limit = 1;
+prepare stmt from 'SELECT * FROM t';
+execute stmt;
+a
+1
+set @@session.sql_select_limit = default;
+execute stmt;
+a
+1
+2
+3
+set @@session.sql_select_limit = 2;
+execute stmt;
+a
+1
+2
+set @@session.sql_select_limit = 1;
+execute stmt;
+a
+1
+set @@session.sql_select_limit = default;
+execute stmt;
+a
+1
+2
+3
+set @@session.sql_select_limit = 2;
+execute stmt;
+a
+1
+2
+set sql_select_limit=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t where a = ?';
+set @a = 1;
+execute stmt using @a;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt using @a;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t;
+create table t(a int auto_increment primary key);
+prepare stmt from 'select row_count()';
+insert into t values();
+execute stmt;
+row_count()
+1
+insert into t values(),(),();
+execute stmt;
+row_count()
+3
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t1;
+create table t1 (a varchar(40));
+insert into t1 values ('C1'),('R1');
+insert into mysql.expr_pushdown_blacklist values('regexp_like', 'tikv,tiflash,tidb', 'for test');
+insert into mysql.expr_pushdown_blacklist values('regexp_substr', 'tikv,tiflash,tidb', 'for test');
+insert into mysql.expr_pushdown_blacklist values('regexp_instr', 'tikv,tiflash,tidb', 'for test');
+insert into mysql.expr_pushdown_blacklist values('regexp_replace', 'tikv,tiflash,tidb', 'for test');
+admin reload expr_pushdown_blacklist;
+set tidb_enable_vectorized_expression=ON;
+prepare stmt1 from 'select a from t1 where a rlike ?';
+prepare stmt2 from 'select a, regexp_substr(a, ?) from t1 order by a asc';
+prepare stmt3 from 'select a, regexp_instr(a, ?) from t1 order by a asc';
+prepare stmt4 from 'select a, regexp_replace(a, ?, ?) from t1 order by a asc';
+set @a='^C.*';
+set @r='xxxx';
+execute stmt1 using @a;
+a
+C1
+execute stmt2 using @a;
+a	regexp_substr(a, ?)
+C1	C1
+R1	NULL
+execute stmt3 using @a;
+a	regexp_instr(a, ?)
+C1	1
+R1	0
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	xxxx
+R1	R1
+set @r='yyyy';
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	yyyy
+R1	R1
+set @a='^R.*';
+execute stmt1 using @a;
+a
+R1
+execute stmt2 using @a;
+a	regexp_substr(a, ?)
+C1	NULL
+R1	R1
+execute stmt3 using @a;
+a	regexp_instr(a, ?)
+C1	0
+R1	1
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	C1
+R1	yyyy
+set tidb_enable_vectorized_expression=OFF;
+set @a='^C.*';
+set @r='xxxx';
+execute stmt1 using @a;
+a
+C1
+execute stmt2 using @a;
+a	regexp_substr(a, ?)
+C1	C1
+R1	NULL
+execute stmt3 using @a;
+a	regexp_instr(a, ?)
+C1	1
+R1	0
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	xxxx
+R1	R1
+set @r='yyyy';
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	yyyy
+R1	R1
+set @a='^R.*';
+execute stmt1 using @a;
+a
+R1
+execute stmt2 using @a;
+a	regexp_substr(a, ?)
+C1	NULL
+R1	R1
+execute stmt3 using @a;
+a	regexp_instr(a, ?)
+C1	0
+R1	1
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	C1
+R1	yyyy
+delete from mysql.expr_pushdown_blacklist where name like 'regexp%' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+admin reload expr_pushdown_blacklist;
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_vectorized_expression=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t1;
+create table t1 (a varchar(40));
+insert into t1 values ('C1'),('R1'),('c1'),('r1');
+insert into mysql.expr_pushdown_blacklist values('like', 'tikv,tiflash,tidb', 'for test');
+insert into mysql.expr_pushdown_blacklist values('ilike', 'tikv,tiflash,tidb', 'for test');
+admin reload expr_pushdown_blacklist;
+set tidb_enable_vectorized_expression=ON;
+prepare stmt1 from 'select a from t1 where a like ? order by a asc';
+prepare stmt2 from 'select a from t1 where a ilike ? order by a asc';
+set @a='%C%';
+execute stmt1 using @a;
+a
+C1
+execute stmt2 using @a;
+a
+C1
+c1
+set @a='%R%';
+execute stmt1 using @a;
+a
+R1
+execute stmt2 using @a;
+a
+R1
+r1
+set tidb_enable_vectorized_expression=OFF;
+set @a='%C%';
+execute stmt1 using @a;
+a
+C1
+execute stmt2 using @a;
+a
+C1
+c1
+set @a='%R%';
+execute stmt1 using @a;
+a
+R1
+execute stmt2 using @a;
+a
+R1
+r1
+delete from mysql.expr_pushdown_blacklist where name in ('like', 'ilike') and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+admin reload expr_pushdown_blacklist;
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_vectorized_expression=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t1;
+create table t1 (a varchar(40));
+insert into t1 values ('a'),('b');
+insert into mysql.expr_pushdown_blacklist values('aes_encrypt', 'tikv,tiflash,tidb', 'for test');
+admin reload expr_pushdown_blacklist;
+set tidb_enable_vectorized_expression=ON;
+prepare stmt1 from 'select a, hex(aes_encrypt(a, ?)) from t1 order by a asc';
+set @a='xx';
+execute stmt1 using @a;
+a	hex(aes_encrypt(a, ?))
+a	DA767CA0BE9CE9A1A979F6169A84B712
+b	56F19741AA9177000269D07B6C4C6D7D
+set @a='yy';
+execute stmt1 using @a;
+a	hex(aes_encrypt(a, ?))
+a	1318DA9E3BFC5FBEF34E5ACAFA944B09
+b	1670ED5A2E8650BBCB09D7DF67B29FFC
+execute stmt2 using @a;
+a
+set tidb_enable_vectorized_expression=OFF;
+set @a='xx';
+execute stmt1 using @a;
+a	hex(aes_encrypt(a, ?))
+a	DA767CA0BE9CE9A1A979F6169A84B712
+b	56F19741AA9177000269D07B6C4C6D7D
+set @a='yy';
+execute stmt1 using @a;
+a	hex(aes_encrypt(a, ?))
+a	1318DA9E3BFC5FBEF34E5ACAFA944B09
+b	1670ED5A2E8650BBCB09D7DF67B29FFC
+execute stmt2 using @a;
+a
+delete from mysql.expr_pushdown_blacklist where name like 'aes_%' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+admin reload expr_pushdown_blacklist;
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_vectorized_expression=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t;
+create table t(col_int int);
+insert into t values(null);
+prepare stmt from 'SELECT ((col_int is true) = ?) AS res FROM t';
+set @p0='0.8';
+execute stmt using @p0;
+res
+0
+set @p0='0';
+execute stmt using @p0;
+res
+1
+prepare stmt from 'SELECT UCASE(?) < col_int from t;';
+set @a1 = 'xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec';
+execute stmt using @a1;
+UCASE(?) < col_int
+NULL
+delete from t;
+insert into t values(1);
+prepare stmt from 'SELECT col_int < ? FROM t';
+set @p0='-184467440737095516167.1';
+execute stmt using @p0;
+col_int < ?
+0
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t;
+create table t(col_double double);
+insert into t values (1);
+set tidb_enable_vectorized_expression=false;
+insert into mysql.expr_pushdown_blacklist values('cast', 'tikv,tiflash,tidb', 'for test');
+admin reload expr_pushdown_blacklist;
+prepare stmt from 'SELECT * FROM (SELECT col_double AS c0 FROM t) t WHERE (ABS((REPEAT(?, ?) OR 5617780767323292672)) < LN(EXP(c0)) + (? ^ ?))';
+set @a1 = 'JuvkBX7ykVux20zQlkwDK2DFelgn7';
+set @a2 = 1;
+set @a3 = -112990.35179796701;
+set @a4 = 87997.92704840179;
+execute stmt using @a1, @a2, @a3, @a4;
+c0
+1
+set tidb_enable_vectorized_expression=default;
+delete from mysql.expr_pushdown_blacklist where name = 'cast' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+admin reload expr_pushdown_blacklist;
+set tidb_enable_prepared_plan_cache=default;

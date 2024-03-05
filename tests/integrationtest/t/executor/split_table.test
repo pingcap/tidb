@@ -1,0 +1,143 @@
+# TestSplitRegionEdgeCase
+drop table if exists t;
+create table t(a bigint(20) auto_increment primary key);
+split table t between (-9223372036854775808) and (9223372036854775807) regions 16;
+drop table if exists t;
+create table t(a int(20) auto_increment primary key);
+-- error 1690
+split table t between (-9223372036854775808) and (9223372036854775807) regions 16;
+drop table if exists t;
+
+# TestSplitTableRegion
+drop table if exists t, t1;
+create table t(a varchar(100),b int, index idx1(b,a));
+split table t index idx1 by (10000,"abcd"),(10000000);
+-- error 1265
+split table t index idx1 by ("abcd");
+
+## Test for split index region.
+## Check min value is more than max value.
+split table t index idx1 between (0) and (1000000000) regions 10;
+-- error 8212
+split table t index idx1 between (2,'a') and (1,'c') regions 10;
+
+## Check min value is invalid.
+-- error 1105
+split table t index idx1 between () and (1) regions 10;
+
+## Check max value is invalid.
+-- error 1105
+split table t index idx1 between (1) and () regions 10;
+
+## Check pre-split region num is too large.
+-- error 1105
+split table t index idx1 between (0) and (1000000000) regions 10000;
+
+## Check pre-split region num 0 is invalid.
+-- error 1105
+split table t index idx1 between (0) and (1000000000) regions 0;
+
+## Test truncate error msg.
+-- error 1265
+split table t index idx1 between ("aa") and (1000000000) regions 0;
+
+## Test for split table region.
+split table t between (0) and (1000000000) regions 10;
+
+## Check the lower value is more than the upper value.
+-- error 8212
+split table t between (2) and (1) regions 10;
+
+## Check the lower value is invalid.
+-- error 1105
+split table t between () and (1) regions 10;
+
+## Check upper value is invalid.
+-- error 1105
+split table t between (1) and () regions 10;
+
+## Check pre-split region num is too large.
+-- error 1105
+split table t between (0) and (1000000000) regions 10000;
+
+## Check pre-split region num 0 is invalid.
+-- error 1105
+split table t between (0) and (1000000000) regions 0;
+
+## Test truncate error msg.
+-- error 1265
+split table t between ("aa") and (1000000000) regions 10;
+
+## Test split table region step is too small.
+-- error 8212
+split table t between (0) and (100) regions 10;
+
+## Test split region by syntax.
+split table t by (0),(1000),(1000000);
+
+## Test split region twice to test for multiple batch split region requests.
+create table t1(a int, b int);
+split table t1 between(0) and (10000) regions 10;
+split table t1 between(10) and (10010) regions 5;
+
+## Test split region for partition table.
+drop table if exists t;
+create table t (a int,b int) partition by hash(a) partitions 5;
+split table t between (0) and (1000000) regions 5;
+
+## Test for `split for region` syntax.
+split region for partition table t between (1000000) and (100000000) regions 10;
+
+## Test split region for partition table with specified partition.
+split table t partition (p1,p2) between (100000000) and (1000000000) regions 5;
+
+## Test for `split for region` syntax.
+split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;
+
+# TestClusterIndexSplitTableIntegration
+set tidb_enable_clustered_index=ON;
+drop table if exists t;
+create table t (a varchar(255), b double, c int, primary key (a, b));
+## Value list length not match.
+-- error 1105
+split table t between ('aaa') and ('aaa', 100.0) regions 10;
+-- error 1105
+split table t between ('aaa', 1.0) and ('aaa', 100.0, 11) regions 10;
+
+## Value type not match.
+-- error 1265
+split table t between ('aaa', 0.0) and (100.0, 'aaa') regions 10;
+
+## lower bound >= upper bound.
+-- error 8212
+split table t between ('aaa', 0.0) and ('aaa', 0.0) regions 10;
+-- error 8212
+split table t between ('bbb', 0.0) and ('aaa', 0.0) regions 10;
+
+## Exceed limit 1000.
+-- error 1105
+split table t between ('aaa', 0.0) and ('aaa', 0.1) regions 100000;
+
+## Split on null values.
+-- error 1048
+split table t between (null, null) and (null, null) regions 1000;
+-- error 1048
+split table t by (null, null);
+
+## Success.
+split table t between ('aaa', 0.0) and ('aaa', 100.0) regions 10;
+split table t by ('aaa', 0.0), ('aaa', 20.0), ('aaa', 100.0);
+split table t by ('aaa', 100.0), ('qqq', 20.0), ('zzz', 100.0), ('zzz', 1000.0);
+drop table t;
+create table t (a int, b int, c int, d int, primary key(d, a, c));
+split table t by (0, 0, 0), (1, 2, 3), (65535, 65535, 65535);
+drop table if exists t;
+create table t (a varchar(255), b decimal, c int, primary key (a, b));
+-- error 1265
+split table t by ('aaa', '');
+drop table t;
+CREATE TABLE t (`id` varchar(10) NOT NULL, primary key (`id`) CLUSTERED);
+-- error 1176
+split table t index `primary` between (0) and (1000) regions 2;
+set tidb_enable_clustered_index=default;
+

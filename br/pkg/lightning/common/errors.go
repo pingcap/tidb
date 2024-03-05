@@ -83,6 +83,7 @@ var (
 	ErrKVReadIndexNotReady   = errors.Normalize("read index not ready", errors.RFCCodeText("Lightning:KV:ReadIndexNotReady"))
 	ErrKVIngestFailed        = errors.Normalize("ingest tikv failed", errors.RFCCodeText("Lightning:KV:ErrKVIngestFailed"))
 	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Lightning:KV:ErrKVRaftProposalDropped"))
+	ErrNoLeader              = errors.Normalize("write to tikv with no leader returned, region '%d', leader: %d", errors.RFCCodeText("Lightning:KV:ErrNoLeader"))
 
 	ErrUnknownBackend       = errors.Normalize("unknown backend %s", errors.RFCCodeText("Lightning:Restore:ErrUnknownBackend"))
 	ErrCheckLocalFile       = errors.Normalize("cannot find local file for table: %s engineDir: %s", errors.RFCCodeText("Lightning:Restore:ErrCheckLocalFile"))
@@ -209,7 +210,7 @@ func NormalizeError(err error) error {
 }
 
 // NormalizeOrWrapErr tries to normalize err. If the returned error is ErrUnknown, wraps it with the given rfcErr.
-func NormalizeOrWrapErr(rfcErr *errors.Error, err error, args ...interface{}) error {
+func NormalizeOrWrapErr(rfcErr *errors.Error, err error, args ...any) error {
 	if err == nil {
 		return nil
 	}

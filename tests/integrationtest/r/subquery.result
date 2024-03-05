@@ -1,0 +1,75 @@
+set tidb_cost_model_version=1;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
+explain format = 'brief' select * from t1 where t1.a in (select t1.b + t2.b from t2);
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		CARTESIAN semi join, other cond:eq(subquery.t1.a, plus(subquery.t1.b, subquery.t2.b))
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
+insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
+analyze table t;
+explain format = 'brief' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
+id	estRows	task	access object	operator info
+Projection	5.00	root		Column#22
+└─Apply	5.00	root		CARTESIAN left outer semi join, other cond:eq(subquery.t.c, Column#21)
+  ├─TableReader(Build)	5.00	root		data:TableFullScan
+  │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
+  └─StreamAgg(Probe)	5.00	root		funcs:count(1)->Column#21
+    └─IndexJoin	2.50	root		inner join, inner:TableReader, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
+      ├─IndexReader(Build)	5.00	root		index:IndexRangeScan
+      │ └─IndexRangeScan	5.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(subquery.t.b, 1) eq(subquery.t.c, 1) eq(subquery.t.d, subquery.t.a)], keep order:false
+      └─TableReader(Probe)	5.00	root		data:TableRangeScan
+        └─TableRangeScan	5.00	cop[tikv]	table:t1	range: decided by [subquery.t.a], keep order:false
+drop table if exists t;
+create table t(a int, b int, c int);
+explain format = 'brief' select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
+id	estRows	task	access object	operator info
+HashJoin	7992.00	root		inner join, equal:[eq(subquery.t.b, subquery.t.b) eq(subquery.t.c, subquery.t.b) eq(subquery.t.a, Column#9)]
+├─Selection(Build)	6393.60	root		not(isnull(Column#9))
+│ └─HashAgg	7992.00	root		group by:subquery.t.b, funcs:max(Column#10)->Column#9, funcs:firstrow(subquery.t.b)->subquery.t.b
+│   └─TableReader	7992.00	root		data:HashAgg
+│     └─HashAgg	7992.00	cop[tikv]		group by:subquery.t.b, funcs:max(subquery.t.a)->Column#10
+│       └─Selection	9990.00	cop[tikv]		not(isnull(subquery.t.b))
+│         └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9970.03	root		data:Selection
+  └─Selection	9970.03	cop[tikv]		not(isnull(subquery.t.a)), not(isnull(subquery.t.b)), not(isnull(subquery.t.c))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t1, t2;
+create table t1(a int(11));
+create table t2(a decimal(40,20) unsigned, b decimal(40,20));
+select count(*) as x from t1 group by a having x not in (select a from t2 where x = t2.b);
+x
+drop table if exists stu;
+drop table if exists exam;
+create table stu(id int, name varchar(100));
+insert into stu values(1, null);
+create table exam(stu_id int, course varchar(100), grade int);
+insert into exam values(1, 'math', 100);
+set names utf8 collate utf8_general_ci;
+explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		anti semi join, equal:[eq(subquery.stu.id, subquery.exam.stu_id)], other cond:eq(subquery.stu.name, "guo")
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:exam	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:stu	keep order:false, stats:pseudo
+select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+id	name
+set names utf8mb4;
+explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		anti semi join, equal:[eq(subquery.stu.id, subquery.exam.stu_id)], other cond:eq(subquery.stu.name, "guo")
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:exam	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:stu	keep order:false, stats:pseudo
+select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
+id	name

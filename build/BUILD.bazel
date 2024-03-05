@@ -1,6 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@io_bazel_rules_go//go:def.bzl", "nogo")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "nogo")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("//build/linter/staticcheck:def.bzl", "staticcheck_analyzers")
 
@@ -14,6 +14,20 @@ config_setting(
     name = "with_nogo",
     flag_values = {
         ":with_nogo_flag": "true",
+    },
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_rbe_flag",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "without_rbe",
+    flag_values = {
+        ":with_rbe_flag": "false",
     },
     visibility = ["//visibility:public"],
 )
@@ -61,7 +75,9 @@ STATICHECK_ANALYZERS = [
     "SA2003",
     "SA3000",
     "SA3001",
+    "SA4004",
     "SA4009",
+    "SA4018",
     "SA5000",
     "SA5001",
     "SA5002",
@@ -76,7 +92,11 @@ STATICHECK_ANALYZERS = [
     "SA5012",
     "SA6000",
     "SA6001",
+    "SA6002",
     "SA6005",
+    "QF1002",
+    "QF1004",
+    "QF1012",
     "U1000",
 ]
 
@@ -124,7 +144,11 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
                "//build/linter/asciicheck",
                "//build/linter/bodyclose",
+               "//build/linter/bootstrap",
+               "//build/linter/constructor",
+               "//build/linter/deferrecover",
                "//build/linter/durationcheck",
+               "//build/linter/etcdconfig",
                "//build/linter/exportloopref",
                "//build/linter/forcetypeassert",
                "//build/linter/gofmt",
@@ -132,21 +156,38 @@ nogo(
                "//build/linter/gosec",
                "//build/linter/ineffassign",
                "//build/linter/makezero",
+               "//build/linter/mirror",
                "//build/linter/misspell",
                "//build/linter/noloopclosure",
                "//build/linter/prealloc",
                "//build/linter/predeclared",
                "//build/linter/unconvert",
                "//build/linter/rowserrcheck",
+               "//build/linter/toomanytests",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
                    "//build/linter/allrevive",
                    "//build/linter/errcheck",
-                   "//build/linter/filepermission",
                    "//build/linter/lll",
                    "//build/linter/revive",
                ],
                "//conditions:default": [],
+           }) +
+           select({
+               "//build:without_rbe": [
+                   "//build/linter/filepermission",
+               ],
+               "//conditions:default": [],
            }),
+)
+
+go_library(
+    name = "build",
+    srcs = ["config.go"],
+    embedsrcs = [
+        "nogo_config.json",
+    ],
+    importpath = "github.com/pingcap/tidb/build",
+    visibility = ["//visibility:public"],
 )

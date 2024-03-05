@@ -13,16 +13,17 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	tmysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	pmysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/errs"
 	"go.uber.org/atomic"
 )
 
@@ -47,6 +48,7 @@ func TestDoChecksum(t *testing.T) {
 	mock.ExpectExec("\\QUPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'\\E").
 		WithArgs("10m").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mock.ExpectClose()
 	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
@@ -197,6 +199,18 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		require.Zero(t, checksumExec.manager.currentTS)
 		require.Equal(t, 0, len(checksumExec.manager.tableGCSafeTS))
 	}
+
+	// test PD leader change error
+	backup := retryGetTSInterval
+	retryGetTSInterval = time.Millisecond
+	t.Cleanup(func() {
+		retryGetTSInterval = backup
+	})
+	pdClient.leaderChanging = true
+	kvClient.maxErrCount = 0
+	checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+	_, err := checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+	require.NoError(t, err)
 }
 
 func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
@@ -215,6 +229,7 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 		WithArgs("300h").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectClose()
+	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
 	_, err = manager.Checksum(context.Background(), &TidbTableInfo{DB: "test", Name: "t"})
@@ -224,6 +239,9 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 func TestGetGCLifetime(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 	ctx := context.Background()
 
 	mock.
@@ -239,6 +257,9 @@ func TestGetGCLifetime(t *testing.T) {
 
 func TestSetGCLifetime(t *testing.T) {
 	db, mock, err := sqlmock.New()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -264,6 +285,7 @@ type testPDClient struct {
 	count            atomic.Int32
 	gcSafePoint      []safePointTTL
 	logicalTSCounter atomic.Uint64
+	leaderChanging   bool
 }
 
 func (c *testPDClient) currentSafePoint() uint64 {
@@ -280,6 +302,9 @@ func (c *testPDClient) currentSafePoint() uint64 {
 
 func (c *testPDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	physicalTS := time.Now().UnixMilli()
+	if c.leaderChanging && physicalTS%2 == 0 {
+		return 0, 0, errors.WithStack(errs.ErrClientTSOStreamClosed)
+	}
 	logicalTS := oracle.ExtractLogical(c.logicalTSCounter.Inc())
 	return physicalTS, logicalTS, nil
 }
@@ -334,6 +359,7 @@ func TestGcTTLManagerSingle(t *testing.T) {
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
+	cancel()
 	time.Sleep(10 * time.Millisecond)
 	val = pdClient.count.Load()
 	time.Sleep(1*time.Second + 10*time.Millisecond)
@@ -342,7 +368,8 @@ func TestGcTTLManagerSingle(t *testing.T) {
 
 func TestGcTTLManagerMulti(t *testing.T) {
 	manager := newGCTTLManager(&testPDClient{})
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	for i := uint64(1); i <= 5; i++ {
 		err := manager.addOneJob(ctx, fmt.Sprintf("test%d", i), i)
@@ -364,6 +391,9 @@ func TestGcTTLManagerMulti(t *testing.T) {
 
 	manager.removeOneJob("test5")
 	require.Equal(t, uint64(0), manager.currentTS)
+	cancel()
+	// GCTTLManager don't wait its goroutine to exit, so we need to wait awhile.
+	time.Sleep(time.Second)
 }
 
 func TestPdServiceID(t *testing.T) {
@@ -438,7 +468,7 @@ type mockChecksumKVClient struct {
 }
 
 // a mock client for checksum request
-func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, option *kv.ClientSendOption) kv.Response {
+func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars any, option *kv.ClientSendOption) kv.Response {
 	if c.onSendReq != nil {
 		c.onSendReq(req)
 	}

@@ -1,0 +1,84 @@
+# TestIssues27147
+set @@tidb_partition_prune_mode='dynamic';
+drop table if exists t;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);
+alter table t add index idx((a+5));
+analyze table t;
+drop table if exists t1;
+create table t1 (a int, b int as (a+1) virtual, c int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);
+alter table t1 add index idx((a+5));
+analyze table t1;
+set @@tidb_partition_prune_mode=default;
+
+# TestIssues24401
+set @@tidb_partition_prune_mode='static';
+drop table if exists t;
+truncate table mysql.stats_fm_sketch;
+create table t(a int, index(a));
+insert into t values (1), (2), (3);
+analyze table t;
+select count(*) from mysql.stats_fm_sketch;
+create table tp(a int, index(a)) partition by hash(a) partitions 3;
+insert into tp values (1), (2), (3);
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+set @@tidb_partition_prune_mode='dynamic';
+analyze table t;
+select count(*) from mysql.stats_fm_sketch;
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+insert into t values (10), (20), (30), (12), (23), (23), (4344);
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+set @@tidb_partition_prune_mode=default;
+
+# TestDuplicateExtendedStats
+set session tidb_enable_extended_stats = on;
+drop table if exists t;
+create table t(a int, b int, c int);
+-- error 1105
+alter table t add stats_extended s1 correlation(a,a);
+alter table t add stats_extended s1 correlation(a,b);
+-- error 1105
+alter table t add stats_extended s1 correlation(a,c);
+-- error 1105
+alter table t add stats_extended s2 correlation(a,b);
+-- error 1105
+alter table t add stats_extended s2 correlation(b,a);
+alter table t add stats_extended s2 correlation(a,c);
+set session tidb_enable_extended_stats = default;
+
+# TestHideIndexUsageSyncLease
+# NOTICE: remove this test when index usage is GA.
+select @@tidb_config like '%index-usage-sync-lease%';
+
+# TestExtendedStatsPartitionTable
+set session tidb_enable_extended_stats = on;
+drop table if exists t1, t2;
+create table t1(a int, b int, c int) partition by range(a) (partition p0 values less than (5), partition p1 values less than (10));
+create table t2(a int, b int, c int) partition by hash(a) partitions 4;
+-- error 1105
+alter table t1 add stats_extended s1 correlation(b,c);
+-- error 1105
+alter table t2 add stats_extended s1 correlation(b,c);
+set session tidb_enable_extended_stats = default;
+
+# TestExtendedStatsDefaultSwitch
+drop table if exists t;
+create table t(a int primary key, b int, c int, d int);
+-- error 1105
+alter table t add stats_extended s1 correlation(b,c);
+-- error 1105
+alter table t drop stats_extended s1;
+-- error 1105
+admin reload stats_extended;
+
+# TestReloadExtStatsLockRelease
+set session tidb_enable_extended_stats = on;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values(1,1),(2,2),(3,3);
+alter table t add stats_extended s1 correlation(a,b);
+## no error
+analyze table t;
+set session tidb_enable_extended_stats = default;

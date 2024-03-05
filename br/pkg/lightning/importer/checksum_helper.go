@@ -20,12 +20,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/kv"
-	pd "github.com/tikv/pd/client"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
 )
 
@@ -36,22 +36,24 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 		return nil, nil
 	}
 
-	pdAddr := rc.cfg.TiDB.PdAddr
-	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.tls, pdAddr)
+	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.pdHTTPCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// for v4.0.0 or upper, we can use the gc ttl api
 	var manager local.ChecksumManager
-	if pdVersion.Major >= 4 {
-		tlsOpt := rc.tls.ToPDSecurityOption()
-		pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tlsOpt)
-		if err != nil {
-			return nil, errors.Trace(err)
+	if pdVersion.Major >= 4 && !rc.cfg.PostRestore.ChecksumViaSQL {
+		backoffWeight, err := common.GetBackoffWeightFromDB(ctx, rc.db)
+		// only set backoff weight when it's smaller than default value
+		if err == nil && backoffWeight >= local.DefaultBackoffWeight {
+			log.FromContext(ctx).Info("get tidb_backoff_weight", zap.Int("backoff_weight", backoffWeight))
+		} else {
+			log.FromContext(ctx).Info("set tidb_backoff_weight to default", zap.Int("backoff_weight", local.DefaultBackoffWeight))
+			backoffWeight = local.DefaultBackoffWeight
 		}
 
-		manager = local.NewTiKVChecksumManager(store.GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency))
+		manager = local.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, rc.taskType)
 	} else {
 		manager = local.NewTiDBChecksumExecutor(rc.db)
 	}

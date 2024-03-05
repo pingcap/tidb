@@ -10,9 +10,9 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-        "//statistics/handle",
-        "//testkit",
+        "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

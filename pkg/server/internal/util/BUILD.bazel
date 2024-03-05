@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "util",
+    srcs = [
+        "buffered_read_conn.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/server/internal/util",
+    visibility = ["//pkg/server:__subpackages__"],
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/charset",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["util_test.go"],
+    embed = [":util"],
+    flaky = True,
+    shard_count = 4,
+    deps = ["@com_github_stretchr_testify//require"],
+)

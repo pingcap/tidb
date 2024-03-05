@@ -9,6 +9,8 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 )
 
 // Range represents a backup response.
@@ -16,6 +18,7 @@ type Range struct {
 	StartKey []byte
 	EndKey   []byte
 	Files    []*backuppb.File
+	Size     uint64
 }
 
 // BytesAndKeys returns total bytes and keys in a range.
@@ -71,6 +74,47 @@ func (rg *Range) Less(than btree.Item) bool {
 	// rg.StartKey < than.StartKey
 	ta := than.(*Range)
 	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
+}
+
+// NeedsMerge checks whether two ranges needs to be merged.
+func NeedsMerge(left, right *Range, splitSizeBytes, splitKeyCount uint64) bool {
+	leftBytes, leftKeys := left.BytesAndKeys()
+	rightBytes, rightKeys := right.BytesAndKeys()
+	if rightBytes == 0 {
+		return true
+	}
+	if leftBytes+rightBytes > splitSizeBytes {
+		return false
+	}
+	if leftKeys+rightKeys > splitKeyCount {
+		return false
+	}
+	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(kv.Key(left.StartKey))
+	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(kv.Key(right.StartKey))
+
+	// Failed to decode the file key head... can this happen?
+	if err1 != nil || err2 != nil {
+		log.Warn("Failed to parse the key head for merging files, skipping",
+			logutil.Key("left-start-key", left.StartKey),
+			logutil.Key("right-start-key", right.StartKey),
+			logutil.AShortError("left-err", err1),
+			logutil.AShortError("right-err", err2),
+		)
+		return false
+	}
+	// Merge if they are both record keys
+	if isRecord1 && isRecord2 {
+		// Do not merge ranges in different tables.
+		return tableID1 == tableID2
+	}
+	// If they are all index keys...
+	if !isRecord1 && !isRecord2 {
+		// Do not merge ranges in different indexes even if they are in the same
+		// table, as rewrite rule only supports rewriting one pattern.
+		// Merge left and right if they are in the same index.
+		return tableID1 == tableID2 && indexID1 == indexID2
+	}
+	return false
 }
 
 var _ btree.Item = &Range{}
@@ -164,6 +208,28 @@ func (rangeTree *RangeTree) InsertRange(rg Range) *Range {
 	return out.(*Range)
 }
 
+// MergedRanges output the sortedRanges having merged according to given `splitSizeBytes` and `splitKeyCount`.
+func (rangeTree *RangeTree) MergedRanges(splitSizeBytes, splitKeyCount uint64) []Range {
+	var mergeTargetIndex int = -1
+	sortedRanges := make([]Range, 0, rangeTree.Len())
+	rangeTree.Ascend(func(item btree.Item) bool {
+		rg := item.(*Range)
+		if mergeTargetIndex < 0 || !NeedsMerge(&sortedRanges[mergeTargetIndex], rg, splitSizeBytes, splitKeyCount) {
+			// unintialized or the sortedRanges[mergeTargetIndex] does not need to merged
+			mergeTargetIndex += 1
+			sortedRanges = append(sortedRanges, *rg)
+		} else {
+			// need to merge from rg to sortedRages[mergeTargetIndex]
+			sortedRanges[mergeTargetIndex].EndKey = rg.EndKey
+			sortedRanges[mergeTargetIndex].Size += rg.Size
+			sortedRanges[mergeTargetIndex].Files = append(sortedRanges[mergeTargetIndex].Files, rg.Files...)
+		}
+
+		return true
+	})
+	return sortedRanges
+}
+
 // GetSortedRanges collects and returns sorted ranges.
 func (rangeTree *RangeTree) GetSortedRanges() []Range {
 	sortedRanges := make([]Range, 0, rangeTree.Len())
@@ -185,17 +251,19 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 		return []Range{}
 	}
 	incomplete := make([]Range, 0, 64)
-	requsetRange := Range{StartKey: startKey, EndKey: endKey}
+	requestRange := Range{StartKey: startKey, EndKey: endKey}
 	lastEndKey := startKey
 	pviot := &Range{StartKey: startKey}
 	if first := rangeTree.Find(pviot); first != nil {
 		pviot.StartKey = first.StartKey
 	}
+	pviotNotFound := true
 	rangeTree.AscendGreaterOrEqual(pviot, func(i btree.Item) bool {
+		pviotNotFound = false
 		rg := i.(*Range)
 		if bytes.Compare(lastEndKey, rg.StartKey) < 0 {
 			start, end, isIntersect :=
-				requsetRange.Intersect(lastEndKey, rg.StartKey)
+				requestRange.Intersect(lastEndKey, rg.StartKey)
 			if isIntersect {
 				// There is a gap between the last item and the current item.
 				incomplete =
@@ -207,9 +275,10 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 	})
 
 	// Check whether we need append the last range
-	if !bytes.Equal(lastEndKey, endKey) && len(lastEndKey) != 0 &&
-		(len(endKey) == 0 || bytes.Compare(lastEndKey, endKey) < 0) {
-		start, end, isIntersect := requsetRange.Intersect(lastEndKey, endKey)
+	if pviotNotFound ||
+		(!bytes.Equal(lastEndKey, endKey) && len(lastEndKey) != 0 &&
+			(len(endKey) == 0 || bytes.Compare(lastEndKey, endKey) < 0)) {
+		start, end, isIntersect := requestRange.Intersect(lastEndKey, endKey)
 		if isIntersect {
 			incomplete =
 				append(incomplete, Range{StartKey: start, EndKey: end})

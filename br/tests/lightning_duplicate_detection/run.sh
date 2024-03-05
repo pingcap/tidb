@@ -16,6 +16,8 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
 LOG_FILE1="$TEST_DIR/lightning-duplicate-detection1.log"
@@ -25,16 +27,16 @@ LOG_FILE2="$TEST_DIR/lightning-duplicate-detection2.log"
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownImport=sleep(250)"
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_detection.sorted1" \
-  --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" &
+  --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "$CUR/config1.toml" &
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_detection.sorted2" \
-  --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config2.toml" &
+  --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "$CUR/config2.toml" &
 
 wait
 
 verify_detected_rows() {
   table=$1
 
-  mapfile -t rows < <(grep "insert" tests/"$TEST_NAME"/data/dup_detect."${table}".*.sql |
+  mapfile -t rows < <(grep "insert" $CUR/data/dup_detect."${table}".*.sql |
     sed 's/^.*(//' | sed 's/).*$//' | sed "s/'//g" | sed 's/, */,/g')
   set +x
   n=${#rows[@]}
@@ -51,7 +53,7 @@ verify_detected_rows() {
     done
   done
   mapfile -t expect_rows < <(for row in "${expect_rows[@]}"; do echo "$row"; done | sort | uniq)
-  mapfile -t actual_rows < <(run_sql "SELECT row_data FROM lightning_task_info.conflict_error_v1 WHERE table_name = \"\`dup_detect\`.\`${table}\`\"" |
+  mapfile -t actual_rows < <(run_sql "SELECT row_data FROM lightning_task_info.conflict_error_v2 WHERE table_name = \"\`dup_detect\`.\`${table}\`\"" |
     grep "row_data:" | sed 's/^.*(//' | sed 's/).*$//' | sed 's/"//g' | sed 's/, */,/g' | sort | uniq)
   equal=0
   if [ "${#actual_rows[@]}" = "${#expect_rows[@]}" ]; then

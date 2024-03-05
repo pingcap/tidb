@@ -14,9 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 run_sql 'DROP DATABASE IF EXISTS sqlmodedb'
 
-run_lightning --config "tests/$TEST_NAME/off.toml"
+run_lightning --config "$CUR/off.toml"
 
 run_sql 'SELECT a, b, hex(c), d FROM sqlmodedb.t WHERE id = 1'
 check_contains 'a: 0000-00-00 00:00:00'
@@ -51,7 +53,7 @@ check_contains 'd: '
 run_sql 'DROP DATABASE IF EXISTS sqlmodedb'
 run_sql 'DROP DATABASE IF EXISTS sqlmodedb_lightning_task_info'
 
-run_lightning --config "tests/$TEST_NAME/on.toml" --log-file "$TEST_DIR/sqlmode-error.log"
+run_lightning --config "$CUR/on.toml" --log-file "$TEST_DIR/sqlmode-error.log"
 
 grep -q '\["kv convert failed"\].*\[original=.*kind=uint64,val=9.*\] \[originalCol=1\] \[colName=a\] \[colType="timestamp BINARY"\]' "$TEST_DIR/sqlmode-error.log"
 

@@ -1,0 +1,119 @@
+# TestIssue21200
+drop table if exists t, t1;
+create table t(a int);
+create table t1(a int);
+insert into t values(1);
+insert into t1 values(1);
+delete a from t a where exists (select 1 from t1 where t1.a=a.a);
+select * from t;
+insert into t values(1), (2);
+insert into t1 values(2);
+prepare stmt from 'delete a from t a where exists (select 1 from t1 where a.a=t1.a and t1.a=?)';
+set @a=1;
+execute stmt using @a;
+select * from t;
+
+# TestDelete
+drop table if exists delete_test;
+drop view if exists v;
+drop sequence if exists seq;
+create table delete_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+insert INTO delete_test VALUES (1, "hello");
+insert into delete_test values (2, "hello");
+--enable_info
+update delete_test set name = "abc" where id = 2;
+delete from delete_test where id = 2 limit 1;
+delete from delete_test where 0;
+--disable_info
+insert into delete_test values (2, 'abc');
+--enable_info
+delete from delete_test where delete_test.id = 2 limit 1;
+--disable_info
+begin;
+SELECT * from delete_test limit 2;
+commit;
+insert into delete_test values (2, 'abc');
+## TODO: https://github.com/pingcap/tidb/issues/48120
+--replace_regex /INTEGER/DOUBLE/
+-- error 1292
+delete from delete_test where id = (select '2a');
+--enable_info
+delete ignore from delete_test where id = (select '2a');
+--disable_info
+SHOW WARNINGS;
+--enable_info
+delete from delete_test;
+--disable_info
+create view v as select * from delete_test;
+-- error 1105
+delete from v where name = 'aaa';
+drop view v;
+create sequence seq;
+-- error 1105
+delete from seq;
+drop sequence seq;
+
+# TestQualifiedDelete
+drop table if exists t1, t2;
+create table t1 (c1 int, c2 int, index (c1));
+create table t2 (c1 int, c2 int);
+insert into t1 values (1, 1), (2, 2);
+--enable_info
+delete from t1 where t1.c1 = 1;
+delete from t1 where t1.c2 = 2;
+--disable_info
+select * from t1;
+insert into t1 values (1, 3);
+--enable_info
+delete from t1 as a where a.c1 = 1;
+--disable_info
+insert into t1 values (1, 1), (2, 2);
+insert into t2 values (2, 1), (3,1);
+--enable_info
+delete t1, t2 from t1 join t2 where t1.c1 = t2.c2;
+--disable_info
+insert into t2 values (2, 1), (3,1);
+--enable_info
+delete a, b from t1 as a join t2 as b where a.c2 = b.c1;
+--disable_info
+-- error 1109
+delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1;
+
+# TestMultiTableDelete
+drop table if exists t1, t2, t3;
+create table t1 (id int, data int);
+--enable_info
+insert into t1 values (11, 121), (12, 122), (13, 123);
+--disable_info
+create table t2 (id int, data int);
+--enable_info
+insert into t2 values (11, 221), (22, 222), (23, 223);
+--disable_info
+create table t3 (id int, data int);
+--enable_info
+insert into t3 values (11, 321), (22, 322), (23, 323);
+delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;
+--disable_info
+--sorted_result
+select * from t3;
+
+# TestNonStrictDeleteUpdateOverflowExpression
+drop table if exists t;
+create table t (id char(255));
+insert into t values ('18446744073709551616');
+# TODO: the error and warning message is different between TiDB and TiKV. Fix it.
+-- replace_regex /BIGINT UNSIGNED/BIGINT/
+-- error 1690
+delete from t where cast(id as unsigned) = 1;
+-- replace_regex /BIGINT UNSIGNED/BIGINT/
+-- error 1690
+update t set id = '1' where cast(id as unsigned) = 1;
+set sql_mode=''
+-- enable_warnings
+-- replace_regex /evaluation failed: //
+delete from t where cast(id as unsigned) = 1;
+-- replace_regex /evaluation failed: //
+update t set id = '1' where cast(id as unsigned) = 1;
+-- disable_warnings
+set sql_mode=DEFAULT
+

@@ -16,6 +16,8 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
 LOG_FILE1="$TEST_DIR/lightning-duplicate-resolution1.log"
@@ -24,7 +26,7 @@ LOG_FILE2="$TEST_DIR/lightning-duplicate-resolution2.log"
 # let lightning run a bit slow to avoid some table in the first lightning finish too fast.
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownCheckDupe=return(10)"
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_resolution_incremental.sorted1" \
-  --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" &
+  --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "$CUR/config1.toml" &
 
 counter=0
 while [ $counter -lt 10 ]; do
@@ -43,7 +45,7 @@ if [ $counter -ge 10 ]; then
 fi
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_resolution_incremental.sorted2" \
-  --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config2.toml" &
+  --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "$CUR/config2.toml" &
 
 wait
 
@@ -54,8 +56,8 @@ run_sql 'admin check table dup_resolve_detect.ta'
 
 # Check data correctness
 run_sql 'select count(*), sum(id) from dup_resolve_detect.ta where id < 100'
-check_contains 'count(*): 10'
-check_contains 'sum(id): 80'
+check_contains 'count(*): 15'
+check_contains 'sum(id): 120'
 
 run_sql 'select count(*), sum(id) from dup_resolve_detect.ta where id > 100'
 check_contains 'count(*): 16'

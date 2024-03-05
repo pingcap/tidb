@@ -1,0 +1,53 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "lockstats",
+    srcs = [
+        "lock_stats.go",
+        "query_lock.go",
+        "unlock_stats.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/lockstats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/statistics/handle/cache",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "lockstats_test",
+    timeout = "short",
+    srcs = [
+        "lock_stats_test.go",
+        "main_test.go",
+        "query_lock_test.go",
+        "unlock_stats_test.go",
+    ],
+    embed = [":lockstats"],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/mock",
+        "//pkg/util/sqlexec/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_mock//gomock",
+    ],
+)

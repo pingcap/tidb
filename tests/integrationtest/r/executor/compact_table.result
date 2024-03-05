@@ -1,0 +1,42 @@
+drop table if exists bar, foo;
+alter table test compact tiflash replica;
+Error 1046 (3D000): No database selected
+alter table executor__compact_table.foo compact tiflash replica;
+Error 1146 (42S02): Table 'executor__compact_table.foo' doesn't exist
+use executor__compact_table;
+alter table bar compact;
+Error 1146 (42S02): Table 'executor__compact_table.bar' doesn't exist
+drop table if exists t;
+create table t(a int);
+alter table t compact tiflash replica;
+show warnings;
+Level	Code	Message
+Warning	1105	compact skipped: no tiflash replica in the table
+alter table executor__compact_table.t compact;
+show warnings;
+Level	Code	Message
+Warning	1105	compact skipped: no tiflash replica in the table
+alter table executor__compact_table.t compact;
+show warnings;
+Level	Code	Message
+Warning	1105	compact skipped: no tiflash replica in the table
+drop table if exists t;
+create table t(a int);
+alter table t compact partition p1,p2 tiflash replica;
+Error 1105 (HY000): table:t is not a partition table, but user specify partition name list:[p1 p2]
+drop table if exists t;
+CREATE TABLE t  (
+id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+fname VARCHAR(25) NOT NULL,
+lname VARCHAR(25) NOT NULL,
+store_id INT NOT NULL,
+department_id INT NOT NULL
+)
+PARTITION BY RANGE(id)  (
+PARTITION p0 VALUES LESS THAN (5),
+PARTITION p1 VALUES LESS THAN (10),
+PARTITION p2 VALUES LESS THAN (15),
+PARTITION p3 VALUES LESS THAN MAXVALUE
+);
+alter table t compact partition p1,p2,p4 tiflash replica;
+Error 1735 (HY000): Unknown partition 'p4' in table 't'

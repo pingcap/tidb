@@ -1,0 +1,2438 @@
+# TestDisableTablePartition
+set @@session.tidb_enable_table_partition = 'AUTO';
+set @@session.tidb_enable_list_partition = OFF;
+drop table if exists t;
+create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),partition p1 values in (3,4));
+show create table t;
+-- error 1505
+alter table t add partition (
+		partition p4 values in (7),
+		partition p5 values in (8,9));
+insert into t values (1),(3),(5),(100),(null);
+set @@session.tidb_enable_table_partition = 'OFF';
+set @@session.tidb_enable_list_partition = OFF;
+drop table if exists t;
+create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),partition p1 values in (3,4));
+show create table t;
+-- error 1505
+alter table t add partition (
+		partition p4 values in (7),
+		partition p5 values in (8,9));
+insert into t values (1),(3),(5),(100),(null);
+set @@session.tidb_enable_table_partition = 0;
+set @@session.tidb_enable_list_partition = OFF;
+drop table if exists t;
+create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),partition p1 values in (3,4));
+show create table t;
+-- error 1505
+alter table t add partition (
+		partition p4 values in (7),
+		partition p5 values in (8,9));
+insert into t values (1),(3),(5),(100),(null);
+set @@session.tidb_enable_table_partition = 'ON';
+set @@session.tidb_enable_list_partition = OFF;
+drop table if exists t;
+create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),partition p1 values in (3,4));
+show create table t;
+-- error 1505
+alter table t add partition (
+		partition p4 values in (7),
+		partition p5 values in (8,9));
+insert into t values (1),(3),(5),(100),(null);
+set @@session.tidb_enable_table_partition = default;
+set @@session.tidb_enable_list_partition = default;
+
+# TestPartitionRangeColumnsCollate
+drop table if exists t;
+create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns (a)
+ (partition p0A values less than ("A"),
+ partition p1AA values less than ("AA"),
+ partition p2Aa values less than ("Aa"),
+ partition p3BB values less than ("BB"),
+ partition p4Bb values less than ("Bb"),
+ partition p5aA values less than ("aA"),
+ partition p6aa values less than ("aa"),
+ partition p7bB values less than ("bB"),
+ partition p8bb values less than ("bb"),
+ partition pMax values less than (MAXVALUE));
+insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba");
+analyze table t;
+explain format='brief' select * from t where a = "AA" collate utf8mb4_general_ci;
+--sorted_result
+select * from t where a = "AA" collate utf8mb4_general_ci;
+explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
+--sorted_result
+select * from t where a = "aa" collate utf8mb4_general_ci;
+explain format='brief' select * from t where a >= "aa" collate utf8mb4_general_ci;
+--sorted_result
+select * from t where a >= "aa" collate utf8mb4_general_ci;
+explain format='brief' select * from t where a > "aa" collate utf8mb4_general_ci;
+--sorted_result
+select * from t where a > "aa" collate utf8mb4_general_ci;
+explain format='brief' select * from t where a <= "aa" collate utf8mb4_general_ci;
+--sorted_result
+select * from t where a <= "aa" collate utf8mb4_general_ci;
+explain format='brief' select * from t where a < "aa" collate utf8mb4_general_ci;
+--sorted_result
+select * from t where a < "aa" collate utf8mb4_general_ci;
+drop table t;
+create table t (a varchar(255) charset utf8mb4 collate utf8mb4_general_ci) partition by range columns (a)
+(partition p0 values less than ("A"),
+ partition p1 values less than ("aa"),
+ partition p2 values less than ("AAA"),
+ partition p3 values less than ("aaaa"),
+ partition p4 values less than ("B"),
+ partition p5 values less than ("bb"),
+ partition pMax values less than (MAXVALUE));
+insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ");
+analyze table t;
+explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
+--sorted_result
+select * from t where a = "aa" collate utf8mb4_general_ci;
+explain format='brief' select * from t where a = "aa" collate utf8mb4_bin;
+--sorted_result
+select * from t where a = "aa" collate utf8mb4_bin;
+explain format='brief' select * from t where a = "ä" collate utf8mb4_bin;
+--sorted_result
+select * from t where a = "ä" collate utf8mb4_bin;
+explain format='brief' select * from t where a = "b" collate utf8mb4_bin;
+--sorted_result
+select * from t where a = "b" collate utf8mb4_bin;
+explain format='brief' select * from t where a <= "b" collate utf8mb4_bin;
+--sorted_result
+select * from t where a <= "b" collate utf8mb4_bin;
+explain format='brief' select * from t where a < "b" collate utf8mb4_bin;
+--sorted_result
+select * from t where a < "b" collate utf8mb4_bin;
+explain format='brief' select * from t where a >= "b" collate utf8mb4_bin;
+--sorted_result
+select * from t where a >= "b" collate utf8mb4_bin;
+explain format='brief' select * from t where a > "b" collate utf8mb4_bin;
+--sorted_result
+select * from t where a > "b" collate utf8mb4_bin;
+
+# TestAlterTableAddPartitionByList
+drop table if exists t;
+set @@session.tidb_enable_list_partition = ON;
+-- error 1495
+create table t (a int) partition by list (a) (partition p1 values in (null, 6), partition p2 values in (7,null));
+create table t (id int) partition by list  (id) (
+    partition p0 values in (1,2),
+    partition p1 values in (3,4),
+    partition p3 values in (5,null)
+);
+alter table t add partition (
+	partition p4 values in (7),
+	partition p5 values in (8,9));
+-- error 1495
+alter table t add partition (partition p6 values in (null, 6));
+alter table t add partition (partition pDef values in (default, 6));
+-- error 8200
+alter table t add partition (partition pDef2 values in (10, default));
+-- error 8200
+alter table t add partition (partition pDef2 values in (10));
+show create table t;
+--sorted_result
+select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema ='ddl__db_partition';
+alter table t reorganize partition pDef into (partition p_6 values in (6));
+-- error 1517
+alter table t add partition (partition p4 values in (7));
+-- error 1480
+alter table t add partition (partition p6 values less than (7));
+-- error 1495
+alter table t add partition (partition p6 values in (null));
+-- error 1495
+alter table t add partition (partition p6 values in (7));
+-- error 1697
+alter table t add partition (partition p6 values in ('a'));
+-- error 1517
+alter table t add partition (partition p5 values in (10),partition p6 values in (7));
+drop table if exists t;
+create table t (a bigint unsigned) partition by list columns (a) (partition p0 values in (1));
+-- error 1654
+alter table t add partition (partition p1 values in (-1));
+drop table if exists t;
+create table t (a varchar(2)) partition by list columns (a) (partition p0 values in ('a','b'));
+-- error 1654
+alter table t add partition (partition p1 values in ('abc'));
+drop table if exists t;
+create table t (a tinyint) partition by list columns (a) (partition p0 values in (1,2,3));
+-- error 1654
+alter table t add partition (partition p1 values in (65536));
+drop table if exists t;
+create table t (a bigint) partition by list columns (a) (partition p0 values in (1,2,3));
+-- error 1654
+alter table t add partition (partition p1 values in (18446744073709551615));
+drop table if exists t;
+create table t (a char) partition by list columns (a) (partition p0 values in ('a','b'));
+-- error 1654
+alter table t add partition (partition p1 values in ('abc'));
+drop table if exists t;
+create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-11-30 12:00:00'));
+-- error 1654
+alter table t add partition (partition p1 values in ('2020-11-31 12:00:00'));
+set @@session.tidb_enable_list_partition = default;
+
+# TestAlterTableAddPartitionByListColumns
+drop table if exists t;
+set @@session.tidb_enable_list_partition = ON;
+create table t (id int, name varchar(10)) partition by list columns (id,name) (
+	    partition p0 values in ((1,'a'),(2,'b')),
+	    partition p1 values in ((3,'a'),(4,'b')),
+	    partition p3 values in ((5,null))
+	);
+-- error 1064
+create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (maxvalue));
+alter table t add partition (
+				partition p4 values in ((7,'a')),
+				partition p5 values in ((8,'a')));
+# We only support a single DEFAULT (catch-all),
+# Not a DEFAULT per column in LIST COLUMNS!
+-- error 1653
+alter table t add partition (
+				partition pDef values in (10, default));
+-- error 1064
+alter table t add partition (
+				partition pDef values in ((10, default)));
+-- error 1653
+alter table t add partition (
+				partition pDef values in (default, 10));
+-- error 1064
+alter table t add partition (
+				partition pDef values in ((default, 10)));
+-- error 1064
+alter table t add partition (
+				partition pDef values in ((9,'a'), (default, 10, 'q'));
+-- error 1064
+alter table t add partition (
+				partition pDef values in ((9,'a'), (10, default, 'q'));
+alter table t add partition (
+		partition pDef values in (default));
+-- error 8200
+alter table t add partition (
+		partition pDef2 values in (default));
+-- error 8200
+alter table t add partition (partition p6 values in ((9,'d')));
+-- error 8200
+alter table t add partition (partition p6 values in (default));
+alter table t drop partition pDef;
+alter table t add partition (partition pDef default);
+alter table t drop partition pDef;
+alter table t add partition (
+		partition pDef values in ((9, 'c'), default));
+# DEFAULT cannot be within parentheses (i.e. like a list).
+-- error 1064
+alter table t add partition (
+		partition pDef values in ((9, 'c'), (default)));
+alter table t drop partition pDef;
+alter table t add partition (
+		partition pDef values in (default, (9,'c')));
+alter table t drop partition pDef;
+alter table t add partition (
+		partition pDef values in ((9,'d'), default));
+alter table t drop partition pDef;
+alter table t add partition (
+		partition pDef values in (default, (9,'c'), (10, 'd')));
+alter table t drop partition pDef;
+alter table t add partition (
+		partition pDef values in ((9,'d'), default, (10, 'd')));
+# After a default value is included in a partition,
+# it can no longer support ADD PARTITION, but should do REORGANIZE instead.
+-- error 1064
+alter table t add partition (
+		partition pDef values in ((9,'a'), (10, default, 'q'));
+show create table t;
+--sorted_result
+select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
+show create table t;
+alter table t reorganize partition pDef into (partition pd VALUES IN ((9,'d'),(10,'d')));
+-- error 1517
+alter table t add partition (partition p4 values in ((7,'b')));
+-- error 1480
+alter table t add partition (partition p6 values less than ((7,'a')));
+-- error 1495
+alter table t add partition (partition p6 values in ((5,null)));
+-- error 1654
+alter table t add partition (partition p6 values in (('a','a')));
+drop table t;
+CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL,
+  `name` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`id`,`name`)
+(PARTITION `p0` VALUES IN ((1,'a'),(2,'b')),
+ PARTITION `p1` VALUES IN ((3,'a'),(4,'b')),
+ PARTITION `p3` VALUES IN ((5,NULL)),
+ PARTITION `p4` VALUES IN ((7,'a')),
+ PARTITION `p5` VALUES IN ((8,'a')),
+ PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')));
+--sorted_result
+select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
+set @@session.tidb_enable_list_partition = OFF;
+alter table t drop partition pDef;
+-- error 1479
+alter table t add partition (partition pDef);
+alter table t add partition (partition pDef default);
+--sorted_result
+select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
+alter table t reorganize partition pDef into (partition pDef VALUES IN (DEFAULT,(9,'c')));
+--sorted_result
+select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
+set @@session.tidb_enable_list_partition = default;
+
+# TestDefaultListPartition
+drop table if exists t;
+create table t (a int, b varchar(255), unique key (a), key (b)) partition by list (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10));
+insert into t values (1, "1"), (2, "2"), (3,'3'), (null, "null"), (4, "4"), (11, "11");
+analyze table t;
+select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_schema = 'ddl__db_partition' and table_name = 't';
+show create table t;
+set @@tidb_partition_prune_mode = 'dynamic';
+select * from t where a = 4;
+select * from t where a is null;
+select * from t where a = 3;
+explain format = 'brief' select * from t where a = 4;
+explain format = 'brief' select * from t where a is null;
+explain format = 'brief' select * from t where a = 3;
+set @@tidb_partition_prune_mode = 'static';
+select * from t where a = 4;
+select * from t where a is null;
+select * from t where a = 3;
+explain format = 'brief' select * from t where a = 4;
+explain format = 'brief' select * from t where a is null;
+explain format = 'brief' select * from t where a = 3;
+# TODO: check ranges with 1,2 and 3 matching values, including 'holes' matching DEFAULT
+# DEFAULT partition will not be used in reorganize partition if not included in the source/destination
+-- error 1526
+alter table t reorganize partition p0 into (partition p0 values in (0));
+drop table t;
+CREATE TABLE t (a VARCHAR(100),b INT) PARTITION BY LIST COLUMNS (a) (PARTITION p1 VALUES IN ('a', 'b', 'DEFAULT'),PARTITION pDef DEFAULT);
+set @@tidb_partition_prune_mode = default;
+
+# TestDefaultListColumnPartition
+drop table if exists t;
+create table t (b int, a varchar(255)) partition by list columns (a) (partition p0 values in (0,4), partition p1 values in (1, null, default), partition p2 values in (2,7,10));
+show create table t;
+insert into t values (1, "1"), (2, "2"), (3,'3'), (null, null), (4, "4"), (11, "11");
+analyze table t;
+--sorted_result
+select * from t partition(p0);
+--sorted_result
+select * from t partition(p1);
+--sorted_result
+select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_schema = 'ddl__db_partition' and table_name = 't';
+set @@tidb_partition_prune_mode = 'dynamic';
+explain format = 'brief' select * from t where a is null;
+--sorted_result
+select * from t where a is null;
+--sorted_result
+select * from t where a = 4;
+explain format = 'brief' select * from t where a = 4;
+--sorted_result
+select * from t where a = 3;
+explain format = 'brief' select * from t where a = 3;
+explain format = 'brief' select * from t where a = "3";
+--sorted_result
+select * from t where a = "3";
+--sorted_result
+select * from t where a = "4";
+explain format = 'brief' select * from t where a = "4";
+# Notice in string context that "35" is between "3" and "4"
+explain format = 'brief' select * from t where a between "3" and "4";
+--sorted_result
+select * from t where a between "3" and "4";
+explain format = 'brief' select * from t where a >= "3" and a <= "4";
+--sorted_result
+select * from t where a >= "3" and a <= "4";
+set @@tidb_partition_prune_mode = 'static';
+--sorted_result
+select * from t where a is null;
+explain format = 'brief' select * from t where a is null;
+--sorted_result
+select * from t where a = 4;
+--sorted_result
+select * from t where a = "4";
+explain format = 'brief' select * from t where a = "4";
+--sorted_result
+select * from t where a = 3;
+--sorted_result
+select * from t where a = "3";
+explain format = 'brief' select * from t where a = "3";
+explain format = 'brief' select * from t where a between "3" and "4";
+--sorted_result
+select * from t where a between "3" and "4";
+explain format = 'brief' select * from t where a >= "3" and a <= "4";
+--sorted_result
+select * from t where a >= "3" and a <= "4";
+# DEFAULT partition will not be used in reorganize partition if not included in the source/destination
+-- error 1526
+alter table t reorganize partition p0 into (partition p0 values in (0));
+set @@tidb_partition_prune_mode = default;
+
+# TestDefaultListErrors
+drop table if exists t;
+-- error 1064
+create table t (a int) partition by range (a) (partition p0 values less than (default));
+-- error 1697
+create table t (a int) partition by range (a) (partition p0 values less than ("default"));
+create table t (a varchar(55)) partition by range columns (a) (partition p0 values less than ("default"));
+drop table t;
+-- error 1064
+create table t (a varchar(55)) partition by range columns (a) (partition p0 values less than (default));
+-- error 1480
+create table t (a varchar(55)) partition by range columns (a) (partition p0 default);
+create table t (a varchar(55)) partition by list columns (a) (partition p0 default);
+insert into t values ('Hi');
+show create table t;
+drop table t;
+create table t (a int) partition by list (a) (partition p0 default);
+insert into t values (2);
+show create table t;
+drop table t;
+-- error 1064
+create table t (a int) partition by list (a) (partition p0 values in ());
+
+# TestAlterTableDropPartitionByList
+drop table if exists t;
+set @@session.tidb_enable_list_partition = ON;
+create table t (id int) partition by list  (id) (
+    partition p0 values in (1,2),
+    partition p1 values in (3,4),
+    partition p3 values in (5,null)
+);
+# TODO: Add cases for dropping DEFAULT partition
+insert into t values (1),(3),(5),(null);
+alter table t drop partition p1;
+select * from t order by id;
+show create table t;
+-- error 1507
+alter table t drop partition p10;
+alter table t drop partition p3;
+select * from t;
+-- error 1508
+alter table t drop partition p0;
+set @@session.tidb_enable_list_partition = default;
+
+# TestAlterTableDropPartitionByListColumns
+drop table if exists t;
+set @@session.tidb_enable_list_partition = ON;
+create table t (id int, name varchar(10)) partition by list columns (id,name) (
+    partition p0 values in ((1,'a'),(2,'b')),
+    partition p1 values in ((3,'a'),(4,'b')),
+    partition p3 values in ((5,'a'),(null,null)),
+    partition pDef values in (default)
+);
+insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null),(9,9);
+alter table t drop partition p1;
+alter table t drop partition pDef;
+--sorted_result
+select * from t;
+show create table t;
+-- error 1507
+alter table t drop partition p10;
+alter table t drop partition p3;
+select * from t;
+-- error 1508
+alter table t drop partition p0;
+set @@session.tidb_enable_list_partition = default;
+
+# TestAlterTableAddPartition
+drop table if exists employees;
+create table employees (
+id int not null,
+hired date not null
+)
+partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p2 values less than (1996),
+	partition p3 values less than (2001)
+);
+alter table employees add partition (
+    partition p4 values less than (2010),
+    partition p5 values less than MAXVALUE
+);
+show create table employees;
+drop table if exists table1;
+create table table1(a int);
+-- error 1505
+alter table table1 add partition (
+	partition p1 values less than (2010),
+	partition p2 values less than maxvalue
+);
+create table table_MustBeDefined (
+	id int not null,
+	hired date not null
+)
+partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p2 values less than (1996),
+	partition p3 values less than (2001)
+);
+-- error 1492
+alter table table_MustBeDefined add partition;
+drop table if exists table2;
+create table table2 (
+	id int not null,
+	hired date not null
+) partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p2 values less than maxvalue
+);
+-- error 1481
+alter table table2 add partition (
+	partition p3 values less than (2010)
+);
+drop table if exists table3;
+create table table3 (
+	id int not null,
+	hired date not null
+)
+partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p2 values less than (2001)
+);
+-- error 1493
+alter table table3 add partition (
+	partition p3 values less than (1993)
+);
+-- error 1517
+alter table table3 add partition (
+	partition p1 values less than (1993)
+);
+-- error 1517
+alter table table3 add partition (
+	partition p1 values less than (1993),
+	partition p1 values less than (1995)
+);
+-- error 1517
+alter table table3 add partition (
+	partition p4 values less than (1993),
+	partition p1 values less than (1995),
+	partition p5 values less than maxvalue
+);
+-- error 1479
+alter table table3 add partition (partition p6);
+-- error 1480
+alter table table3 add partition (partition p7 values in (2018));
+-- error 1492
+alter table table3 add partition partitions 4;
+alter table table3 add partition (partition p3 values less than (2001 + 10));
+CREATE TABLE tt5 (
+	c3 bigint(20) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE ( c3 ) (
+	PARTITION p0 VALUES LESS THAN (-3),
+	PARTITION p1 VALUES LESS THAN (-2)
+);
+ALTER TABLE tt5 add partition ( partition p2 values less than (-1) );
+ALTER TABLE tt5 add partition ( partition p3 values less than (5-1) );
+drop table if exists t;
+create table t (a datetime) partition by range columns (a) (partition p1 values less than ('2019-06-01'), partition p2 values less than ('2019-07-01'));
+-- error 1493
+alter table t add partition ( partition p3 values less than ('2019-07-01'));
+alter table t add partition ( partition p3 values less than ('2019-08-01'));
+drop table if exists t;
+create table t (
+	col date not null default '2000-01-01')
+partition by range columns (col) (
+	PARTITION p0 VALUES LESS THAN ('20190905'),
+	PARTITION p1 VALUES LESS THAN ('20190906')
+);
+-- error 1654
+alter table t add partition (partition p2 values less than (20190907));
+
+# TestAlterTableDropPartition
+drop table if exists employees;
+create table employees (
+	id int not null,
+	hired int not null
+)
+partition by range( hired ) (
+	partition p1 values less than (1991),
+	partition p2 values less than (1996),
+	partition p3 values less than (2001)
+);
+alter table employees drop partition p3;
+show create table employees;
+drop table if exists table1;
+create table table1 (a int);
+-- error 1505
+alter table table1 drop partition p10;
+drop table if exists table2;
+create table table2 (
+	id int not null,
+	hired date not null
+)
+partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p2 values less than (1996),
+	partition p3 values less than (2001)
+);
+-- error 1507
+alter table table2 drop partition p10;
+drop table if exists table3;
+create table table3 (
+	id int not null
+)
+partition by range( id ) (
+	partition p1 values less than (1991)
+);
+-- error 1508
+alter table table3 drop partition p1;
+drop table if exists table4;
+create table table4 (
+	id int not null
+)
+partition by range( id ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20),
+	partition p3 values less than MAXVALUE
+);
+alter table table4 drop partition p2;
+show create table table4;
+drop table if exists tr;
+create table tr(
+	id int, name varchar(50),
+	purchased date
+)
+partition by range( year(purchased) ) (
+    partition p0 values less than (1990),
+    partition p1 values less than (1995),
+    partition p2 values less than (2000),
+    partition p3 values less than (2005),
+    partition p4 values less than (2010),
+    partition p5 values less than (2015)
+);
+INSERT INTO tr VALUES
+	(1, 'desk organiser', '2003-10-15'),
+	(2, 'alarm clock', '1997-11-05'),
+	(3, 'chair', '2009-03-10'),
+	(4, 'bookcase', '1989-01-10'),
+	(5, 'exercise bike', '2014-05-09'),
+	(6, 'sofa', '1987-06-05'),
+	(7, 'espresso maker', '2011-11-22'),
+	(8, 'aquarium', '1992-08-04'),
+	(9, 'study desk', '2006-09-16'),
+	(10, 'lava lamp', '1998-12-25');
+select * from tr where purchased between '1995-01-01' and '1999-12-31';
+alter table tr drop partition p2;
+select * from tr where purchased between '1995-01-01' and '1999-12-31';
+select * from tr where purchased between '2010-01-01' and '2014-12-31';
+alter table tr drop partition p5;
+select * from tr where purchased between '2010-01-01' and '2014-12-31';
+alter table tr drop partition p4;
+select * from tr where purchased between '2005-01-01' and '2009-12-31';
+drop table if exists table4;
+create table table4 (
+	id int not null
+)
+partition by range( id ) (
+	partition Par1 values less than (1991),
+	partition pAR2 values less than (1992),
+	partition Par3 values less than (1995),
+	partition PaR5 values less than (1996)
+);
+alter table table4 drop partition Par2;
+alter table table4 drop partition PAR5;
+-- error 1507
+alter table table4 drop partition PAR0;
+CREATE TABLE t1 (a int(11), b varchar(64)) PARTITION BY HASH(a) PARTITIONS 3;
+-- error 1512
+alter table t1 drop partition p2;
+
+# TestMultiPartitionDropAndTruncate
+drop table if exists employees;
+create table employees (
+	hired int not null
+)
+partition by range( hired ) (
+	partition p1 values less than (1991),
+	partition p2 values less than (1996),
+	partition p3 values less than (2001),
+	partition p4 values less than (2006),
+	partition p5 values less than (2011)
+);
+INSERT INTO employees VALUES (1990), (1995), (2000), (2005), (2010);
+alter table employees drop partition p1, p2;
+--sorted_result
+select * from employees;
+alter table employees truncate partition p3, p4;
+select * from employees;
+
+# TestExchangePartitionValidation
+drop table if exists t1, t1p;
+CREATE TABLE t1 (
+	d date NOT NULL ,
+	name varchar(10)  NOT NULL,
+	UNIQUE KEY (d,name)
+);
+CREATE TABLE t1p (
+	d date NOT NULL ,
+	name varchar(10)  NOT NULL,
+	UNIQUE KEY (d,name)
+)
+PARTITION BY RANGE COLUMNS(d)
+(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
+ PARTITION p202308 VALUES LESS THAN ('2023-09-01'),
+ PARTITION p202309 VALUES LESS THAN ('2023-10-01'),
+ PARTITION p202310 VALUES LESS THAN ('2023-11-01'),
+ PARTITION p202311 VALUES LESS THAN ('2023-12-01'),
+ PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
+ PARTITION pfuture VALUES LESS THAN (MAXVALUE));
+insert into t1 values ("2023-08-06","0000");
+-- error 1737
+alter table t1p exchange partition p202307 with table t1 with validation;
+insert into t1 values ("2023-08-06","0001");
+
+# TestExchangePartitionCheckConstraint
+drop database if exists db_one;
+drop database if exists db_two;
+create database db_one;
+create database db_two;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 60);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (80, 60);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+-- error 1737
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+set @@global.tidb_enable_check_constraint = 0;
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 80);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+-- error 1737
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+set @@global.tidb_enable_check_constraint = 0;
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (80, 80);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+-- error 1737
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+set @@global.tidb_enable_check_constraint = 0;
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 120);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (80, 120);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+-- error 1737
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+set @@global.tidb_enable_check_constraint = 0;
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (60, 60);
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (60, 50);
+-- error 1737
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+set @@global.tidb_enable_check_constraint = 0;
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (30, 50);
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 60);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (70, 70);
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 60);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (70, 70);
+insert into db_two.pt values (30, 50);
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 60);
+insert into db_one.nt values (60, 120);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (70, 70);
+insert into db_two.pt values (30, 50);
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 60);
+insert into db_one.nt values (80, 120);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (70, 70);
+insert into db_two.pt values (30, 50);
+-- error 1737
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+set @@global.tidb_enable_check_constraint = 0;
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 60);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (70, 70);
+insert into db_two.pt values (30, 50);
+insert into db_two.pt values (60, 50);
+-- error 1737
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+set @@global.tidb_enable_check_constraint = 0;
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = 1;
+create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED);
+insert into db_one.nt values (60, 60);
+insert into db_one.nt values (60, 80);
+create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) );
+insert into db_two.pt values (70, 70);
+insert into db_two.pt values (30, 50);
+-- error 1737
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+set @@global.tidb_enable_check_constraint = 0;
+alter table db_two.pt exchange partition p1 with table db_one.nt;
+drop table db_one.nt, db_two.pt;
+set @@global.tidb_enable_check_constraint = default;
+
+# TestExchangePartitionPlacementPolicy
+drop placement policy if exists rule1;
+drop placement policy if exists rule2;
+drop table if exists t1, t1p;
+CREATE PLACEMENT POLICY rule1 FOLLOWERS=1;
+CREATE PLACEMENT POLICY rule2 FOLLOWERS=2;
+CREATE TABLE t1 (
+	d date NOT NULL ,
+	name varchar(10)  NOT NULL,
+	UNIQUE KEY (d,name)
+) PLACEMENT POLICY="rule1";
+CREATE TABLE t1p (
+	d date NOT NULL ,
+	name varchar(10)  NOT NULL,
+	UNIQUE KEY (d,name)
+) PLACEMENT POLICY="rule2"
+PARTITION BY RANGE COLUMNS(d)
+(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
+ PARTITION p202308 VALUES LESS THAN ('2023-09-01'),
+ PARTITION p202309 VALUES LESS THAN ('2023-10-01'),
+ PARTITION p202310 VALUES LESS THAN ('2023-11-01'),
+ PARTITION p202311 VALUES LESS THAN ('2023-12-01'),
+ PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
+ PARTITION pfuture VALUES LESS THAN (MAXVALUE));
+-- error 1736
+alter table t1p exchange partition p202307 with table t1;
+insert into t1 values ("2023-08-06","0000");
+drop table t1, t1p;
+drop placement policy rule1;
+drop placement policy rule2;
+
+# TestTiDBEnableExchangePartition
+drop table if exists pt;
+create table pt (a int primary key auto_increment) partition by range(a) (
+	partition p0 values less than (3),
+	partition p1 values less than (6),
+    PARTITION p2 values less than (9)
+);
+select @@tidb_enable_exchange_partition;
+create table nt(a int primary key auto_increment);
+alter table pt exchange partition p0 with table nt;
+show warnings;
+set @@tidb_enable_exchange_partition=0;
+show warnings;
+select @@tidb_enable_exchange_partition;
+alter table pt exchange partition p0 with table nt;
+show warnings;
+set @@tidb_enable_exchange_partition=1;
+show warnings;
+select @@tidb_enable_exchange_partition;
+alter table pt exchange partition p0 with table nt;
+show warnings;
+set @@tidb_enable_exchange_partition=default;
+
+# TestPartitionUniqueKeyNeedAllFieldsInPf
+drop table if exists part1;
+create table part1 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	unique key (col1, col2)
+)
+partition by range( col1 + col2 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists part2;
+create table part2 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	unique key (col1, col2, col3),
+	unique key (col3)
+)
+partition by range( col3 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists part3;
+create table part3 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	primary key(col1, col2)
+)
+partition by range( col1 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists part4;
+create table part4 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	primary key(col1, col2),
+	unique key(col2)
+)
+partition by range( year(col2)  ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists part5;
+create table part5 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	primary key(col1, col2, col4),
+	unique key(col2, col1)
+)
+partition by range( col1 + col2 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists Part1;
+-- error 1503
+create table Part1 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	unique key (col1, col2)
+)
+partition by range( col3 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists Part1;
+-- error 1503
+create table Part1 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	unique key (col1),
+	unique key (col3)
+)
+partition by range( col1 + col3 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists Part1;
+-- error 1503
+create table Part1 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	unique key (col1),
+	unique key (col3)
+)
+partition by range( col3 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists Part1;
+-- error 1503
+create table Part1 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	unique key (col1, col2, col3),
+	unique key (col3)
+)
+partition by range( col1 + col3 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists Part1;
+-- error 1503
+create table Part1 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	primary key(col1, col2)
+)
+partition by range( col3 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists Part1;
+-- error 1503
+create table Part1 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	primary key(col1, col3),
+	unique key(col2)
+)
+partition by range( year(col2)  ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists Part1;
+-- error 1503
+create table Part1 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	primary key(col1, col3, col4),
+	unique key(col2, col1)
+)
+partition by range( col1 + col2 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+drop table if exists part6;
+-- error 1503
+create table part6 (
+	col1 int not null,
+	col2 date not null,
+	col3 int not null,
+	col4 int not null,
+	col5 int not null,
+	unique key(col1, col2),
+	unique key(col1, col3)
+)
+partition by range( col1 + col2 ) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+-- error 1503
+create table part7 (
+	col1 int not null,
+	col2 int not null,
+	col3 int not null unique,
+	unique key(col1, col2)
+)
+partition by range (col1 + col2) (
+partition p1 values less than (11),
+partition p2 values less than (15)
+);
+-- error 1503
+create table part8 (
+         a int not null,
+         b int not null,
+         c int default null,
+         d int default null,
+         e int default null,
+         primary key (a, b),
+         unique key (c, d)
+)
+partition by range columns (b) (
+       partition p0 values less than (4),
+       partition p1 values less than (7),
+       partition p2 values less than (11)
+);
+-- error 1503
+create table part9 (
+         a int not null,
+         b int not null,
+         c int default null,
+         d int default null,
+         e int default null,
+         primary key (a, b),
+         unique key (b, c, d)
+)
+partition by range columns (b, c) (
+       partition p0 values less than (4, 5),
+       partition p1 values less than (7, 9),
+       partition p2 values less than (11, 22)
+);
+-- error 1503
+create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'));
+create table part12 (a varchar(20), b binary) partition by range columns (a) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'));
+-- error 1503
+alter table part12 add unique index (a(5));
+create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'));
+
+# TestCoalescePartition
+drop table if exists t;
+create table t (
+	id int,
+	fname varchar(30),
+	lname varchar(30),
+	signed date
+)
+partition by hash( month(signed) )
+partitions 12;
+insert into t values (0, "Joe", "Doe", from_days(738974 + 0));
+insert into t values (1, "Joe", "Doe", from_days(738974 + 3));
+insert into t values (2, "Joe", "Doe", from_days(738974 + 6));
+insert into t values (3, "Joe", "Doe", from_days(738974 + 9));
+insert into t values (4, "Joe", "Doe", from_days(738974 + 12));
+insert into t values (5, "Joe", "Doe", from_days(738974 + 15));
+insert into t values (6, "Joe", "Doe", from_days(738974 + 18));
+insert into t values (7, "Joe", "Doe", from_days(738974 + 21));
+insert into t values (8, "Joe", "Doe", from_days(738974 + 24));
+insert into t values (9, "Joe", "Doe", from_days(738974 + 27));
+insert into t values (10, "Joe", "Doe", from_days(738974 + 30));
+insert into t values (11, "Joe", "Doe", from_days(738974 + 33));
+insert into t values (12, "Joe", "Doe", from_days(738974 + 36));
+insert into t values (13, "Joe", "Doe", from_days(738974 + 39));
+insert into t values (14, "Joe", "Doe", from_days(738974 + 42));
+insert into t values (15, "Joe", "Doe", from_days(738974 + 45));
+insert into t values (16, "Joe", "Doe", from_days(738974 + 48));
+insert into t values (17, "Joe", "Doe", from_days(738974 + 51));
+insert into t values (18, "Joe", "Doe", from_days(738974 + 54));
+insert into t values (19, "Joe", "Doe", from_days(738974 + 57));
+insert into t values (20, "Joe", "Doe", from_days(738974 + 60));
+insert into t values (21, "Joe", "Doe", from_days(738974 + 63));
+insert into t values (22, "Joe", "Doe", from_days(738974 + 66));
+insert into t values (23, "Joe", "Doe", from_days(738974 + 69));
+insert into t values (24, "Joe", "Doe", from_days(738974 + 72));
+insert into t values (25, "Joe", "Doe", from_days(738974 + 75));
+insert into t values (26, "Joe", "Doe", from_days(738974 + 78));
+insert into t values (27, "Joe", "Doe", from_days(738974 + 81));
+insert into t values (28, "Joe", "Doe", from_days(738974 + 84));
+insert into t values (29, "Joe", "Doe", from_days(738974 + 87));
+alter table t coalesce partition 4;
+show create table t;
+analyze table t;
+--sorted_result
+select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
+(select 'p0', count(*) from t partition (p0) UNION select 'p1', count(*) from t partition (p1) UNION select 'p2', count(*) from t partition (p2) UNION select 'p3', count(*) from t partition (p3) UNION select 'p4', count(*) from t partition (p4) UNION select 'p5', count(*) from t partition (p5) UNION select 'p6', count(*) from t partition (p6) UNION select 'p7', count(*) from t partition (p7)) ORDER BY 1;
+drop table t;
+create table t (
+	id int,
+	fname varchar(30),
+	lname varchar(30),
+	signed date
+)
+partition by key(signed,fname)
+partitions 12;
+insert into t values (0, "Joe", "Doe", from_days(738974 + 0));
+insert into t values (1, "Joe", "Doe", from_days(738974 + 3));
+insert into t values (2, "Joe", "Doe", from_days(738974 + 6));
+insert into t values (3, "Joe", "Doe", from_days(738974 + 9));
+insert into t values (4, "Joe", "Doe", from_days(738974 + 12));
+insert into t values (5, "Joe", "Doe", from_days(738974 + 15));
+insert into t values (6, "Joe", "Doe", from_days(738974 + 18));
+insert into t values (7, "Joe", "Doe", from_days(738974 + 21));
+insert into t values (8, "Joe", "Doe", from_days(738974 + 24));
+insert into t values (9, "Joe", "Doe", from_days(738974 + 27));
+insert into t values (10, "Joe", "Doe", from_days(738974 + 30));
+insert into t values (11, "Joe", "Doe", from_days(738974 + 33));
+insert into t values (12, "Joe", "Doe", from_days(738974 + 36));
+insert into t values (13, "Joe", "Doe", from_days(738974 + 39));
+insert into t values (14, "Joe", "Doe", from_days(738974 + 42));
+insert into t values (15, "Joe", "Doe", from_days(738974 + 45));
+insert into t values (16, "Joe", "Doe", from_days(738974 + 48));
+insert into t values (17, "Joe", "Doe", from_days(738974 + 51));
+insert into t values (18, "Joe", "Doe", from_days(738974 + 54));
+insert into t values (19, "Joe", "Doe", from_days(738974 + 57));
+insert into t values (20, "Joe", "Doe", from_days(738974 + 60));
+insert into t values (21, "Joe", "Doe", from_days(738974 + 63));
+insert into t values (22, "Joe", "Doe", from_days(738974 + 66));
+insert into t values (23, "Joe", "Doe", from_days(738974 + 69));
+insert into t values (24, "Joe", "Doe", from_days(738974 + 72));
+insert into t values (25, "Joe", "Doe", from_days(738974 + 75));
+insert into t values (26, "Joe", "Doe", from_days(738974 + 78));
+insert into t values (27, "Joe", "Doe", from_days(738974 + 81));
+insert into t values (28, "Joe", "Doe", from_days(738974 + 84));
+insert into t values (29, "Joe", "Doe", from_days(738974 + 87));
+alter table t coalesce partition 4;
+show create table t;
+analyze table t;
+--sorted_result
+select partition_name, table_rows from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
+(select 'p0', count(*) from t partition (p0) UNION select 'p1', count(*) from t partition (p1) UNION select 'p2', count(*) from t partition (p2) UNION select 'p3', count(*) from t partition (p3) UNION select 'p4', count(*) from t partition (p4) UNION select 'p5', count(*) from t partition (p5) UNION select 'p6', count(*) from t partition (p6) UNION select 'p7', count(*) from t partition (p7)) ORDER BY 1;
+
+# TestAddHashPartition
+drop table if exists t;
+create table t (
+	id int not null,
+	fname varchar(30),
+	lname varchar(30),
+	hired date not null default '1970-01-01',
+	separated date,
+	job_code int,
+	store_id int
+)
+partition by hash(store_id)
+partitions 4;
+insert into t values (1,"one", "two","1999-01-04", null, 1, 1), (2, "Who", "Else", '2020-12-02', '2022-12-31', 2, 2);
+insert into t select id + 2, fname, lname, hired, separated, job_code, store_id + 2 from t;
+insert into t select id + 4, fname, lname, hired, separated, job_code, store_id + 4 from t;
+insert into t select id + 8, fname, lname, hired, separated, job_code, store_id + 8 from t;
+insert into t select id + 16, fname, lname, hired, separated, job_code, store_id + 16 from t;
+insert into t select id + 32, fname, lname, hired, separated, job_code, store_id + 32 from t;
+insert into t select id + 64, fname, lname, hired, separated, job_code, store_id + 64 from t;
+insert into t select id + 128, fname, lname, hired, separated, job_code, store_id + 128 from t;
+insert into t select id + 256, fname, lname, hired, separated, job_code, store_id + 256 from t;
+insert into t select id + 512, fname, lname, hired, separated, job_code, store_id + 512 from t;
+select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t;
+-- error 1480
+alter table t add partition (partition pHist history);
+-- error 1480
+alter table t add partition (partition pList values in (22));
+-- error 1480
+alter table t add partition (partition pRange values less than (22));
+insert into t values (20, "Joe", "Doe", '2020-01-05', null, 1,1), (21, "Jane", "Doe", '2021-07-05', null, 2,1);
+select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t;
+# TiDB does not support system versioned tables / SYSTEM_TIME
+# also the error is slightly wrong with 'VALUES HISTORY'
+# instead of just 'HISTORY'
+alter table t add partition partitions 8;
+show create table t;
+-- error 1515
+alter table t coalesce partition 0;
+-- error 1508
+alter table t coalesce partition 12;
+create placement policy tworeplicas followers=1;
+create placement policy threereplicas followers=2;
+create placement policy fourreplicas followers=3;
+alter table t add partition (partition pp13 comment 'p13' placement policy tworeplicas, partition pp14 comment 'p14' placement policy threereplicas, partition pp15 comment 'p15' placement policy fourreplicas);
+alter table t add partition partitions 1;
+alter table t coalesce partition 1;
+show create table t;
+alter table t coalesce partition 2;
+show create table t;
+alter table t coalesce partition 1;
+alter table t add partition (partition p13 comment 'p13');
+-- error 1517
+alter table t add partition partitions 1;
+alter table t coalesce partition 1;
+show create table t;
+alter table t add partition (partition p12 comment 'p12' placement policy tworeplicas);
+alter table t placement policy fourreplicas;
+alter table t add partition partitions 1;
+show create table t;
+alter table t remove partitioning;
+show create table t;
+select sum(store_id), avg(store_id), max(store_id), min(store_id), sum(id) from t;
+alter table t placement policy default;
+drop placement policy tworeplicas;
+drop placement policy threereplicas;
+drop placement policy fourreplicas;
+drop table t;
+create table t (
+	id int not null,
+	fname varchar(30),
+	lname varchar(30),
+	hired date not null default '1970-01-01',
+	separated date,
+	job_code int,
+	store_id int
+)
+partition by key (hired)
+partitions 4;
+insert into t values (20, "Joe", "Doe", '2020-01-05', null, 1,1), (21, "Jane", "Doe", '2021-07-05', null, 2,1);
+alter table t add partition partitions 8;
+show create table t;
+alter table t add partition (partition p13);
+-- error 1517
+alter table t add partition partitions 1;
+show create table t;
+alter table t coalesce partition 2;
+show create table t;
+
+# TestConstAndTimezoneDepent
+set @@session.tidb_enable_table_partition = 1;
+drop database if exists test_db_with_partition_const;
+create database test_db_with_partition_const;
+use test_db_with_partition_const;
+-- error 1486
+create table t1 ( id int )
+		partition by range(4) (
+		partition p1 values less than (10)
+		);
+-- error 1486
+create table t2 ( time_recorded timestamp )
+		partition by range(TO_DAYS(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);
+-- error 1486
+create table t3 ( id int )
+		partition by range(DAY(id)) (
+		partition p1 values less than (1)
+		);
+-- error 1486
+create table t4 ( id int )
+		partition by hash(4) partitions 4
+		;
+-- error 1486
+create table t5 ( time_recorded timestamp )
+		partition by range(to_seconds(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);
+-- error 1486
+create table t6 ( id int )
+		partition by range(to_seconds(id)) (
+		partition p1 values less than (1559192604)
+		);
+-- error 1486
+create table t7 ( time_recorded timestamp )
+		partition by range(abs(time_recorded)) (
+		partition p1 values less than (1559192604)
+		);
+-- error 1486
+create table t2332 ( time_recorded time )
+         partition by range(TO_DAYS(time_recorded)) (
+  		 partition p0 values less than (1)
+		);
+-- error 1486
+create table t1 ( id int )
+		partition by hash(4) partitions 4;
+-- error 1054
+create table t1 ( id int )
+		partition by hash(ed) partitions 4;
+-- error 1486
+create table t2332 ( time_recorded time )
+         partition by range(TO_SECONDS(time_recorded)) (
+  		 partition p0 values less than (1)
+		);
+-- error 1486
+create table t2332 ( time_recorded time )
+         partition by range(TO_SECONDS(time_recorded)) (
+  		 partition p0 values less than (1)
+		);
+-- error 1486
+create table t2332 ( time_recorded time )
+         partition by range(day(time_recorded)) (
+  		 partition p0 values less than (1)
+		);
+-- error 1486
+create table t2332 ( time_recorded timestamp )
+         partition by range(day(time_recorded)) (
+  		 partition p0 values less than (1)
+		);
+set @@session.tidb_enable_table_partition = default;
+
+# TestUnsupportedPartitionManagementDDLs
+drop table if exists test_1465;
+create table test_1465 (a int)
+partition by range(a) (
+	partition p1 values less than (10),
+	partition p2 values less than (20),
+	partition p3 values less than (30)
+);
+alter table test_1465 truncate partition p1;
+-- error 8200
+alter table test_1465 check partition p1;
+-- error 8200
+alter table test_1465 optimize partition p1;
+-- error 8200
+alter table test_1465 repair partition p1;
+-- error 8200
+alter table test_1465 import partition p1 tablespace;
+-- error 8200
+alter table test_1465 discard partition p1 tablespace;
+-- error 8200
+alter table test_1465 rebuild partition p1;
+-- error 1509
+alter table test_1465 coalesce partition 1;
+alter table test_1465 partition by hash(a);
+show create table test_1465;
+-- error 1512
+alter table test_1465 drop partition p0;
+
+# TestCreatePartitionTableWithWrongType
+drop table if exists t;
+-- error 1654
+create table t(
+	b int(10)
+) partition by range columns (b) (
+	partition p0 values less than (0x10),
+	partition p3 values less than (0x20)
+);
+-- error 1654
+create table t(
+	b int(10)
+) partition by range columns (b) (
+	partition p0 values less than ('g'),
+	partition p3 values less than ('k')
+);
+-- error 1654
+create table t(
+	b char(10)
+) partition by range columns (b) (
+	partition p0 values less than (30),
+	partition p3 values less than (60)
+);
+-- error 1654
+create table t(
+	b datetime
+) partition by range columns (b) (
+	partition p0 values less than ('g'),
+	partition p3 values less than ('m')
+);
+
+# TestAddPartitionForTableWithWrongType
+drop tables if exists t_int, t_char, t_date;
+create table t_int(b int(10))
+partition by range columns (b) (
+	partition p0 values less than (10)
+);
+create table t_char(b char(10))
+partition by range columns (b) (
+	partition p0 values less than ('a')
+);
+create table t_date(b datetime)
+partition by range columns (b) (
+	partition p0 values less than ('2020-09-01')
+);
+-- error 1654
+alter table t_int add partition (partition p1 values less than ('g'));
+-- error 1654
+alter table t_int add partition (partition p1 values less than (0x20));
+-- error 1493
+alter table t_char add partition (partition p1 values less than (0x20));
+-- error 1654
+alter table t_char add partition (partition p1 values less than (10));
+-- error 1654
+alter table t_date add partition (partition p1 values less than ('m'));
+-- error 1654
+alter table t_date add partition (partition p1 values less than (0x20));
+-- error 1654
+alter table t_date add partition (partition p1 values less than (20));
+
+# TestPartitionListWithTimeType
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t_list1;
+create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));
+insert into t_list1(a) values (20180203);
+select * from t_list1 partition (p0);
+set @@session.tidb_enable_list_partition = default;
+
+# TestPartitionListWithNewCollation
+drop table if exists t;
+set @@session.tidb_enable_list_partition = ON;
+-- error 1495
+create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));
+create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));
+insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');
+analyze table t11;
+select * from t11 order by a;
+select * from t11 partition (p0);
+select * from t11 partition (p1);
+desc select * from t11 where a = 'b';
+set @@session.tidb_enable_list_partition = default;
+
+# TestAddTableWithPartition
+drop table if exists global_partition_table;
+-- error 1562
+create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;
+drop table if exists global_partition_table;
+drop table if exists partition_table;
+create table partition_table (a int, b int) partition by hash(a) partitions 3;
+drop table if exists partition_table;
+drop table if exists partition_range_table;
+-- error 1562
+create global temporary table partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30),
+		partition p3 values less than (MAXVALUE)
+) ON COMMIT DELETE ROWS;
+drop table if exists partition_range_table;
+drop table if exists partition_list_table;
+set @@session.tidb_enable_list_partition = ON;
+-- error 1562
+create global temporary table partition_list_table (id int) partition by list  (id) (
+    partition p0 values in (1,2),
+    partition p1 values in (3,4),
+    partition p3 values in (5,null)
+) ON COMMIT DELETE ROWS;
+drop table if exists partition_list_table;
+drop table if exists local_partition_table;
+-- error 1562
+create temporary table local_partition_table (a int, b int) partition by hash(a) partitions 3;
+drop table if exists local_partition_table;
+drop table if exists partition_table;
+create table partition_table (a int, b int) partition by hash(a) partitions 3;
+drop table if exists partition_table;
+drop table if exists local_partition_range_table;
+-- error 1562
+create temporary table local_partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30),
+		partition p3 values less than (MAXVALUE)
+);
+drop table if exists local_partition_range_table;
+drop table if exists local_partition_list_table;
+set @@session.tidb_enable_list_partition = ON;
+-- error 1562
+create temporary table local_partition_list_table (id int) partition by list  (id) (
+    partition p0 values in (1,2),
+    partition p1 values in (3,4),
+    partition p3 values in (5,null)
+);
+drop table if exists local_partition_list_table;
+set @@session.tidb_enable_list_partition = default;
+
+# TestDuplicatePartitionNames
+drop table if exists t1;
+set @@tidb_enable_list_partition=on;
+create table t1 (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2), partition p3 values in (3));
+insert into t1 values (1),(2),(3);
+alter table t1 truncate partition p1,p1;
+--sorted_result
+select * from t1;
+insert into t1 values (1);
+-- error 1507
+alter table t1 drop partition p1,p1;
+-- error 1507
+alter table t1 drop partition p1,p9;
+-- error 1508
+alter table t1 drop partition p1,p1,p1;
+-- error 1508
+alter table t1 drop partition p1,p9,p1;
+--sorted_result
+select * from t1;
+alter table t1 drop partition p1;
+--sorted_result
+select * from t1;
+Show create table t1;
+set @@tidb_enable_list_partition=default;
+
+# TestCreateIntervalPartitionSyntax
+drop table if exists t;
+CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),
+ PARTITION `p_0` VALUES LESS THAN (0),
+ PARTITION `p_10000000` VALUES LESS THAN (10000000),
+ PARTITION `p_20000000` VALUES LESS THAN (20000000),
+ PARTITION `p_30000000` VALUES LESS THAN (30000000),
+ PARTITION `p_40000000` VALUES LESS THAN (40000000),
+ PARTITION `p_50000000` VALUES LESS THAN (50000000),
+ PARTITION `p_60000000` VALUES LESS THAN (60000000),
+ PARTITION `p_70000000` VALUES LESS THAN (70000000),
+ PARTITION `p_80000000` VALUES LESS THAN (80000000),
+ PARTITION `p_90000000` VALUES LESS THAN (90000000),
+ PARTITION `p_Maxvalue` VALUES LESS THAN (MAXVALUE));
+show create table t;
+drop table t;
+CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),
+ PARTITION `p_0` VALUES LESS THAN (0),
+ PARTITION `p_10000000` VALUES LESS THAN (10000000),
+ PARTITION `p_20000000` VALUES LESS THAN (20000000),
+ PARTITION `p_30000000` VALUES LESS THAN (30000000),
+ PARTITION `p_40000000` VALUES LESS THAN (40000000),
+ PARTITION `p_50000000` VALUES LESS THAN (50000000),
+ PARTITION `p_60000000` VALUES LESS THAN (60000000),
+ PARTITION `p_70000000` VALUES LESS THAN (70000000),
+ PARTITION `p_80000000` VALUES LESS THAN (80000000),
+ PARTITION `p_90000000` VALUES LESS THAN (90000000),
+ PARTITION `p_Maxvalue` VALUES LESS THAN (MAXVALUE));
+show create table t;
+drop table t;
+CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`id`)
+(PARTITION `pNull` VALUES LESS THAN (-2147483648),
+ PARTITION `p_0` VALUES LESS THAN (0),
+ PARTITION `p_10000000` VALUES LESS THAN (10000000),
+ PARTITION `p_20000000` VALUES LESS THAN (20000000),
+ PARTITION `p_30000000` VALUES LESS THAN (30000000),
+ PARTITION `p_40000000` VALUES LESS THAN (40000000),
+ PARTITION `p_50000000` VALUES LESS THAN (50000000),
+ PARTITION `p_60000000` VALUES LESS THAN (60000000),
+ PARTITION `p_70000000` VALUES LESS THAN (70000000),
+ PARTITION `p_80000000` VALUES LESS THAN (80000000),
+ PARTITION `p_90000000` VALUES LESS THAN (90000000),
+ PARTITION `pMaxvalue` VALUES LESS THAN (MAXVALUE));
+show create table t;
+drop table t;
+CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`id`)
+(PARTITION `pNull` VALUES LESS THAN (-2147483648),
+ PARTITION `p_0` VALUES LESS THAN (0),
+ PARTITION `p_10000000` VALUES LESS THAN (10000000),
+ PARTITION `p_20000000` VALUES LESS THAN (20000000),
+ PARTITION `p_30000000` VALUES LESS THAN (30000000),
+ PARTITION `p_40000000` VALUES LESS THAN (40000000),
+ PARTITION `p_50000000` VALUES LESS THAN (50000000),
+ PARTITION `p_60000000` VALUES LESS THAN (60000000),
+ PARTITION `p_70000000` VALUES LESS THAN (70000000),
+ PARTITION `p_80000000` VALUES LESS THAN (80000000),
+ PARTITION `p_90000000` VALUES LESS THAN (90000000),
+ PARTITION `pMaxvalue` VALUES LESS THAN (MAXVALUE));
+show create table t;
+drop table t;
+create table t (id int) partition by range (id) interval (10000000) first partition less than (0) last partition less than (90000000) NULL PARTITION maxvalue partition;
+show create table t;
+drop table t;
+CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id`)
+(PARTITION `P_NULL` VALUES LESS THAN (-9223372036854775808),
+ PARTITION `P_LT_0` VALUES LESS THAN (0),
+ PARTITION `P_LT_10000000` VALUES LESS THAN (10000000),
+ PARTITION `P_LT_20000000` VALUES LESS THAN (20000000),
+ PARTITION `P_LT_30000000` VALUES LESS THAN (30000000),
+ PARTITION `P_LT_40000000` VALUES LESS THAN (40000000),
+ PARTITION `P_LT_50000000` VALUES LESS THAN (50000000),
+ PARTITION `P_LT_60000000` VALUES LESS THAN (60000000),
+ PARTITION `P_LT_70000000` VALUES LESS THAN (70000000),
+ PARTITION `P_LT_80000000` VALUES LESS THAN (80000000),
+ PARTITION `P_LT_90000000` VALUES LESS THAN (90000000),
+ PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE));
+show create table t;
+drop table t;
+create table t (id int) partition by range columns (id) interval (10000000) first partition less than (0) last partition less than (90000000) NULL PARTITION maxvalue partition;
+show create table t;
+drop table t;
+CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`id`)
+(PARTITION `P_NULL` VALUES LESS THAN (-2147483648),
+ PARTITION `P_LT_0` VALUES LESS THAN (0),
+ PARTITION `P_LT_10000000` VALUES LESS THAN (10000000),
+ PARTITION `P_LT_20000000` VALUES LESS THAN (20000000),
+ PARTITION `P_LT_30000000` VALUES LESS THAN (30000000),
+ PARTITION `P_LT_40000000` VALUES LESS THAN (40000000),
+ PARTITION `P_LT_50000000` VALUES LESS THAN (50000000),
+ PARTITION `P_LT_60000000` VALUES LESS THAN (60000000),
+ PARTITION `P_LT_70000000` VALUES LESS THAN (70000000),
+ PARTITION `P_LT_80000000` VALUES LESS THAN (80000000),
+ PARTITION `P_LT_90000000` VALUES LESS THAN (90000000),
+ PARTITION `P_MAXVALUE` VALUES LESS THAN (MAXVALUE));
+show create table t;
+drop table t;
+
+# TestCreateAndAlterIntervalPartition
+drop table if exists ipt, t, idpt;
+create table ipt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90) MAXVALUE PARTITION;
+insert into ipt values (0, '0'), (1, '1'), (2, '2');
+insert into ipt select id + 10, concat('1', val) FROM ipt;
+insert into ipt select id + 20, concat('2', val) FROM ipt where id < 10;
+insert into ipt select id + 30, concat('3', val) FROM ipt where id < 10;
+insert into ipt select id + 40, concat('4', val) FROM ipt where id < 10;
+insert into ipt select id + 50, concat('5', val) FROM ipt where id < 10;
+insert into ipt select id + 60, concat('6', val) FROM ipt where id < 10;
+insert into ipt select id + 70, concat('7', val) FROM ipt where id < 10;
+insert into ipt select id + 80, concat('8', val) FROM ipt where id < 10;
+insert into ipt select id + 90, concat('9', val) FROM ipt where id < 10;
+insert into ipt select id + 100, concat('10', val) FROM ipt where id < 10;
+SHOW CREATE TABLE ipt;
+-- error 8200
+alter table ipt LAST partition less than (100);
+alter table ipt first partition less than (30);
+select count(*) from ipt;
+SHOW CREATE TABLE ipt;
+-- error 8200
+alter table ipt merge first partition less than (60);
+-- error 8200
+alter table ipt split maxvalue partition less than (140);
+select count(*) from ipt;
+create table idpt (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION;
+SHOW CREATE TABLE idpt;
+# Notice that '2022-01-31' + INTERVAL n MONTH returns '2022-02-28', '2022-03-31' etc.
+# So having a range of the last of the month (normally what you want is LESS THAN first of the months) will work
+# if using a month with 31 days.
+# But managing partitions with the day-part of 29, 30 or 31 will be troublesome, since once the FIRST is not 31
+# both the ALTER TABLE t FIRST PARTITION and MERGE FIRST PARTITION will have issues
+create table t (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31');
+show create table t;
+alter table t first partition less than ('2022-02-28');
+show create table t;
+# Now we are stuck, since we will use the current FIRST PARTITION to check the INTERVAL!
+# Should we check and limit FIRST PARTITION for QUARTER and MONTH to not have day part in (29,30,31)?
+-- error 8200
+alter table t first partition less than ('2022-03-31');
+-- error 8200
+alter table t last partition less than ('2022-06-30');
+-- error 8200
+alter table t last partition less than ('2022-07-31');
+show create table t;
+drop table t;
+create table t2 (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90);
+alter table t2 first partition less than (20);
+alter table t2 LAST partition less than (110);
+-- error 8200
+alter table t2 merge first partition less than (60);
+-- error 8200
+alter table t2 split maxvalue partition less than (140);
+show create table t2;
+-- error 8200
+alter table t2 first partition less than (20);
+-- error 8200
+alter table t2 first partition less than (10);
+-- error 8200
+alter table t2 last partition less than (110);
+-- error 8200
+alter table t2 last partition less than (100);
+drop table t2;
+-- error 1659
+create table t (id timestamp, val varchar(255)) partition by range columns (id) interval (1 minute) first partition less than ('2022-01-01 00:01:00') last partition less than ('2022-01-01 01:00:00');
+-- error 1486
+create table t (id timestamp, val varchar(255)) partition by range (TO_SECONDS(id)) interval (3600) first partition less than (TO_SECONDS('2022-01-01 00:00:00')) last partition less than ('2022-01-02 00:00:00');
+set @@time_zone = 'Europe/Amsterdam';
+create table t (id timestamp, val varchar(255)) partition by range (unix_timestamp(id)) interval (3600) first partition less than (unix_timestamp('2022-01-01 00:00:00')) last partition less than (unix_timestamp('2022-01-02 00:00:00'));
+set @@time_zone = default;
+show create table t;
+alter table t drop partition P_LT_1640995200;
+drop table t;
+# OK with out-of-range partitions, see https://github.com/pingcap/tidb/issues/36022
+create table t (id tinyint, val varchar(255)) partition by range (id) interval (50) first partition less than (-300) last partition less than (300);
+show create table t;
+drop table t;
+-- error 1659
+create table t (id int unsigned, val float, comment varchar(255)) partition by range columns (val) interval (1000 * 1000) first partition less than (0) last partition less than (100 * 1000 * 1000) NULL PARTITION MAXVALUE PARTITION;
+-- error 8200
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range columns (val) interval (1000 * 1000) first partition less than ('0') last partition less than ('10000000') NULL PARTITION MAXVALUE PARTITION;
+-- error 8200
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range columns (id) interval (-1000 * 1000) first partition less than (0) last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION;
+-- error 8200
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range (id) interval (0) first partition less than (0) last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION;
+-- error 8200
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range (id) interval ('1000000') first partition less than (0) last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION;
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range (id) interval (01000000) first partition less than (0) last partition less than (10000000) MAXVALUE PARTITION;
+drop table t;
+# Null partition and first partition collides
+-- error 1493
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range (id) interval (01000000) first partition less than (0) last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION;
+-- error 8200
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range (id) interval (NULL) first partition less than (0) last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION;
+-- error 8200
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range (id) interval (1000000) first partition less than (NULL) last partition less than (10000000);
+-- error 8200
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range (id) interval (1000000) first partition less than (0) last partition less than (NULL);
+create table t (id int, val varchar(255), comment varchar(255)) partition by range (id) interval (100) first partition less than (-1000) last partition less than (-1000);
+show create table t;
+-- error 8200
+alter table t last partition less than (0);
+alter table t add partition (partition `P_LT_0` values less than (-900));
+-- error 1517
+alter table t last partition less than (0);
+drop table t;
+-- error 8200
+create table t (id int, val varchar(255), comment varchar(255)) partition by range (id) interval (100) first partition less than (-100) last partition less than (250);
+-- error 8200
+create table t (id int unsigned, val varchar(255), comment varchar(255)) partition by range (id) interval (33) first partition less than (100) last partition less than (67);
+# Non-partitioned tables does not support ALTER of FIRST/LAST PARTITION
+create table t (a int, b varchar(255));
+-- error 1505
+ALTER TABLE t FIRST PARTITION LESS THAN (10);
+-- error 1505
+ALTER TABLE t LAST PARTITION LESS THAN (10);
+drop table t;
+# HASH/LIST [COLUMNS] does not support ALTER of FIRST/LAST PARTITION
+create table t (a int, b varchar(255)) partition by hash (a) partitions 4;
+-- error 8200
+ALTER TABLE t FIRST PARTITION LESS THAN (10);
+-- error 8200
+ALTER TABLE t LAST PARTITION LESS THAN (10);
+drop table t;
+create table t (a int, b varchar(255)) partition by list (a) (partition p0 values in (1,2,3), partition p1 values in (22,23,24));
+-- error 8200
+ALTER TABLE t FIRST PARTITION LESS THAN (0);
+-- error 1492
+ALTER TABLE t LAST PARTITION LESS THAN (100);
+drop table t;
+create table t (a int, b varchar(255)) partition by list columns (b) (partition p0 values in ("1","2","3"), partition p1 values in ("22","23","24"));
+-- error 8200
+ALTER TABLE t FIRST PARTITION LESS THAN (10);
+-- error 1492
+ALTER TABLE t LAST PARTITION LESS THAN (10);
+drop table t;
+
+# TestPartitionTableWithAnsiQuotes
+drop table if exists t;
+SET SESSION sql_mode='ANSI_QUOTES';
+create table t(created_at datetime) PARTITION BY RANGE COLUMNS(created_at) (
+		PARTITION p0 VALUES LESS THAN ('2021-12-01 00:00:00'),
+		PARTITION p1 VALUES LESS THAN ('2022-01-01 00:00:00'));
+show create table t;
+drop table t;
+set @@time_zone = 'Asia/Shanghai';
+create table t(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
+		PARTITION p0 VALUES LESS THAN (unix_timestamp('2021-12-01 00:00:00')),
+		PARTITION p1 VALUES LESS THAN (unix_timestamp('2022-01-01 00:00:00')));
+set @@time_zone = default;
+# FIXME: should be "created_at" instead of `created_at`, see #35389.
+show create table t;
+drop table t;
+set @@time_zone = default;
+CREATE TABLE t (a int DEFAULT NULL, b varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a,b) (
+		PARTITION p0 VALUES IN ((1,'1'),(2,'2')),
+ 		PARTITION p1 VALUES IN ((10,'10'),(11,'11')));
+show create table t;
+drop table t;
+CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'));
+show create table t;
+insert into t values (0x5c27090a),('\\''\t\n');
+drop table t;
+CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+		PARTITION p1 VALUES IN ('\"\"','\\',0x5c27090a));
+insert into t values (0x5c27090a),('\\''\t\n');
+show create table t;
+# https://github.com/pingcap/tidb/issues/37692
+drop table t;
+CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+		PARTITION p1 VALUES IN ('""','\\',x'5c27090a'));
+insert into t values (0x5c27090a),('\\''\t\n');
+show create table t;
+drop table t;
+CREATE TABLE t (a varchar(255)) PARTITION BY RANGE COLUMNS(a) (
+		PARTITION p0 VALUES LESS THAN ('"'),
+		PARTITION p1 VALUES LESS THAN ('""'),
+		PARTITION p2 VALUES LESS THAN ('\''),
+		PARTITION p3 VALUES LESS THAN (''''''),
+		PARTITION p4 VALUES LESS THAN ('\\''\t\n'),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE));
+insert into t values (0x5c27090a),('\\''\t\n');
+show create table t;
+drop table t;
+CREATE TABLE t (a varchar(255)) PARTITION BY RANGE COLUMNS(a) (
+		PARTITION p0 VALUES LESS THAN ('"'),
+		PARTITION p1 VALUES LESS THAN ('""'),
+		PARTITION p2 VALUES LESS THAN ('\''),
+		PARTITION p3 VALUES LESS THAN (''''''),
+		PARTITION p4 VALUES LESS THAN (0x5c27090a),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE));
+insert into t values (0x5c27090a),('\\''\t\n');
+show create table t;
+drop table t;
+CREATE TABLE t (a varchar(255), b varchar(255)) PARTITION BY RANGE COLUMNS(a,b) (
+		PARTITION p0 VALUES LESS THAN ('"','"'),
+		PARTITION p1 VALUES LESS THAN ('""','""'),
+		PARTITION p2 VALUES LESS THAN ('\'','\''),
+		PARTITION p3 VALUES LESS THAN ('''''',''''''),
+		PARTITION p4 VALUES LESS THAN ('\\''\t\n',0x5c27090a),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE,maxvalue));
+insert into t values (0x5c27090a,'\\''\t\n');
+show create table t;
+SET SESSION sql_mode=default;
+
+# TestAlterModifyColumnOnPartitionedTableRename
+drop table if exists t;
+create table t (a int, b char) partition by range (a) (partition p0 values less than (10));
+-- error 3855
+alter table t change a c int;
+drop table t;
+create table t (a char, b char) partition by range columns (a) (partition p0 values less than ('z'));
+-- error 3855
+alter table t change a c char;
+drop table t;
+create table t (a int, b char) partition by list (a) (partition p0 values in (10));
+-- error 3855
+alter table t change a c int;
+drop table t;
+create table t (a char, b char) partition by list columns (a) (partition p0 values in ('z'));
+-- error 3855
+alter table t change a c char;
+drop table t;
+create table t (a int, b char) partition by hash (a) partitions 3;
+-- error 3855
+alter table t change a c int;
+
+# TestDropPartitionKeyColumn
+drop table if exists t1, t2, t3, t4;
+create table t1 (a tinyint, b char) partition by range (a) ( partition p0 values less than (10) );
+-- error 3855
+alter table t1 drop column a;
+alter table t1 drop column b;
+create table t2 (a tinyint, b char) partition by range (a-1) ( partition p0 values less than (10) );
+-- error 3855
+alter table t2 drop column a;
+alter table t2 drop column b;
+create table t3 (a tinyint, b char) partition by hash(a) partitions 4;
+-- error 3855
+alter table t3 drop column a;
+alter table t3 drop column b;
+create table t4 (a char, b char) partition by list columns (a) ( partition p0 values in ('0'),  partition p1 values in ('a'), partition p2 values in ('b'));
+-- error 3855
+alter table t4 drop column a;
+alter table t4 drop column b;
+
+# TestRangeExpressions
+drop table if exists t6;
+create table t6 (colint int, col1 date)
+partition by range(colint)
+(partition p0 values less than (extract(year from '1998-11-23')),
+partition p1 values less than maxvalue);
+show create table t6;
+
+# TestRemoveRangePartitioning
+drop table if exists tRange;
+create table tRange (a int unsigned primary key, b varchar(255))
+	partition by range (a)
+	(partition p0 values less than (1000000),
+	partition pMax values less than maxvalue);
+insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000");
+show create table tRange;
+alter table tRange remove partitioning;
+show create table tRange;
+drop table tRange;
+create table tRange (a int unsigned primary key nonclustered, b varchar(255))
+partition by range (a)
+(partition p0 values less than (1000000),
+partition pMax values less than maxvalue);
+insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000");
+show create table tRange;
+alter table tRange remove partitioning;
+show create table tRange;
+insert into tRange values (1, "One"), (999998, "999998"), (1000001, "1000001"), (20000002, "20000002");
+drop table tRange;
+create table tRange (a int unsigned primary key nonclustered, b varchar(255))
+partition by range (a)
+(partition p0 values less than (1000000),
+partition pMax values less than maxvalue);
+insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000");
+show create table tRange;
+alter table tRange remove partitioning;
+show create table tRange;
+insert into tRange values (1, "One"), (999998, "999998"), (1000001, "1000001"), (20000002, "20000002");
+
+# TestRemoveRangeColumnPartitioning
+drop table if exists tRange;
+create table tRange (a varchar(55) primary key, b varchar(255))
+partition by range columns (a)
+(partition p0 values less than ("1000000"),
+partition pMax values less than maxvalue);
+insert into tRange values ("0", "Zero"), ("0999999", "0999999"), ("1000000", "1000000"), ("20000000", "20000000");
+show create table tRange;
+alter table tRange remove partitioning;
+show create table tRange;
+
+# TestRemoveRangeColumnsPartitioning
+drop table if exists tRange;
+create table tRange (a varchar(55), b varchar(255))
+partition by range columns (a,b)
+(partition p0 values less than ("1000000","1000000"),
+partition pMax values less than (maxvalue,1));
+insert into tRange values ("0", "0Zero"), ("0999999", "0999999"), ("1000000", "1000000"), ("20000000", "20000000");
+show create table tRange;
+alter table tRange remove partitioning;
+show create table tRange;
+
+# TestRemoveHashPartitioning
+drop table if exists t;
+create table t (a int, b varchar(255), key (a,b), key (b)) partition by hash (a) partitions 7;
+insert into t values (32,char(32,32,32,32));
+insert into t values (33,char(33,33,33,33));
+insert into t values (34,char(34,34,34,34));
+insert into t values (35,char(35,35,35,35));
+insert into t values (36,char(36,36,36,36));
+insert into t values (37,char(37,37,37,37));
+insert into t values (38,char(38,38,38,38));
+insert into t values (39,char(39,39,39,39));
+insert into t values (40,char(40,40,40,40));
+insert into t values (41,char(41,41,41,41));
+insert into t values (42,char(42,42,42,42));
+insert into t values (43,char(43,43,43,43));
+insert into t values (44,char(44,44,44,44));
+insert into t values (45,char(45,45,45,45));
+insert into t values (46,char(46,46,46,46));
+insert into t values (47,char(47,47,47,47));
+insert into t values (48,char(48,48,48,48));
+insert into t values (49,char(49,49,49,49));
+insert into t values (50,char(50,50,50,50));
+insert into t values (51,char(51,51,51,51));
+insert into t values (52,char(52,52,52,52));
+insert into t values (53,char(53,53,53,53));
+insert into t values (54,char(54,54,54,54));
+insert into t values (55,char(55,55,55,55));
+insert into t values (56,char(56,56,56,56));
+insert into t values (57,char(57,57,57,57));
+insert into t values (58,char(58,58,58,58));
+insert into t values (59,char(59,59,59,59));
+insert into t values (60,char(60,60,60,60));
+insert into t values (61,char(61,61,61,61));
+insert into t values (62,char(62,62,62,62));
+insert into t values (63,char(63,63,63,63));
+insert into t values (64,char(64,64,64,64));
+insert into t values (65,char(65,65,65,65));
+insert into t values (66,char(66,66,66,66));
+insert into t values (67,char(67,67,67,67));
+insert into t values (68,char(68,68,68,68));
+insert into t values (69,char(69,69,69,69));
+insert into t values (70,char(70,70,70,70));
+insert into t values (71,char(71,71,71,71));
+insert into t values (72,char(72,72,72,72));
+insert into t values (73,char(73,73,73,73));
+insert into t values (74,char(74,74,74,74));
+insert into t values (75,char(75,75,75,75));
+insert into t values (76,char(76,76,76,76));
+insert into t values (77,char(77,77,77,77));
+insert into t values (78,char(78,78,78,78));
+insert into t values (79,char(79,79,79,79));
+insert into t values (80,char(80,80,80,80));
+insert into t values (81,char(81,81,81,81));
+insert into t values (82,char(82,82,82,82));
+insert into t values (83,char(83,83,83,83));
+insert into t values (84,char(84,84,84,84));
+insert into t values (85,char(85,85,85,85));
+insert into t values (86,char(86,86,86,86));
+insert into t values (87,char(87,87,87,87));
+insert into t values (88,char(88,88,88,88));
+insert into t values (89,char(89,89,89,89));
+insert into t values (90,char(90,90,90,90));
+insert into t values (91,char(91,91,91,91));
+insert into t values (92,char(92,92,92,92));
+insert into t values (93,char(93,93,93,93));
+insert into t values (94,char(94,94,94,94));
+insert into t values (95,char(95,95,95,95));
+insert into t values (96,char(96,96,96,96));
+insert into t values (97,char(97,97,97,97));
+insert into t values (98,char(98,98,98,98));
+insert into t values (99,char(99,99,99,99));
+insert into t values (100,char(100,100,100,100));
+insert into t values (101,char(101,101,101,101));
+insert into t values (102,char(102,102,102,102));
+insert into t values (103,char(103,103,103,103));
+insert into t values (104,char(104,104,104,104));
+insert into t values (105,char(105,105,105,105));
+insert into t values (106,char(106,106,106,106));
+insert into t values (107,char(107,107,107,107));
+insert into t values (108,char(108,108,108,108));
+insert into t values (109,char(109,109,109,109));
+insert into t values (110,char(110,110,110,110));
+insert into t values (111,char(111,111,111,111));
+insert into t values (112,char(112,112,112,112));
+insert into t values (113,char(113,113,113,113));
+insert into t values (114,char(114,114,114,114));
+insert into t values (115,char(115,115,115,115));
+insert into t values (116,char(116,116,116,116));
+insert into t values (117,char(117,117,117,117));
+insert into t values (118,char(118,118,118,118));
+insert into t values (119,char(119,119,119,119));
+insert into t values (120,char(120,120,120,120));
+insert into t values (121,char(121,121,121,121));
+insert into t values (122,char(122,122,122,122));
+insert into t values (123,char(123,123,123,123));
+insert into t values (124,char(124,124,124,124));
+insert into t values (125,char(125,125,125,125));
+insert into t values (126,char(126,126,126,126));
+analyze table t;
+--sorted_result
+select partition_name, table_rows from information_schema.partitions where table_schema = 'ddl__db_partition' and table_name = 't';
+alter table t remove partitioning;
+show create table t;
+
+# TestListDefinitionError
+drop table if exists t;
+-- error 1480
+create table t (a int) partition by list (a) (partition p2 values less than (2));
+-- error 1479
+create table t (a int) partition by list (a) (partition p2);
+create table t (a int) partition by list (a) (partition p1 values in (1));
+-- error 1480
+alter table t add partition (partition p2 values less than (2));
+-- error 1479
+alter table t add partition (partition p2);
+
+# TestListExchangeValidate
+drop table if exists lcp, lmcp, np, lp, t;
+create table lcp (id int, create_ts datetime, name varchar(10))
+partition by list columns (create_ts)
+(partition p20230829 values in ('2023-08-29'),partition p20230830 values in ('2023-08-30'));
+insert into lcp values (1,'2023-08-29','a');
+insert into lcp values (2,'2023-08-30','b');
+-- error 1526
+insert into lcp values (3,'2023-08-31','c');
+create table t (id int, create_ts datetime, name varchar(10));
+insert into t values (3,'2023-08-31','c');
+-- error 1737
+alter table lcp EXCHANGE PARTITION p20230829 WITH TABLE t;
+alter table lcp add partition
+		    (partition p202302 values in ('2023-02-01','2023-02-28',null),
+		     partition p202303 values in ('2023-03-01','2023-03-02','2023-03-31'));
+-- error 1737
+alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t;
+-- error 1737
+alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t;
+truncate table t;
+insert into t values (4,'2023-02-01','d'), (5,'2023-02-28','e'), (6, null, 'f');
+-- error 1737
+alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t;
+alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t;
+insert into t values (4,'2023-03-01','d'), (5,'2023-03-02','e'), (6,'2023-03-31','f');
+-- error 1737
+alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t;
+alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t;
+drop table t;
+CREATE TABLE lmcp (d date, name varchar(10), data varchar(255))
+					  PARTITION BY LIST COLUMNS(d,name)
+					  (partition p3 values IN (('2021-01-01','a'),('2021-01-02','b'),('2021-01-03','c')),
+					   partition p4 values IN (('2021-01-01','b'),(null,'a'),('2021-01-01',null),(null,null)),
+					   partition p2 values IN (('2021-01-01','c'),('2021-01-02','a')),
+					   partition p1 values IN (('2021-01-02','c')));
+CREATE TABLE t (d date, name varchar(10), data varchar(255));
+insert into t values ('2021-01-02', 'c', "OK");
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t;
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t;
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t;
+alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t;
+insert into t values ('2021-01-01', 'c', "OK"), ('2021-01-02', 'a', "OK");
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t;
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t;
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t;
+alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t;
+insert into t values ('2021-01-01', 'a', "OK"), ('2021-01-02','b', "OK"), ('2021-01-03','c', "OK");
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t;
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t;
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t;
+alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t;
+insert into t values ('2021-01-01', 'b', "OK"), ('2021-01-01',null, "OK"), (null,'a', "OK"), (null,null,"OK");
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t;
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t;
+-- error 1737
+alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t;
+alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t;
+create table lp (a int, data varchar(255)) partition by list (a) (partition p0 values in (0,4), partition pNull values in (null));
+create table np (a int, data varchar(255));
+insert into np values (0,"OK"), (4,"OK");
+-- error 1737
+alter table lp EXCHANGE PARTITION pNull WITH TABLE np;
+alter table lp EXCHANGE PARTITION p0 WITH TABLE np;
+insert into np values (null,"OK");
+-- error 1737
+alter table lp EXCHANGE PARTITION p0 WITH TABLE np;
+alter table lp EXCHANGE PARTITION pNull WITH TABLE np;
+# TODO: Check EXCHANGE with DEFAULT partition!!
+
+# TestRangeExchangeValidate
+drop table if exists t, tcp;
+CREATE TABLE t (d date, name varchar(10), data varchar(255));
+create table rcp (d date, name varchar(10), data varchar(255))
+partition by range columns (d)
+(partition p20230829 values less than ('2023-08-30'),partition p20230830 values less than ('2023-08-31'));
+insert into rcp values ('2023-08-29', 'a', "OK");
+insert into rcp values ('2023-08-30', 'b', "OK");
+-- error 1526
+insert into rcp values ('2023-08-31', 'c', "FAIL");
+insert into t values ('2023-08-31', 'c', "FAIL");
+-- error 1737
+alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t;
+# TODO: Add test with a RANGE single partition (both normal AND maxvalue!)
+# TODO: add test with maxvalue (1, 2, and more partitions)
+# TODO: add test not in first partition (both last without maxvalue and also not last with/without maxvalue)
+
+# TestConstAndTimezoneDepent2
+set @@session.tidb_enable_table_partition = 1;
+drop table if exists t1, t2, t3, t4, t5;
+create table t1 ( time_recorded datetime )
+partition by range(TO_DAYS(time_recorded)) (
+partition p0 values less than (1));
+create table t2 ( time_recorded date )
+partition by range(TO_DAYS(time_recorded)) (
+partition p0 values less than (1));
+create table t3 ( time_recorded date )
+partition by range(TO_SECONDS(time_recorded)) (
+partition p0 values less than (1));
+create table t4 ( time_recorded date )
+partition by range(TO_SECONDS(time_recorded)) (
+partition p0 values less than (1));
+create table t5 ( time_recorded timestamp )
+partition by range(unix_timestamp(time_recorded)) (
+	partition p1 values less than (1559192604)
+);
+set @@session.tidb_enable_table_partition = default;
+
+
+# TestExchangePartitionExpressIndex
+set @@tidb_enable_exchange_partition=1;
+drop table if exists pt1;
+create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;
+alter table pt1 add index idx((a+c));
+
+drop table if exists nt1;
+create table nt1(a int, b int, c int);
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+alter table nt1 add column (`_V$_idx_0` bigint(20) generated always as (a+b) virtual);
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+## test different expression index when expression returns same field type
+alter table nt1 drop column `_V$_idx_0`;
+alter table nt1 add index idx((b-c));
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+## test different expression index when expression returns different field type
+alter table nt1 drop index idx;
+alter table nt1 add index idx((concat(a, b)));
+--error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+drop table if exists nt2;
+create table nt2 (a int, b int, c int);
+alter table nt2 add index idx((a+c));
+alter table pt1 exchange partition p0 with table nt2;
+
+
+# TestExchangePartitionTableCompatiable
+set tidb_enable_global_index=true;
+
+drop database if exists partition_exchange;
+create database partition_exchange;
+use partition_exchange;
+
+create table pt (id int not null) partition by hash (id) partitions 4;
+create table nt (id int(1) not null);
+alter table pt exchange partition p0 with table nt;
+
+create table pt1 (id int not null, fname varchar(3)) partition by hash (id) partitions 4;
+create table nt1 (id int not null, fname varchar(4));
+-- error 1736
+alter table pt1 exchange partition p0 with table nt1;
+
+create table pt2 (id int not null, salary decimal) partition by hash(id) partitions 4;
+create table nt2 (id int not null, salary decimal(3,2));
+-- error 1736
+alter table pt2 exchange partition p0 with table nt2;
+
+create table pt3 (id int not null, salary decimal) partition by hash(id) partitions 1;
+create table nt3 (id int not null, salary decimal(10, 1));
+-- error 1736
+alter table pt3 exchange partition p0 with table nt3;
+
+create table pt4 (id int not null) partition by hash(id) partitions 1;
+create table nt4 (id1 int not null);
+-- error 1736
+alter table pt4 exchange partition p0 with table nt4;
+
+create table pt5 (id int not null, primary key (id)) partition by hash(id) partitions 1;
+create table nt5 (id int not null);
+-- error 1736
+alter table pt5 exchange partition p0 with table nt5;
+
+create table pt6 (id int not null, salary decimal, index idx (id, salary)) partition by hash(id) partitions 1;
+create table nt6 (id int not null, salary decimal, index idx (salary, id));
+-- error 1736
+alter table pt6 exchange partition p0 with table nt6;
+
+create table pt7 (id int not null, index idx (id) invisible) partition by hash(id) partitions 1;
+create table nt7 (id int not null, index idx (id));
+alter table pt7 exchange partition p0 with table nt7;
+
+create table pt8 (id int not null, index idx (id)) partition by hash(id) partitions 1;
+create table nt8 (id int not null, index id_idx (id));
+-- error 1736
+alter table pt8 exchange partition p0 with table nt8;
+
+--echo ## Generated column (virtual)
+create table pt10 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) virtual) partition by hash(id) partitions 1;
+create table nt10 (id int not null, lname varchar(30), fname varchar(100));
+-- error 3106
+alter table pt10 exchange partition p0 with table nt10;
+
+create table pt11 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;
+create table nt11 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);
+-- error 3106
+alter table pt11 exchange partition p0 with table nt11;
+
+create table pt12 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) stored) partition by hash(id) partitions 1;
+create table nt12 (id int not null, lname varchar(30), fname varchar(100));
+-- error 1736
+alter table pt12 exchange partition p0 with table nt12;
+
+create table pt13 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;
+create table nt13 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored);
+-- error 1736
+alter table pt13 exchange partition p0 with table nt13;
+
+create table pt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;
+create table nt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);
+alter table pt14 exchange partition p0 with table nt14;
+
+--echo ## unique index
+create table pt15 (id int not null, unique index uk_id (id)) partition by hash(id) partitions 1;
+create table nt15 (id int not null, index uk_id (id));
+-- error 1736
+alter table pt15 exchange partition p0 with table nt15;
+
+--echo ## auto_increment
+create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;
+create table nt16 (id int not null primary key);
+-- error 1736
+alter table pt16 exchange partition p0 with table nt16;
+
+--echo ## default
+create table pt17 (id int not null default 1) partition by hash(id) partitions 1;
+create table nt17 (id int not null);
+alter table pt17 exchange partition p0 with table nt17;
+
+--echo ## view test
+create table pt18 (id int not null) partition by hash(id) partitions 1;
+create view nt18 as select id from nt17;
+-- error 1177
+alter table pt18 exchange partition p0 with table nt18;
+
+create table pt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored) partition by hash(id) partitions 1;
+create table nt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);
+-- error 3106
+alter table pt19 exchange partition p0 with table nt19;
+
+create table pt20 (id int not null) partition by hash(id) partitions 1;
+create table nt20 (id int default null);
+-- error 1736
+alter table pt20 exchange partition p0 with table nt20;
+
+--echo ## unsigned
+create table pt21 (id int unsigned) partition by hash(id) partitions 1;
+create table nt21 (id int);
+-- error 1736
+alter table pt21 exchange partition p0 with table nt21;
+
+--echo ## zerofill
+create table pt22 (id int) partition by hash(id) partitions 1;
+create table nt22 (id int zerofill);
+-- error 1736
+alter table pt22 exchange partition p0 with table nt22;
+
+create table pt23 (id int, lname varchar(10) charset binary) partition by hash(id) partitions 1;
+create table nt23 (id int, lname varchar(10));
+-- error 1736
+alter table pt23 exchange partition p0 with table nt23;
+
+create table pt25 (id int, a datetime on update current_timestamp) partition by hash(id) partitions 1;
+create table nt25 (id int, a datetime);
+alter table pt25 exchange partition p0 with table nt25;
+
+create table pt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;
+create table nt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(id, ' ')) virtual);
+-- error 1736
+alter table pt26 exchange partition p0 with table nt26;
+
+create table pt27 (a int key, b int, index(a)) partition by hash(a) partitions 1;
+create table nt27 (a int not null, b int, index(a));
+-- error 1736
+alter table pt27 exchange partition p0 with table nt27;
+
+create table pt28 (a int primary key, b int, index(a)) partition by hash(a) partitions 1;
+create table nt28 (a int not null, b int, index(a));
+-- error 1736
+alter table pt28 exchange partition p0 with table nt28;
+
+create table pt29 (a int primary key, b int) partition by hash(a) partitions 1;
+create table nt29 (a int not null, b int, index(a));
+-- error 1736
+alter table pt29 exchange partition p0 with table nt29;
+
+create table pt30 (a int primary key, b int) partition by hash(a) partitions 1;
+create table nt30 (a int, b int, unique index(a));
+-- error 1736
+alter table pt30 exchange partition p0 with table nt30;
+
+--echo ## auto_increment
+create table pt31 (id bigint not null primary key auto_increment) partition by hash(id) partitions 1;
+create table nt31 (id bigint not null primary key);
+-- error 1736
+alter table pt31 exchange partition p0 with table nt31;
+
+--echo ## auto_random
+create table pt32 (id bigint not null primary key AUTO_RANDOM) partition by hash(id) partitions 1;
+create table nt32 (id bigint not null primary key);
+-- error 1736
+alter table pt32 exchange partition p0 with table nt32;
+
+--echo ## global temporary table
+create table pt33 (id int) partition by hash(id) partitions 1;
+create global temporary table nt33 (id int) on commit delete rows;
+-- error 1733
+alter table pt33 exchange partition p0 with table nt33;
+
+--echo ## local temporary table
+create table pt34 (id int) partition by hash(id) partitions 1;
+create temporary table nt34 (id int);
+-- error 1733
+alter table pt34 exchange partition p0 with table nt34;
+
+--echo ## global index
+create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;
+create table nt35 (a int, b int, unique index(b));
+-- error 1731
+alter table pt35 exchange partition p0 with table nt35;
+
+drop database partition_exchange;
+use ddl__db_partition;
+set tidb_enable_global_index=default;
+

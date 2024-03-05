@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "hint",
+    srcs = [
+        "hint.go",
+        "hint_processor.go",
+        "hint_query_block.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/hint",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errno",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/format",
+        "//pkg/parser/model",
+        "//pkg/util/dbterror",
+        "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)

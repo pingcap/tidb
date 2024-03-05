@@ -4,7 +4,7 @@ TiDB is a fast-growing open source database. To ensure its security, a security 
 
 The primary goal of this process is to reduce the total exposure time of users to publicly known vulnerabilities. To quickly fix vulnerabilities of TiDB products, the security team is responsible for the entire vulnerability management process, including internal communication and external disclosure.
 
-If you find a vulnerability or encounter a security incident involving vulnerabilities of TiDB products, please report it as soon as possible to the TiDB security team (security@tidb.io).
+If you find a vulnerability or encounter a security incident involving vulnerabilities of TiDB products, please report it as soon as possible to the TiDB security team (security@pingcap.com).
 
 Please kindly help provide as much vulnerability information as possible in the following format:
 

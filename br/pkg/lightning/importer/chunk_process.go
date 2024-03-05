@@ -15,8 +15,8 @@
 package importer
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"time"
 
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	kv2 "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -34,9 +35,14 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/keyspace"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/driver/txn"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/extsort"
 	"go.uber.org/zap"
 )
 
@@ -56,13 +62,31 @@ func newChunkProcessor(
 	chunk *checkpoints.ChunkCheckpoint,
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
-	tableInfo *checkpoints.TidbTableInfo,
+	tableInfo *model.TableInfo,
 ) (*chunkProcessor, error) {
-	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
+	parser, err := openParser(ctx, cfg, chunk, ioWorkers, store, tableInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
+	}
+	return &chunkProcessor{
+		parser: parser,
+		index:  index,
+		chunk:  chunk,
+	}, nil
+}
+
+func openParser(
+	ctx context.Context,
+	cfg *config.Config,
+	chunk *checkpoints.ChunkCheckpoint,
+	ioWorkers *worker.Pool,
+	store storage.ExternalStorage,
+	tblInfo *model.TableInfo,
+) (mydump.Parser, error) {
+	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	if err != nil {
+		return nil, err
 	}
 
 	var parser mydump.Parser
@@ -76,38 +100,36 @@ func newChunkProcessor(
 		}
 		parser, err = mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	default:
-		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String()))
+		return nil, errors.Errorf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String())
 	}
 
 	if chunk.FileMeta.Compression == mydump.CompressionNone {
 		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
-			return nil, errors.Trace(err)
+			_ = parser.Close()
+			return nil, err
 		}
 	} else {
 		if err = mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
-			return nil, errors.Trace(err)
+			_ = parser.Close()
+			return nil, err
 		}
 		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
 	}
 	if len(chunk.ColumnPermutation) > 0 {
-		parser.SetColumns(getColumnNames(tableInfo.Core, chunk.ColumnPermutation))
+		parser.SetColumns(getColumnNames(tblInfo, chunk.ColumnPermutation))
 	}
 
-	return &chunkProcessor{
-		parser: parser,
-		index:  index,
-		chunk:  chunk,
-	}, nil
+	return parser, nil
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
@@ -182,7 +204,15 @@ func (cr *chunkProcessor) process(
 
 	logTask := logger.Begin(zap.InfoLevel, "restore file")
 
-	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logger, kvEncoder, deliverCompleteCh, rc)
+	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(
+		ctx,
+		kvsCh,
+		t,
+		logger,
+		kvEncoder,
+		deliverCompleteCh,
+		rc,
+	)
 	var deliverErr error
 	select {
 	case deliverResult, ok := <-deliverCompleteCh:
@@ -215,6 +245,36 @@ func (cr *chunkProcessor) encodeLoop(
 	rc *Controller,
 ) (readTotalDur time.Duration, encodeTotalDur time.Duration, err error) {
 	defer close(kvsCh)
+
+	// when AddIndexBySQL, we use all PK and UK to run pre-deduplication, and then we
+	// strip almost all secondary index to run encodeLoop. In encodeLoop when we meet
+	// a duplicated row marked by pre-deduplication, we need original table structure
+	// to generate the duplicate error message, so here create a new encoder with
+	// original table structure.
+	originalTableEncoder := kvEncoder
+	if rc.cfg.TikvImporter.AddIndexBySQL {
+		encTable, err := tables.TableFromMeta(t.alloc, t.tableInfo.Desired)
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+
+		originalTableEncoder, err = rc.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   rc.cfg.TiDB.SQLMode,
+				Timestamp: cr.chunk.Timestamp,
+				SysVars:   rc.sysVars,
+				// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
+				AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
+			},
+			Path:   cr.chunk.Key.Path,
+			Table:  encTable,
+			Logger: logger,
+		})
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
+		defer originalTableEncoder.Close()
+	}
 
 	send := func(kvs []deliveredKVs) error {
 		select {
@@ -249,6 +309,18 @@ func (cr *chunkProcessor) encodeLoop(
 		err = err1
 		return
 	}
+
+	var dupIgnoreRowsIter extsort.Iterator
+	if t.dupIgnoreRows != nil {
+		dupIgnoreRowsIter, err = t.dupIgnoreRows.NewIterator(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+		defer func() {
+			_ = dupIgnoreRowsIter.Close()
+		}()
+	}
+
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
@@ -308,6 +380,10 @@ func (cr *chunkProcessor) encodeLoop(
 						}
 					}
 					initializedColumns = true
+
+					if dupIgnoreRowsIter != nil {
+						dupIgnoreRowsIter.Seek(common.EncodeIntRowID(lastRow.RowID))
+					}
 				}
 			case io.EOF:
 				reachEOF = true
@@ -320,6 +396,62 @@ func (cr *chunkProcessor) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			lastRow.Row = append(lastRow.Row, extendVals...)
+
+			// Skip duplicated rows.
+			if dupIgnoreRowsIter != nil {
+				rowIDKey := common.EncodeIntRowID(lastRow.RowID)
+				isDupIgnored := false
+			dupDetectLoop:
+				for dupIgnoreRowsIter.Valid() {
+					switch bytes.Compare(rowIDKey, dupIgnoreRowsIter.UnsafeKey()) {
+					case 0:
+						isDupIgnored = true
+						break dupDetectLoop
+					case 1:
+						dupIgnoreRowsIter.Next()
+					case -1:
+						break dupDetectLoop
+					}
+				}
+				if dupIgnoreRowsIter.Error() != nil {
+					err = dupIgnoreRowsIter.Error()
+					return
+				}
+				if isDupIgnored {
+					cr.parser.RecycleRow(lastRow)
+					lastOffset := curOffset
+					curOffset = newOffset
+
+					if rc.errorMgr.ConflictRecordsRemain() <= 0 {
+						continue
+					}
+
+					dupMsg := cr.getDuplicateMessage(
+						originalTableEncoder,
+						lastRow,
+						lastOffset,
+						dupIgnoreRowsIter.UnsafeValue(),
+						t.tableInfo.Desired,
+						logger,
+					)
+					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
+					err = rc.errorMgr.RecordDuplicate(
+						ctx,
+						logger,
+						t.tableName,
+						cr.chunk.Key.Path,
+						newOffset,
+						dupMsg,
+						lastRow.RowID,
+						rowText,
+					)
+					if err != nil {
+						return 0, 0, err
+					}
+					continue
+				}
+			}
+
 			// sql -> kv
 			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
@@ -382,6 +514,57 @@ func (cr *chunkProcessor) encodeLoop(
 
 	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset, realOffset: cr.chunk.FileMeta.FileSize}})
 	return
+}
+
+// getDuplicateMessage gets the duplicate message like a SQL error. When it meets
+// internal error, the error message will be returned instead of the duplicate message.
+// If the index is not found (which is not expected), an empty string will be returned.
+func (cr *chunkProcessor) getDuplicateMessage(
+	kvEncoder encode.Encoder,
+	lastRow mydump.Row,
+	lastOffset int64,
+	encodedIdxID []byte,
+	tableInfo *model.TableInfo,
+	logger log.Logger,
+) string {
+	_, idxID, err := codec.DecodeVarint(encodedIdxID)
+	if err != nil {
+		return err.Error()
+	}
+	kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
+	if err != nil {
+		return err.Error()
+	}
+
+	if idxID == conflictOnHandle {
+		for _, kv := range kvs.(*kv2.Pairs).Pairs {
+			if tablecodec.IsRecordKey(kv.Key) {
+				dupErr := txn.ExtractKeyExistsErrFromHandle(kv.Key, kv.Val, tableInfo)
+				return dupErr.Error()
+			}
+		}
+		// should not happen
+		logger.Warn("fail to find conflict record key",
+			zap.String("file", cr.chunk.FileMeta.Path),
+			zap.Any("row", lastRow.Row))
+	} else {
+		for _, kv := range kvs.(*kv2.Pairs).Pairs {
+			_, decodedIdxID, isRecordKey, err := tablecodec.DecodeKeyHead(kv.Key)
+			if err != nil {
+				return err.Error()
+			}
+			if !isRecordKey && decodedIdxID == idxID {
+				dupErr := txn.ExtractKeyExistsErrFromIndex(kv.Key, kv.Val, tableInfo, idxID)
+				return dupErr.Error()
+			}
+		}
+		// should not happen
+		logger.Warn("fail to find conflict index key",
+			zap.String("file", cr.chunk.FileMeta.Path),
+			zap.Int64("idxID", idxID),
+			zap.Any("row", lastRow.Row))
+	}
+	return ""
 }
 
 //nolint:nakedret // TODO: refactor

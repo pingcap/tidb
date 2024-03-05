@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cteutil",
+    srcs = ["storage.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/cteutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/disk",
+        "//pkg/util/memory",
+        "//pkg/util/syncutil",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "cteutil_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "storage_test.go",
+    ],
+    embed = [":cteutil"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

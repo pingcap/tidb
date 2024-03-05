@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = [
+        "context.go",
+        "disttest_util.go",
+        "executor_util.go",
+        "scheduler_util.go",
+        "table_util.go",
+        "task_util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/testutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/disttask/framework/handle",
+        "//pkg/disttask/framework/mock",
+        "//pkg/disttask/framework/mock/execute",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/scheduler",
+        "//pkg/disttask/framework/scheduler/mock",
+        "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/taskexecutor",
+        "//pkg/kv",
+        "//pkg/sessionctx",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_mock//gomock",
+    ],
+)

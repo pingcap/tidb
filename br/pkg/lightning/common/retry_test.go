@@ -19,14 +19,17 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
-	drivererr "github.com/pingcap/tidb/store/driver/error"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
+	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -34,6 +37,7 @@ import (
 func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(context.Canceled))
 	require.False(t, IsRetryableError(context.DeadlineExceeded))
+	require.True(t, IsRetryableError(ErrWriteTooSlow))
 	require.False(t, IsRetryableError(io.EOF))
 	require.False(t, IsRetryableError(&net.AddrError{}))
 	require.False(t, IsRetryableError(&net.DNSError{}))
@@ -66,6 +70,9 @@ func TestIsRetryableError(t *testing.T) {
 	_, err := net.Dial("tcp", "localhost:65533")
 	require.Error(t, err)
 	require.True(t, IsRetryableError(err))
+	// wrap net.OpErr inside url.Error
+	urlErr := &url.Error{Op: "post", Err: err}
+	require.True(t, IsRetryableError(urlErr))
 
 	// MySQL Errors
 	require.False(t, IsRetryableError(&mysql.MySQLError{}))
@@ -112,4 +119,13 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})))
 
 	require.True(t, IsRetryableError(errors.New("other error: Coprocessor task terminated due to exceeding the deadline")))
+
+	// error from limiter
+	l := rate.NewLimiter(rate.Limit(1), 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	// context has 1 second timeout, can't wait for 10 seconds
+	err = l.WaitN(ctx, 10)
+	require.Error(t, err)
+	require.True(t, IsRetryableError(err))
 }

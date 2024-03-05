@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xitongsys/parquet-go-source/local"
@@ -43,7 +43,7 @@ func TestParquetParser(t *testing.T) {
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
-	r, err := store.Open(context.TODO(), name)
+	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
 	reader, err := NewParquetParser(context.TODO(), store, r, name)
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestParquetVariousTypes(t *testing.T) {
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
-	r, err := store.Open(context.TODO(), name)
+	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
 	reader, err := NewParquetParser(context.TODO(), store, r, name)
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		DecimalRef *int32 `parquet:"name=decimal2, type=DECIMAL, scale=3, precision=5, basetype=INT32"`
 	}
 
-	cases := [][]interface{}{
+	cases := [][]any{
 		{int32(0), "0.000"},
 		{int32(1000), "1.000"},
 		{int32(-1000), "-1.000"},
@@ -176,7 +176,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, writer.WriteStop())
 	require.NoError(t, pf.Close())
 
-	r, err = store.Open(context.TODO(), fileName)
+	r, err = store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
 	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, writer.WriteStop())
 	require.NoError(t, pf.Close())
 
-	r, err = store.Open(context.TODO(), fileName)
+	r, err = store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
 	reader, err = NewParquetParser(context.TODO(), store, r, fileName)
 	require.NoError(t, err)
@@ -237,14 +237,14 @@ func TestParquetAurora(t *testing.T) {
 	require.NoError(t, err)
 
 	fileName := "test.parquet"
-	r, err := store.Open(context.TODO(), fileName)
+	r, err := store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)
 	parser, err := NewParquetParser(context.TODO(), store, r, fileName)
 	require.NoError(t, err)
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
 
-	expectedRes := [][]interface{}{
+	expectedRes := [][]any{
 		{int64(1), int64(1), "0", int64(123), "1.23", "0.00000001", "1234567890", "123", "1.23000000"},
 		{
 			int64(2), int64(123456), "0", int64(123456), "9999.99", "0.12345678", "99999999999999999999",
@@ -294,7 +294,7 @@ func TestHiveParquetParser(t *testing.T) {
 	dir := "./parquet/"
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
-	r, err := store.Open(context.TODO(), name)
+	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
 	reader, err := NewParquetParser(context.TODO(), store, r, name)
 	require.NoError(t, err)

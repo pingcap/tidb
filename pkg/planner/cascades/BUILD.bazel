@@ -1,0 +1,61 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cascades",
+    srcs = [
+        "enforcer_rules.go",
+        "implementation_rules.go",
+        "optimize.go",
+        "stringer.go",
+        "transformation_rules.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/context",
+        "//pkg/planner/core",
+        "//pkg/planner/implementation",
+        "//pkg/planner/memo",
+        "//pkg/planner/property",
+        "//pkg/planner/util",
+        "//pkg/types",
+        "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/ranger",
+        "//pkg/util/set",
+    ],
+)
+
+go_test(
+    name = "cascades_test",
+    timeout = "short",
+    srcs = [
+        "enforcer_rules_test.go",
+        "main_test.go",
+        "optimize_test.go",
+        "stringer_test.go",
+        "transformation_rules_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    embed = [":cascades"],
+    flaky = True,
+    shard_count = 25,
+    deps = [
+        "//pkg/domain",
+        "//pkg/expression",
+        "//pkg/infoschema",
+        "//pkg/parser",
+        "//pkg/parser/model",
+        "//pkg/planner/core",
+        "//pkg/planner/memo",
+        "//pkg/planner/property",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

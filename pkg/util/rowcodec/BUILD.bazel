@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "rowcodec",
+    srcs = [
+        "common.go",
+        "decoder.go",
+        "encoder.go",
+        "row.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/rowcodec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/types",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/codec",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_multierr//:multierr",
+    ],
+)
+
+go_test(
+    name = "rowcodec_test",
+    timeout = "short",
+    srcs = [
+        "bench_test.go",
+        "main_test.go",
+        "rowcodec_test.go",
+    ],
+    embed = [":rowcodec"],
+    flaky = True,
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/tablecodec",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/benchdaily",
+        "//pkg/util/chunk",
+        "//pkg/util/codec",
+        "//pkg/util/collate",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

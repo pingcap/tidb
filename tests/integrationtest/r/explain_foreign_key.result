@@ -1,0 +1,161 @@
+set @@foreign_key_checks=1;
+drop table if exists t1,t2;
+create table t1 (id int key);
+create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);
+create table t3 (id int, unique index idx(id));
+create table t4 (id int, index idx_id(id),foreign key fk(id) references t3(id));
+create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));
+create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE CASCADE, foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);
+explain format = 'brief' insert into t2 values (1);
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+└─Foreign_Key_Check	0.00	root	table:t1	foreign_key:fk, check_exist
+explain format = 'brief' update t2 set id=id+1 where id = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+├─Point_Get	1.00	root	table:t2	handle:1
+└─Foreign_Key_Check	0.00	root	table:t1	foreign_key:fk, check_exist
+explain format = 'brief' delete from t1 where id > 1;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+├─TableReader	3333.33	root		data:TableRangeScan
+│ └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(1,+inf], keep order:false, stats:pseudo
+└─Foreign_Key_Cascade	0.00	root	table:t2	foreign_key:fk, on_delete:CASCADE
+explain format = 'brief' update t1 set id=id+1 where id = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+├─Point_Get	1.00	root	table:t1	handle:1
+└─Foreign_Key_Cascade	0.00	root	table:t2	foreign_key:fk, on_update:CASCADE
+explain format = 'brief' insert into t1 values (1);
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+explain format = 'brief' insert into t1 values (1) on duplicate key update id = 100;
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+└─Foreign_Key_Cascade	0.00	root	table:t2	foreign_key:fk, on_update:CASCADE
+explain format = 'brief' insert into t4 values (1);
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+└─Foreign_Key_Check	0.00	root	table:t3, index:idx	foreign_key:fk, check_exist
+explain format = 'brief' update t4 set id=id+1 where id = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+├─IndexReader	10.00	root		index:IndexRangeScan
+│ └─IndexRangeScan	10.00	cop[tikv]	table:t4, index:idx_id(id)	range:[1,1], keep order:false, stats:pseudo
+└─Foreign_Key_Check	0.00	root	table:t3, index:idx	foreign_key:fk, check_exist
+explain format = 'brief' delete from t3 where id > 1;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+├─IndexReader	3333.33	root		index:IndexRangeScan
+│ └─IndexRangeScan	3333.33	cop[tikv]	table:t3, index:idx(id)	range:(1,+inf], keep order:false, stats:pseudo
+└─Foreign_Key_Check	0.00	root	table:t4, index:idx_id	foreign_key:fk, check_not_exist
+explain format = 'brief' update t3 set id=id+1 where id = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+├─Point_Get	1.00	root	table:t3, index:idx(id)	
+└─Foreign_Key_Check	0.00	root	table:t4, index:idx_id	foreign_key:fk, check_not_exist
+explain format = 'brief' insert into t3 values (1);
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+explain format = 'brief' insert into t3 values (1) on duplicate key update id = 100;
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+└─Foreign_Key_Check	0.00	root	table:t4, index:idx_id	foreign_key:fk, check_not_exist
+explain format = 'brief' insert into t6 values (1,1,1);
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+├─Foreign_Key_Check	0.00	root	table:t5	foreign_key:fk_1, check_exist
+├─Foreign_Key_Check	0.00	root	table:t5, index:idx2	foreign_key:fk_2, check_exist
+└─Foreign_Key_Check	0.00	root	table:t5, index:idx3	foreign_key:fk_3, check_exist
+explain format = 'brief' update t6 set id=id+1, id3=id2+1 where id = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+├─IndexLookUp	10.00	root		
+│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t6, index:idx_id(id)	range:[1,1], keep order:false, stats:pseudo
+│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+├─Foreign_Key_Check	0.00	root	table:t5	foreign_key:fk_1, check_exist
+└─Foreign_Key_Check	0.00	root	table:t5, index:idx3	foreign_key:fk_3, check_exist
+explain format = 'brief' delete from t5 where id > 1;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+├─TableReader	3333.33	root		data:TableRangeScan
+│ └─TableRangeScan	3333.33	cop[tikv]	table:t5	range:(1,+inf], keep order:false, stats:pseudo
+├─Foreign_Key_Check	0.00	root	table:t6, index:idx_id2	foreign_key:fk_2, check_not_exist
+├─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id	foreign_key:fk_1, on_delete:CASCADE
+└─Foreign_Key_Cascade	0.00	root	table:t6, index:fk_3	foreign_key:fk_3, on_delete:CASCADE
+explain format = 'brief' update t5 set id=id+1, id2=id2+1 where id = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+├─Point_Get	1.00	root	table:t5	handle:1
+├─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id	foreign_key:fk_1, on_update:CASCADE
+└─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id2	foreign_key:fk_2, on_update:CASCADE
+explain format = 'brief' update t5 set id=id+1, id2=id2+1, id3=id3+1 where id = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+├─Point_Get	1.00	root	table:t5	handle:1
+├─Foreign_Key_Check	0.00	root	table:t6, index:fk_3	foreign_key:fk_3, check_not_exist
+├─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id	foreign_key:fk_1, on_update:CASCADE
+└─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id2	foreign_key:fk_2, on_update:CASCADE
+explain format = 'brief' insert into t5 values (1,1,1);
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+explain format = 'brief' insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100;
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+├─Foreign_Key_Check	0.00	root	table:t6, index:fk_3	foreign_key:fk_3, check_not_exist
+└─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id	foreign_key:fk_1, on_update:CASCADE
+explain format = 'brief' insert into t5 values (1,1,1) on duplicate key update id = 100, id2=100, id3=100;
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+├─Foreign_Key_Check	0.00	root	table:t6, index:fk_3	foreign_key:fk_3, check_not_exist
+├─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id	foreign_key:fk_1, on_update:CASCADE
+└─Foreign_Key_Cascade	0.00	root	table:t6, index:idx_id2	foreign_key:fk_2, on_update:CASCADE
+drop table if exists t1,t2,t3,t4,t5,t6;
+drop table if exists t_1,t_2,t_3,t_4;
+create table t_1 (id int key);
+create table t_2 (id int key);
+create table t_3 (id int key, id2 int, foreign key fk_1(id) references t_1(id), foreign key fk_2(id2) references t_1(id), foreign key fk_3(id) references t_2(id) ON UPDATE CASCADE ON DELETE CASCADE);
+create table t_4 (id int key, id2 int, foreign key fk_1(id) references t_2(id), foreign key fk_2(id2) references t_1(id), foreign key fk_3(id) references t_1(id) ON UPDATE CASCADE ON DELETE CASCADE);
+explain format = 'brief' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t_2.id and t_1.id=1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+├─HashJoin	1.00	root		CARTESIAN inner join
+│ ├─Point_Get(Build)	1.00	root	table:t_2	handle:1
+│ └─Point_Get(Probe)	1.00	root	table:t_1	handle:1
+├─Foreign_Key_Check	0.00	root	table:t_3	foreign_key:fk_1, check_not_exist
+├─Foreign_Key_Check	0.00	root	table:t_3, index:fk_2	foreign_key:fk_2, check_not_exist
+├─Foreign_Key_Check	0.00	root	table:t_4, index:fk_2	foreign_key:fk_2, check_not_exist
+├─Foreign_Key_Check	0.00	root	table:t_4	foreign_key:fk_1, check_not_exist
+├─Foreign_Key_Cascade	0.00	root	table:t_4	foreign_key:fk_3, on_update:CASCADE
+└─Foreign_Key_Cascade	0.00	root	table:t_3	foreign_key:fk_3, on_update:CASCADE
+explain format = 'brief' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+├─MergeJoin	4166.67	root		inner join, left key:explain_foreign_key.t_1.id, right key:explain_foreign_key.t_2.id
+│ ├─TableReader(Build)	3333.33	root		data:TableRangeScan
+│ │ └─TableRangeScan	3333.33	cop[tikv]	table:t_2	range:(0,+inf], keep order:true, stats:pseudo
+│ └─TableReader(Probe)	3333.33	root		data:TableRangeScan
+│   └─TableRangeScan	3333.33	cop[tikv]	table:t_1	range:(0,+inf], keep order:true, stats:pseudo
+├─Foreign_Key_Check	0.00	root	table:t_3	foreign_key:fk_1, check_not_exist
+├─Foreign_Key_Check	0.00	root	table:t_3, index:fk_2	foreign_key:fk_2, check_not_exist
+├─Foreign_Key_Check	0.00	root	table:t_4, index:fk_2	foreign_key:fk_2, check_not_exist
+├─Foreign_Key_Check	0.00	root	table:t_4	foreign_key:fk_1, check_not_exist
+├─Foreign_Key_Cascade	0.00	root	table:t_4	foreign_key:fk_3, on_delete:CASCADE
+└─Foreign_Key_Cascade	0.00	root	table:t_3	foreign_key:fk_3, on_delete:CASCADE
+set @@foreign_key_checks=0;
+explain format = 'brief' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t_2.id and t_1.id=1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─HashJoin	1.00	root		CARTESIAN inner join
+  ├─Point_Get(Build)	1.00	root	table:t_2	handle:1
+  └─Point_Get(Probe)	1.00	root	table:t_1	handle:1
+explain format = 'brief' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+└─MergeJoin	4166.67	root		inner join, left key:explain_foreign_key.t_1.id, right key:explain_foreign_key.t_2.id
+  ├─TableReader(Build)	3333.33	root		data:TableRangeScan
+  │ └─TableRangeScan	3333.33	cop[tikv]	table:t_2	range:(0,+inf], keep order:true, stats:pseudo
+  └─TableReader(Probe)	3333.33	root		data:TableRangeScan
+    └─TableRangeScan	3333.33	cop[tikv]	table:t_1	range:(0,+inf], keep order:true, stats:pseudo
+drop table if exists t_1,t_2,t_3,t_4;
+set @@foreign_key_checks=0;

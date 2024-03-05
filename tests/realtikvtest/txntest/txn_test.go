@@ -18,10 +18,11 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -250,4 +251,94 @@ func TestAssertionWhenPessimisticLockLost(t *testing.T) {
 	tk1.MustExec("insert into t values (1, 'a') on duplicate key update val = concat(val, 'a')")
 	err := tk1.ExecToErr("commit")
 	require.NotContains(t, err.Error(), "assertion")
+}
+
+func TestSelectLockForPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(a int, b int, c int, key idx(a, b, c)) PARTITION BY HASH (c) PARTITIONS 10")
+	tk1.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk1.MustExec("analyze table t")
+	tk1.MustExec("begin")
+	tk1.MustHavePlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexLookUp")
+	tk1.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
+	ch := make(chan bool, 1)
+	go func() {
+		tk2.MustExec("use test")
+		tk2.MustExec("begin")
+		ch <- false
+		// block here, until tk1 finish
+		tk2.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
+		ch <- true
+	}()
+
+	res := <-ch
+	// Sleep here to make sure SelectLock stmt is executed
+	time.Sleep(10 * time.Millisecond)
+
+	select {
+	case res = <-ch:
+	default:
+	}
+	require.False(t, res)
+
+	tk1.MustExec("commit")
+	// wait until tk2 finished
+	res = <-ch
+	require.True(t, res)
+}
+
+func TestTxnEntrySizeLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("create table t (a int, b longtext)")
+
+	// cannot insert a large entry by default
+	tk1.MustContainErrMsg("insert into t values (1, repeat('a', 7340032))", "[kv:8025]entry too large, the max entry size is 6291456")
+
+	// increase the entry size limit allow user write large entries
+	tk1.MustExec("set session tidb_txn_entry_size_limit=8388608")
+	tk1.MustExec("insert into t values (1, repeat('a', 7340032))")
+	tk1.MustContainErrMsg("insert into t values (1, repeat('a', 9427968))", "[kv:8025]entry too large, the max entry size is 8388608")
+
+	// update session var does not affect other sessions
+	tk2.MustContainErrMsg("insert into t values (1, repeat('a', 7340032))", "[kv:8025]entry too large, the max entry size is 6291456")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	tk3.MustContainErrMsg("insert into t values (1, repeat('a', 7340032))", "[kv:8025]entry too large, the max entry size is 6291456")
+
+	// update session var does not affect internal session used by ddl backfilling
+	tk1.MustContainErrMsg("alter table t modify column a varchar(255)", "[kv:8025]entry too large, the max entry size is 6291456")
+
+	// update global var allows ddl backfilling write large entries
+	tk1.MustExec("set global tidb_txn_entry_size_limit=8388608")
+	tk1.MustExec("alter table t modify column a varchar(255)")
+	tk2.MustExec("alter table t modify column a int")
+
+	// update global var does not affect existing sessions
+	tk2.MustContainErrMsg("insert into t values (1, repeat('a', 7340032))", "[kv:8025]entry too large, the max entry size is 6291456")
+	tk3.MustContainErrMsg("insert into t values (1, repeat('a', 7340032))", "[kv:8025]entry too large, the max entry size is 6291456")
+
+	// update global var affects new sessions
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec("use test")
+	tk4.MustExec("insert into t values (2, repeat('b', 7340032))")
+
+	// reset global var to default
+	tk1.MustExec("set global tidb_txn_entry_size_limit=0")
+	tk1.MustContainErrMsg("alter table t modify column a varchar(255)", "[kv:8025]entry too large, the max entry size is 6291456")
+	tk2.MustContainErrMsg("alter table t modify column a varchar(255)", "[kv:8025]entry too large, the max entry size is 6291456")
+	tk3.MustContainErrMsg("alter table t modify column a varchar(255)", "[kv:8025]entry too large, the max entry size is 6291456")
+	tk4.MustContainErrMsg("alter table t modify column a varchar(255)", "[kv:8025]entry too large, the max entry size is 6291456")
+
+	// reset session var to default
+	tk1.MustExec("insert into t values (3, repeat('c', 7340032))")
+	tk1.MustExec("set session tidb_txn_entry_size_limit=0")
+	tk1.MustContainErrMsg("insert into t values (1, repeat('a', 7340032))", "[kv:8025]entry too large, the max entry size is 6291456")
 }

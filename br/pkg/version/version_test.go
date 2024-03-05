@@ -13,6 +13,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
@@ -43,6 +44,13 @@ func TestCheckClusterVersion(t *testing.T) {
 
 	mock := mockPDClient{
 		Client: nil,
+	}
+	{
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v5.4.2`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
 	}
 
 	{
@@ -493,7 +501,7 @@ func TestDetectServerInfo(t *testing.T) {
 	defer db.Close()
 
 	mkVer := makeVersion
-	data := [][]interface{}{
+	data := [][]any{
 		{1, "8.0.18", ServerTypeMySQL, mkVer(8, 0, 18, "")},
 		{2, "10.4.10-MariaDB-1:10.4.10+maria~bionic", ServerTypeMariaDB, mkVer(10, 4, 10, "MariaDB-1")},
 		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
@@ -504,7 +512,7 @@ func TestDetectServerInfo(t *testing.T) {
 		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(5, 4, 0, "alpha-21-g86caab907")},
 		{9, "5.7.25-TiDB-5584f12", ServerTypeTiDB, mkVer(0, 0, 0, "")},
 	}
-	dec := func(d []interface{}) (tag int, verStr string, tp ServerType, v *semver.Version) {
+	dec := func(d []any) (tag int, verStr string, tp ServerType, v *semver.Version) {
 		return d[0].(int), d[1].(string), ServerType(d[2].(int)), d[3].(*semver.Version)
 	}
 
@@ -621,4 +629,12 @@ Check Table Before Drop: false`
 	versionStr, err = FetchVersion(ctx, db)
 	require.NoError(t, err)
 	require.Equal(t, "5.7.25", versionStr)
+}
+
+func TestEnsureSupportVersion(t *testing.T) {
+	// Once this test failed. please check the compatibility carefully.
+	// *** Don't change this test simply. ***
+	require.Equal(t,
+		CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION,
+		model.CurrLatestTableInfoVersion)
 }

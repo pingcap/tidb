@@ -18,8 +18,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +47,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustExec("insert into t values('b'), ('bBb'), ('Bb'), ('bA'), ('BBBB'), ('BBBBBDDDDDdd'), ('bbbbBBBBbbBBR'), ('BBbbBBbbBBbbBBRRR')")
 	h := dom.StatsHandle()
 	tk.MustExec("set @@session.tidb_analyze_version=1")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 'aaa'")
@@ -119,7 +118,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h = dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 'aaa'")

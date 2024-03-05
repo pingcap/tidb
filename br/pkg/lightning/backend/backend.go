@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -36,7 +36,7 @@ const (
 	importMaxRetryTimes = 3 // tikv-importer has done retry internally. so we don't retry many times.
 )
 
-func makeTag(tableName string, engineID int32) string {
+func makeTag(tableName string, engineID int64) string {
 	return fmt.Sprintf("%s:%d", tableName, engineID)
 }
 
@@ -48,7 +48,7 @@ func makeLogger(logger log.Logger, tag string, engineUUID uuid.UUID) log.Logger 
 }
 
 // MakeUUID generates a UUID for the engine and a tag for the engine.
-func MakeUUID(tableName string, engineID int32) (string, uuid.UUID) {
+func MakeUUID(tableName string, engineID int64) (string, uuid.UUID) {
 	tag := makeTag(tableName, engineID)
 	engineUUID := uuid.NewSHA1(engineNamespace, []byte(tag))
 	return tag, engineUUID
@@ -84,6 +84,8 @@ type EngineConfig struct {
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
+	// local backend external engine specified configuration
+	External *ExternalEngineConfig
 	// KeepSortDir indicates whether to keep the temporary sort directory
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
@@ -97,6 +99,25 @@ type LocalEngineConfig struct {
 	CompactThreshold int64
 	// compact routine concurrency
 	CompactConcurrency int
+
+	// blocksize
+	BlockSize int
+}
+
+// ExternalEngineConfig is the configuration used for local backend external engine.
+type ExternalEngineConfig struct {
+	StorageURI      string
+	DataFiles       []string
+	StatFiles       []string
+	StartKey        []byte
+	EndKey          []byte
+	SplitKeys       [][]byte
+	RegionSplitSize int64
+	// TotalFileSize can be an estimated value.
+	TotalFileSize int64
+	// TotalKVCount can be an estimated value.
+	TotalKVCount int64
+	CheckHotspot bool
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -213,7 +234,7 @@ func MakeEngineManager(ab Backend) EngineManager {
 // OpenEngine opens an engine with the given table name and engine ID.
 func (be EngineManager) OpenEngine(ctx context.Context, config *EngineConfig,
 	tableName string, engineID int32) (*OpenedEngine, error) {
-	tag, engineUUID := MakeUUID(tableName, engineID)
+	tag, engineUUID := MakeUUID(tableName, int64(engineID))
 	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
 
 	if err := be.backend.OpenEngine(ctx, config, engineUUID); err != nil {
@@ -282,7 +303,7 @@ func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterCon
 // resuming from a checkpoint.
 func (be EngineManager) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig,
 	tableName string, engineID int32) (*ClosedEngine, error) {
-	tag, engineUUID := MakeUUID(tableName, engineID)
+	tag, engineUUID := MakeUUID(tableName, int64(engineID))
 	return be.UnsafeCloseEngineWithUUID(ctx, cfg, tag, engineUUID, engineID)
 }
 
@@ -347,7 +368,11 @@ func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionS
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {
-			task.End(zap.ErrorLevel, err)
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				task.End(zap.WarnLevel, err)
+			} else {
+				task.End(zap.ErrorLevel, err)
+			}
 			return err
 		}
 		task.Warn("import spuriously failed, going to retry again", log.ShortError(err))

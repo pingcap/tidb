@@ -18,10 +18,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/mockstore/mockcopr"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/pkg/store/mockstore/mockcopr"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
@@ -62,6 +62,9 @@ func TestForCoverage(t *testing.T) {
 	tk.MustExec("insert t values ()")
 
 	// Normal request will not cover txn.Seek.
+	tk.MustExec("set @@tidb_enable_fast_table_check=false")
+	tk.MustExec("admin check table t")
+	tk.MustExec("set @@tidb_enable_fast_table_check=true")
 	tk.MustExec("admin check table t")
 
 	// Cover dirty table operations in StateTxn.

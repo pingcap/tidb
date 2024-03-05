@@ -22,17 +22,22 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
 )
 
 // sampleCompressedFileSize represents how many bytes need to be sampled for compressed files
-const sampleCompressedFileSize = 4 * 1024
+const (
+	sampleCompressedFileSize = 4 * 1024
+	maxSampleParquetDataSize = 8 * 1024
+	maxSampleParquetRowCount = 500
+)
 
 // MDDatabaseMeta contains some parsed metadata for a database in the source by MyDumper Loader.
 type MDDatabaseMeta struct {
@@ -64,7 +69,7 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 		}
 	}
 	// set default if schema sql is empty or failed to extract.
-	return "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
+	return common.SprintfWithIdentifiers("CREATE DATABASE IF NOT EXISTS %s", m.Name)
 }
 
 // MDTableMeta contains some parsed metadata for a table in the source by MyDumper Loader.
@@ -123,11 +128,6 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 		return "", err
 	}
 	return string(schema), nil
-}
-
-// FullTableName return FQDN of the table.
-func (m *MDTableMeta) FullTableName() string {
-	return common.UniqueTable(m.DB, m.Name)
 }
 
 // MDLoaderSetupConfig stores the configs when setting up a MDLoader.
@@ -245,13 +245,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
 		}
 	}
 
-	// use the legacy black-white-list if defined. otherwise use the new filter.
-	var f filter.Filter
-	if cfg.HasLegacyBlackWhiteList() {
-		f, err = filter.ParseMySQLReplicationRules(&cfg.BWList)
-	} else {
-		f, err = filter.Parse(cfg.Mydumper.Filter)
-	}
+	f, err := filter.Parse(cfg.Mydumper.Filter)
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse filter failed")
 	}
@@ -356,11 +350,10 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		return errors.New("file iterator is not defined")
 	}
 	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
-		if s.setupCfg.ReturnPartialResultOnError {
-			gerr = err
-		} else {
+		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
+		gerr = err
 	}
 	if err := s.route(); err != nil {
 		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
@@ -462,7 +455,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		return errors.Annotatef(err, "apply file routing on file '%s' failed", path)
 	}
 	if res == nil {
-		logger.Info("[loader] file is filtered by file router")
+		logger.Info("file is filtered by file router", zap.String("category", "loader"))
 		return nil
 	}
 
@@ -472,7 +465,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 	}
 
 	if s.loader.shouldSkip(&info.TableName) {
-		logger.Debug("[filter] ignoring table file")
+		logger.Debug("ignoring table file", zap.String("category", "filter"))
 
 		return nil
 	}
@@ -484,15 +477,24 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		s.tableSchemas = append(s.tableSchemas, info)
 	case SourceTypeViewSchema:
 		s.viewSchemas = append(s.viewSchemas, info)
-	case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
+	case SourceTypeSQL, SourceTypeCSV:
 		if info.FileMeta.Compression != CompressionNone {
 			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
 			if err2 != nil {
-				logger.Error("[loader] fail to calculate data file compress ratio",
+				logger.Error("fail to calculate data file compress ratio", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type))
 			} else {
 				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
 			}
+		}
+		s.tableDatas = append(s.tableDatas, info)
+	case SourceTypeParquet:
+		parquestDataSize, err2 := SampleParquetDataSize(ctx, info.FileMeta, s.loader.GetStore())
+		if err2 != nil {
+			logger.Error("fail to sample parquet data size", zap.String("category", "loader"),
+				zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type), zap.Error(err2))
+		} else {
+			info.FileMeta.RealSize = parquestDataSize
 		}
 		s.tableDatas = append(s.tableDatas, info)
 	}
@@ -529,12 +531,30 @@ func (s *mdLoaderSetup) route() error {
 		}
 	}
 	for _, info := range s.tableSchemas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.viewSchemas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.tableDatas {
+		if _, ok := knownDBNames[info.TableName.Schema]; !ok {
+			knownDBNames[info.TableName.Schema] = &dbInfo{
+				fileMeta: info.FileMeta,
+				count:    1,
+			}
+		}
 		knownDBNames[info.TableName.Schema].count++
 	}
 
@@ -679,13 +699,14 @@ func calculateFileBytes(ctx context.Context,
 	store storage.ExternalStorage,
 	offset int64) (tot int, pos int64, err error) {
 	bytes := make([]byte, sampleCompressedFileSize)
-	reader, err := store.Open(ctx, dataFile)
+	reader, err := store.Open(ctx, dataFile, nil)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	defer reader.Close()
 
-	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, offset)
+	decompressConfig := storage.DecompressConfig{ZStdDecodeConcurrency: 1}
+	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, decompressConfig, offset)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -725,6 +746,14 @@ func calculateFileBytes(ctx context.Context,
 
 // SampleFileCompressRatio samples the compress ratio of the compressed file.
 func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
+	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
+		switch v := val.(type) {
+		case string:
+			failpoint.Return(1.0, errors.New(v))
+		case int:
+			failpoint.Return(float64(v)/100, nil)
+		}
+	})
 	if fileMeta.Compression == CompressionNone {
 		return 1, nil
 	}
@@ -749,4 +778,48 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 		return 0, err
 	}
 	return float64(tot) / float64(pos), nil
+}
+
+// SampleParquetDataSize samples the data size of the parquet file.
+func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (int64, error) {
+	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
+	if err != nil {
+		return 0, err
+	}
+
+	reader, err := store.Open(ctx, fileMeta.Path, nil)
+	if err != nil {
+		return 0, err
+	}
+	parser, err := NewParquetParser(ctx, store, reader, fileMeta.Path)
+	if err != nil {
+		//nolint: errcheck
+		reader.Close()
+		return 0, err
+	}
+	//nolint: errcheck
+	defer parser.Close()
+
+	var (
+		rowSize  int64
+		rowCount int64
+	)
+	for {
+		err = parser.ReadRow()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			return 0, err
+		}
+		lastRow := parser.LastRow()
+		rowCount++
+		rowSize += int64(lastRow.Length)
+		parser.RecycleRow(lastRow)
+		if rowSize > maxSampleParquetDataSize || rowCount > maxSampleParquetRowCount {
+			break
+		}
+	}
+	size := int64(float64(totalRowCount) / float64(rowCount) * float64(rowSize))
+	return size, nil
 }

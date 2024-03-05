@@ -5,6 +5,7 @@ package storage
 import (
 	"bufio"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,17 @@ type LocalStorage struct {
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	path := filepath.Join(l.base, name)
 	return os.Remove(path)
+}
+
+// DeleteFiles deletes the files.
+func (l *LocalStorage) DeleteFiles(ctx context.Context, names []string) error {
+	for _, name := range names {
+		err := l.DeleteFile(ctx, name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WriteFile writes data to a file to storage.
@@ -95,7 +107,14 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 			return errors.Trace(err)
 		}
 
-		if f == nil || f.IsDir() {
+		if f == nil {
+			return nil
+		}
+		if f.IsDir() {
+			// walk will call this for base itself.
+			if path != base && opt.SkipSubDir {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
@@ -111,7 +130,11 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 		if !f.Mode().IsRegular() {
 			stat, err := os.Stat(filepath.Join(l.base, path))
 			if err != nil {
-				return errors.Trace(err)
+				// error may happen because of file deleted after walk started, or other errors
+				// like #49423. We just return 0 size and let the caller handle it in later
+				// logic.
+				log.Warn("failed to get file size", zap.String("path", path), zap.Error(err))
+				return fn(path, 0)
 			}
 			size = stat.Size()
 		}
@@ -121,18 +144,82 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 
 // URI returns the base path as an URI with a file:/// prefix.
 func (l *LocalStorage) URI() string {
-	return LocalURIPrefix + "/" + l.base
+	return LocalURIPrefix + l.base
 }
 
 // Open a Reader by file path, path is a relative path to base path.
-func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader, error) {
+func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	//nolint: gosec
-	return os.Open(filepath.Join(l.base, path))
+	f, err := os.Open(filepath.Join(l.base, path))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	pos, endPos := int64(0), int64(-1)
+	if o != nil {
+		if o.EndOffset != nil {
+			endPos = *o.EndOffset
+		}
+		if o.StartOffset != nil {
+			_, err = f.Seek(*o.StartOffset, io.SeekStart)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			pos = *o.StartOffset
+		}
+	}
+	return &localFile{File: f, pos: pos, endPos: endPos}, nil
+}
+
+type localFile struct {
+	*os.File
+	pos    int64
+	endPos int64
+}
+
+func (f *localFile) Read(p []byte) (n int, err error) {
+	if f.endPos == -1 {
+		return f.File.Read(p)
+	}
+
+	pEnd := f.endPos - f.pos
+	if pEnd <= 0 {
+		return 0, io.EOF
+	}
+	if pEnd > int64(len(p)) {
+		pEnd = int64(len(p))
+	}
+	p = p[:pEnd]
+	n, err = f.File.Read(p)
+	f.pos += int64(n)
+	return n, err
+}
+
+func (f *localFile) Seek(offset int64, whence int) (int64, error) {
+	n, err := f.File.Seek(offset, whence)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	f.pos, _ = f.File.Seek(0, io.SeekCurrent)
+	return n, nil
+}
+
+func (f *localFile) GetFileSize() (int64, error) {
+	stat, err := f.Stat()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return stat.Size(), nil
 }
 
 // Create implements ExternalStorage interface.
-func (l *LocalStorage) Create(_ context.Context, name string) (ExternalFileWriter, error) {
-	file, err := os.Create(filepath.Join(l.base, name))
+func (l *LocalStorage) Create(_ context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
+	filename := filepath.Join(l.base, name)
+	dir := filepath.Dir(filename)
+	err := os.MkdirAll(dir, 0750)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	file, err := os.Create(filename)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -144,6 +231,9 @@ func (l *LocalStorage) Create(_ context.Context, name string) (ExternalFileWrite
 func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string) error {
 	return errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName)))
 }
+
+// Close implements ExternalStorage interface.
+func (*LocalStorage) Close() {}
 
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)

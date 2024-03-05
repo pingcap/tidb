@@ -1,0 +1,16 @@
+set sql_mode='';
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (a int);
+insert into t values (1000000000), (2000000);
+alter table t modify a tinyint;
+show warnings;
+Level	Code	Message
+Warning	1690	2 warnings with this error code, first warning: constant 1000000000 overflows tinyint
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (a int);
+insert into t values (1000000000);
+alter table t modify a tinyint;
+show warnings;
+Level	Code	Message
+Warning	1690	constant 1000000000 overflows tinyint
+set sql_mode=default;

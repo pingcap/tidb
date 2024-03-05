@@ -16,6 +16,8 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 LOG_FILE1="$TEST_DIR/lightning-distributed-import1.log"
 LOG_FILE2="$TEST_DIR/lightning-distributed-import2.log"
 
@@ -23,11 +25,11 @@ LOG_FILE2="$TEST_DIR/lightning-distributed-import2.log"
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownImport=sleep(250)"
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_distributed_import.sorted1" \
-  -d "tests/$TEST_NAME/data1" --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config.toml" &
+  -d "$CUR/data1" --log-file "$LOG_FILE1" --config "$CUR/config.toml" &
 pid1="$!"
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_distributed_import.sorted2" \
-  -d "tests/$TEST_NAME/data2" --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config.toml" &
+  -d "$CUR/data2" --log-file "$LOG_FILE2" --config "$CUR/config.toml" &
 pid2="$!"
 
 wait "$pid1" "$pid2"

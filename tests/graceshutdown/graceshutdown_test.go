@@ -131,7 +131,9 @@ func TestGracefulShutdown(t *testing.T) {
 	conn1, err := db.Conn(ctx)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, conn1.Close())
+		if conn1 != nil {
+			require.NoError(t, conn1.Close())
+		}
 	}()
 
 	_, err = conn1.ExecContext(ctx, "drop table if exists t;")
@@ -149,10 +151,19 @@ func TestGracefulShutdown(t *testing.T) {
 		close(done)
 	}()
 
+	// Graceful shutdown will wait for connections in transaction only.
+	// See https://github.com/pingcap/tidb/pull/44953.
+	txn, err := conn1.BeginTx(ctx, nil)
+	require.NoError(t, err)
 	sql := `select 1 from t where not (select sleep(3)) ;`
 	var a int64
-	err = conn1.QueryRowContext(ctx, sql).Scan(&a)
+	err = txn.QueryRowContext(ctx, sql).Scan(&a)
 	require.NoError(t, err)
 	require.Equal(t, a, int64(1))
+	require.NoError(t, txn.Commit())
+
+	conn1.Close()
+	conn1 = nil
+
 	<-done
 }

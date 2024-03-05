@@ -18,9 +18,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -37,7 +39,8 @@ type schemaInfo struct {
 	crc64xor   uint64
 	totalKvs   uint64
 	totalBytes uint64
-	stats      *handle.JSONTable
+	stats      *util.JSONTable
+	statsIndex []*backuppb.StatsFileIndex
 }
 
 type iterFuncTp func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error
@@ -130,27 +133,25 @@ func (ss *Schemas) BackupSchemas(
 							return errors.Trace(err)
 						}
 						calculateCost := time.Since(start)
-						var flushCost time.Duration
 						if checkpointRunner != nil {
 							// if checkpoint runner is running and the checksum is not from checkpoint
 							// then flush the checksum by the checkpoint runner
-							startFlush := time.Now()
-							if err = checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes, calculateCost.Seconds()); err != nil {
+							if err = checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes); err != nil {
 								return errors.Trace(err)
 							}
-							flushCost = time.Since(startFlush)
 						}
 						logger.Info("Calculate table checksum completed",
 							zap.Uint64("Crc64Xor", schema.crc64xor),
 							zap.Uint64("TotalKvs", schema.totalKvs),
 							zap.Uint64("TotalBytes", schema.totalBytes),
-							zap.Duration("calculate-take", calculateCost),
-							zap.Duration("flush-take", flushCost))
+							zap.Duration("calculate-take", calculateCost))
 					}
 				}
 				if statsHandle != nil {
-					if err := schema.dumpStatsToJSON(statsHandle); err != nil {
+					statsWriter := metaWriter.NewStatsWriter()
+					if err := schema.dumpStatsToJSON(ctx, statsWriter, statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
+						return errors.Trace(err)
 					}
 				}
 			}
@@ -191,6 +192,7 @@ func (s *schemaInfo) calculateChecksum(
 	concurrency uint,
 ) error {
 	exe, err := checksum.NewExecutorBuilder(s.tableInfo, backupTS).
+		SetExplicitRequestSourceType(kvutil.ExplicitTypeBR).
 		SetConcurrency(concurrency).
 		Build()
 	if err != nil {
@@ -210,14 +212,19 @@ func (s *schemaInfo) calculateChecksum(
 	return nil
 }
 
-func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
-	jsonTable, err := statsHandle.DumpStatsToJSON(
-		s.dbInfo.Name.String(), s.tableInfo, nil, true)
-	if err != nil {
+func (s *schemaInfo) dumpStatsToJSON(ctx context.Context, statsWriter *metautil.StatsWriter, statsHandle *handle.Handle, backupTS uint64) error {
+	log.Info("dump stats to json", zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
+	if err := statsHandle.PersistStatsBySnapshot(
+		ctx, s.dbInfo.Name.String(), s.tableInfo, backupTS, statsWriter.BackupStats,
+	); err != nil {
 		return errors.Trace(err)
 	}
 
-	s.stats = jsonTable
+	statsFileIndexes, err := statsWriter.BackupStatsDone(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.statsIndex = statsFileIndexes
 	return nil
 }
 
@@ -249,5 +256,6 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 		TotalKvs:   s.totalKvs,
 		TotalBytes: s.totalBytes,
 		Stats:      statsBytes,
+		StatsIndex: s.statsIndex,
 	}, nil
 }

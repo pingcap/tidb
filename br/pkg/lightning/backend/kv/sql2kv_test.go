@@ -25,19 +25,19 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -51,19 +51,19 @@ func TestMarshal(t *testing.T) {
 	encoder := zapcore.NewMapObjectEncoder()
 	err := encoder.AddArray("test", lkv.RowArrayMarshaller{types.NewStringDatum("1"), nullDatum, minNotNull, types.MaxValueDatum()})
 	require.NoError(t, err)
-	require.Equal(t, encoder.Fields["test"], []interface{}{
-		map[string]interface{}{"kind": "string", "val": "1"},
-		map[string]interface{}{"kind": "null", "val": "NULL"},
-		map[string]interface{}{"kind": "min", "val": "-inf"},
-		map[string]interface{}{"kind": "max", "val": "+inf"},
+	require.Equal(t, encoder.Fields["test"], []any{
+		map[string]any{"kind": "string", "val": "1"},
+		map[string]any{"kind": "null", "val": "NULL"},
+		map[string]any{"kind": "min", "val": "-inf"},
+		map[string]any{"kind": "max", "val": "+inf"},
 	})
 
 	invalid := types.Datum{}
 	invalid.SetInterface(1)
 	err = encoder.AddArray("bad-test", lkv.RowArrayMarshaller{minNotNull, invalid})
 	require.Regexp(t, "cannot convert.*", err)
-	require.Equal(t, encoder.Fields["bad-test"], []interface{}{
-		map[string]interface{}{"kind": "min", "val": "-inf"},
+	require.Equal(t, encoder.Fields["bad-test"], []any{
+		map[string]any{"kind": "min", "val": "-inf"},
 	})
 }
 
@@ -71,7 +71,7 @@ type mockTable struct {
 	table.Table
 }
 
-func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (mockTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return kv.IntHandle(-1), errors.New("mock error")
 }
 
@@ -384,7 +384,7 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, pairsExpect, pairs)
-	require.Equal(t, tbl.Allocators(lkv.GetEncoderSe(encoder)).Get(autoid.AutoIncrementType).Base(), int64(70))
+	require.Equal(t, tbl.Allocators(lkv.GetEncoderSe(encoder).GetTableCtx()).Get(autoid.AutoIncrementType).Base(), int64(70))
 }
 
 func TestEncodeMissingAutoValue(t *testing.T) {
@@ -445,14 +445,48 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		}, rowID, []int{0}, 1234)
 		require.NoError(t, err)
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
-		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder)).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
+		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder).GetTableCtx()).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
 
 		// test insert a row without specifying the auto_xxxx column
 		pairs, err = encoder.Encode([]types.Datum{}, rowID, []int{0}, 1234)
 		require.NoError(t, err)
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
-		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder)).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
+		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder).GetTableCtx()).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
 	}
+}
+
+func TestEncodeExpressionColumn(t *testing.T) {
+	tblInfo := mockTableInfo(t, "create table t (id varchar(40) not null DEFAULT uuid(), unique key `u_id` (`id`));")
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
+	require.NoError(t, err)
+
+	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: map[string]string{
+				"tidb_row_format_version": "2",
+			},
+		},
+		Logger: log.L(),
+	}, nil)
+	require.NoError(t, err)
+
+	strDatumForID := types.NewStringDatum("1")
+	actualDatum, err := lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, &strDatumForID)
+	require.NoError(t, err)
+	require.Equal(t, strDatumForID, actualDatum)
+
+	actualDatum, err = lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, nil)
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, actualDatum.Kind())
+	require.Len(t, actualDatum.GetString(), 36) // uuid length
+
+	actualDatum2, err := lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, nil)
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, actualDatum2.Kind())
+	require.Len(t, actualDatum2.GetString(), 36)
+	require.NotEqual(t, actualDatum.GetString(), actualDatum2.GetString()) // check different uuid
 }
 
 func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {
@@ -490,7 +524,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 			RowID: common.EncodeIntRowID(70),
 		},
 	}))
-	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder)).Get(autoid.AutoRandomType).Base(), int64(70))
+	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetTableCtx()).Get(autoid.AutoRandomType).Base(), int64(70))
 
 	pairs, err = encoder.Encode([]types.Datum{types.NewStringDatum("")}, 71, []int{-1, 0}, 1234)
 	require.NoError(t, err)
@@ -501,7 +535,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 			RowID: common.EncodeIntRowID(71),
 		},
 	}))
-	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder)).Get(autoid.AutoRandomType).Base(), int64(71))
+	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetTableCtx()).Get(autoid.AutoRandomType).Base(), int64(71))
 }
 
 func TestShardRowId(t *testing.T) {
@@ -532,54 +566,7 @@ func TestShardRowId(t *testing.T) {
 		keyMap[rowID>>60] = struct{}{}
 	}
 	require.Len(t, keyMap, 8)
-	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder)).Get(autoid.RowIDAllocType).Base(), int64(32))
-}
-
-func TestSplitIntoChunks(t *testing.T) {
-	pairs := []common.KvPair{
-		{
-			Key: []byte{1, 2, 3},
-			Val: []byte{4, 5, 6},
-		},
-		{
-			Key: []byte{7, 8},
-			Val: []byte{9, 0},
-		},
-		{
-			Key: []byte{1, 2, 3, 4},
-			Val: []byte{5, 6, 7, 8},
-		},
-		{
-			Key: []byte{9, 0},
-			Val: []byte{1, 2},
-		},
-	}
-
-	splitBy10 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(10)
-	require.Equal(t, splitBy10, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:3]),
-		lkv.MakeRowsFromKvPairs(pairs[3:4]),
-	})
-
-	splitBy12 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(12)
-	require.Equal(t, splitBy12, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:4]),
-	})
-
-	splitBy1000 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(1000)
-	require.Equal(t, splitBy1000, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:4]),
-	})
-
-	splitBy1 := lkv.MakeRowsFromKvPairs(pairs).SplitIntoChunks(1)
-	require.Equal(t, splitBy1, []encode.Rows{
-		lkv.MakeRowsFromKvPairs(pairs[0:1]),
-		lkv.MakeRowsFromKvPairs(pairs[1:2]),
-		lkv.MakeRowsFromKvPairs(pairs[2:3]),
-		lkv.MakeRowsFromKvPairs(pairs[3:4]),
-	})
+	require.Equal(t, tbl.Allocators(lkv.GetSession4test(encoder).GetTableCtx()).Get(autoid.RowIDAllocType).Base(), int64(32))
 }
 
 func TestClassifyAndAppend(t *testing.T) {

@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "analyzetest_test",
+    timeout = "short",
+    srcs = [
+        "analyze_bench_test.go",
+        "analyze_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 48,
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/domain/infosync",
+        "//pkg/errno",
+        "//pkg/executor",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/planner/core",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/testkit",
+        "//pkg/util/dbterror/exeerrors",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

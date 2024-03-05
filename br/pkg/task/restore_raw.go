@@ -7,6 +7,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -73,21 +74,30 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer mgr.Close()
 
-	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
-	mergeRegionCount := cfg.MergeSmallRegionKeyCount
-	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
-		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
+	// need retrieve these configs from tikv if not set in command.
+	kvConfigs := &kvconfig.KVConfig{
+		MergeRegionSize:     cfg.MergeSmallRegionSizeBytes,
+		MergeRegionKeyCount: cfg.MergeSmallRegionKeyCount,
+	}
+
+	if !kvConfigs.MergeRegionSize.Modified || !kvConfigs.MergeRegionKeyCount.Modified {
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+		mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
 	}
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, true)
+	client := restore.NewRestoreClient(
+		mgr.GetPDClient(),
+		mgr.GetPDHTTPClient(),
+		mgr.GetTLSConfig(),
+		keepaliveCfg,
+		true,
+	)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
@@ -128,7 +138,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	summary.CollectInt("restore files", len(files))
 
 	ranges, _, err := restore.MergeFileRanges(
-		files, mergeRegionSize, mergeRegionCount)
+		files, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -12,15 +12,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 const (
-	tidbNewCollationEnabled = "new_collation_enabled"
+	TidbNewCollationEnabled = "new_collation_enabled"
 )
 
 var (
@@ -33,14 +33,14 @@ var (
 
 // QueryExecutor is a interface for exec query
 type QueryExecutor interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // StmtExecutor define both query and exec methods
 type StmtExecutor interface {
 	QueryExecutor
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // DBExecutor is a interface for statements and txn
@@ -59,7 +59,7 @@ func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
 	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
 	if !ok {
 		// shouldn't happen
-		log.Error("[backup] unable to translate executor from sessionctx")
+		log.Error("unable to translate executor from sessionctx", zap.String("category", "backup"))
 		return false
 	}
 	enabled, err := IsLogBackupEnabled(executor)
@@ -68,7 +68,7 @@ func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
 		// for GC worker it will scan more locks in one tick.
 		// for Add index it will skip using lightning this time.
 		// for Telemetry it will get a false positive usage count.
-		log.Warn("[backup] check log backup config failed, ignore it", zap.Error(err))
+		log.Warn("check log backup config failed, ignore it", zap.String("category", "backup"), zap.Error(err))
 		return true
 	}
 	return enabled
@@ -226,5 +226,5 @@ func IsLogBackupInUse(ctx sessionctx.Context) bool {
 
 // GetTidbNewCollationEnabled returns the variable name of NewCollationEnabled.
 func GetTidbNewCollationEnabled() string {
-	return tidbNewCollationEnabled
+	return TidbNewCollationEnabled
 }

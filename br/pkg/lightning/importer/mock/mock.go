@@ -17,16 +17,16 @@ import (
 	"context"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/filter"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/filter"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 // SourceFile defines a mock source file.
@@ -237,39 +237,34 @@ func (t *TargetInfo) GetTargetSysVariablesForImport(_ context.Context, _ ...ropt
 	return result
 }
 
-// GetReplicationConfig gets the replication config on the target.
-// It implements the TargetInfoGetter interface.
-func (t *TargetInfo) GetReplicationConfig(_ context.Context) (*pdtypes.ReplicationConfig, error) {
+// GetMaxReplica implements the TargetInfoGetter interface.
+func (t *TargetInfo) GetMaxReplica(context.Context) (uint64, error) {
 	replCount := t.MaxReplicasPerRegion
 	if replCount <= 0 {
 		replCount = 1
 	}
-	return &pdtypes.ReplicationConfig{
-		MaxReplicas: uint64(replCount),
-	}, nil
+	return uint64(replCount), nil
 }
 
 // GetStorageInfo gets the storage information on the target.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) GetStorageInfo(_ context.Context) (*pdtypes.StoresInfo, error) {
-	resultStoreInfos := make([]*pdtypes.StoreInfo, len(t.StorageInfos))
+func (t *TargetInfo) GetStorageInfo(_ context.Context) (*pdhttp.StoresInfo, error) {
+	resultStoreInfos := make([]pdhttp.StoreInfo, len(t.StorageInfos))
 	for i, storeInfo := range t.StorageInfos {
-		resultStoreInfos[i] = &pdtypes.StoreInfo{
-			Store: &pdtypes.MetaStore{
-				Store: &metapb.Store{
-					Id: uint64(i + 1),
-				},
+		resultStoreInfos[i] = pdhttp.StoreInfo{
+			Store: pdhttp.MetaStore{
+				ID:        int64(i + 1),
 				StateName: "Up",
 			},
-			Status: &pdtypes.StoreStatus{
-				Capacity:    pdtypes.ByteSize(storeInfo.TotalSize),
-				Available:   pdtypes.ByteSize(storeInfo.AvailableSize),
-				UsedSize:    pdtypes.ByteSize(storeInfo.UsedSize),
-				RegionCount: storeInfo.RegionCount,
+			Status: pdhttp.StoreStatus{
+				Capacity:    units.BytesSize(float64(storeInfo.TotalSize)),
+				Available:   units.BytesSize(float64(storeInfo.AvailableSize)),
+				RegionSize:  int64(storeInfo.UsedSize),
+				RegionCount: int64(storeInfo.RegionCount),
 			},
 		}
 	}
-	return &pdtypes.StoresInfo{
+	return &pdhttp.StoresInfo{
 		Count:  len(resultStoreInfos),
 		Stores: resultStoreInfos,
 	}, nil
@@ -277,18 +272,16 @@ func (t *TargetInfo) GetStorageInfo(_ context.Context) (*pdtypes.StoresInfo, err
 
 // GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) GetEmptyRegionsInfo(_ context.Context) (*pdtypes.RegionsInfo, error) {
-	totalEmptyRegions := []pdtypes.RegionInfo{}
+func (t *TargetInfo) GetEmptyRegionsInfo(_ context.Context) (*pdhttp.RegionsInfo, error) {
+	totalEmptyRegions := []pdhttp.RegionInfo{}
 	totalEmptyRegionCount := 0
 	for storeID, storeEmptyRegionCount := range t.EmptyRegionCountMap {
-		regions := make([]pdtypes.RegionInfo, storeEmptyRegionCount)
+		regions := make([]pdhttp.RegionInfo, storeEmptyRegionCount)
 		for i := 0; i < storeEmptyRegionCount; i++ {
-			regions[i] = pdtypes.RegionInfo{
-				Peers: []pdtypes.MetaPeer{
+			regions[i] = pdhttp.RegionInfo{
+				Peers: []pdhttp.RegionPeer{
 					{
-						Peer: &metapb.Peer{
-							StoreId: storeID,
-						},
+						StoreID: int64(storeID),
 					},
 				},
 			}
@@ -296,8 +289,8 @@ func (t *TargetInfo) GetEmptyRegionsInfo(_ context.Context) (*pdtypes.RegionsInf
 		totalEmptyRegions = append(totalEmptyRegions, regions...)
 		totalEmptyRegionCount += storeEmptyRegionCount
 	}
-	return &pdtypes.RegionsInfo{
-		Count:   totalEmptyRegionCount,
+	return &pdhttp.RegionsInfo{
+		Count:   int64(totalEmptyRegionCount),
 		Regions: totalEmptyRegions,
 	}, nil
 }

@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -41,12 +42,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -64,6 +64,15 @@ const (
 	// and add isImportingAtomic with this value. In other state, we directly store with the state value.
 	// so this must always the last value of this enum.
 	importMutexStateReadLock
+	// we need to lock the engine when it's open as we do when it's close, otherwise GetEngienSize may race with OpenEngine
+	importMutexStateOpen
+)
+
+const (
+	// DupDetectDirSuffix is used by pre-deduplication to store the encoded index KV.
+	DupDetectDirSuffix = ".dupdetect"
+	// DupResultDirSuffix is used by pre-deduplication to store the duplicated row ID.
+	DupResultDirSuffix = ".dupresult"
 )
 
 // engineMeta contains some field that is necessary to continue the engine restore/import process.
@@ -78,10 +87,10 @@ type engineMeta struct {
 
 type syncedRanges struct {
 	sync.Mutex
-	ranges []Range
+	ranges []common.Range
 }
 
-func (r *syncedRanges) add(g Range) {
+func (r *syncedRanges) add(g common.Range) {
 	r.Lock()
 	r.ranges = append(r.ranges, g)
 	r.Unlock()
@@ -97,7 +106,7 @@ func (r *syncedRanges) reset() {
 type Engine struct {
 	engineMeta
 	closed       atomic.Bool
-	db           *pebble.DB
+	db           atomic.Pointer[pebble.DB]
 	UUID         uuid.UUID
 	localWriters sync.Map
 
@@ -125,7 +134,7 @@ type Engine struct {
 	config    backend.LocalEngineConfig
 	tableInfo *checkpoints.TidbTableInfo
 
-	dupDetectOpt DupDetectOpt
+	dupDetectOpt common.DupDetectOpt
 
 	// total size of SST files waiting to be ingested
 	pendingFileSize atomic.Int64
@@ -134,7 +143,7 @@ type Engine struct {
 	importedKVSize  atomic.Int64
 	importedKVCount atomic.Int64
 
-	keyAdapter         KeyAdapter
+	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 
@@ -148,25 +157,37 @@ func (e *Engine) setError(err error) {
 	}
 }
 
+func (e *Engine) getDB() *pebble.DB {
+	return e.db.Load()
+}
+
 // Close closes the engine and release all resources.
 func (e *Engine) Close() error {
 	e.logger.Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
-	if e.db == nil {
+	db := e.getDB()
+	if db == nil {
 		return nil
 	}
-	err := errors.Trace(e.db.Close())
-	e.db = nil
+	err := errors.Trace(db.Close())
+	e.db.Store(nil)
 	return err
 }
 
-// Cleanup remove meta and db files
+// Cleanup remove meta, db and duplicate detection files
 func (e *Engine) Cleanup(dataDir string) error {
 	if err := os.RemoveAll(e.sstDir); err != nil {
 		return errors.Trace(err)
 	}
+	uuid := e.UUID.String()
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupDetectDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupResultDirSuffix)); err != nil {
+		return errors.Trace(err)
+	}
 
-	dbPath := filepath.Join(dataDir, e.UUID.String())
-	return os.RemoveAll(dbPath)
+	dbPath := filepath.Join(dataDir, uuid)
+	return errors.Trace(os.RemoveAll(dbPath))
 }
 
 // Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
@@ -242,7 +263,7 @@ func (e *Engine) unlock() {
 // TotalMemorySize returns the total memory size of the engine.
 func (e *Engine) TotalMemorySize() int64 {
 	var memSize int64
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		w := k.(*Writer)
 		if w.kvBuffer != nil {
 			w.Lock()
@@ -252,6 +273,50 @@ func (e *Engine) TotalMemorySize() int64 {
 		return true
 	})
 	return memSize
+}
+
+// KVStatistics returns the total kv size and total kv count.
+func (e *Engine) KVStatistics() (totalSize int64, totalKVCount int64) {
+	return e.TotalSize.Load(), e.Length.Load()
+}
+
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
+	return e.importedKVSize.Load(), e.importedKVCount.Load()
+}
+
+// ID is the identifier of an engine.
+func (e *Engine) ID() string {
+	return e.UUID.String()
+}
+
+// GetKeyRange implements common.Engine.
+func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	firstLey, lastKey, err := e.GetFirstAndLastKey(nil, nil)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return firstLey, nextKey(lastKey), nil
+}
+
+// SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
+func (e *Engine) SplitRanges(
+	startKey, endKey []byte,
+	sizeLimit, keysLimit int64,
+	logger log.Logger,
+) ([]common.Range, error) {
+	sizeProps, err := getSizePropertiesFn(logger, e.getDB(), e.keyAdapter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ranges := splitRangeBySizeProps(
+		common.Range{Start: startKey, End: endKey},
+		sizeProps,
+		sizeLimit,
+		keysLimit,
+	)
+	return ranges, nil
 }
 
 type rangeOffsets struct {
@@ -397,7 +462,7 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 	})
 }
 
-func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties, error) {
+func decodeRangeProperties(data []byte, keyAdapter common.KeyAdapter) (rangeProperties, error) {
 	r := make(rangeProperties, 0, 16)
 	for len(data) > 0 {
 		if len(data) < 4 {
@@ -428,7 +493,7 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 // getSizePropertiesFn is used to let unit test replace the real function.
 var getSizePropertiesFn = getSizeProperties
 
-func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
+func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter common.KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
 		logger.Warn("get sst table properties failed", log.ShortError(err))
@@ -455,9 +520,7 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 }
 
 func (e *Engine) getEngineFileSize() backend.EngineFileSize {
-	e.mutex.RLock()
-	db := e.db
-	e.mutex.RUnlock()
+	db := e.getDB()
 
 	var total pebble.LevelMetrics
 	if db != nil {
@@ -465,16 +528,9 @@ func (e *Engine) getEngineFileSize() backend.EngineFileSize {
 		total = metrics.Total()
 	}
 	var memSize int64
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		w := k.(*Writer)
-		if w.writer != nil {
-			memSize += int64(w.writer.writer.EstimatedSize())
-		} else {
-			// if kvs are still in memory, only calculate half of the total size
-			// in our tests, SST file size is about 50% of the raw kv size
-			memSize += w.batchSize / 2
-		}
-
+		memSize += int64(w.EstimatedSize())
 		return true
 	})
 
@@ -523,12 +579,12 @@ func (h *metaSeqHeap) Swap(i, j int) {
 }
 
 // Push pushes the item onto the priority queue.
-func (h *metaSeqHeap) Push(x interface{}) {
+func (h *metaSeqHeap) Push(x any) {
 	h.arr = append(h.arr, x.(metaSeq))
 }
 
 // Pop removes the minimum item (according to Less) from the priority queue
-func (h *metaSeqHeap) Pop() interface{} {
+func (h *metaSeqHeap) Pop() any {
 	item := h.arr[len(h.arr)-1]
 	h.arr = h.arr[:len(h.arr)-1]
 	return item
@@ -586,7 +642,7 @@ func (e *Engine) ingestSSTLoop() {
 					}
 					ingestMetas := metas.metas
 					if e.config.Compact {
-						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir)
+						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir, e.config.BlockSize)
 						if err != nil {
 							e.setError(err)
 							return
@@ -606,22 +662,20 @@ func (e *Engine) ingestSSTLoop() {
 						finSeq = metas.seq
 						finMetaSeq := metasMaxSeq
 						for len(inSyncSeqs.arr) > 0 {
-							if inSyncSeqs.arr[0].flushSeq == finSeq+1 {
-								finSeq++
-								finMetaSeq = inSyncSeqs.arr[0].metaSeq
-								heap.Remove(inSyncSeqs, 0)
-							} else {
+							if inSyncSeqs.arr[0].flushSeq != finSeq+1 {
 								break
 							}
+							finSeq++
+							finMetaSeq = inSyncSeqs.arr[0].metaSeq
+							heap.Remove(inSyncSeqs, 0)
 						}
 
 						var flushChans []chan struct{}
 						for _, seq := range flushQueue {
-							if seq.seq <= finSeq {
-								flushChans = append(flushChans, seq.ch)
-							} else {
+							if seq.seq > finSeq {
 								break
 							}
+							flushChans = append(flushChans, seq.ch)
 						}
 						flushQueue = flushQueue[len(flushChans):]
 						finishedSeq.Store(finSeq)
@@ -764,8 +818,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	slices.SortFunc(metas, func(i, j *sstMeta) bool {
-		return bytes.Compare(i.minKey, j.minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) int {
+		return bytes.Compare(i.minKey, j.minKey)
 	})
 
 	// non overlapping sst is grouped, and ingested in that order
@@ -832,7 +886,7 @@ func (e *Engine) ingestSSTs(metas []*sstMeta) error {
 
 func (e *Engine) flushLocalWriters(parentCtx context.Context) error {
 	eg, ctx := errgroup.WithContext(parentCtx)
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		eg.Go(func() error {
 			w := k.(*Writer)
 			return w.flush(ctx)
@@ -869,7 +923,7 @@ func (e *Engine) flushEngineWithoutLock(ctx context.Context) error {
 		return err
 	}
 
-	flushFinishedCh, err := e.db.AsyncFlush()
+	flushFinishedCh, err := e.getDB().AsyncFlush()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -897,11 +951,11 @@ func saveEngineMetaToDB(meta *engineMeta, db *pebble.DB) error {
 func (e *Engine) saveEngineMeta() error {
 	e.logger.Debug("save engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
-	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.db))
+	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.getDB()))
 }
 
 func (e *Engine) loadEngineMeta() error {
-	jsonBytes, closer, err := e.db.Get(engineMetaKey)
+	jsonBytes, closer, err := e.getDB().Get(engineMetaKey)
 	if err != nil {
 		if err == pebble.ErrNotFound {
 			e.logger.Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
@@ -921,25 +975,35 @@ func (e *Engine) loadEngineMeta() error {
 	return nil
 }
 
-func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
+func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *membuf.Buffer) IngestLocalEngineIter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
 		newOpts.LowerBound = normalIterStartKey
 		opts = &newOpts
 	}
 	if !e.duplicateDetection {
-		return pebbleIter{Iterator: e.db.NewIter(opts)}
+		return &pebbleIter{Iterator: e.getDB().NewIter(opts), buf: buf}
 	}
 	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+	return newDupDetectIter(
+		e.getDB(),
+		e.keyAdapter,
+		opts,
+		e.duplicateDB,
+		logger,
+		e.dupDetectOpt,
+		buf,
+	)
 }
 
-// getFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
+var _ common.IngestData = (*Engine)(nil)
+
+// GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
-func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
 	if len(upperBound) == 0 {
 		// we use empty slice for unbounded upper bound, but it means max value in pebble
 		// so reset to nil
@@ -949,8 +1013,11 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
+	failpoint.Inject("mockGetFirstAndLastKey", func() {
+		failpoint.Return(lowerBound, upperBound, nil)
+	})
 
-	iter := e.newKVIter(context.Background(), opt)
+	iter := e.newKVIter(context.Background(), opt, nil)
 	//nolint: errcheck
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
@@ -968,6 +1035,53 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	}
 	lastKey := append([]byte{}, iter.Key()...)
 	return firstKey, lastKey, nil
+}
+
+// NewIter implements IngestData interface.
+func (e *Engine) NewIter(
+	ctx context.Context,
+	lowerBound, upperBound []byte,
+	bufPool *membuf.Pool,
+) common.ForwardIter {
+	return e.newKVIter(
+		ctx,
+		&pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound},
+		bufPool.NewBuffer(),
+	)
+}
+
+// GetTS implements IngestData interface.
+func (e *Engine) GetTS() uint64 {
+	return e.TS
+}
+
+// IncRef implements IngestData interface.
+func (*Engine) IncRef() {}
+
+// DecRef implements IngestData interface.
+func (*Engine) DecRef() {}
+
+// Finish implements IngestData interface.
+func (e *Engine) Finish(totalBytes, totalCount int64) {
+	e.importedKVSize.Add(totalBytes)
+	e.importedKVCount.Add(totalCount)
+}
+
+// LoadIngestData return (local) Engine itself because Engine has implemented
+// IngestData interface.
+func (e *Engine) LoadIngestData(
+	ctx context.Context,
+	regionRanges []common.Range,
+	outCh chan<- common.DataAndRange,
+) error {
+	for _, r := range regionRanges {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- common.DataAndRange{Data: e, Range: r}:
+		}
+	}
+	return nil
 }
 
 type sstMeta struct {
@@ -990,7 +1104,8 @@ type Writer struct {
 	// if the KVs are append in order, we can directly write the into SST file,
 	// else we must first store them in writeBatch and then batch flush into SST file.
 	isKVSorted bool
-	writer     *sstWriter
+	writer     atomic.Pointer[sstWriter]
+	writerSize atomic.Uint64
 
 	// bytes buffer for writeBatch
 	kvBuffer   *membuf.Buffer
@@ -1001,33 +1116,34 @@ type Writer struct {
 	sortedKeyBuf       []byte
 
 	batchCount int
-	batchSize  int64
+	batchSize  atomic.Int64
 
 	lastMetaSeq int32
 
 	tikvCodec tikv.Codec
 }
 
-func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
-	if w.writer == nil {
-		writer, err := w.createSSTWriter()
+func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
+	writer := w.writer.Load()
+	if writer == nil {
+		writer, err = w.createSSTWriter()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		w.writer = writer
+		w.writer.Store(writer)
 	}
 
 	keyAdapter := w.engine.keyAdapter
 	totalKeySize := 0
 	for i := 0; i < len(kvs); i++ {
 		keySize := keyAdapter.EncodedLen(kvs[i].Key, kvs[i].RowID)
-		w.batchSize += int64(keySize + len(kvs[i].Val))
+		w.batchSize.Add(int64(keySize + len(kvs[i].Val)))
 		totalKeySize += keySize
 	}
 	w.batchCount += len(kvs)
-	// noopKeyAdapter doesn't really change the key,
+	// NoopKeyAdapter doesn't really change the key,
 	// skipping the encoding to avoid unnecessary alloc and copy.
-	if _, ok := keyAdapter.(noopKeyAdapter); !ok {
+	if _, ok := keyAdapter.(common.NoopKeyAdapter); !ok {
 		if cap(w.sortedKeyBuf) < totalKeySize {
 			w.sortedKeyBuf = make([]byte, totalKeySize)
 		}
@@ -1040,7 +1156,11 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		kvs = newKvs
 	}
-	return w.writer.writeKVs(kvs)
+	if err := writer.writeKVs(kvs); err != nil {
+		return err
+	}
+	w.writerSize.Store(writer.writer.EstimatedSize())
+	return nil
 }
 
 func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) error {
@@ -1056,7 +1176,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 			w.isWriteBatchSorted = false
 		}
 		lastKey = pair.Key
-		w.batchSize += int64(len(pair.Key) + len(pair.Val))
+		w.batchSize.Add(int64(len(pair.Key) + len(pair.Val)))
 		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
 		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
@@ -1070,7 +1190,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	}
 	w.batchCount = cnt
 
-	if w.batchSize > w.memtableSizeLimit {
+	if w.batchSize.Load() > w.memtableSizeLimit {
 		if err := w.flushKVs(ctx); err != nil {
 			return err
 		}
@@ -1097,7 +1217,7 @@ func (w *Writer) AppendRows(ctx context.Context, columnNames []string, rows enco
 	defer w.Unlock()
 
 	// if chunk has _tidb_rowid field, we can't ensure that the rows are sorted.
-	if w.isKVSorted && w.writer == nil {
+	if w.isKVSorted && w.writer.Load() == nil {
 		for _, c := range columnNames {
 			if c == model.ExtraHandleName.L {
 				w.isKVSorted = false
@@ -1124,12 +1244,14 @@ func (w *Writer) flush(ctx context.Context) error {
 		}
 	}
 
-	if w.writer != nil {
-		meta, err := w.writer.close()
+	writer := w.writer.Load()
+	if writer != nil {
+		meta, err := writer.close()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		w.writer = nil
+		w.writer.Store(nil)
+		w.writerSize.Store(0)
 		w.batchCount = 0
 		if meta != nil && meta.totalSize > 0 {
 			return w.addSST(ctx, meta)
@@ -1137,6 +1259,16 @@ func (w *Writer) flush(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// EstimatedSize returns the estimated size of the SST file.
+func (w *Writer) EstimatedSize() uint64 {
+	if size := w.writerSize.Load(); size > 0 {
+		return size
+	}
+	// if kvs are still in memory, only calculate half of the total size
+	// in our tests, SST file size is about 50% of the raw kv size
+	return uint64(w.batchSize.Load()) / 2
 }
 
 type flushStatus struct {
@@ -1172,8 +1304,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
-			return bytes.Compare(i.Key, j.Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) int {
+			return bytes.Compare(i.Key, j.Key)
 		})
 		w.isWriteBatchSorted = true
 	}
@@ -1200,7 +1332,7 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	w.batchSize = 0
+	w.batchSize.Store(0)
 	w.batchCount = 0
 	w.kvBuffer.Reset()
 	return nil
@@ -1217,7 +1349,7 @@ func (w *Writer) addSST(ctx context.Context, meta *sstMeta) error {
 
 func (w *Writer) createSSTWriter() (*sstWriter, error) {
 	path := filepath.Join(w.engine.sstDir, uuid.New().String()+".sst")
-	writer, err := newSSTWriter(path)
+	writer, err := newSSTWriter(path, w.engine.config.BlockSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1233,7 +1365,7 @@ type sstWriter struct {
 	logger log.Logger
 }
 
-func newSSTWriter(path string) (*sstable.Writer, error) {
+func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1242,7 +1374,7 @@ func newSSTWriter(path string) (*sstable.Writer, error) {
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
-		BlockSize: 16 * 1024,
+		BlockSize: blockSize,
 	})
 	return writer, nil
 }
@@ -1329,12 +1461,12 @@ func (h *sstIterHeap) Swap(i, j int) {
 }
 
 // Push implements heap.Interface.
-func (h *sstIterHeap) Push(x interface{}) {
+func (h *sstIterHeap) Push(x any) {
 	h.iters = append(h.iters, x.(*sstIter))
 }
 
 // Pop implements heap.Interface.
-func (h *sstIterHeap) Pop() interface{} {
+func (h *sstIterHeap) Pop() any {
 	item := h.iters[len(h.iters)-1]
 	h.iters = h.iters[:len(h.iters)-1]
 	return item
@@ -1372,7 +1504,7 @@ func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 // sstIngester is a interface used to merge and ingest SST files.
 // it's a interface mainly used for test convenience
 type sstIngester interface {
-	mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
+	mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error)
 	ingest([]*sstMeta) error
 }
 
@@ -1380,7 +1512,7 @@ type dbSSTIngester struct {
 	e *Engine
 }
 
-func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
+func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {
@@ -1429,7 +1561,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	heap.Init(mergeIter)
 
 	name := filepath.Join(dir, fmt.Sprintf("%s.sst", uuid.New()))
-	writer, err := newSSTWriter(name)
+	writer, err := newSSTWriter(name, blockSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1509,8 +1641,9 @@ func (i dbSSTIngester) ingest(metas []*sstMeta) error {
 	for _, m := range metas {
 		paths = append(paths, m.path)
 	}
-	if i.e.db == nil {
+	db := i.e.getDB()
+	if db == nil {
 		return errorEngineClosed
 	}
-	return i.e.db.Ingest(paths)
+	return db.Ingest(paths)
 }
