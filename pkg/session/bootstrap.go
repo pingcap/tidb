@@ -572,7 +572,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
@@ -1079,6 +1079,7 @@ const (
 	//   modify `mysql.dist_framework_meta` host from VARCHAR(100) to VARCHAR(261)
 	//   modify `mysql.tidb_background_subtask` exec_id from varchar(256) to VARCHAR(261)
 	//   modify `mysql.tidb_background_subtask_history` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task` dispatcher_id from varchar(256) to VARCHAR(261)
 	version186 = 186
 )
 
@@ -3027,6 +3028,7 @@ func upgradeToVer186(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta MODIFY COLUMN `host` VARCHAR(261)")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask MODIFY COLUMN `exec_id` VARCHAR(261)")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
 }
 
 func writeOOMAction(s sessiontypes.Session) {
