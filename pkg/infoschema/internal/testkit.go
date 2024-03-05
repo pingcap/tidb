@@ -19,7 +19,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -187,7 +187,6 @@ func AddTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *mod
 
 func DropTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblID int64, tblName string) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).DropTableOrView(dbInfo.ID, dbInfo.Name.O, tblID, tblName)
 		require.NoError(t, err)

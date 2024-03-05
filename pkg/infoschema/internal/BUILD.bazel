@@ -15,7 +15,7 @@ go_library(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/types",
-        "@com_github_juju_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )
