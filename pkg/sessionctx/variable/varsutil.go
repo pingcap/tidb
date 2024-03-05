@@ -44,12 +44,12 @@ func SetDDLReorgWorkerCounter(cnt int32) {
 }
 
 // SetDDLReorgReaderCounter sets ddlReorgReaderCounter.
-func SetDDLReorgReaderCounter(cnt int32) int32 {
+func SetDDLReorgReaderCounter(cnt int32) {
 	atomic.StoreInt32(&ddlReorgReaderCounter, cnt)
 }
 
 // SetDDLReorgWriterCounter sets ddlReorgWriterCounter.
-func SetDDLReorgWriterCounter(cnt int32) int32 {
+func SetDDLReorgWriterCounter(cnt int32) {
 	atomic.StoreInt32(&ddlReorgWriterCounter, cnt)
 }
 
