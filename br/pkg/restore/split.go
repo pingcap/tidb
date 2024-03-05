@@ -106,18 +106,22 @@ func (rs *RegionSplitter) ExecuteSplit(
 		sortedKeys = append(sortedKeys, r.EndKey)
 		totalRangeSize += r.Size
 	}
+	// need use first range's start key to scan region
+	// and the range size must be greater than 0 here
+	scanStartKey := sortedRanges[0].StartKey
 	sctx := SplitContext{
 		isRawKv:    isRawKv,
 		onSplit:    onSplit,
 		storeCount: storeCount,
 	}
 	// the range size must be greater than 0 here
-	return rs.executeSplitByRanges(ctx, sctx, sortedKeys)
+	return rs.executeSplitByRanges(ctx, sctx, scanStartKey, sortedKeys)
 }
 
 func (rs *RegionSplitter) executeSplitByRanges(
 	ctx context.Context,
 	splitContext SplitContext,
+	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
 	startTime := time.Now()
@@ -126,6 +130,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 	const regionIndexStep = 128
 	const maxSplitKeysOnce = 10240
 	curRegionIndex := regionIndexStep
+	roughScanStartKey := scanStartKey
 	for {
 		roughSortedSplitKeys := make([][]byte, 0, maxSplitKeysOnce)
 		for i := 0; i < maxSplitKeysOnce && curRegionIndex < len(sortedKeys); i += 1 {
@@ -135,17 +140,19 @@ func (rs *RegionSplitter) executeSplitByRanges(
 		if len(roughSortedSplitKeys) == 0 {
 			break
 		}
-		if err := rs.executeSplitByKeys(ctx, splitContext, roughSortedSplitKeys); err != nil {
+		if err := rs.executeSplitByKeys(ctx, splitContext, roughScanStartKey, roughSortedSplitKeys); err != nil {
 			return errors.Trace(err)
 		}
 		if curRegionIndex >= len(sortedKeys) {
 			break
 		}
+		// update the roughScanStartKey to the last key of roughSortedSplitKeys
+		roughScanStartKey = roughSortedSplitKeys[len(roughSortedSplitKeys)-1]
 	}
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
 	// Then send split requests to each TiKV.
-	if err := rs.executeSplitByKeys(ctx, splitContext, sortedKeys); err != nil {
+	if err := rs.executeSplitByKeys(ctx, splitContext, scanStartKey, sortedKeys); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -160,20 +167,12 @@ func (rs *RegionSplitter) executeSplitByRanges(
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	splitContext SplitContext,
+	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
 	var mutex sync.Mutex
 	startTime := time.Now()
-	if len(sortedKeys) == 0 {
-		return nil
-	}
-	// Notice: if there are only one key so that `minKey`` is equal to `maxKey`, there are 2 kind of results of
-	// pd.ScanRegions(minKey, maxKey):
-	// case 1: minKey = maxKey = a region's StartKey. PD returns nothing, but it's OK because it would skip spliting
-	// the boundary of the region.
-	// case 2: minKey = maxKey != any region's StartKey. PD returns one region, it would split the key on this region
-	// later.
-	minKey := codec.EncodeBytesExt(nil, sortedKeys[0], splitContext.isRawKv)
+	minKey := codec.EncodeBytesExt(nil, scanStartKey, splitContext.isRawKv)
 	maxKey := codec.EncodeBytesExt(nil, sortedKeys[len(sortedKeys)-1], splitContext.isRawKv)
 	scatterRegions := make([]*split.RegionInfo, 0)
 	regionsMap := make(map[uint64]*split.RegionInfo)
@@ -198,7 +197,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Info("get split keys for split regions",
 					logutil.Region(region.Region), logutil.Keys(keys))
-				newRegions, err := rs.splitAndScatterRegions(ectx, sctx, region, keys)
+				newRegions, err := rs.splitAndScatterRegions(ectx, region, keys, sctx.isRawKv)
 				if err != nil {
 					return err
 				}
@@ -241,7 +240,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 }
 
 func (rs *RegionSplitter) splitAndScatterRegions(
-	ctx context.Context, splitContext SplitContext, regionInfo *split.RegionInfo, keys [][]byte,
+	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, isRawKv bool,
 ) ([]*split.RegionInfo, error) {
 	if len(keys) < 1 {
 		return []*split.RegionInfo{regionInfo}, nil
@@ -256,7 +255,7 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 				log.Error("split regions no valid key",
 					logutil.Key("startKey", regionInfo.Region.StartKey),
 					logutil.Key("endKey", regionInfo.Region.EndKey),
-					logutil.Key("key", codec.EncodeBytesExt(nil, key, splitContext.isRawKv)))
+					logutil.Key("key", codec.EncodeBytesExt(nil, key, isRawKv)))
 			}
 		}
 		return nil, errors.Trace(err)
@@ -727,12 +726,8 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 		return nil
 	}
 
-	sctx := SplitContext{
-		storeCount: 0,
-	}
-
 	helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
-		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, sctx, region, splitPoints)
+		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints, false)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
 			_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
