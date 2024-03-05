@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"math/rand"
 	"strings"
 	"sync"
@@ -1474,6 +1475,39 @@ func TestPlanCacheMVIndexRandomly(t *testing.T) {
 	verifyPlanCacheForMVIndex(t, tk, true,
 		"SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
 		"int", "string")
+}
+
+func TestPlanCacheMVIndexManually(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	planSuiteData := plannercore.GetPlanCacheSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		if strings.HasPrefix(strings.ToLower(input[i]), "select") ||
+			strings.HasPrefix(strings.ToLower(input[i]), "execute") {
+			result := tk.MustQuery(input[i])
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(result.Rows())
+			})
+			result.Check(testkit.Rows(output[i].Result...))
+		} else {
+			tk.MustExec(input[i])
+		}
+	}
 }
 
 func BenchmarkPlanCacheBindingMatch(b *testing.B) {
