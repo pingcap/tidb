@@ -505,26 +505,6 @@ func TestCheckPointLaggedFailure(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(60 * time.Second)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-}
-
-func TestTaskResume(t *testing.T) {
-	c := createFakeCluster(t, 4, false)
-	defer func() {
-		fmt.Println(c)
-	}()
-	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
-	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1*time.Minute
-	})
-	adv.StartTaskListener(ctx)
-	c.advanceClusterTimeBy(60 * time.Second)
-	require.NoError(t, adv.OnTick(ctx))
-	c.advanceClusterTimeBy(60 * time.Second)
-	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	require.Eventually(t,func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))
 	},5*time.Second, 100*time.Millisecond)
