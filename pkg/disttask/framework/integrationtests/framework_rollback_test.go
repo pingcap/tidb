@@ -15,19 +15,32 @@
 package integrationtests
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestFrameworkRollback(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
 	testutil.RegisterRollbackTaskMeta(t, c.MockCtrl, testutil.GetMockRollbackSchedulerExt(c.MockCtrl), c.TestContext)
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask", "2*return(true)")
-
+	cnt := 0
+	scheduler.OnTaskRefreshed = func(ctx context.Context, taskMgr scheduler.TaskManager, task *proto.Task) {
+		if cnt < 2 && task.State == proto.TaskStateRunning {
+			err := taskMgr.CancelTask(ctx, task.ID)
+			if err != nil {
+				logutil.BgLogger().Error("cancel task failed", zap.Error(err))
+			}
+			cnt++
+		}
+	}
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/onTaskRefreshed", "return()")
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }

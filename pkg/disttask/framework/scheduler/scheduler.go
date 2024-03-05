@@ -55,6 +55,9 @@ var (
 	RetrySQLInterval = 3 * time.Second
 	// RetrySQLMaxInterval is the max interval between two SQL retries.
 	RetrySQLMaxInterval = 30 * time.Second
+
+	// OnTaskRefreshed is called after task refreshed, export for testing.
+	OnTaskRefreshed func(tx context.Context, taskMgr TaskManager, task *proto.Task)
 )
 
 // Scheduler manages the lifetime of a task
@@ -168,35 +171,9 @@ func (s *BaseScheduler) scheduleTask() {
 				continue
 			}
 			task := *s.GetTask()
-			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
-				if val.(bool) && task.State == proto.TaskStateRunning {
-					err := s.taskMgr.CancelTask(s.ctx, task.ID)
-					if err != nil {
-						s.logger.Error("cancel task failed", zap.Error(err))
-					}
-				}
-			})
 
-			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
-				if val.(bool) && task.State == proto.TaskStatePending {
-					_, err := s.taskMgr.PauseTask(s.ctx, task.Key)
-					if err != nil {
-						s.logger.Error("pause task failed", zap.Error(err))
-					}
-					task.State = proto.TaskStatePausing
-					s.task.Store(&task)
-				}
-			})
-
-			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
-				if val.(bool) && task.State == proto.TaskStateRunning {
-					_, err := s.taskMgr.PauseTask(s.ctx, task.Key)
-					if err != nil {
-						s.logger.Error("pause task failed", zap.Error(err))
-					}
-					task.State = proto.TaskStatePausing
-					s.task.Store(&task)
-				}
+			failpoint.Inject("onTaskRefreshed", func() {
+				OnTaskRefreshed(s.ctx, s.taskMgr, &task)
 			})
 
 			switch task.State {

@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state proto.SubtaskState, expectedCnt int64) {
@@ -38,7 +40,11 @@ func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state p
 	require.NoError(t, err)
 	historySubTasksCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, mgr, taskID)
 	require.NoError(t, err)
-	require.Equal(t, expectedCnt, cntByStatesStepOne[state]+cntByStatesStepTwo[state]+int64(historySubTasksCnt))
+	if cntByStatesStepOne[state]+cntByStatesStepTwo[state] != 0 {
+		require.Equal(t, expectedCnt, cntByStatesStepOne[state]+cntByStatesStepTwo[state])
+	} else {
+		require.Equal(t, expectedCnt, int64(historySubTasksCnt))
+	}
 }
 
 func TestFrameworkPauseAndResume(t *testing.T) {
@@ -46,16 +52,27 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	// 1. schedule and pause one running task.
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask", "2*return(true)")
+	cnt := 0
+	scheduler.OnTaskRefreshed = func(ctx context.Context, taskMgr scheduler.TaskManager, task *proto.Task) {
+		if cnt < 1 && task.State == proto.TaskStateRunning {
+			_, err := taskMgr.PauseTask(ctx, task.Key)
+			if err != nil {
+				logutil.BgLogger().Error("pause task failed", zap.Error(err))
+			}
+			cnt++
+		}
+	}
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume", "return()")
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/onTaskRefreshed", "return()")
+
 	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
 	require.Equal(t, proto.TaskStatePaused, task1.State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask"))
 	// 4 subtask scheduled.
 	require.NoError(t, handle.ResumeTask(c.Ctx, "key1"))
 	<-scheduler.TestSyncChan
 	testutil.WaitTaskDoneOrPaused(c.Ctx, t, task1.Key)
 	CheckSubtasksState(c.Ctx, t, 1, proto.SubtaskStateSucceed, 4)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/onTaskRefreshed"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
 	mgr, err := storage.GetTaskManager()
@@ -65,16 +82,26 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	require.Empty(t, errs)
 
 	// 2. pause pending task.
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask", "2*return(true)")
+	cnt = 0
+	scheduler.OnTaskRefreshed = func(ctx context.Context, taskMgr scheduler.TaskManager, task *proto.Task) {
+		if cnt < 1 && task.State == proto.TaskStatePending {
+			_, err := taskMgr.PauseTask(ctx, task.Key)
+			if err != nil {
+				logutil.BgLogger().Error("pause task failed", zap.Error(err))
+			}
+			cnt++
+		}
+	}
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/onTaskRefreshed", "return()")
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume", "1*return()")
 	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", 1)
 	require.Equal(t, proto.TaskStatePaused, task2.State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask"))
 	// 4 subtask scheduled.
 	require.NoError(t, handle.ResumeTask(c.Ctx, "key2"))
 	<-scheduler.TestSyncChan
 	testutil.WaitTaskDoneOrPaused(c.Ctx, t, task2.Key)
 	CheckSubtasksState(c.Ctx, t, 1, proto.SubtaskStateSucceed, 4)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/onTaskRefreshed"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
 	errs, err = mgr.GetSubtaskErrors(c.Ctx, 1)
