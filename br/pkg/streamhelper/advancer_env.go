@@ -49,7 +49,7 @@ func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 }
 
 func (c PDRegionScanner) FetchCurrentTS(ctx context.Context) (uint64, error) {
-	return uint64(time.Now().UnixNano()), nil
+	return uint64(time.Now().Unix()), nil
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
