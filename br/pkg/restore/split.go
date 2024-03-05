@@ -188,7 +188,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
 		}
-		workerPool := utils.NewWorkerPool(uint(splitContext.storeCount), "split keys")
+		workerPool := utils.NewWorkerPool(uint(splitContext.storeCount)+1, "split keys")
 		eg, ectx := errgroup.WithContext(ctx)
 		for regionID, splitKeys := range splitKeyMap {
 			region := regionMap[regionID]
