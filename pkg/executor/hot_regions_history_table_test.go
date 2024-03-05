@@ -37,8 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 type mockStoreWithMultiPD struct {
@@ -86,7 +86,7 @@ func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuit
 	return s
 }
 
-func writeResp(w http.ResponseWriter, resp interface{}) {
+func writeResp(w http.ResponseWriter, resp any) {
 	w.WriteHeader(http.StatusOK)
 	jsonResp, err := json.Marshal(resp)
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *hotRegionsHistoryTableSuite) setUpMockPDHTTPServer() (*httptest.Server,
 	server := httptest.NewServer(router)
 	mockAddr := strings.TrimPrefix(server.URL, "http://")
 	// mock PD API
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -152,7 +152,7 @@ func (s *hotRegionsHistoryTableSuite) setUpMockPDHTTPServer() (*httptest.Server,
 		}, nil
 	}))
 	// mock history hot regions response
-	router.HandleFunc(pdapi.HotHistory, hisHotRegionsHandler)
+	router.HandleFunc(pd.HotHistory, hisHotRegionsHandler)
 	return server, mockAddr
 }
 

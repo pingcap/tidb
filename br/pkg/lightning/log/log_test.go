@@ -15,15 +15,21 @@
 package log_test
 
 import (
+	"context"
 	"io"
 	"os"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestConfigAdjust(t *testing.T) {
@@ -85,4 +91,17 @@ func TestInitStdoutLogger(t *testing.T) {
 	require.Equal(t, "true", os.Getenv(logutil.GRPCDebugEnvName))
 	// reset GRPCDebugEnvName
 	require.NoError(t, os.Unsetenv(logutil.GRPCDebugEnvName))
+}
+
+func TestIsContextCanceledError(t *testing.T) {
+	require.True(t, log.IsContextCanceledError(context.Canceled))
+	require.True(t, log.IsContextCanceledError(status.Error(codes.Canceled, "")))
+	require.True(t, log.IsContextCanceledError(errors.Annotate(context.Canceled, "foo")))
+	require.True(t, log.IsContextCanceledError(awserr.New(request.CanceledErrorCode, "", context.Canceled)))
+	require.True(t, log.IsContextCanceledError(awserr.New(
+		"MultipartUpload", "upload multipart failed",
+		awserr.New(request.CanceledErrorCode, "", context.Canceled))))
+	require.True(t, log.IsContextCanceledError(awserr.New(request.ErrCodeRequestError, "", context.Canceled)))
+
+	require.False(t, log.IsContextCanceledError(nil))
 }

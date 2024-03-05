@@ -55,6 +55,7 @@ func PrepareSlowLogfile(t *testing.T, slowLogFileName string) {
 # Plan: abcd
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 2;
+# Resource_group: default
 select * from t_slim;
 # Time: 2021-09-08T14:39:54.506967433+08:00
 # Txn_start_ts: 427578666238083075
@@ -82,6 +83,9 @@ select * from t_slim;
 # Backoff_total: 100.054
 # Write_sql_response_total: 0
 # Succ: true
+# Resource_group: rg1
+# Request_unit_read: 96.66703066666668
+# Request_unit_write: 3182.424414062492
 INSERT INTO ...;
 `)
 	require.NoError(t, f.Close())

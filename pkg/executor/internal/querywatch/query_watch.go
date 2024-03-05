@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -44,11 +44,11 @@ func setWatchOption(ctx context.Context,
 	switch op.Tp {
 	case ast.QueryWatchResourceGroup:
 		if op.ExprValue != nil {
-			expr, err := expression.RewriteAstExpr(sctx, op.ExprValue, nil, nil, false)
+			expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
 			if err != nil {
 				return err
 			}
-			name, isNull, err := expr.EvalString(sctx, chunk.Row{})
+			name, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -62,11 +62,11 @@ func setWatchOption(ctx context.Context,
 	case ast.QueryWatchAction:
 		record.Action = rmpb.RunawayAction(op.IntValue)
 	case ast.QueryWatchType:
-		expr, err := expression.RewriteAstExpr(sctx, op.ExprValue, nil, nil, false)
+		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
 		if err != nil {
 			return err
 		}
-		strval, isNull, err := expr.EvalString(sctx, chunk.Row{})
+		strval, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -180,10 +180,11 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err := validateWatchRecord(record, do.ResourceGroupsController()); err != nil {
 		return err
 	}
-	err = do.AddRunawayWatch(record)
+	id, err := do.AddRunawayWatch(record)
 	if err != nil {
 		return err
 	}
+	req.AppendUint64(0, id)
 	return nil
 }
 

@@ -100,7 +100,7 @@ func TestRowCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
+	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -117,7 +117,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equalf(t, 0, equal, "expect: %v, got %v", row[i], v)
 	}
@@ -131,7 +131,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -149,13 +149,13 @@ func TestRowCodec(t *testing.T) {
 		}
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeOldRow(sc, []types.Datum{}, []int64{}, nil, nil)
+	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{}, []int64{}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, bs, 1)
 
@@ -169,7 +169,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	// test timestamp
 	d := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp))
-	bs, err := EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err := EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -177,7 +177,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeTimestamp)
 	d1, err := DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err := d1.Compare(sc, &d, collate.GetBinaryCollator())
+	cmp, err := d1.Compare(sc.TypeCtx(), &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -185,7 +185,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	elems := []string{"a", "b", "c", "d", "e"}
 	e, _ := types.ParseSetValue(elems, uint64(1))
 	d = types.NewMysqlSetDatum(e, "")
-	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -194,13 +194,13 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.SetElems(elems)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.GetCollate()))
+	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
 	// test bit
 	d = types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(3223600, 3))
-	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -209,13 +209,13 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.SetFlen(24)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc, &d, collate.GetBinaryCollator())
+	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
 	// test empty enum
 	d = types.NewMysqlEnumDatum(types.Enum{})
-	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -223,7 +223,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeEnum)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.GetCollate()))
+	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
@@ -234,7 +234,7 @@ func TestUnflattenDatums(t *testing.T) {
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	output, err := UnflattenDatums(input, tps, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err := input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
+	cmp, err := input[0].Compare(sc.TypeCtx(), &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -243,7 +243,7 @@ func TestUnflattenDatums(t *testing.T) {
 	tps[0].SetCollate("utf8mb4_unicode_ci")
 	output, err = UnflattenDatums(input, tps, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
+	cmp, err = input[0].Compare(sc.TypeCtx(), &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 	require.Equal(t, "utf8mb4_unicode_ci", output[0].Collation())
@@ -275,7 +275,7 @@ func TestTimeCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
+	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -292,7 +292,7 @@ func TestTimeCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
 		require.Nil(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -312,18 +312,18 @@ func TestCutRow(t *testing.T) {
 
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	data := make([][]byte, 3)
-	data[0], err = EncodeValue(sc, nil, row[0])
+	data[0], err = EncodeValue(sc.TimeZone(), nil, row[0])
 	require.NoError(t, err)
-	data[1], err = EncodeValue(sc, nil, row[1])
+	data[1], err = EncodeValue(sc.TimeZone(), nil, row[1])
 	require.NoError(t, err)
-	data[2], err = EncodeValue(sc, nil, row[2])
+	data[2], err = EncodeValue(sc.TimeZone(), nil, row[2])
 	require.NoError(t, err)
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeOldRow(sc, row, colIDs, nil, nil)
+	bs, err := EncodeOldRow(sc.TimeZone(), row, colIDs, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -355,7 +355,7 @@ func TestCutKeyNew(t *testing.T) {
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -378,7 +378,7 @@ func TestCutKey(t *testing.T) {
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -494,7 +494,7 @@ func TestDecodeIndexKey(t *testing.T) {
 		valueStrs = append(valueStrs, str)
 	}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
 	require.NoError(t, err)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
 
@@ -567,7 +567,7 @@ func BenchmarkEncodeValue(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, d := range row {
 			encodedCol = encodedCol[:0]
-			_, err := EncodeValue(sc, encodedCol, d)
+			_, err := EncodeValue(sc.TimeZone(), encodedCol, d)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -601,7 +601,7 @@ func TestUntouchedIndexKValue(t *testing.T) {
 
 func TestTempIndexKey(t *testing.T) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
-	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.UTC), nil, values...)
+	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.UTC).TimeZone(), nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -628,7 +628,7 @@ func TestTempIndexKey(t *testing.T) {
 
 func TestTempIndexValueCodec(t *testing.T) {
 	// Test encode temp index value.
-	encodedValue, err := codec.EncodeValue(stmtctx.NewStmtCtxWithTimeZone(time.UTC), nil, types.NewIntDatum(1))
+	encodedValue, err := codec.EncodeValue(stmtctx.NewStmtCtxWithTimeZone(time.UTC).TimeZone(), nil, types.NewIntDatum(1))
 	require.NoError(t, err)
 	encodedValueCopy := make([]byte, len(encodedValue))
 	copy(encodedValueCopy, encodedValue)

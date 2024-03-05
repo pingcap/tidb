@@ -202,7 +202,7 @@ func (projection *LogicalProjection) pullUpConstantPredicates() []expression.Exp
 	// result predicate : a'=1
 	replace := make(map[string]*expression.Column)
 	for i, expr := range projection.Exprs {
-		replace[string(expr.HashCode(nil))] = projection.Schema().Columns[i]
+		replace[string(expr.HashCode())] = projection.Schema().Columns[i]
 	}
 	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
 	for _, predicate := range candidateConstantPredicates {
@@ -212,7 +212,7 @@ func (projection *LogicalProjection) pullUpConstantPredicates() []expression.Exp
 		if len(columns) != 1 {
 			continue
 		}
-		if replace[string(columns[0].HashCode(nil))] == nil {
+		if replace[string(columns[0].HashCode())] == nil {
 			// The column of predicate will not appear on the upper level
 			// This means that this predicate does not apply to the constant propagation optimization rule
 			// For example: select * from t, (select b from s where s.a=1) tmp where t.b=s.b
@@ -269,7 +269,7 @@ func validCompareConstantPredicate(candidatePredicate expression.Expression) boo
 func addCandidateSelection(currentPlan LogicalPlan, currentChildIdx int, parentPlan LogicalPlan,
 	candidatePredicates []expression.Expression, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
 	// generate a new selection for candidatePredicates
-	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.SelectBlockOffset())
+	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.QueryBlockOffset())
 	// add selection above of p
 	if parentPlan == nil {
 		newRoot = selection

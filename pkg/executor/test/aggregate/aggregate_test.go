@@ -15,6 +15,7 @@
 package aggregate
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -25,221 +26,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
-	"github.com/pingcap/tidb/pkg/executor/internal"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
-
-func TestGroupConcatAggr(t *testing.T) {
-	var err error
-	// issue #5411
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test;")
-	tk.MustExec("create table test(id int, name int)")
-	tk.MustExec("insert into test values(1, 10);")
-	tk.MustExec("insert into test values(1, 20);")
-	tk.MustExec("insert into test values(1, 30);")
-	tk.MustExec("insert into test values(2, 20);")
-	tk.MustExec("insert into test values(3, 200);")
-	tk.MustExec("insert into test values(3, 500);")
-	result := tk.MustQuery("select id, group_concat(name) from test group by id order by id")
-	result.Check(testkit.Rows("1 10,20,30", "2 20", "3 200,500"))
-
-	result = tk.MustQuery("select id, group_concat(name SEPARATOR ';') from test group by id order by id")
-	result.Check(testkit.Rows("1 10;20;30", "2 20", "3 200;500"))
-
-	result = tk.MustQuery("select id, group_concat(name SEPARATOR ',') from test group by id order by id")
-	result.Check(testkit.Rows("1 10,20,30", "2 20", "3 200,500"))
-
-	result = tk.MustQuery(`select id, group_concat(name SEPARATOR '%') from test group by id order by id`)
-	result.Check(testkit.Rows("1 10%20%30", "2 20", `3 200%500`))
-
-	result = tk.MustQuery("select id, group_concat(name SEPARATOR '') from test group by id order by id")
-	result.Check(testkit.Rows("1 102030", "2 20", "3 200500"))
-
-	result = tk.MustQuery("select id, group_concat(name SEPARATOR '123') from test group by id order by id")
-	result.Check(testkit.Rows("1 101232012330", "2 20", "3 200123500"))
-
-	tk.MustQuery("select group_concat(id ORDER BY name) from (select * from test order by id, name limit 2,2) t").Check(testkit.Rows("2,1"))
-	tk.MustQuery("select group_concat(id ORDER BY name desc) from (select * from test order by id, name limit 2,2) t").Check(testkit.Rows("1,2"))
-	tk.MustQuery("select group_concat(name ORDER BY id) from (select * from test order by id, name limit 2,2) t").Check(testkit.Rows("30,20"))
-	tk.MustQuery("select group_concat(name ORDER BY id desc) from (select * from test order by id, name limit 2,2) t").Check(testkit.Rows("20,30"))
-
-	result = tk.MustQuery("select group_concat(name ORDER BY name desc SEPARATOR '++') from test;")
-	result.Check(testkit.Rows("500++200++30++20++20++10"))
-
-	result = tk.MustQuery("select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;")
-	result.Check(testkit.Rows("3--3--1--1--2--1"))
-
-	result = tk.MustQuery("select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;")
-	result.Check(testkit.Rows("500++200++30++20++20++10 3--3--1--1--2--1"))
-
-	result = tk.MustQuery("select group_concat(distinct name order by name desc) from test;")
-	result.Check(testkit.Rows("500,200,30,20,10"))
-
-	expected := "3--3--1--1--2--1"
-	for maxLen := 4; maxLen < len(expected); maxLen++ {
-		tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", maxLen))
-		result = tk.MustQuery("select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;")
-		result.Check(testkit.Rows(expected[:maxLen]))
-		require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	}
-	expected = "1--2--1--1--3--3"
-	for maxLen := 4; maxLen < len(expected); maxLen++ {
-		tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", maxLen))
-		result = tk.MustQuery("select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;")
-		result.Check(testkit.Rows(expected[:maxLen]))
-		require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	}
-	expected = "500,200,30,20,10"
-	for maxLen := 4; maxLen < len(expected); maxLen++ {
-		tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", maxLen))
-		result = tk.MustQuery("select group_concat(distinct name order by name desc) from test;")
-		result.Check(testkit.Rows(expected[:maxLen]))
-		require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	}
-
-	tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", 1024))
-
-	// test varchar table
-	tk.MustExec("drop table if exists test2;")
-	tk.MustExec("create table test2(id varchar(20), name varchar(20));")
-	tk.MustExec("insert into test2 select * from test;")
-
-	tk.MustQuery("select group_concat(id ORDER BY name) from (select * from test2 order by id, name limit 2,2) t").Check(testkit.Rows("2,1"))
-	tk.MustQuery("select group_concat(id ORDER BY name desc) from (select * from test2 order by id, name limit 2,2) t").Check(testkit.Rows("1,2"))
-	tk.MustQuery("select group_concat(name ORDER BY id) from (select * from test2 order by id, name limit 2,2) t").Check(testkit.Rows("30,20"))
-	tk.MustQuery("select group_concat(name ORDER BY id desc) from (select * from test2 order by id, name limit 2,2) t").Check(testkit.Rows("20,30"))
-
-	result = tk.MustQuery("select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test2;")
-	result.Check(testkit.Rows("500++30++200++20++20++10 3--1--3--1--2--1"))
-
-	// test Position Expr
-	tk.MustQuery("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 1 desc, id SEPARATOR '++') from test;").Check(testkit.Rows("1 2 3 4 5 5003++2003++301++201++202++101"))
-	tk.MustQuery("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 2 desc, name SEPARATOR '++') from test;").Check(testkit.Rows("1 2 3 4 5 2003++5003++202++101++201++301"))
-	err = tk.ExecToErr("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 3 desc, name SEPARATOR '++') from test;")
-	require.EqualError(t, err, "[planner:1054]Unknown column '3' in 'order clause'")
-	// test Param Marker
-	tk.MustExec(`prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY floor(id/?) desc, name SEPARATOR '++') from test";`)
-	tk.MustExec("set @a=2;")
-	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("1 2 3 4 5 202++2003++5003++101++201++301"))
-
-	tk.MustExec(`prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY ? desc, name SEPARATOR '++') from test";`)
-	tk.MustExec("set @a=2;")
-	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("1 2 3 4 5 2003++5003++202++101++201++301"))
-	tk.MustExec("set @a=3;")
-	err = tk.ExecToErr("execute s1 using @a;")
-	require.EqualError(t, err, "[planner:1054]Unknown column '?' in 'order clause'")
-	tk.MustExec("set @a=3.0;")
-	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("1 2 3 4 5 101++202++201++301++2003++5003"))
-
-	// test partition table
-	tk.MustExec("drop table if exists ptest;")
-	tk.MustExec("CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) " +
-		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
-	tk.MustExec("insert into ptest select * from test;")
-
-	for i := 0; i <= 1; i++ {
-		for j := 0; j <= 1; j++ {
-			tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", i))
-			tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", j))
-
-			result = tk.MustQuery("select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;")
-			result.Check(testkit.Rows("500++200++30++20++20++10 3--3--1--1--2--1"))
-
-			result = tk.MustQuery("select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;")
-			result.Check(testkit.Rows("500,200,30,20,10"))
-		}
-	}
-
-	// issue #9920
-	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
-
-	// issue #23129
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(cid int, sname varchar(100));")
-	tk.MustExec("insert into t1 values(1, 'Bob'), (1, 'Alice');")
-	tk.MustExec("insert into t1 values(3, 'Ace');")
-	tk.MustExec("set @@group_concat_max_len=5;")
-	rows := tk.MustQuery("select group_concat(sname order by sname) from t1 group by cid;")
-	rows.Check(testkit.Rows("Alice", "Ace"))
-
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(c1 varchar(10));")
-	tk.MustExec("insert into t1 values('0123456789');")
-	tk.MustExec("insert into t1 values('12345');")
-	tk.MustExec("set @@group_concat_max_len=8;")
-	rows = tk.MustQuery("select group_concat(c1 order by c1) from t1 group by c1;")
-	rows.Check(testkit.Rows("01234567", "12345"))
-}
-
-func TestSelectDistinct(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	internal.FillData(tk, "select_distinct_test")
-
-	tk.MustExec("begin")
-	r := tk.MustQuery("select distinct name from select_distinct_test;")
-	r.Check(testkit.Rows("hello"))
-	tk.MustExec("commit")
-}
-
-func TestInjectProjBelowTopN(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (i int);")
-	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
-	var (
-		input  []string
-		output [][]string
-	)
-	aggMergeSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
-	}
-}
-
-func TestIssue12759HashAggCalledByApply(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.Session().GetSessionVars().SetHashAggFinalConcurrency(4)
-	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate");`)
-	defer func() {
-		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate";`)
-		tk.MustExec(`admin reload opt_rule_blacklist;`)
-	}()
-	tk.MustExec(`drop table if exists test;`)
-	tk.MustExec("create table test (a int);")
-	tk.MustExec("insert into test value(1);")
-	tk.MustQuery("select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("1 <nil> <nil> <nil>"))
-
-	var (
-		input  []string
-		output [][]string
-	)
-	aggMergeSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
-	}
-}
 
 func TestHashAggRuntimeStat(t *testing.T) {
 	partialInfo := &aggregate.AggWorkerInfo{
@@ -280,7 +74,7 @@ func TestHashAggRuntimeStat(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 }
 
-func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
+func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	data := make([]string, 0, len(rows))
 	for _, row := range rows {
 		if str, ok := row[0].(string); ok {
@@ -378,7 +172,7 @@ func TestIssue20658(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL.String()))
 
-	mustParseAndSort := func(rows [][]interface{}, cmt string) []float64 {
+	mustParseAndSort := func(rows [][]any, cmt string) []float64 {
 		ret := make([]float64, len(rows))
 		for i := 0; i < len(rows); i++ {
 			rowStr := rows[i][0].(string)
@@ -539,4 +333,144 @@ func TestRandomPanicConsume(t *testing.T) {
 			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 		}
 	}
+}
+
+func checkResults(actualRes [][]any, expectedRes map[string]string) bool {
+	if len(actualRes) != len(expectedRes) {
+		return false
+	}
+
+	var key string
+	var expectVal string
+	var actualVal string
+	var ok bool
+	for _, row := range actualRes {
+		if len(row) != 2 {
+			return false
+		}
+
+		key, ok = row[0].(string)
+		if !ok {
+			return false
+		}
+
+		expectVal, ok = expectedRes[key]
+		if !ok {
+			return false
+		}
+
+		actualVal, ok = row[1].(string)
+		if !ok {
+			return false
+		}
+
+		if expectVal != actualVal {
+			return false
+		}
+	}
+	return true
+}
+
+func genListPartition(begin, end int) string {
+	buf := &bytes.Buffer{}
+	buf.WriteString("(")
+	for i := begin; i < end-1; i++ {
+		buf.WriteString(fmt.Sprintf("%v, ", i))
+	}
+	buf.WriteString(fmt.Sprintf("%v)", end-1))
+	return buf.String()
+}
+
+func TestParallelHashAgg(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.parallel_hash_agg;")
+	tk.MustExec("create table test.parallel_hash_agg(k varchar(30), v int);")
+	for i := 0; i < 20; i++ {
+		tk.MustExec("insert into test.parallel_hash_agg (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('EE', 1), ('eE', 1), ('Ee', 1);")
+	}
+
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+
+	expectedResult := make(map[string]string)
+	expectedResult["dd"] = "20"
+	expectedResult["AA"] = "20"
+	expectedResult["cc"] = "20"
+	expectedResult["eE"] = "20"
+	expectedResult["bb"] = "20"
+	expectedResult["Cc"] = "20"
+	expectedResult["EE"] = "20"
+	expectedResult["Aa"] = "20"
+	expectedResult["ee"] = "20"
+	expectedResult["Bb"] = "20"
+	expectedResult["dD"] = "20"
+	expectedResult["aa"] = "20"
+	expectedResult["cC"] = "20"
+	expectedResult["DD"] = "20"
+	expectedResult["BB"] = "20"
+	expectedResult["Dd"] = "20"
+	expectedResult["CC"] = "20"
+	expectedResult["bB"] = "20"
+	expectedResult["aA"] = "20"
+	expectedResult["Ee"] = "20"
+	res := tk.MustQuery("select k, sum(v) from parallel_hash_agg group by k;")
+	tk.RequireEqual(true, checkResults(res.Rows(), expectedResult))
+
+	tk.MustExec("create database list_partition_agg")
+	tk.MustExec("use list_partition_agg")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
+		` partition p0 values in ` + genListPartition(0, 20) +
+		`, partition p1 values in ` + genListPartition(20, 40) +
+		`, partition p2 values in ` + genListPartition(40, 60) +
+		`, partition p3 values in ` + genListPartition(60, 80) +
+		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
+	tk.MustExec(`create table tnormal (a int, b int)`)
+
+	vals := ""
+	for i := 0; i < 100; i++ {
+		if vals != "" {
+			vals += ", "
+		}
+		vals += fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100))
+	}
+	tk.MustExec(`insert into tnormal values ` + vals)
+	tk.MustExec(`insert into tlist values ` + vals)
+
+	for _, aggFunc := range []string{"min", "max", "sum", "count"} {
+		c1, c2 := "a", "b"
+		for i := 0; i < 2; i++ {
+			rs := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tnormal group by %v`, c1, aggFunc, c2, c1)).Sort()
+
+			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+			rsDynamic := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tlist group by %v`, c1, aggFunc, c2, c1)).Sort()
+
+			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+			rsStatic := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tlist group by %v`, c1, aggFunc, c2, c1)).Sort()
+
+			rs.Check(rsDynamic.Rows())
+			rs.Check(rsStatic.Rows())
+		}
+	}
+}
+
+func TestIssue50849(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("insert into t select * from t;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/injectHashAggClosePanic", "return(true)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/injectHashAggClosePanic")
+	rs, err := tk.ExecWithContext(context.Background(), "select  /*+hash_agg()*/ sum(t1.a) from t t1 join t t2;")
+	require.NoError(t, err)
+	err = rs.Close()
+	// Check the error contains stack information
+	require.True(t, errors.HasStack(err))
 }

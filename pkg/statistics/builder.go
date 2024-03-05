@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -71,7 +71,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.NDV = 1
 		return nil
 	}
-	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc, &data, collate.GetBinaryCollator())
+	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).Compare(b.sc.TypeCtx(), &data, collate.GetBinaryCollator())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -127,7 +127,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
+	err := sortSampleItems(sc, samples)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 		}
-		cmp, err := upper.Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(sc.TypeCtx(), &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -241,6 +241,7 @@ func BuildHistAndTopN(
 	tp *types.FieldType,
 	isColumn bool,
 	memTracker *memory.Tracker,
+	needExtStats bool,
 ) (*Histogram, *TopN, error) {
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
@@ -253,7 +254,8 @@ func BuildHistAndTopN(
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
+			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if memTracker != nil {
 				// tmp memory usage
 				deltaSize := int64(cap(encoded))
@@ -277,8 +279,15 @@ func BuildHistAndTopN(
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
+	var samples []*SampleItem
+	// if we need to build extended stats, we need to copy the samples to avoid modifying the original samples.
+	if needExtStats {
+		samples = make([]*SampleItem, len(collector.Samples))
+		copy(samples, collector.Samples)
+	} else {
+		samples = collector.Samples
+	}
+	err := sortSampleItems(sc, samples)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -304,7 +313,9 @@ func BuildHistAndTopN(
 		if isColumn {
 			corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		}
-
+		if numTopN == 0 {
+			continue
+		}
 		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -349,81 +360,79 @@ func BuildHistAndTopN(
 
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
-	if len(topNList) == 0 {
-		topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-	} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
-		// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
+	if numTopN != 0 {
+		if len(topNList) == 0 {
+			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
+		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
+			// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
+			j := len(topNList)
+			for ; j > 0; j-- {
+				if uint64(curCnt) < topNList[j-1].Count {
+					break
+				}
 			}
-		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
+			topNList = append(topNList, TopNMeta{})
+			copy(topNList[j+1:], topNList[j:])
+			topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
+			if len(topNList) > numTopN {
+				topNList = topNList[:numTopN]
+			}
 		}
 	}
 
 	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 
 	// Step2: exclude topn from samples
-	for i := int64(0); i < int64(len(samples)); i++ {
-		sampleBytes, err := getComparedBytes(samples[i].Value)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		// For debugging invalid sample data.
-		var (
-			foundTwice      bool
-			firstTimeSample types.Datum
-		)
-		for j := 0; j < len(topNList); j++ {
-			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-				// This should never happen, but we met this panic before, so we add this check here.
-				// See: https://github.com/pingcap/tidb/issues/35948
-				if foundTwice {
-					datumString, err := firstTimeSample.ToString()
-					if err != nil {
-						logutil.BgLogger().With(
-							zap.String("category", "stats"),
-						).Error("try to convert datum to string failed", zap.Error(err))
-					}
+	if numTopN != 0 {
+		for i := int64(0); i < int64(len(samples)); i++ {
+			sampleBytes, err := getComparedBytes(samples[i].Value)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			// For debugging invalid sample data.
+			var (
+				foundTwice      bool
+				firstTimeSample types.Datum
+			)
+			for j := 0; j < len(topNList); j++ {
+				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
+					// This should never happen, but we met this panic before, so we add this check here.
+					// See: https://github.com/pingcap/tidb/issues/35948
+					if foundTwice {
+						datumString, err := firstTimeSample.ToString()
+						if err != nil {
+							statslogutil.StatsLogger().Error("try to convert datum to string failed", zap.Error(err))
+						}
 
-					logutil.BgLogger().With(
-						zap.String("category", "stats"),
-					).Warn(
-						"invalid sample data",
-						zap.Bool("isColumn", isColumn),
-						zap.Int64("columnID", id),
-						zap.String("datum", datumString),
-						zap.Binary("sampleBytes", sampleBytes),
-						zap.Binary("topNBytes", topNList[j].Encoded),
-					)
-					// NOTE: if we don't return here, we may meet panic in the following code.
-					// The i may decrease to a negative value.
-					// We haven't fix the issue here, because we don't know how to
-					// remove the invalid sample data from the samples.
-					break
+						statslogutil.StatsLogger().Warn(
+							"invalid sample data",
+							zap.Bool("isColumn", isColumn),
+							zap.Int64("columnID", id),
+							zap.String("datum", datumString),
+							zap.Binary("sampleBytes", sampleBytes),
+							zap.Binary("topNBytes", topNList[j].Encoded),
+						)
+						// NOTE: if we don't return here, we may meet panic in the following code.
+						// The i may decrease to a negative value.
+						// We haven't fix the issue here, because we don't know how to
+						// remove the invalid sample data from the samples.
+						break
+					}
+					// First time to find the same value in topN: need to record the sample data for debugging.
+					firstTimeSample = samples[i].Value
+					// Found the same value in topn: need to skip over this value in samples.
+					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
+					samples = samples[:uint64(len(samples))-topNList[j].Count]
+					i--
+					foundTwice = true
+					continue
 				}
-				// First time to find the same value in topN: need to record the sample data for debugging.
-				firstTimeSample = samples[i].Value
-				// Found the same value in topn: need to skip over this value in samples.
-				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-				samples = samples[:uint64(len(samples))-topNList[j].Count]
-				i--
-				foundTwice = true
-				continue
 			}
 		}
 	}
 
-	for i := 0; i < len(topNList); i++ {
-		topNList[i].Count *= uint64(sampleFactor)
-	}
 	topn := &TopN{TopN: topNList}
+	topn.Scale(sampleFactor)
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
 		// TopN includes all sample data
@@ -446,7 +455,7 @@ func BuildHistAndTopN(
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
 func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
-	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv {
+	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv || len(topns) == 0 {
 		return topns
 	}
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth

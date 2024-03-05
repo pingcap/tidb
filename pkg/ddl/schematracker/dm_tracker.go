@@ -186,13 +186,12 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	// suppress ErrTooLongKey
-	strictSQLModeBackup := ctx.GetSessionVars().StrictSQLMode
-	ctx.GetSessionVars().StrictSQLMode = false
+	ctx.SetValue(ddl.SuppressErrorTooLongKeyKey, true)
 	// support drop PK
 	enableClusteredIndexBackup := ctx.GetSessionVars().EnableClusteredIndex
 	ctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
 	defer func() {
-		ctx.GetSessionVars().StrictSQLMode = strictSQLModeBackup
+		ctx.ClearValue(ddl.SuppressErrorTooLongKeyKey)
 		ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndexBackup
 	}()
 
@@ -613,7 +612,7 @@ func (d SchemaTracker) renameColumn(_ sessionctx.Context, ident ast.Ident, spec 
 		if col.GeneratedExpr == nil {
 			continue
 		}
-		dependedColNames := ddl.FindColumnNamesInExpr(col.GeneratedExpr)
+		dependedColNames := ddl.FindColumnNamesInExpr(col.GeneratedExpr.Internal())
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
 				if col.Hidden {
@@ -714,7 +713,7 @@ func (d SchemaTracker) handleModifyColumn(
 	job, err := ddl.GetModifiableColumnJob(ctx, sctx, nil, ident, originalColName, schema, t, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
-			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))
+			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
 			return nil
 		}
 		return errors.Trace(err)
@@ -788,7 +787,7 @@ func (d SchemaTracker) addTablePartitions(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partInfo, err := ddl.BuildAddedPartitionInfo(ctx, tblInfo, spec)
+	partInfo, err := ddl.BuildAddedPartitionInfo(ctx.GetExprCtx(), tblInfo, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1213,7 +1212,7 @@ func (SchemaTracker) GetLease() time.Duration {
 }
 
 // Stats implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
+func (SchemaTracker) Stats(_ *variable.SessionVars) (map[string]any, error) {
 	return nil, nil
 }
 

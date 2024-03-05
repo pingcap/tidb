@@ -21,7 +21,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
-        "//pkg/statistics/handle/util",
+        "//pkg/statistics/handle/types",
         "//pkg/table",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

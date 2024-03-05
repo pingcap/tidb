@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // SetConfigExec executes 'SET CONFIG' statement.
@@ -112,7 +112,7 @@ func (s *SetConfigExec) Next(_ context.Context, req *chunk.Chunk) error {
 		var url string
 		switch serverInfo.ServerType {
 		case "pd":
-			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), serverInfo.StatusAddr, pdapi.Config)
+			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), serverInfo.StatusAddr, pd.Config)
 		case "tikv":
 			url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), serverInfo.StatusAddr)
 		case "tiflash":
@@ -190,13 +190,13 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 	switch val.GetType().EvalType() {
 	case types.ETString:
 		var s string
-		s, isNull, err = val.EvalString(ctx, chunk.Row{})
+		s, isNull, err = val.EvalString(ctx.GetExprCtx(), chunk.Row{})
 		if err == nil && !isNull {
 			str = fmt.Sprintf("%q", s)
 		}
 	case types.ETInt:
 		var i int64
-		i, isNull, err = val.EvalInt(ctx, chunk.Row{})
+		i, isNull, err = val.EvalInt(ctx.GetExprCtx(), chunk.Row{})
 		if err == nil && !isNull {
 			if mysql.HasIsBooleanFlag(val.GetType().GetFlag()) {
 				str = "true"
@@ -209,13 +209,13 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		}
 	case types.ETReal:
 		var f float64
-		f, isNull, err = val.EvalReal(ctx, chunk.Row{})
+		f, isNull, err = val.EvalReal(ctx.GetExprCtx(), chunk.Row{})
 		if err == nil && !isNull {
 			str = fmt.Sprintf("%v", f)
 		}
 	case types.ETDecimal:
 		var d *types.MyDecimal
-		d, isNull, err = val.EvalDecimal(ctx, chunk.Row{})
+		d, isNull, err = val.EvalDecimal(ctx.GetExprCtx(), chunk.Row{})
 		if err == nil && !isNull {
 			str = string(d.ToString())
 		}

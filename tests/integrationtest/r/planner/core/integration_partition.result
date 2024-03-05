@@ -319,6 +319,8 @@ partition p1 values in (5, 6, 7, 8, 9),
 partition p2 values in (10, 11, 12, 13, 14));
 insert into tlist values (0), (1), (5), (6), (10), (12);
 split table tlist index a between (2) and (15) regions 10;
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+30	1
 select * from tlist;
 a
 0
@@ -343,6 +345,8 @@ partition p1 values in (5, 6, 7, 8, 9),
 partition p2 values in (10, 11, 12, 13, 14));
 insert into tcollist values (0), (1), (5), (6), (10), (12);
 split table tcollist index a between (2) and (15) regions 10;
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+30	1
 select * from tcollist;
 a
 0
@@ -419,24 +423,16 @@ create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 va
 alter table tlist alter index a invisible;
 explain select a from tlist where a>=0 and a<=5;
 id	estRows	task	access object	operator info
-PartitionUnion_8	500.00	root		
-├─TableReader_11	250.00	root		data:Selection_10
-│ └─Selection_10	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
-│   └─TableFullScan_9	10000.00	cop[tikv]	table:tlist, partition:p0	keep order:false, stats:pseudo
-└─TableReader_14	250.00	root		data:Selection_13
-  └─Selection_13	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
-    └─TableFullScan_12	10000.00	cop[tikv]	table:tlist, partition:p1	keep order:false, stats:pseudo
+TableReader_7	250.00	root	partition:all	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:tlist	keep order:false, stats:pseudo
 create table tcollist (a int, b int, key(a)) partition by list columns (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
 alter table tcollist alter index a invisible;
 explain select a from tcollist where a>=0 and a<=5;
 id	estRows	task	access object	operator info
-PartitionUnion_8	500.00	root		
-├─TableReader_11	250.00	root		data:Selection_10
-│ └─Selection_10	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
-│   └─TableFullScan_9	10000.00	cop[tikv]	table:tcollist, partition:p0	keep order:false, stats:pseudo
-└─TableReader_14	250.00	root		data:Selection_13
-  └─Selection_13	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
-    └─TableFullScan_12	10000.00	cop[tikv]	table:tcollist, partition:p1	keep order:false, stats:pseudo
+TableReader_7	250.00	root	partition:p0,p1	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:tcollist	keep order:false, stats:pseudo
 create database list_partition_cte;
 use list_partition_cte;
 drop table if exists tlist;
@@ -1308,31 +1304,19 @@ create table q1(a int, b int, key (a)) partition by range (a) (partition p0 valu
 create table q2(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
 explain format=brief select * from q1,q2;
 id	estRows	task	access object	operator info
-HashJoin	400000000.00	root		CARTESIAN inner join
-├─PartitionUnion(Build)	20000.00	root		
-│ ├─TableReader	10000.00	root		data:TableFullScan
-│ │ └─TableFullScan	10000.00	cop[tikv]	table:q2, partition:p0	keep order:false, stats:pseudo
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:q2, partition:p1	keep order:false, stats:pseudo
-└─PartitionUnion(Probe)	20000.00	root		
-  ├─TableReader	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:q1, partition:p0	keep order:false, stats:pseudo
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:q1, partition:p1	keep order:false, stats:pseudo
+HashJoin	100000000.00	root		CARTESIAN inner join
+├─TableReader(Build)	10000.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:q2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:q1	keep order:false, stats:pseudo
 analyze table q1;
 explain format=brief select * from q1,q2;
 id	estRows	task	access object	operator info
-HashJoin	400000000.00	root		CARTESIAN inner join
-├─PartitionUnion(Build)	20000.00	root		
-│ ├─TableReader	10000.00	root		data:TableFullScan
-│ │ └─TableFullScan	10000.00	cop[tikv]	table:q2, partition:p0	keep order:false, stats:pseudo
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:q2, partition:p1	keep order:false, stats:pseudo
-└─PartitionUnion(Probe)	20000.00	root		
-  ├─TableReader	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:q1, partition:p0	keep order:false, stats:pseudo
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:q1, partition:p1	keep order:false, stats:pseudo
+HashJoin	100000000.00	root		CARTESIAN inner join
+├─TableReader(Build)	10000.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:q2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:q1	keep order:false, stats:pseudo
 analyze table q2;
 explain format=brief select * from q1,q2;
 id	estRows	task	access object	operator info
@@ -1357,3 +1341,22 @@ select * from t where col1 = floor(202303);
 col1
 202303
 drop database issue42323;
+drop database if exists list_partition_pri;
+create database list_partition_pri;
+use list_partition_pri;
+set tidb_enable_list_partition = 1;
+create table tlist (a int) partition by list (a) (partition p0 values in (0), partition p1 values in (1));
+drop user if exists 'priv_test'@'%';
+create user 'priv_test'@'%';
+grant select on list_partition_pri.tlist to 'priv_test';
+use list_partition_pri;
+alter table tlist truncate partition p0;
+Error 1142 (42000): ALTER command denied to user 'priv_test'@'%' for table 'tlist'
+alter table tlist drop partition p0;
+Error 1142 (42000): ALTER command denied to user 'priv_test'@'%' for table 'tlist'
+alter table tlist add partition (partition p2 values in (2));
+Error 1142 (42000): ALTER command denied to user 'priv_test'@'%' for table 'tlist'
+insert into tlist values (1);
+Error 1142 (42000): INSERT command denied to user 'priv_test'@'%' for table 'tlist'
+use planner__core__integration_partition;
+set tidb_enable_list_partition = DEFAULT;

@@ -36,7 +36,7 @@ import (
 )
 
 func TestGlueGetVersion(t *testing.T) {
-	g := tidbGlueSession{}
+	g := tidbGlue{}
 	version := g.GetVersion()
 	require.Contains(t, version, `Release Version`)
 	require.Contains(t, version, `Git Commit Hash`)
@@ -87,7 +87,7 @@ func TestFetchShowBRIE(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowBackups,
 	}
-	require.NoError(t, e.Open(ctx))
+	require.NoError(t, exec.Open(ctx, e))
 
 	tp := mysql.TypeDatetime
 	lateTime := types.NewTime(types.FromGoTime(time.Now().Add(-outdatedDuration.Duration+1)), tp, 0)

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -121,10 +121,10 @@ func (path *AccessPath) IsTablePath() bool {
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
-func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context, eqOrInCount int) (access, remained []expression.Expression) {
+func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx, path.TableFilters) {
+	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
 		return nil, path.TableFilters
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
@@ -198,7 +198,7 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 			return false
 		}
 		if checkFn(f.GetArgs()[1]) {
-			if col.Equal(nil, c) {
+			if col.EqualColumn(c) {
 				return true
 			}
 		}
@@ -208,7 +208,7 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 			return false
 		}
 		if checkFn(f.GetArgs()[0]) {
-			if col.Equal(nil, c) {
+			if col.EqualColumn(c) {
 				return true
 			}
 		}
@@ -217,10 +217,10 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 }
 
 // OnlyPointRange checks whether each range is a point(no interval range exists).
-func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
+func (path *AccessPath) OnlyPointRange(tc types.Context) bool {
 	if path.IsIntHandlePath {
 		for _, ran := range path.Ranges {
-			if !ran.IsPointNullable(sctx) {
+			if !ran.IsPointNullable(tc) {
 				return false
 			}
 		}
@@ -228,7 +228,7 @@ func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
 	}
 	for _, ran := range path.Ranges {
 		// Not point or the not full matched.
-		if !ran.IsPointNonNullable(sctx) || len(ran.HighVal) != len(path.Index.Columns) {
+		if !ran.IsPointNonNullable(tc) || len(ran.HighVal) != len(path.Index.Columns) {
 			return false
 		}
 	}
@@ -240,22 +240,22 @@ type Col2Len map[int64]int
 
 // ExtractCol2Len collects index/table columns with lengths from expressions. If idxCols and idxColLens are not nil, it collects index columns with lengths(maybe prefix lengths).
 // Otherwise it collects table columns with full lengths.
-func ExtractCol2Len(exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) Col2Len {
+func ExtractCol2Len(ctx expression.EvalContext, exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) Col2Len {
 	col2len := make(Col2Len, len(idxCols))
 	for _, expr := range exprs {
-		extractCol2LenFromExpr(expr, idxCols, idxColLens, col2len)
+		extractCol2LenFromExpr(ctx, expr, idxCols, idxColLens, col2len)
 	}
 	return col2len
 }
 
-func extractCol2LenFromExpr(expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
+func extractCol2LenFromExpr(ctx expression.EvalContext, expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
 	switch v := expr.(type) {
 	case *expression.Column:
 		if idxCols == nil {
 			col2Len[v.UniqueID] = types.UnspecifiedLength
 		} else {
 			for i, col := range idxCols {
-				if col != nil && v.EqualByExprAndID(nil, col) {
+				if col != nil && v.EqualByExprAndID(ctx, col) {
 					col2Len[v.UniqueID] = idxColLens[i]
 					break
 				}
@@ -263,7 +263,7 @@ func extractCol2LenFromExpr(expr expression.Expression, idxCols []*expression.Co
 		}
 	case *expression.ScalarFunction:
 		for _, arg := range v.GetArgs() {
-			extractCol2LenFromExpr(arg, idxCols, idxColLens, col2Len)
+			extractCol2LenFromExpr(ctx, arg, idxCols, idxColLens, col2Len)
 		}
 	}
 }
@@ -332,9 +332,9 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 }
 
 // GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
-func (path *AccessPath) GetCol2LenFromAccessConds() Col2Len {
+func (path *AccessPath) GetCol2LenFromAccessConds(ctx context.PlanContext) Col2Len {
 	if path.IsTablePath() {
-		return ExtractCol2Len(path.AccessConds, nil, nil)
+		return ExtractCol2Len(ctx.GetExprCtx(), path.AccessConds, nil, nil)
 	}
-	return ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
+	return ExtractCol2Len(ctx.GetExprCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }

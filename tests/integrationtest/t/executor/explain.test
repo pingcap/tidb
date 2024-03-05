@@ -162,3 +162,55 @@ explain select * from t3;
 explain select * from v3;
 disconnect conn1;
 
+
+# TestIssue47331
+drop table if exists t1;
+create table t1(
+  id1 varchar(2) DEFAULT '00',
+  id2 varchar(30) NOT NULL,
+  id3 datetime DEFAULT NULL,
+  id4 varchar(100) NOT NULL DEFAULT 'ecifdata',
+  id5 datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id6 int(11) DEFAULT NULL,
+  id7 int(11) DEFAULT NULL,
+  UNIQUE KEY UI_id2 (id2),
+  KEY ix_id1 (id1)
+);
+drop table if exists t2;
+create table t2(
+  id10 varchar(40) NOT NULL,
+  id2 varchar(30) NOT NULL,
+  KEY IX_id2 (id2),
+  PRIMARY KEY (id10)
+);
+drop table if exists t3;
+create table t3(
+  id20 varchar(40) DEFAULT NULL,
+  UNIQUE KEY IX_id20 (id20)
+);
+explain UPDATE t1 a
+SET a.id1 = '04',
+  a.id3 = CURRENT_TIMESTAMP,
+  a.id4 = SUBSTRING_INDEX(USER(), '@', 1),
+  a.id5 = CURRENT_TIMESTAMP
+WHERE a.id1 = '03'
+  AND a.id6 - IFNULL(a.id7, 0) =
+      (
+        SELECT COUNT(1)
+        FROM t2 b, t3 c
+        WHERE b.id10 = c.id20
+          AND b.id2 = a.id2
+          AND b.id2 in (
+            SELECT rn.id2
+            FROM t1 rn
+            WHERE rn.id1 = '03'
+          )
+      );
+
+
+# TestExplainAnalyzeActRowsNotEmpty
+drop table if exists t;
+create table t (a int, b int, index (a));
+insert into t values (1, 1);
+--replace_column 6 <execution_info> 8 <memory> 9 <disk>
+explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;

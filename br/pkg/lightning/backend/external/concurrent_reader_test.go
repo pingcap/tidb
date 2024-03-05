@@ -50,6 +50,10 @@ func TestConcurrentRead(t *testing.T) {
 	concurrency := rand.Intn(4) + 1
 	readBufferSize := rand.Intn(100) + 1
 
+	bufs := make([][]byte, concurrency)
+	for i := range bufs {
+		bufs[i] = make([]byte, readBufferSize)
+	}
 	rd, err := newConcurrentFileReader(
 		ctx,
 		memStore,
@@ -61,19 +65,19 @@ func TestConcurrentRead(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	readSize := rand.Intn(500) + 1
-	readBuf := make([]byte, readSize)
 	got := make([]byte, 0, 256)
 
 	for {
-		n, err := rd.read(readBuf)
+		bs, err := rd.read(bufs)
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
 			require.NoError(t, err)
 		}
-		got = append(got, readBuf[:n]...)
+		for _, b := range bs {
+			got = append(got, b...)
+		}
 	}
 
 	require.Equal(t, data[offset:], got)

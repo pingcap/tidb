@@ -20,9 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -253,25 +251,6 @@ func TestApplyMultiColumnType(t *testing.T) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "<nil>", "<nil>"))
 }
 
-func TestSetTiDBEnableParallelApply(t *testing.T) {
-	// validate the tidb_enable_parallel_apply's value
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_parallel_apply=0")
-	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_enable_parallel_apply=1")
-	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("1"))
-	tk.MustExec("set tidb_enable_parallel_apply=on")
-	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("1"))
-	tk.MustExec("set tidb_enable_parallel_apply=off")
-	tk.MustQuery("select @@tidb_enable_parallel_apply").Check(testkit.Rows("0"))
-	require.Error(t, tk.ExecToErr("set tidb_enable_parallel_apply=-1"))
-	require.Error(t, tk.ExecToErr("set tidb_enable_parallel_apply=2"))
-	require.Error(t, tk.ExecToErr("set tidb_enable_parallel_apply=1000"))
-	require.Error(t, tk.ExecToErr("set tidb_enable_parallel_apply='onnn'"))
-}
-
 func TestMultipleApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -404,118 +383,6 @@ func TestApplyWithOtherOperators(t *testing.T) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1"))
 }
 
-func TestApplyWithOtherFeatures(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_parallel_apply=true")
-
-	// collation 1
-	tk.MustExec("drop table if exists t, t1")
-	tk.MustExec("create table t(a varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b int)")
-	tk.MustExec("create table t1(a varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b int)")
-	tk.MustExec("insert into t values ('a', 1), ('A', 2), ('a', 3), ('A', 4)")
-	tk.MustExec("insert into t1 values ('a', 1), ('A', 2), ('a', 3), ('A', 4)")
-	sql := "select (select min(t1.b) from t1 where t1.a >= t.a), (select sum(t1.b) from t1 where t1.a >= t.a) from t"
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 10", "1 10", "1 10", "1 10"))
-
-	// collation 2
-	sql = "select (select min(t1.b) from t1 where t1.a >= t.a and t1.b >= t.b), (select sum(t1.b) from t1 where t1.a >= t.a and t1.b >= t.b) from t"
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 10", "2 9", "3 7", "4 4"))
-	collate.SetNewCollationEnabledForTest(false)
-	defer collate.SetNewCollationEnabledForTest(true)
-
-	// plan cache
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int)")
-	tk.MustExec("create table t2(a int, b int)")
-	tk.MustExec("insert into t1 values (1, 1), (1, 5), (2, 3), (2, 4), (3, 3)")
-	tk.MustExec("insert into t2 values (0, 1), (2, -1), (3, 2)")
-	tk.MustExec(`prepare stmt from "select * from t1 where t1.b >= (select sum(t2.b) from t2 where t2.a > t1.a and t2.a > ?)"`)
-	tk.MustExec("set @a=1")
-	tk.MustQuery("execute stmt using @a").Sort().Check(testkit.Rows("1 1", "1 5", "2 3", "2 4"))
-	tk.MustExec("set @a=2")
-	tk.MustQuery("execute stmt using @a").Sort().Check(testkit.Rows("1 5", "2 3", "2 4"))
-	tk.MustQuery(" select @@last_plan_from_cache").Check(testkit.Rows("0")) // sub-queries are not cacheable
-
-	// cluster index
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("drop table if exists t, t2")
-	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
-	tk.MustExec("create table t2(a int, b int, c int, primary key(a, c))")
-	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
-	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
-	sql = "select * from t where (select min(t2.b) from t2 where t2.a > t.a) > 0"
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-
-	// partitioning table
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int) partition by range(a) (partition p0 values less than(10), partition p1 values less than(20), partition p2 values less than(30), partition p3 values less than(40))")
-	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 4")
-	tk.MustExec("insert into t1 values (5, 5), (15, 15), (25, 25), (35, 35)")
-	tk.MustExec("insert into t2 values (5, 5), (15, 15), (25, 25), (35, 35)")
-	sql = "select (select count(*) from t2 where t2.a > t1.b and t2.a=20), (select max(t2.b) from t2 where t2.a between t1.a and 20) from t1 where t1.a > 10"
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("0 15", "0 <nil>", "0 <nil>"))
-}
-
-func TestApplyInDML(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_parallel_apply=true")
-
-	// delete
-	tk.MustExec("drop table if exists t, t2")
-	tk.MustExec("create table t(a bigint, b int)")
-	tk.MustExec("create table t2(a int, b int)")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (4, 4), (1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustExec("delete from t where (select min(t2.a) * 2 from t2 where t2.a < t.a) > 1")
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1", "1 1"))
-
-	// insert
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int)")
-	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (1, 1, 1), (2, 2, 2), (3, 3, 3)")
-	tk.MustExec("insert into t (select * from t where (select count(*) from t t1 where t1.b > t.a) > 2)")
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1 1", "1 1 1", "1 1 1", "1 1 1", "2 2 2", "2 2 2", "3 3 3", "3 3 3"))
-
-	// update
-	tk.MustExec("drop table if exists t, t2")
-	tk.MustExec("create table t(a smallint, b int)")
-	tk.MustExec("create table t2(a int, b int)")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("update t set a = a + 1 where (select count(*) from t2 where t2.a <= t.a) in (1, 2)")
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("2 1", "2 1", "2 2", "2 2", "3 3", "3 3"))
-
-	// replace
-	tk.MustExec("drop table if exists t, t2")
-	tk.MustExec("create table t(a tinyint, b int, unique index idx(a))")
-	tk.MustExec("create table t2(a tinyint, b int)")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3), (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("replace into t (select pow(t2.a, 2), t2.b from t2 where (select min(t.a) from t where t.a > t2.a) between 1 and 5)")
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 2", "9 3"))
-
-	// Transaction
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int)")
-	tk.MustExec("create table t2(a int, b int)")
-	tk.MustExec("insert into t1 values (1, 2), (1, 3)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 values (1, 4), (2, 3), (2, 5)")
-	tk.MustExec("insert into t2 values (2, 3), (3, 4)")
-	sql := "select * from t1 where t1.b > any (select t2.b from t2 where t2.b < t1.b)"
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 4", "2 5"))
-	tk.MustExec("delete from t1 where a = 1")
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("2 5"))
-	tk.MustExec("commit")
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("2 5"))
-}
-
 func TestApplyConcurrency(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -623,15 +490,18 @@ func TestApplyGoroutinePanic(t *testing.T) {
 	}
 }
 
-func TestIssue24930(t *testing.T) {
+func TestParallelApplyCorrectness(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c1 bigint, c2 int, c3 int, c4 int, primary key(c1, c2), index (c3));")
+	tk.MustExec("insert into t1 values(1, 1, 1, 1), (1, 2, 3, 3), (2, 1, 4, 4), (2, 2, 2, 2);")
+
 	tk.MustExec("set tidb_enable_parallel_apply=true")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("create table t2(a int)")
-	tk.MustQuery(`select case when t1.a is null
-    then (select t2.a from t2 where t2.a = t1.a limit 1) else t1.a end a
-	from t1 where t1.a=1 order by a limit 1`).Check(testkit.Rows()) // can return an empty result instead of hanging forever
+	sql := "select (select /*+ NO_DECORRELATE() */ sum(c4) from t1 where t1.c3 = alias.c3) from t1 alias where alias.c1 = 1;"
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
+
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
 }

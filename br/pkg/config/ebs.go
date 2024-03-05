@@ -66,8 +66,8 @@ type ClusterInfo struct {
 type Kubernetes struct {
 	PVs     []*corev1.PersistentVolume      `json:"pvs" toml:"pvs"`
 	PVCs    []*corev1.PersistentVolumeClaim `json:"pvcs" toml:"pvcs"`
-	CRD     interface{}                     `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
-	Options map[string]interface{}          `json:"options" toml:"options"`
+	CRD     any                             `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
+	Options map[string]any                  `json:"options" toml:"options"`
 }
 
 type TiKVComponent struct {
@@ -84,13 +84,13 @@ type TiDBComponent struct {
 }
 
 type EBSBasedBRMeta struct {
-	ClusterInfo    *ClusterInfo           `json:"cluster_info" toml:"cluster_info"`
-	TiKVComponent  *TiKVComponent         `json:"tikv" toml:"tikv"`
-	TiDBComponent  *TiDBComponent         `json:"tidb" toml:"tidb"`
-	PDComponent    *PDComponent           `json:"pd" toml:"pd"`
-	KubernetesMeta *Kubernetes            `json:"kubernetes" toml:"kubernetes"`
-	Options        map[string]interface{} `json:"options" toml:"options"`
-	Region         string                 `json:"region" toml:"region"`
+	ClusterInfo    *ClusterInfo   `json:"cluster_info" toml:"cluster_info"`
+	TiKVComponent  *TiKVComponent `json:"tikv" toml:"tikv"`
+	TiDBComponent  *TiDBComponent `json:"tidb" toml:"tidb"`
+	PDComponent    *PDComponent   `json:"pd" toml:"pd"`
+	KubernetesMeta *Kubernetes    `json:"kubernetes" toml:"kubernetes"`
+	Options        map[string]any `json:"options" toml:"options"`
+	Region         string         `json:"region" toml:"region"`
 }
 
 func (c *EBSBasedBRMeta) GetStoreCount() uint64 {

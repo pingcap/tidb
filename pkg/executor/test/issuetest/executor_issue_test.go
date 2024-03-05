@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -340,88 +340,6 @@ func TestFix31038(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/disable-collect-execution"))
 }
 
-func TestFix31537(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@foreign_key_checks=0")
-	tk.MustExec(`CREATE TABLE trade (
-  t_id bigint(16) NOT NULL AUTO_INCREMENT,
-  t_dts datetime NOT NULL,
-  t_st_id char(4) NOT NULL,
-  t_tt_id char(3) NOT NULL,
-  t_is_cash tinyint(1) NOT NULL,
-  t_s_symb char(15) NOT NULL,
-  t_qty mediumint(7) NOT NULL,
-  t_bid_price decimal(8,2) NOT NULL,
-  t_ca_id bigint(12) NOT NULL,
-  t_exec_name varchar(49) NOT NULL,
-  t_trade_price decimal(8,2) DEFAULT NULL,
-  t_chrg decimal(10,2) NOT NULL,
-  t_comm decimal(10,2) NOT NULL,
-  t_tax decimal(10,2) NOT NULL,
-  t_lifo tinyint(1) NOT NULL,
-  PRIMARY KEY (t_id) /*T![clustered_index] CLUSTERED */,
-  KEY i_t_ca_id_dts (t_ca_id,t_dts),
-  KEY i_t_s_symb_dts (t_s_symb,t_dts),
-  CONSTRAINT fk_trade_st FOREIGN KEY (t_st_id) REFERENCES status_type (st_id),
-  CONSTRAINT fk_trade_tt FOREIGN KEY (t_tt_id) REFERENCES trade_type (tt_id),
-  CONSTRAINT fk_trade_s FOREIGN KEY (t_s_symb) REFERENCES security (s_symb),
-  CONSTRAINT fk_trade_ca FOREIGN KEY (t_ca_id) REFERENCES customer_account (ca_id)
-) ;`)
-	tk.MustExec(`CREATE TABLE trade_history (
-  th_t_id bigint(16) NOT NULL,
-  th_dts datetime NOT NULL,
-  th_st_id char(4) NOT NULL,
-  PRIMARY KEY (th_t_id,th_st_id) /*T![clustered_index] NONCLUSTERED */,
-  KEY i_th_t_id_dts (th_t_id,th_dts),
-  CONSTRAINT fk_trade_history_t FOREIGN KEY (th_t_id) REFERENCES trade (t_id),
-  CONSTRAINT fk_trade_history_st FOREIGN KEY (th_st_id) REFERENCES status_type (st_id)
-);
-`)
-	tk.MustExec(`CREATE TABLE status_type (
-  st_id char(4) NOT NULL,
-  st_name char(10) NOT NULL,
-  PRIMARY KEY (st_id) /*T![clustered_index] NONCLUSTERED */
-);`)
-	tk.MustQuery(`trace plan SELECT T_ID, T_S_SYMB, T_QTY, ST_NAME, TH_DTS FROM ( SELECT T_ID AS ID FROM TRADE WHERE T_CA_ID = 43000014236 ORDER BY T_DTS DESC LIMIT 10 ) T, TRADE, TRADE_HISTORY, STATUS_TYPE WHERE TRADE.T_ID = ID AND TRADE_HISTORY.TH_T_ID = TRADE.T_ID AND STATUS_TYPE.ST_ID = TRADE_HISTORY.TH_ST_ID ORDER BY TH_DTS DESC LIMIT 30;`)
-}
-
-func TestIssue30382(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t1  (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key (c_int) , key(c_str(2)) , key(c_decimal) ) partition by list (c_int) ( partition p0 values IN (1, 5, 9, 13, 17, 21, 25, 29, 33, 37), partition p1 values IN (2, 6, 10, 14, 18, 22, 26, 30, 34, 38), partition p2 values IN (3, 7, 11, 15, 19, 23, 27, 31, 35, 39), partition p3 values IN (4, 8, 12, 16, 20, 24, 28, 32, 36, 40)) ;")
-	tk.MustExec("create table t2  (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key (c_int) , key(c_str) , key(c_decimal) ) partition by hash (c_int) partitions 4;")
-	tk.MustExec("insert into t1 values (6, 'musing mayer', 1.280), (7, 'wizardly heisenberg', 6.589), (8, 'optimistic swirles', 9.633), (9, 'hungry haslett', 2.659), (10, 'stupefied wiles', 2.336);")
-	tk.MustExec("insert into t2 select * from t1 ;")
-	tk.MustExec("begin;")
-	tk.MustQuery("select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;").Sort().Check(testkit.Rows(
-		"10 stupefied wiles 2.336000",
-		"6 musing mayer 1.280000",
-		"7 wizardly heisenberg 6.589000",
-		"8 optimistic swirles 9.633000",
-		"9 hungry haslett 2.659000"))
-	tk.MustQuery("explain format = 'brief' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;").Check(testkit.Rows(
-		"SelectLock 6400.00 root  for update 0",
-		"└─HashJoin 6400.00 root  CARTESIAN inner join, other cond:or(gt(Column#8, 1), or(ne(test.t1.c_str, Column#7), if(ne(Column#9, 0), NULL, 0)))",
-		"  ├─Selection(Build) 0.80 root  ne(Column#10, 0)",
-		"  │ └─HashAgg 1.00 root  funcs:max(Column#17)->Column#7, funcs:count(distinct Column#18)->Column#8, funcs:sum(Column#19)->Column#9, funcs:count(1)->Column#10",
-		"  │   └─Projection 3323.33 root  test.t2.c_str->Column#17, test.t2.c_str->Column#18, cast(isnull(test.t2.c_str), decimal(20,0) BINARY)->Column#19",
-		"  │     └─TableReader 3323.33 root partition:all data:Selection",
-		"  │       └─Selection 3323.33 cop[tikv]  lt(test.t2.c_decimal, 5)",
-		"  │         └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"  └─TableReader(Probe) 8000.00 root partition:all data:Selection",
-		"    └─Selection 8000.00 cop[tikv]  if(isnull(test.t1.c_str), NULL, 1)",
-		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
-	tk.MustExec("commit")
-}
-
 func issue20975Prepare(t *testing.T, store kv.Storage) (*testkit.TestKit, *testkit.TestKit) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -658,7 +576,7 @@ func TestIssue42662(t *testing.T) {
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	}
-	sm.Conn = make(map[uint64]session.Session)
+	sm.Conn = make(map[uint64]sessiontypes.Session)
 	sm.Conn[tk.Session().GetSessionVars().ConnectionID] = tk.Session()
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
@@ -688,4 +606,18 @@ func TestIssue42662(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
+}
+
+func TestIssue50393(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+
+	tk.MustExec("create table t1 (a blob)")
+	tk.MustExec("create table t2 (a blob)")
+	tk.MustExec("insert into t1 values (0xC2A0)")
+	tk.MustExec("insert into t2 values (0xC2)")
+	tk.MustQuery("select count(*) from t1,t2 where t1.a like concat(\"%\",t2.a,\"%\")").Check(testkit.Rows("1"))
 }

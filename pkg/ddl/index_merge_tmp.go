@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -32,11 +32,6 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
-
-// IsEnableFastReorg check whether Fast Reorg is allowed.
-func IsEnableFastReorg() bool {
-	return variable.EnableFastReorg.Load()
-}
 
 func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 	txn kv.Transaction,
@@ -59,6 +54,9 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 			// Found a value in the original index key.
 			err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
 			if err != nil {
+				if kv.ErrKeyExists.Equal(err) {
+					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), idxInfo.ID)
+				}
 				return errors.Trace(err)
 			}
 		} else if idxRecords[i].distinct {
@@ -120,7 +118,6 @@ type temporaryIndexRecord struct {
 	unique   bool
 	distinct bool
 	handle   kv.Handle
-	rowKey   kv.Key
 }
 
 type mergeIndexWorker struct {
@@ -153,9 +150,10 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	for _, idx := range w.indexes {
 		idx := idx // Make linter noloopclosure happy.
-		errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 			taskCtx.addedCount = 0
 			taskCtx.scanCount = 0
+			updateTxnEntrySizeLimitIfNeeded(txn)
 			txn.SetOption(kv.Priority, taskRange.priority)
 			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)

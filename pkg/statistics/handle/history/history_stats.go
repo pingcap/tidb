@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -29,12 +30,12 @@ import (
 
 // statsHistoryImpl implements util.StatsHistory.
 type statsHistoryImpl struct {
-	statsHandle util.StatsHandle
+	statsHandle types.StatsHandle
 }
 
 // NewStatsHistory creates a new StatsHistory.
-func NewStatsHistory(statsHandle util.StatsHandle,
-) util.StatsHistory {
+func NewStatsHistory(statsHandle types.StatsHandle,
+) types.StatsHistory {
 	return &statsHistoryImpl{
 		statsHandle: statsHandle,
 	}
@@ -52,7 +53,10 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
+	if js == nil {
+		logutil.BgLogger().Warn("no stats data to record", zap.String("dbName", dbName), zap.String("tableName", tableInfo.Name.O))
+		return 0, nil
+	}
 	var version uint64
 	err = util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		version, err = RecordHistoricalStatsToStorage(sctx, physicalID, js)

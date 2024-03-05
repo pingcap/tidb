@@ -72,7 +72,8 @@ type CommonHandleCols struct {
 
 func (cb *CommonHandleCols) buildHandleByDatumsBuffer(datumBuf []types.Datum) (kv.Handle, error) {
 	tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
-	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
+	handleBytes, err := codec.EncodeKey(cb.sc.TimeZone(), nil, datumBuf...)
+	err = cb.sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +164,7 @@ func (cb *CommonHandleCols) String() string {
 		if i != 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(col.ExplainInfo())
+		b.WriteString(col.ColumnExplainInfo(false))
 	}
 	b.WriteByte(']')
 	return b.String()
@@ -174,7 +175,7 @@ func (cb *CommonHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator
 	for i, col := range cb.columns {
 		aDatum := &a[col.Index]
 		bDatum := &b[col.Index]
-		cmp, err := aDatum.Compare(cb.sc, bDatum, ctors[i])
+		cmp, err := aDatum.Compare(cb.sc.TypeCtx(), bDatum, ctors[i])
 		if err != nil {
 			return 0, err
 		}
@@ -268,7 +269,7 @@ func (*IntHandleCols) IsInt() bool {
 
 // String implements the kv.HandleCols interface.
 func (ib *IntHandleCols) String() string {
-	return ib.col.ExplainInfo()
+	return ib.col.ColumnExplainInfo(false)
 }
 
 // GetCol implements the kv.HandleCols interface.
@@ -288,7 +289,7 @@ func (*IntHandleCols) NumCols() int {
 func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
 	aVal := &a[ib.col.Index]
 	bVal := &b[ib.col.Index]
-	return aVal.Compare(nil, bVal, ctors[ib.col.Index])
+	return aVal.Compare(types.DefaultStmtNoWarningContext, bVal, ctors[ib.col.Index])
 }
 
 // GetFieldsTypes implements the kv.HandleCols interface.

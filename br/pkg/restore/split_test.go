@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -41,6 +42,7 @@ type TestClient struct {
 	regionsInfo         *pdtypes.RegionTree // For now it's only used in ScanRegions
 	nextRegionID        uint64
 	injectInScatter     func(*split.RegionInfo) error
+	injectInOperator    func(uint64) (*pdpb.GetOperatorResponse, error)
 	supportBatchScatter bool
 
 	scattered   map[uint64]bool
@@ -215,6 +217,9 @@ func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *split.Region
 }
 
 func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	if c.injectInOperator != nil {
+		return c.injectInOperator(regionID)
+	}
 	return &pdpb.GetOperatorResponse{
 		Header: new(pdpb.ResponseHeader),
 	}, nil
@@ -224,6 +229,9 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	if c.InjectErr && c.InjectTimes > 0 {
 		c.InjectTimes -= 1
 		return nil, status.Error(codes.Unavailable, "not leader")
+	}
+	if len(key) != 0 && bytes.Equal(key, endKey) {
+		return nil, status.Error(codes.Internal, "key and endKey are the same")
 	}
 
 	infos := c.regionsInfo.ScanRange(key, endKey, limit)
@@ -237,11 +245,11 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, nil
 }
 
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
+func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
 	return
 }
 
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
+func (c *TestClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
 	return nil
 }
 
@@ -281,6 +289,19 @@ func (b *assertRetryLessThanBackoffer) NextBackoff(err error) time.Duration {
 func (b *assertRetryLessThanBackoffer) Attempt() int {
 	return b.max - b.already
 }
+func TestScanEmptyRegion(t *testing.T) {
+	client := initTestClient(false)
+	ranges := initRanges()
+	// make ranges has only one
+	ranges = ranges[0:1]
+	rewriteRules := initRewriteRules()
+	regionSplitter := restore.NewRegionSplitter(client)
+
+	ctx := context.Background()
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
+	// should not return error with only one range entry
+	require.NoError(t, err)
+}
 
 func TestScatterFinishInTime(t *testing.T) {
 	client := initTestClient(false)
@@ -289,7 +310,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -315,7 +336,7 @@ func TestScatterFinishInTime(t *testing.T) {
 
 	// When using a exponential backoffer, if we try to backoff more than 40 times in 10 regions,
 	// it would cost time unacceptable.
-	regionSplitter.ScatterRegionsWithBackoffer(ctx,
+	regionSplitter.ScatterRegionsSequentially(ctx,
 		regionInfos,
 		assertRetryLessThan(t, 40))
 }
@@ -337,6 +358,108 @@ func TestSplitAndScatter(t *testing.T) {
 		client := initTestClient(false)
 		runTestSplitAndScatterWith(t, client)
 	})
+	t.Run("WaitScatter", func(t *testing.T) {
+		client := initTestClient(false)
+		client.InstallBatchScatterSupport()
+		runWaitScatter(t, client)
+	})
+}
+
+// +------------+----------------------------
+// |   region   | states
+// +------------+----------------------------
+// | [   , aay) | SUCCESS
+// +------------+----------------------------
+// | [aay, bba) | CANCEL, SUCCESS
+// +------------+----------------------------
+// | [bba, bbh) | RUNNING, TIMEOUT, SUCCESS
+// +------------+----------------------------
+// | [bbh, cca) | <NOT_SCATTER_OPEARTOR>
+// +------------+----------------------------
+// | [cca,    ) | CANCEL, RUNNING, SUCCESS
+// +------------+----------------------------
+// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+// states:
+func runWaitScatter(t *testing.T, client *TestClient) {
+	// configuration
+	type Operatorstates struct {
+		index  int
+		status []pdpb.OperatorStatus
+	}
+	results := map[string]*Operatorstates{
+		"": {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_SUCCESS}},
+		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_CANCEL, pdpb.OperatorStatus_SUCCESS}},
+		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_RUNNING, pdpb.OperatorStatus_TIMEOUT, pdpb.OperatorStatus_SUCCESS}},
+		string(codec.EncodeBytesExt([]byte{}, []byte("bbh"), false)): {},
+		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_CANCEL, pdpb.OperatorStatus_RUNNING, pdpb.OperatorStatus_SUCCESS}},
+	}
+	// after test done, the `leftScatterCount` should be empty
+	leftScatterCount := map[string]int{
+		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): 1,
+		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): 1,
+		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): 1,
+	}
+	client.injectInScatter = func(ri *split.RegionInfo) error {
+		states, ok := results[string(ri.Region.StartKey)]
+		require.True(t, ok)
+		require.NotEqual(t, 0, len(states.status))
+		require.NotEqual(t, pdpb.OperatorStatus_SUCCESS, states.status[states.index])
+		states.index += 1
+		cnt, ok := leftScatterCount[string(ri.Region.StartKey)]
+		require.True(t, ok)
+		if cnt == 1 {
+			delete(leftScatterCount, string(ri.Region.StartKey))
+		} else {
+			leftScatterCount[string(ri.Region.StartKey)] = cnt - 1
+		}
+		return nil
+	}
+	regionsMap := client.GetAllRegions()
+	leftOperatorCount := map[string]int{
+		"": 1,
+		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): 2,
+		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): 3,
+		string(codec.EncodeBytesExt([]byte{}, []byte("bbh"), false)): 1,
+		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): 3,
+	}
+	client.injectInOperator = func(u uint64) (*pdpb.GetOperatorResponse, error) {
+		ri := regionsMap[u]
+		cnt, ok := leftOperatorCount[string(ri.Region.StartKey)]
+		require.True(t, ok)
+		if cnt == 1 {
+			delete(leftOperatorCount, string(ri.Region.StartKey))
+		} else {
+			leftOperatorCount[string(ri.Region.StartKey)] = cnt - 1
+		}
+		states, ok := results[string(ri.Region.StartKey)]
+		require.True(t, ok)
+		if len(states.status) == 0 {
+			return &pdpb.GetOperatorResponse{
+				Desc: []byte("other"),
+			}, nil
+		}
+		if states.status[states.index] == pdpb.OperatorStatus_RUNNING {
+			states.index += 1
+			return &pdpb.GetOperatorResponse{
+				Desc:   []byte("scatter-region"),
+				Status: states.status[states.index-1],
+			}, nil
+		}
+		return &pdpb.GetOperatorResponse{
+			Desc:   []byte("scatter-region"),
+			Status: states.status[states.index],
+		}, nil
+	}
+
+	// begin to test
+	ctx := context.Background()
+	regions := make([]*split.RegionInfo, 0, len(regionsMap))
+	for _, info := range regionsMap {
+		regions = append(regions, info)
+	}
+	regionSplitter := restore.NewRegionSplitter(client)
+	leftCnt := regionSplitter.WaitForScatterRegionsTimeout(ctx, regions, 2000*time.Second)
+	require.Equal(t, leftCnt, 0)
 }
 
 func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
@@ -345,7 +468,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -369,7 +492,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 		scattered[regionInfo.Region.Id] = true
 		return nil
 	}
-	regionSplitter.ScatterRegions(ctx, regionInfos)
+	regionSplitter.ScatterRegionsSync(ctx, regionInfos)
 	for key := range regions {
 		if key == alwaysFailedRegionID {
 			require.Falsef(t, scattered[key], "always failed region %d was scattered successfully", key)
@@ -391,7 +514,7 @@ func TestRawSplit(t *testing.T) {
 	ctx := context.Background()
 
 	regionSplitter := restore.NewRegionSplitter(client)
-	err := regionSplitter.Split(ctx, ranges, nil, true, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, nil, 0, "", true, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
@@ -510,6 +633,94 @@ FindRegion:
 		return false
 	}
 	return true
+}
+
+func TestChooseSplitKeysBySize(t *testing.T) {
+	// case #0 store count is zero, return nil
+	keys, _ := restore.ChooseSplitKeysBySize(0, 0, nil)
+	require.Len(t, keys, 0)
+
+	// case #1 choose the first two keys as split keys
+	rg := rtree.NewRangeTree()
+	firstEndKey := []byte("2")
+	SecondEndKey := []byte("3")
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("1"),
+		EndKey:   firstEndKey,
+		Size:     3,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("2"),
+		EndKey:   SecondEndKey,
+		Size:     3,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("3"),
+		EndKey:   []byte("4"),
+		Size:     4,
+	})
+
+	keys, size := restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
+	require.Len(t, keys, 2)
+	require.EqualValues(t, size, 3)
+	require.ElementsMatch(t, keys, [][]byte{firstEndKey, SecondEndKey})
+
+	// case #2 choose the first key as split key, because the first range is large enough
+	rg = rtree.NewRangeTree()
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("1"),
+		EndKey:   firstEndKey,
+		Size:     8,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("2"),
+		EndKey:   SecondEndKey,
+		Size:     1,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("3"),
+		EndKey:   []byte("4"),
+		Size:     1,
+	})
+
+	keys, size = restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
+	require.Len(t, keys, 1)
+	require.ElementsMatch(t, keys, [][]byte{firstEndKey})
+	require.EqualValues(t, size, 3)
+
+	// case #3 choose the second key as split key, because the first+second range is large enough
+	rg = rtree.NewRangeTree()
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("1"),
+		EndKey:   firstEndKey,
+		Size:     1,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("3"),
+		EndKey:   SecondEndKey,
+		Size:     8,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("4"),
+		EndKey:   []byte("5"),
+		Size:     1,
+	})
+
+	keys, size = restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
+	require.Len(t, keys, 1)
+	require.ElementsMatch(t, keys, [][]byte{SecondEndKey})
+	require.EqualValues(t, size, 3)
+
+	// case #4 too many stores, no need to split
+	rg = rtree.NewRangeTree()
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("1"),
+		EndKey:   []byte("2"),
+		Size:     8,
+	})
+	keys, size = restore.ChooseSplitKeysBySize(10, 100, rg.GetSortedRanges())
+	require.Len(t, keys, 0)
+	require.EqualValues(t, size, 0)
 }
 
 func TestNeedSplit(t *testing.T) {
@@ -716,7 +927,7 @@ func TestRestoreFailed(t *testing.T) {
 	r := &fakeRestorer{
 		tableIDIsInsequence: true,
 	}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, string(restore.FineGrained))
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -739,7 +950,7 @@ func TestSplitFailed(t *testing.T) {
 		fakeRanges("bcy", "cad", "xxy"),
 	}
 	r := &fakeRestorer{errorInSplit: true, tableIDIsInsequence: true}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, string(restore.FineGrained))
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -940,10 +1151,10 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 	}
 	return result, nil
 }
-func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error) {
-	return pdtypes.Rule{}, nil
+func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error) {
+	return nil, nil
 }
-func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error { return nil }
+func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error { return nil }
 func (*fakeSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
 	return nil
 }

@@ -40,6 +40,8 @@ var retryableErrorMsgList = []string{
 	// this error happens on when distsql.Checksum calls TiKV
 	// see https://github.com/pingcap/tidb/blob/2c3d4f1ae418881a95686e8b93d4237f2e76eec6/store/copr/coprocessor.go#L941
 	"coprocessor task terminated due to exceeding the deadline",
+	// fix https://github.com/pingcap/tidb/issues/51383
+	"rate: wait",
 }
 
 func isRetryableFromErrorMessage(err error) bool {
@@ -79,6 +81,8 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	ErrKVReadIndexNotReady.ID():   {},
 	ErrKVIngestFailed.ID():        {},
 	ErrKVRaftProposalDropped.ID(): {},
+	// litBackendCtxMgr.Register may return the error.
+	ErrCreatePDClient.ID(): {},
 	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr
 	// met ErrRegionUnavailable on free-tier import during checksum, others hasn't met yet
 	drivererr.ErrRegionUnavailable.ID(): {},
@@ -88,13 +92,19 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	drivererr.ErrUnknown.ID():           {},
 }
 
+// ErrWriteTooSlow is used to get rid of the gRPC blocking issue.
+// there are some strange blocking issues of gRPC like
+// https://github.com/pingcap/tidb/issues/48352
+// https://github.com/pingcap/tidb/issues/46321 and I don't know why 😭
+var ErrWriteTooSlow = errors.New("write too slow, maybe gRPC is blocked forever")
+
 func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
 	switch err {
 	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
 		return false
-	case mysql.ErrInvalidConn, driver.ErrBadConn:
+	case mysql.ErrInvalidConn, driver.ErrBadConn, ErrWriteTooSlow:
 		return true
 	}
 
@@ -103,7 +113,9 @@ func isSingleRetryableError(err error) bool {
 		if nerr.Timeout() {
 			return true
 		}
-		if syscallErr, ok := goerrors.Unwrap(err).(*os.SyscallError); ok {
+		// the error might be nested, such as *url.Error -> *net.OpError -> *os.SyscallError
+		var syscallErr *os.SyscallError
+		if goerrors.As(nerr, &syscallErr) {
 			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
 		}
 		return false
@@ -133,11 +145,17 @@ func isSingleRetryableError(err error) bool {
 			codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
 		case codes.Unknown:
+			errMsg := rpcStatus.Message()
+			if strings.Contains(errMsg, "DiskSpaceNotEnough") {
+				return false
+			}
 			// cases we have met during import:
 			// 1. in scatter region: rpc error: code = Unknown desc = region 31946583 is not fully replicated
 			// 2. in write TiKV: rpc error: code = Unknown desc = EngineTraits(Engine(Status { code: IoError, sub_code:
 			//    None, sev: NoError, state: \"IO error: No such file or directory: while stat a file for size:
 			//    /...../63992d9c-fbc8-4708-b963-32495b299027_32279707_325_5280_write.sst: No such file or directory\"
+			// 3. in write TiKV: rpc error: code = Unknown desc = Engine("request region 26 is staler than local region,
+			//    local epoch conf_ver: 5 version: 65, request epoch conf_ver: 5 version: 64, please rescan region later")
 			return true
 		default:
 			return false

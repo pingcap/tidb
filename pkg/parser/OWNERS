@@ -2,6 +2,9 @@
 options:
   no_parent_owners: true
 filters:
-  "(OWNERS|parser\\.y)$":
+  "(parser\\.y)$":
     approvers:
       - sig-critical-approvers-parser
+  ".*":
+    approvers:
+      - sig-approvers-parser

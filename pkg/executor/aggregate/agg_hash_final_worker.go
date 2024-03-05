@@ -15,16 +15,18 @@
 package aggregate
 
 import (
+	"math/rand"
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
 
@@ -42,15 +44,27 @@ type HashAggFinalWorker struct {
 
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
-	partialResultMap    AggPartialResultMapper
-	groupSet            set.StringSetWithMemoryUsage
-	inputCh             chan *HashAggIntermData
+	partialResultMap    aggfuncs.AggPartialResultMapper
+	BInMap              int
+	inputCh             chan *aggfuncs.AggPartialResultMapper
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
+
+	spillHelper *parallelHashAggSpillHelper
+
+	restoredAggResultMapperMem int64
 }
 
-func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
+func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
+	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
+	w.intestDuringFinalWorkerRun(&err)
+	return ret, restoredMem, err
+}
+
+func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
+	waitStart := time.Now()
+	defer updateWaitTime(w.stats, waitStart)
 	select {
 	case <-w.finishCh:
 		return nil, false
@@ -62,89 +76,83 @@ func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok boo
 	return
 }
 
-func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error) {
-	var (
-		input            *HashAggIntermData
-		ok               bool
-		intermDataBuffer [][]aggfuncs.PartialResult
-		groupKeys        []string
-		sc               = sctx.GetSessionVars().StmtCtx
-	)
-	for {
-		waitStart := time.Now()
-		input, ok = w.getPartialInput()
-		if w.stats != nil {
-			w.stats.WaitTime += int64(time.Since(waitStart))
+func (w *HashAggFinalWorker) initBInMap() {
+	w.BInMap = 0
+	mapLen := len(w.partialResultMap)
+	for mapLen > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		w.BInMap++
+	}
+}
+
+func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input *aggfuncs.AggPartialResultMapper) error {
+	// As the w.partialResultMap is empty when we get the first input.
+	// So it's better to directly assign the input to w.partialResultMap
+	if len(w.partialResultMap) == 0 {
+		w.partialResultMap = *input
+		w.initBInMap()
+		return nil
+	}
+
+	execStart := time.Now()
+	allMemDelta := int64(0)
+	exprCtx := sctx.GetExprCtx()
+	for key, value := range *input {
+		dstVal, ok := w.partialResultMap[key]
+		if !ok {
+			w.handleNewGroupKey(key, value)
+			continue
 		}
+
+		for j, af := range w.aggFuncs {
+			memDelta, err := af.MergePartialResult(exprCtx, value[j], dstVal[j])
+			if err != nil {
+				return err
+			}
+			allMemDelta += memDelta
+		}
+	}
+	w.memTracker.Consume(allMemDelta)
+	updateExecTime(w.stats, execStart)
+	return nil
+}
+
+func (w *HashAggFinalWorker) handleNewGroupKey(key string, value []aggfuncs.PartialResult) {
+	if len(w.partialResultMap)+1 > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+		w.BInMap++
+	}
+	w.partialResultMap[key] = value
+}
+
+func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
+	for {
+		input, ok := w.getPartialInput()
 		if !ok {
 			return nil
 		}
-		execStart := time.Now()
-		if intermDataBuffer == nil {
-			intermDataBuffer = make([][]aggfuncs.PartialResult, 0, w.maxChunkSize)
-		}
-		// Consume input in batches, size of every batch is less than w.maxChunkSize.
-		for reachEnd := false; !reachEnd; {
-			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
-			groupKeysLen := len(groupKeys)
-			memSize := getGroupKeyMemUsage(w.groupKeys)
-			w.groupKeys = w.groupKeys[:0]
-			for i := 0; i < groupKeysLen; i++ {
-				w.groupKeys = append(w.groupKeys, []byte(groupKeys[i]))
-			}
-			failpoint.Inject("ConsumeRandomPanic", nil)
-			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
-			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
-			allMemDelta := int64(0)
-			for i, groupKey := range groupKeys {
-				if !w.groupSet.Exist(groupKey) {
-					allMemDelta += w.groupSet.Insert(groupKey)
-				}
-				prs := intermDataBuffer[i]
-				for j, af := range w.aggFuncs {
-					memDelta, err := af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j])
-					if err != nil {
-						return err
-					}
-					allMemDelta += memDelta
-				}
-			}
-			w.memTracker.Consume(allMemDelta)
-		}
-		if w.stats != nil {
-			w.stats.ExecTime += int64(time.Since(execStart))
-			w.stats.TaskNum++
+
+		failpoint.Inject("ConsumeRandomPanic", nil)
+
+		if err := w.mergeInputIntoResultMap(sctx, input); err != nil {
+			return err
 		}
 	}
 }
 
-func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
-	waitStart := time.Now()
-	result, finished := w.receiveFinalResultHolder()
-	if w.stats != nil {
-		w.stats.WaitTime += int64(time.Since(waitStart))
-	}
-	if finished {
-		return
-	}
-	execStart := time.Now()
-	memSize := getGroupKeyMemUsage(w.groupKeys)
-	w.groupKeys = w.groupKeys[:0]
-	for groupKey := range w.groupSet.StringSet {
-		w.groupKeys = append(w.groupKeys, []byte(groupKey))
-	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
-	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
-	for i := 0; i < len(w.groupSet.StringSet); i++ {
+func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) {
+	var finished bool
+	exprCtx := sctx.GetExprCtx()
+	for _, results := range w.partialResultMap {
 		for j, af := range w.aggFuncs {
-			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i][j], result); err != nil {
+			if err := af.AppendFinalResult2Chunk(exprCtx, results[j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}
+
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
+
 		if result.IsFull() {
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
@@ -153,10 +161,59 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 			}
 		}
 	}
-	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-	if w.stats != nil {
-		w.stats.ExecTime += int64(time.Since(execStart))
+}
+
+func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
+	waitStart := time.Now()
+	result, finished := w.receiveFinalResultHolder()
+	updateWaitTime(w.stats, waitStart)
+	if finished {
+		return
 	}
+
+	failpoint.Inject("ConsumeRandomPanic", nil)
+
+	execStart := time.Now()
+	updateExecTime(w.stats, execStart)
+	if w.spillHelper.isSpilledChunksIOEmpty() {
+		w.generateResultAndSend(sctx, result)
+	} else {
+		for {
+			if w.checkFinishChClosed() {
+				return
+			}
+
+			eof, hasError := w.restoreDataFromDisk(sctx)
+			if hasError {
+				return
+			}
+			if eof {
+				break
+			}
+			w.generateResultAndSend(sctx, result)
+		}
+	}
+
+	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
+}
+
+func (w *HashAggFinalWorker) restoreDataFromDisk(sctx sessionctx.Context) (eof bool, hasError bool) {
+	var err error
+
+	// Since data is restored partition by partition, only one partition is in memory at any given time.
+	// Therefore, it's necessary to release the memory used by the previous partition.
+	w.spillHelper.memTracker.Consume(-w.restoredAggResultMapperMem)
+	w.partialResultMap, w.restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
+	if err != nil {
+		w.outputCh <- &AfFinalResult{err: err}
+		return false, true
+	}
+
+	if w.partialResultMap == nil {
+		// All partitions have been restored
+		return true, false
+	}
+	return false, false
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
@@ -168,19 +225,62 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
+func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, partialWorkerWaiter *sync.WaitGroup) {
 	start := time.Now()
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryHashAgg(w.outputCh, r)
+	defer w.cleanup(start, waitGroup)
+
+	partialWorkerWaiter.Wait()
+
+	intestBeforeFinalWorkerStart()
+
+	if w.spillHelper.isSpilledChunksIOEmpty() {
+		err := w.consumeIntermData(ctx)
+		if err != nil {
+			w.outputCh <- &AfFinalResult{err: err}
+			return
 		}
-		if w.stats != nil {
-			w.stats.WorkerTime += int64(time.Since(start))
+	} else {
+		if w.spillHelper.checkError() {
+			return
 		}
-		waitGroup.Done()
-	}()
-	if err := w.consumeIntermData(ctx); err != nil {
-		w.outputCh <- &AfFinalResult{err: err}
 	}
-	w.loadFinalResult(ctx)
+	w.sendFinalResult(ctx)
+}
+
+func (w *HashAggFinalWorker) cleanup(start time.Time, waitGroup *sync.WaitGroup) {
+	if r := recover(); r != nil {
+		recoveryHashAgg(w.outputCh, r)
+	}
+	updateWorkerTime(w.stats, start)
+	waitGroup.Done()
+}
+
+func intestBeforeFinalWorkerStart() {
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(50)
+			if num < 3 {
+				panic("Intest panic: final worker is panicked before start")
+			} else if num < 6 {
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	})
+}
+
+func (w *HashAggFinalWorker) intestDuringFinalWorkerRun(err *error) {
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(10000)
+			if num < 5 {
+				panic("Intest panic: final worker is panicked when running")
+			} else if num < 10 {
+				time.Sleep(1 * time.Millisecond)
+			} else if num < 15 {
+				w.memTracker.Consume(1000000)
+			} else if num < 20 {
+				*err = errors.New("Random fail is triggered in final worker")
+			}
+		}
+	})
 }

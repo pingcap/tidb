@@ -4,6 +4,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/rules_go_work-*": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code",
       "pkg/extension/enterprise/audit/entry.go": "pkg/extension/enterprise/audit/entry.go",
@@ -15,6 +16,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
     }
   },
@@ -86,6 +88,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "br/pkg/glue/console_glue_test.go": "ignore code",
       "br/pkg/restore/db_test.go": "ignore code",
       ".*_/testmain\\.go$": "ignore code"
@@ -96,6 +99,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo code"
     }
   },
@@ -139,6 +143,7 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       ".*_test\\.go$": "ignore generated code",
       "pkg/util/logutil": "ignore util/logutil code",
       "tools/": "ignore tools code",
@@ -163,6 +168,7 @@
       "external/": "no need to vet third party code",
       ".cgo/": "no need to cgo code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code"
     }
   },
@@ -171,6 +177,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code",
       ".*_test\\.go$": "ignore test code"
     },
@@ -251,9 +258,10 @@
   },
   "gofmt": {
     "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
+      "pkg/parser/": "parser/*.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
@@ -264,6 +272,7 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       ".*\\.pb\\.go$": "generated code",
       "/rules_go_work-*": "ignore generated code",
@@ -312,6 +321,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet cgo code"
     }
   },
@@ -342,6 +352,7 @@
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       ".*pb\\.go$": "ignore generated code",
       "br/pkg/streamhelper/.*_test\\.go$": "ignore test code",
       "br/pkg/errors/errors.go": "ignore error",
@@ -464,6 +475,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo"
     }
   },
@@ -503,6 +515,7 @@
       "dumpling/export/sql_type.go": "please fix it",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
@@ -535,7 +548,8 @@
       "pkg/resourcemanager/": "resourcemanager code",
       "pkg/keyspace/": "keyspace code",
       "pkg/owner/": "owner code",
-      "pkg/timer/": "timer code"
+      "pkg/timer/": "timer code",
+      "pkg/domain": "domain code"
     }
   },
   "shift": {
@@ -592,6 +606,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
@@ -699,6 +714,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/parser/digester.go": "ignore code"
     }
   },
@@ -707,6 +723,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/parser/digester_test.go": "ignore code"
     }
   },
@@ -715,8 +732,10 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/server/tidb_test.go": "ignore test code",
       "pkg/server/tests/tidb_test.go": "ignore test code",
+      "pkg/server/tests/commontest/tidb_test.go": "ignore test code",
       "pkg/server/tests/tidb_serial_test.go": "ignore test code",
       "pkg/server/tidb_serial_test.go": "ignore test code",
       "pkg/server/statistics_handler_test.go": "ignore test code",
@@ -866,6 +885,7 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/parser/parser.go": "ignore code"
     }
   },
@@ -881,6 +901,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "tools/check/ut.go": "ignore code"
     }
   },
@@ -895,6 +916,7 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/parser/parser.go": "ignore code"
     }
   },
@@ -1014,6 +1036,7 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/parser/parser.go": "ignore generated code"
     }
   },
@@ -1023,6 +1046,7 @@
       "/build/": "no need to linter code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       ".*_test\\.go$": "ignore test code",
       "br/pkg/restore/split/client.go": "github.com/golang/protobuf deprecated",
       "br/pkg/streamhelper/advancer_cliext.go": "github.com/golang/protobuf deprecated",
@@ -1050,7 +1074,8 @@
       "pkg/server/": "server code",
       "pkg/owner/": "owner code",
       "pkg/meta": "meta code",
-      "pkg/timer/": "timer code"
+      "pkg/timer/": "timer code",
+      "pkg/statistics/": "statistics code"
     }
   },
   "SA1029": {
@@ -1058,6 +1083,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       ".*_test\\.go$": "ignore test code"
     }
   },
@@ -1237,6 +1263,7 @@
       "cmd/mirror": "cmd/mirror code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/parser/yy_parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
@@ -1246,6 +1273,7 @@
       "external/": "no need to vet third party code",
       "cmd/mirror": "no need to mirror",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "pkg/parser/yy_parser.go": "ignore generated code",
       "pkg/parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
@@ -1263,6 +1291,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1270,6 +1299,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code",
       "build/linter/constructor/testdata/": "no need to vet the test inside the linter"
     }
@@ -1279,6 +1309,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1287,6 +1318,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1296,6 +1328,7 @@
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
@@ -1305,6 +1338,7 @@
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },

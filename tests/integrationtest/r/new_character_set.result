@@ -51,7 +51,6 @@ insert into t values ('中文');
 set @@character_set_client = 'gbk';
 prepare p1 from "insert into t values ('中文');";
 execute p1;
-
 select a, hex(a) from t;
 a	hex(a)
 涓?枃	E6B6933FE69E83

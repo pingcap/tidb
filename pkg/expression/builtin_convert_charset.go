@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -56,7 +55,7 @@ type tidbToBinaryFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
@@ -90,8 +89,8 @@ func (b *builtinInternalToBinarySig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinInternalToBinarySig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
@@ -105,14 +104,14 @@ func (b *builtinInternalToBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInternalToBinarySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
@@ -138,7 +137,7 @@ type tidbFromBinaryFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
@@ -169,8 +168,8 @@ func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return val, isNull, err
 	}
@@ -188,14 +187,14 @@ func (b *builtinInternalFromBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
 	enc := charset.FindEncoding(b.tp.GetCharset())
@@ -218,7 +217,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 }
 
 // BuildToBinaryFunction builds to_binary function.
-func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Expression) {
+func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 	fc := &tidbToBinaryFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
@@ -229,11 +228,11 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 		RetType:  f.getRetTp(),
 		Function: f,
 	}
-	return FoldConstant(res)
+	return FoldConstant(ctx, res)
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
@@ -244,7 +243,7 @@ func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.
 		RetType:  tp,
 		Function: f,
 	}
-	return FoldConstant(res)
+	return FoldConstant(ctx, res)
 }
 
 type funcProp int8
@@ -306,7 +305,7 @@ func init() {
 }
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
-func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollation, funcName string) Expression {
+func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string) Expression {
 	argChs, dstChs := expr.GetType().GetCharset(), ec.Charset
 	switch convertFuncsMap[funcName] {
 	case funcPropNone:
@@ -322,7 +321,8 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 				return expr
 			}
 			return BuildToBinaryFunction(ctx, expr)
-		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin {
+		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin &&
+			expr.GetType().GetType() != mysql.TypeNull {
 			ft := expr.GetType().Clone()
 			ft.SetCharset(ec.Charset)
 			ft.SetCollate(ec.Collation)

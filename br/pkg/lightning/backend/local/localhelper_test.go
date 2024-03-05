@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 )
 
@@ -252,6 +253,11 @@ func (c *testSplitClient) GetOperator(ctx context.Context, regionID uint64) (*pd
 func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if c.hook != nil {
 		key, endKey, limit = c.hook.BeforeScanRegions(ctx, key, endKey, limit)
 	}
@@ -272,11 +278,11 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	return regions, err
 }
 
-func (c *testSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
+func (c *testSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
 	return
 }
 
-func (c *testSplitClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
+func (c *testSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
 	return nil
 }
 
@@ -456,9 +462,8 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	client := initTestSplitClient(keys, hook)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
 	local.RegionSplitBatchSize = 4
 	local.RegionSplitConcurrency = 4
@@ -715,9 +720,8 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
 	client := initTestSplitClient(keys, nil)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
 	local.RegionSplitBatchSize = 4
 	local.RegionSplitConcurrency = 4
@@ -791,7 +795,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	keys := [][]byte{[]byte(""), tableStartKey}
 	// pre split 2 regions
 	for i := int64(0); i < 2; i++ {
-		keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(i))
+		keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(i))
 		require.NoError(t, err)
 		h, err := kv.NewCommonHandle(keyBytes)
 		require.NoError(t, err)
@@ -801,9 +805,8 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	keys = append(keys, tableEndKey, []byte(""))
 	client := initTestSplitClient(keys, hook)
 	local := &Backend{
-		splitCli:         client,
-		regionSizeGetter: &TableRegionSizeGetterImpl{},
-		logger:           log.L(),
+		splitCli: client,
+		logger:   log.L(),
 	}
 	local.RegionSplitBatchSize = 10
 	local.RegionSplitConcurrency = 10
@@ -813,7 +816,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	rangeKeys := make([][]byte, 0, 20+1)
 	for i := int64(0); i < 2; i++ {
 		for j := int64(0); j < 10; j++ {
-			keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
+			keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
 			require.NoError(t, err)
 			h, err := kv.NewCommonHandle(keyBytes)
 			require.NoError(t, err)

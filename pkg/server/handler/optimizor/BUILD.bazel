@@ -43,7 +43,7 @@ go_test(
         "statistics_handler_test.go",
     ],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         ":optimizor",
         "//pkg/config",
@@ -60,6 +60,7 @@ go_test(
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "//pkg/util/replayer",
         "//pkg/util/topsql/state",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_go_sql_driver_mysql//:mysql",

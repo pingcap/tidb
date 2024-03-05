@@ -52,6 +52,11 @@ func (*IdleCoordinator) IsClosed() bool {
 	return true
 }
 
+// GetNodeCnt implements MppCoordinator interface function.
+func (*IdleCoordinator) GetNodeCnt() int {
+	return 0
+}
+
 func TestDetectAndDelete(t *testing.T) {
 	startTs := uint64(time.Now().UnixNano())
 	InstanceMPPCoordinatorManager.maxLifeTime = uint64(copr.TiFlashReadTimeoutUltraLong.Nanoseconds() + detectFrequency.Nanoseconds())

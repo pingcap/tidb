@@ -263,7 +263,7 @@ func (e *Engine) unlock() {
 // TotalMemorySize returns the total memory size of the engine.
 func (e *Engine) TotalMemorySize() int64 {
 	var memSize int64
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		w := k.(*Writer)
 		if w.kvBuffer != nil {
 			w.Lock()
@@ -528,7 +528,7 @@ func (e *Engine) getEngineFileSize() backend.EngineFileSize {
 		total = metrics.Total()
 	}
 	var memSize int64
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		w := k.(*Writer)
 		memSize += int64(w.EstimatedSize())
 		return true
@@ -579,12 +579,12 @@ func (h *metaSeqHeap) Swap(i, j int) {
 }
 
 // Push pushes the item onto the priority queue.
-func (h *metaSeqHeap) Push(x interface{}) {
+func (h *metaSeqHeap) Push(x any) {
 	h.arr = append(h.arr, x.(metaSeq))
 }
 
 // Pop removes the minimum item (according to Less) from the priority queue
-func (h *metaSeqHeap) Pop() interface{} {
+func (h *metaSeqHeap) Pop() any {
 	item := h.arr[len(h.arr)-1]
 	h.arr = h.arr[:len(h.arr)-1]
 	return item
@@ -642,7 +642,7 @@ func (e *Engine) ingestSSTLoop() {
 					}
 					ingestMetas := metas.metas
 					if e.config.Compact {
-						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir)
+						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir, e.config.BlockSize)
 						if err != nil {
 							e.setError(err)
 							return
@@ -886,7 +886,7 @@ func (e *Engine) ingestSSTs(metas []*sstMeta) error {
 
 func (e *Engine) flushLocalWriters(parentCtx context.Context) error {
 	eg, ctx := errgroup.WithContext(parentCtx)
-	e.localWriters.Range(func(k, v interface{}) bool {
+	e.localWriters.Range(func(k, _ any) bool {
 		eg.Go(func() error {
 			w := k.(*Writer)
 			return w.flush(ctx)
@@ -975,20 +975,28 @@ func (e *Engine) loadEngineMeta() error {
 	return nil
 }
 
-func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
+func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *membuf.Buffer) IngestLocalEngineIter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
 		newOpts.LowerBound = normalIterStartKey
 		opts = &newOpts
 	}
 	if !e.duplicateDetection {
-		return pebbleIter{Iterator: e.getDB().NewIter(opts)}
+		return &pebbleIter{Iterator: e.getDB().NewIter(opts), buf: buf}
 	}
 	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(e.getDB(), e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
+	return newDupDetectIter(
+		e.getDB(),
+		e.keyAdapter,
+		opts,
+		e.duplicateDB,
+		logger,
+		e.dupDetectOpt,
+		buf,
+	)
 }
 
 var _ common.IngestData = (*Engine)(nil)
@@ -1005,8 +1013,11 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		LowerBound: lowerBound,
 		UpperBound: upperBound,
 	}
+	failpoint.Inject("mockGetFirstAndLastKey", func() {
+		failpoint.Return(lowerBound, upperBound, nil)
+	})
 
-	iter := e.newKVIter(context.Background(), opt)
+	iter := e.newKVIter(context.Background(), opt, nil)
 	//nolint: errcheck
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
@@ -1027,8 +1038,16 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 }
 
 // NewIter implements IngestData interface.
-func (e *Engine) NewIter(ctx context.Context, lowerBound, upperBound []byte) common.ForwardIter {
-	return e.newKVIter(ctx, &pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound})
+func (e *Engine) NewIter(
+	ctx context.Context,
+	lowerBound, upperBound []byte,
+	bufPool *membuf.Pool,
+) common.ForwardIter {
+	return e.newKVIter(
+		ctx,
+		&pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound},
+		bufPool.NewBuffer(),
+	)
 }
 
 // GetTS implements IngestData interface.
@@ -1330,7 +1349,7 @@ func (w *Writer) addSST(ctx context.Context, meta *sstMeta) error {
 
 func (w *Writer) createSSTWriter() (*sstWriter, error) {
 	path := filepath.Join(w.engine.sstDir, uuid.New().String()+".sst")
-	writer, err := newSSTWriter(path)
+	writer, err := newSSTWriter(path, w.engine.config.BlockSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1346,7 +1365,7 @@ type sstWriter struct {
 	logger log.Logger
 }
 
-func newSSTWriter(path string) (*sstable.Writer, error) {
+func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1355,7 +1374,7 @@ func newSSTWriter(path string) (*sstable.Writer, error) {
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
-		BlockSize: 16 * 1024,
+		BlockSize: blockSize,
 	})
 	return writer, nil
 }
@@ -1442,12 +1461,12 @@ func (h *sstIterHeap) Swap(i, j int) {
 }
 
 // Push implements heap.Interface.
-func (h *sstIterHeap) Push(x interface{}) {
+func (h *sstIterHeap) Push(x any) {
 	h.iters = append(h.iters, x.(*sstIter))
 }
 
 // Pop implements heap.Interface.
-func (h *sstIterHeap) Pop() interface{} {
+func (h *sstIterHeap) Pop() any {
 	item := h.iters[len(h.iters)-1]
 	h.iters = h.iters[:len(h.iters)-1]
 	return item
@@ -1485,7 +1504,7 @@ func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 // sstIngester is a interface used to merge and ingest SST files.
 // it's a interface mainly used for test convenience
 type sstIngester interface {
-	mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
+	mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error)
 	ingest([]*sstMeta) error
 }
 
@@ -1493,7 +1512,7 @@ type dbSSTIngester struct {
 	e *Engine
 }
 
-func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
+func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {
@@ -1542,7 +1561,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	heap.Init(mergeIter)
 
 	name := filepath.Join(dir, fmt.Sprintf("%s.sst", uuid.New()))
-	writer, err := newSSTWriter(name)
+	writer, err := newSSTWriter(name, blockSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

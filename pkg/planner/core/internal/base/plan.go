@@ -20,8 +20,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -29,31 +29,31 @@ import (
 
 // Plan Should be used as embedded struct in Plan implementations.
 type Plan struct {
-	ctx         sessionctx.Context
-	stats       *property.StatsInfo
-	tp          string
-	id          int
-	blockOffset int
+	ctx     context.PlanContext
+	stats   *property.StatsInfo
+	tp      string
+	id      int
+	qbBlock int // Query Block offset
 }
 
 // NewBasePlan creates a new base plan.
-func NewBasePlan(ctx sessionctx.Context, tp string, offset int) Plan {
+func NewBasePlan(ctx context.PlanContext, tp string, qbBlock int) Plan {
 	id := ctx.GetSessionVars().PlanID.Add(1)
 	return Plan{
-		tp:          tp,
-		id:          int(id),
-		ctx:         ctx,
-		blockOffset: offset,
+		tp:      tp,
+		id:      int(id),
+		ctx:     ctx,
+		qbBlock: qbBlock,
 	}
 }
 
 // SCtx is to get the sessionctx from the plan.
-func (p *Plan) SCtx() sessionctx.Context {
+func (p *Plan) SCtx() context.PlanContext {
 	return p.ctx
 }
 
 // SetSCtx is to set the sessionctx for the plan.
-func (p *Plan) SetSCtx(ctx sessionctx.Context) {
+func (p *Plan) SetSCtx(ctx context.PlanContext) {
 	p.ctx = ctx
 }
 
@@ -108,9 +108,9 @@ func (p *Plan) SetTP(tp string) {
 	p.tp = tp
 }
 
-// SelectBlockOffset is to get the select block offset.
-func (p *Plan) SelectBlockOffset() int {
-	return p.blockOffset
+// QueryBlockOffset is to get the select block offset.
+func (p *Plan) QueryBlockOffset() int {
+	return p.qbBlock
 }
 
 // SetStats sets the stats

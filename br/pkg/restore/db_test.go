@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,7 +79,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 		DB:   dbInfo,
 	}
 	// Get the next AutoIncID
-	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
+	idAlloc := autoid.NewAllocator(s.mock.Domain, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
 	globalAutoID, err := idAlloc.NextGlobalAutoID()
 	require.NoErrorf(t, err, "Error allocate next auto id")
 	require.Equal(t, uint64(globalAutoID), autoIncID)
@@ -376,7 +377,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs := restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err := infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -387,7 +388,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err = infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -399,7 +400,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 1, len(dbs))
 
-	builder, err = infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("d1")},
@@ -414,4 +415,15 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 2, len(dbs))
+}
+
+// NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
+//
+// - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.
+// - IF it is an system privilege table, please add the table name into `sysPrivilegeTableMap`.
+// - IF it is an statistics table, please add the table name into `statsTables`.
+//
+// The above variables are in the file br/pkg/restore/systable_restore.go
+func TestMonitorTheSystemTableIncremental(t *testing.T) {
+	require.Equal(t, int64(185), session.CurrentBootstrapVersion)
 }

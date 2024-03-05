@@ -111,8 +111,13 @@ func (tc *TLS) WithHost(host string) *TLS {
 
 // ToGRPCDialOption constructs a gRPC dial option.
 func (tc *TLS) ToGRPCDialOption() grpc.DialOption {
-	if tc.inner != nil {
-		return grpc.WithTransportCredentials(credentials.NewTLS(tc.inner))
+	return ToGRPCDialOption(tc.inner)
+}
+
+// ToGRPCDialOption constructs a gRPC dial option from tls.Config.
+func ToGRPCDialOption(tls *tls.Config) grpc.DialOption {
+	if tls != nil {
+		return grpc.WithTransportCredentials(credentials.NewTLS(tls))
 	}
 	return grpc.WithTransportCredentials(insecure.NewCredentials())
 }
@@ -126,7 +131,7 @@ func (tc *TLS) WrapListener(l net.Listener) net.Listener {
 }
 
 // GetJSON performs a GET request to the given path and unmarshals the response
-func (tc *TLS) GetJSON(ctx context.Context, path string, v interface{}) error {
+func (tc *TLS) GetJSON(ctx context.Context, path string, v any) error {
 	return GetJSON(ctx, tc.client, tc.url+path, v)
 }
 

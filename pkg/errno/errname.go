@@ -979,7 +979,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInfoSchemaExpired:                mysql.Message("Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV", nil),
 	ErrInfoSchemaChanged:                mysql.Message("Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`", nil),
 	ErrBadNumber:                        mysql.Message("Bad Number", nil),
-	ErrCastAsSignedOverflow:             mysql.Message("Cast to signed converted positive out-of-range integer to it's negative complement", nil),
+	ErrCastAsSignedOverflow:             mysql.Message("Cast to signed converted positive out-of-range integer to its negative complement", nil),
 	ErrCastNegIntAsUnsigned:             mysql.Message("Cast to unsigned converted negative integer to it's positive complement", nil),
 	ErrInvalidYearFormat:                mysql.Message("invalid year format", nil),
 	ErrInvalidYear:                      mysql.Message("invalid year", nil),
@@ -1059,7 +1059,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadParquetFromLocal:             mysql.Message("Do not support loading parquet files from local. Please try to load the parquet files from the cloud storage", nil),
 	ErrLoadDataEmptyPath:                mysql.Message("The value of INFILE must not be empty when LOAD DATA from LOCAL", nil),
 	ErrLoadDataUnsupportedFormat:        mysql.Message("The FORMAT '%s' is not supported", nil),
-	ErrLoadDataInvalidURI:               mysql.Message("The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'", nil),
+	ErrLoadDataInvalidURI:               mysql.Message("The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'", nil),
 	ErrLoadDataCantAccess:               mysql.Message("Access to the %s has been denied. Reason: %s. Please check the URI, access key and secret access key are correct", nil),
 	ErrLoadDataCantRead:                 mysql.Message("Failed to read source files. Reason: %s. %s", nil),
 	ErrLoadDataWrongFormatConfig:        mysql.Message("", nil),
@@ -1073,6 +1073,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataPreCheckFailed:           mysql.Message("PreCheck failed: %s", nil),
 	ErrMemoryExceedForQuery:             mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", nil),
 	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
+	ErrHTTPServiceError:                 mysql.Message("HTTP request failed with status %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1164,4 +1165,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCannotPauseDDLJob:  mysql.Message("Job [%v] can't be paused: %s", nil),
 	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed: %s", nil),
 	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
+	ErrBDRRestrictedDDL:   mysql.Message("The operation is not allowed while the bdr role of this cluster is set to %s.", nil),
 }

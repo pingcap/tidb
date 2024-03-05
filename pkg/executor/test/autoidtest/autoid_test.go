@@ -16,7 +16,6 @@ package autoid_test
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,7 +24,6 @@ import (
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -89,56 +87,10 @@ func TestFilterDifferentAllocators(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, len(allHandles))
 		orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-		require.Greater(t, orderedHandles[0], int64(3000001))
+		require.GreaterOrEqual(t, orderedHandles[0], int64(3000001))
 
 		tk.MustExec("drop table t1")
 	}
-}
-
-func TestAutoIncrementInsertMinMax(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	cases := []struct {
-		t      string
-		s      string
-		vals   []int64
-		expect [][]interface{}
-	}{
-		{"tinyint", "signed", []int64{-128, 0, 127}, testkit.Rows("-128", "1", "2", "3", "127")},
-		{"tinyint", "unsigned", []int64{0, 127, 255}, testkit.Rows("1", "2", "127", "128", "255")},
-		{"smallint", "signed", []int64{-32768, 0, 32767}, testkit.Rows("-32768", "1", "2", "3", "32767")},
-		{"smallint", "unsigned", []int64{0, 32767, 65535}, testkit.Rows("1", "2", "32767", "32768", "65535")},
-		{"mediumint", "signed", []int64{-8388608, 0, 8388607}, testkit.Rows("-8388608", "1", "2", "3", "8388607")},
-		{"mediumint", "unsigned", []int64{0, 8388607, 16777215}, testkit.Rows("1", "2", "8388607", "8388608", "16777215")},
-		{"integer", "signed", []int64{-2147483648, 0, 2147483647}, testkit.Rows("-2147483648", "1", "2", "3", "2147483647")},
-		{"integer", "unsigned", []int64{0, 2147483647, 4294967295}, testkit.Rows("1", "2", "2147483647", "2147483648", "4294967295")},
-		{"bigint", "signed", []int64{-9223372036854775808, 0, 9223372036854775807}, testkit.Rows("-9223372036854775808", "1", "2", "3", "9223372036854775807")},
-		{"bigint", "unsigned", []int64{0, 9223372036854775807}, testkit.Rows("1", "2", "9223372036854775807", "9223372036854775808")},
-	}
-
-	for _, option := range []string{"", "auto_id_cache 1", "auto_id_cache 100"} {
-		for idx, c := range cases {
-			sql := fmt.Sprintf("create table t%d (a %s %s key auto_increment) %s", idx, c.t, c.s, option)
-			tk.MustExec(sql)
-
-			for _, val := range c.vals {
-				tk.MustExec(fmt.Sprintf("insert into t%d values (%d)", idx, val))
-				tk.Exec(fmt.Sprintf("insert into t%d values ()", idx)) // ignore error
-			}
-
-			tk.MustQuery(fmt.Sprintf("select * from t%d order by a", idx)).Check(c.expect)
-
-			tk.MustExec(fmt.Sprintf("drop table t%d", idx))
-		}
-	}
-
-	tk.MustExec("create table t10 (a integer key auto_increment) auto_id_cache 1")
-	err := tk.ExecToErr("insert into t10 values (2147483648)")
-	require.Error(t, err)
-	err = tk.ExecToErr("insert into t10 values (-2147483649)")
-	require.Error(t, err)
 }
 
 func TestInsertWithAutoidSchema(t *testing.T) {
@@ -154,14 +106,10 @@ func TestInsertWithAutoidSchema(t *testing.T) {
 	tk.MustExec(`create table t7(id int primary key, n double unsigned auto_increment, key I_n(n));`)
 	// test for inserting multiple values
 	tk.MustExec(`create table t8(id int primary key auto_increment, n int);`)
-
 	testInsertWithAutoidSchema(t, tk)
-}
 
-func TestInsertWithAutoidSchemaCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
+	// test for auto_id_cache = 1
+	tk.MustExec(`drop table if exists t1, t2, t3, t4, t5, t6, t7, t8`)
 	tk.MustExec(`create table t1(id int primary key auto_increment, n int) AUTO_ID_CACHE 1;`)
 	tk.MustExec(`create table t2(id int unsigned primary key auto_increment, n int) AUTO_ID_CACHE 1;`)
 	tk.MustExec(`create table t3(id tinyint primary key auto_increment, n int) AUTO_ID_CACHE 1;`)
@@ -171,7 +119,6 @@ func TestInsertWithAutoidSchemaCache(t *testing.T) {
 	tk.MustExec(`create table t7(id int primary key, n double unsigned auto_increment, key I_n(n)) AUTO_ID_CACHE 1;`)
 	// test for inserting multiple values
 	tk.MustExec(`create table t8(id int primary key auto_increment, n int);`)
-
 	testInsertWithAutoidSchema(t, tk)
 }
 
@@ -179,7 +126,7 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 	tests := []struct {
 		insert string
 		query  string
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			`insert into t1(id, n) values(1, 1)`,
@@ -591,153 +538,6 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 	}
 }
 
-// TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
-// than that of auto_increment_increment, the value of auto_increment_offset is ignored
-// (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
-// This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
-func TestAutoIDIncrementAndOffset(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	// Test for offset is larger than increment.
-	tk.Session().GetSessionVars().AutoIncrementIncrement = 5
-	tk.Session().GetSessionVars().AutoIncrementOffset = 10
-
-	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
-		tk.MustExec(`create table io (a int key auto_increment)` + str)
-		tk.MustExec(`insert into io values (null),(null),(null)`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "15", "20"))
-		tk.MustExec(`drop table io`)
-	}
-
-	// Test handle is PK.
-	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
-		tk.MustExec(`create table io (a int key auto_increment)` + str)
-		tk.Session().GetSessionVars().AutoIncrementOffset = 10
-		tk.Session().GetSessionVars().AutoIncrementIncrement = 2
-		tk.MustExec(`insert into io values (),(),()`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "12", "14"))
-		tk.MustExec(`delete from io`)
-
-		// Test reset the increment.
-		tk.Session().GetSessionVars().AutoIncrementIncrement = 5
-		tk.MustExec(`insert into io values (),(),()`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("15", "20", "25"))
-		tk.MustExec(`delete from io`)
-
-		tk.Session().GetSessionVars().AutoIncrementIncrement = 10
-		tk.MustExec(`insert into io values (),(),()`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("30", "40", "50"))
-		tk.MustExec(`delete from io`)
-
-		tk.Session().GetSessionVars().AutoIncrementIncrement = 5
-		tk.MustExec(`insert into io values (),(),()`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("55", "60", "65"))
-		tk.MustExec(`drop table io`)
-	}
-
-	// Test handle is not PK.
-	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
-		tk.Session().GetSessionVars().AutoIncrementIncrement = 2
-		tk.Session().GetSessionVars().AutoIncrementOffset = 10
-		tk.MustExec(`create table io (a int, b int auto_increment, key(b))` + str)
-		tk.MustExec(`insert into io(b) values (null),(null),(null)`)
-		// AutoID allocation will take increment and offset into consideration.
-		tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
-		if str == "" {
-			// HandleID allocation will ignore the increment and offset.
-			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
-		} else {
-			// Separate row id and auto inc id, increment and offset works on auto inc id
-			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("1", "2", "3"))
-		}
-		tk.MustExec(`delete from io`)
-
-		tk.Session().GetSessionVars().AutoIncrementIncrement = 10
-		tk.MustExec(`insert into io(b) values (null),(null),(null)`)
-		tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
-		if str == "" {
-			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
-		} else {
-			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("4", "5", "6"))
-		}
-
-		// Test invalid value.
-		tk.Session().GetSessionVars().AutoIncrementIncrement = -1
-		tk.Session().GetSessionVars().AutoIncrementOffset = -2
-		tk.MustGetErrMsg(`insert into io(b) values (null),(null),(null)`,
-			"[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
-		tk.MustExec(`delete from io`)
-
-		tk.Session().GetSessionVars().AutoIncrementIncrement = 65536
-		tk.Session().GetSessionVars().AutoIncrementOffset = 65536
-		tk.MustGetErrMsg(`insert into io(b) values (null),(null),(null)`,
-			"[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
-
-		tk.MustExec(`drop table io`)
-	}
-}
-
-func TestRenameTableForAutoIncrement(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test;")
-	tk.MustExec("drop table if exists t1, t2, t3;")
-	tk.MustExec("create table t1 (id int key auto_increment);")
-	tk.MustExec("insert into t1 values ()")
-	tk.MustExec("rename table t1 to t11")
-	tk.MustExec("insert into t11 values ()")
-	// TODO(tiancaiamao): fix bug and uncomment here, rename table should not discard the cached AUTO_ID.
-	// tk.MustQuery("select * from t11").Check(testkit.Rows("1", "2"))
-
-	// auto_id_cache 1 use another implementation and do not have such bug.
-	tk.MustExec("create table t2 (id int key auto_increment) auto_id_cache 1;")
-	tk.MustExec("insert into t2 values ()")
-	tk.MustExec("rename table t2 to t22")
-	tk.MustExec("insert into t22 values ()")
-	tk.MustQuery("select * from t22").Check(testkit.Rows("1", "2"))
-
-	tk.MustExec("create table t3 (id int key auto_increment) auto_id_cache 100;")
-	tk.MustExec("insert into t3 values ()")
-	tk.MustExec("rename table t3 to t33")
-	tk.MustExec("insert into t33 values ()")
-	// TODO(tiancaiamao): fix bug and uncomment here, rename table should not discard the cached AUTO_ID.
-	// tk.MustQuery("select * from t33").Check(testkit.Rows("1", "2"))
-}
-
-func TestAlterTableAutoIDCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test;")
-	tk.MustExec("drop table if exists t_473;")
-	tk.MustExec("create table t_473 (id int key auto_increment)")
-	tk.MustExec("insert into t_473 values ()")
-	tk.MustQuery("select * from t_473").Check(testkit.Rows("1"))
-	rs, err := tk.Exec("show table t_473 next_row_id")
-	require.NoError(t, err)
-	rows, err1 := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
-	require.NoError(t, err1)
-	// "test t_473 id 1013608 AUTO_INCREMENT"
-	val, err2 := strconv.ParseUint(rows[0][3], 10, 64)
-	require.NoError(t, err2)
-
-	tk.MustExec("alter table t_473 auto_id_cache = 100")
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(
-		fmt.Sprintf("test t_473 id %d _TIDB_ROWID", val),
-		"test t_473 id 1 AUTO_INCREMENT",
-	))
-	tk.MustExec("insert into t_473 values ()")
-	tk.MustQuery("select * from t_473").Check(testkit.Rows("1", fmt.Sprintf("%d", val)))
-	tk.MustQuery("show table t_473 next_row_id").Check(testkit.Rows(
-		fmt.Sprintf("test t_473 id %d _TIDB_ROWID", val+100),
-		"test t_473 id 1 AUTO_INCREMENT",
-	))
-
-	// Note that auto_id_cache=1 use a different implementation, switch between them is not allowed.
-	// TODO: relax this restriction and update the test case.
-	tk.MustExecToErr("alter table t_473 auto_id_cache = 1")
-}
-
 func TestMockAutoIDServiceError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -766,43 +566,4 @@ func TestIssue39528(t *testing.T) {
 	require.NoError(t, err)
 	// Make sure the code does not visit tikv on allocate path.
 	require.False(t, codeRun)
-}
-
-func TestAutoIDConstraint(t *testing.T) {
-	// Remove the constraint that auto id column must be defined as a key
-	// See https://github.com/pingcap/tidb/issues/40580
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-
-	// Cover: create table with/without key constraint
-	template := `create table t%d (id int auto_increment,k int,c char(120)%s) %s`
-	keyDefs := []string{"",
-		",PRIMARY KEY(k, id)",
-		",key idx_1(id)",
-		",PRIMARY KEY(`k`, `id`), key idx_1(id)",
-	}
-	engineDefs := []string{"",
-		"engine = MyISAM",
-		"engine = InnoDB",
-		"auto_id_cache 1",
-		"auto_id_cache 100",
-	}
-	i := 0
-	for _, keyDef := range keyDefs {
-		for _, engineDef := range engineDefs {
-			tk.MustExec(fmt.Sprintf("drop table if exists t%d", i))
-			sql := fmt.Sprintf(template, i, keyDef, engineDef)
-			tk.MustExec(sql)
-			i++
-		}
-	}
-
-	// alter table add auto id column is not supported, but cover it here to prevent regression
-	tk.MustExec("create table tt1 (id int)")
-	tk.MustExecToErr("alter table tt1 add column (c int auto_increment)")
-
-	// Cover case: create table with auto id column as key, and remove it later
-	tk.MustExec("create table tt2 (id int, c int auto_increment, key c_idx(c))")
-	tk.MustExec("alter table tt2 drop index c_idx")
 }

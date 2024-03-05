@@ -76,7 +76,7 @@ func testWindowFunc(t *testing.T, p windowTest) {
 		err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 		require.NoError(t, err)
 		dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-		result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[i], collate.GetCollator(desc.RetTp.GetCollate()))
+		result, err := dt.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &p.results[i], collate.GetCollator(desc.RetTp.GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, result)
 		resultChk.Reset()
@@ -107,7 +107,7 @@ func testWindowAggMemFunc(t *testing.T, p windowMemTest) {
 	}
 }
 
-func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...interface{}) windowTest {
+func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...any) windowTest {
 	pt := windowTest{
 		dataType: types.NewFieldType(tp),
 		numRows:  numRows,
@@ -127,7 +127,7 @@ func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expre
 	return pt
 }
 
-func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, results ...interface{}) windowTest {
+func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, results ...any) windowTest {
 	pt := windowTest{
 		dataType: types.NewFieldType(tp),
 		numRows:  numRows,

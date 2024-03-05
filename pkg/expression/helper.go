@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -60,7 +59,7 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 }
 
 // GetTimeCurrentTimestamp is used for generating a timestamp for some special cases: cast null value to timestamp type with not null flag.
-func GetTimeCurrentTimestamp(ctx sessionctx.Context, tp byte, fsp int) (d types.Datum, err error) {
+func GetTimeCurrentTimestamp(ctx BuildContext, tp byte, fsp int) (d types.Datum, err error) {
 	var t types.Time
 	t, err = getTimeCurrentTimeStamp(ctx, tp, fsp)
 	if err != nil {
@@ -70,7 +69,7 @@ func GetTimeCurrentTimestamp(ctx sessionctx.Context, tp byte, fsp int) (d types.
 	return d, nil
 }
 
-func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int) (t types.Time, err error) {
+func getTimeCurrentTimeStamp(ctx BuildContext, tp byte, fsp int) (t types.Time, err error) {
 	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
 	defaultTime, err := getStmtTimestamp(ctx)
 	if err != nil {
@@ -87,10 +86,13 @@ func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int) (t types.
 }
 
 // GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, explicitTz *time.Location) (d types.Datum, err error) {
+func GetTimeValue(ctx BuildContext, v any, tp byte, fsp int, explicitTz *time.Location) (d types.Datum, err error) {
 	var value types.Time
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	if explicitTz != nil {
+		tc = tc.WithLocation(explicitTz)
+	}
 
-	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
 	case string:
 		lowerX := strings.ToLower(x)
@@ -99,10 +101,10 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 				return d, err
 			}
 		} else if lowerX == types.ZeroDatetimeStr {
-			value, err = types.ParseTimeFromNum(sc.TypeCtx(), 0, tp, fsp)
+			value, err = types.ParseTimeFromNum(tc, 0, tp, fsp)
 			terror.Log(err)
 		} else {
-			value, err = types.ParseTime(sc.TypeCtx(), x, tp, fsp, explicitTz)
+			value, err = types.ParseTime(tc, x, tp, fsp)
 			if err != nil {
 				return d, err
 			}
@@ -110,12 +112,12 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 	case *driver.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
-			value, err = types.ParseTime(sc.TypeCtx(), x.GetString(), tp, fsp, nil)
+			value, err = types.ParseTime(tc, x.GetString(), tp, fsp)
 			if err != nil {
 				return d, err
 			}
 		case types.KindInt64:
-			value, err = types.ParseTimeFromNum(sc.TypeCtx(), x.GetInt64(), tp, fsp)
+			value, err = types.ParseTimeFromNum(tc, x.GetInt64(), tp, fsp)
 			if err != nil {
 				return d, err
 			}
@@ -132,17 +134,17 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 		return d, errDefaultValue
 	case *ast.UnaryOperationExpr:
 		// support some expression, like `-1`
-		v, err := EvalAstExpr(ctx, x)
+		v, err := EvalSimpleAst(ctx, x)
 		if err != nil {
 			return d, err
 		}
 		ft := types.NewFieldType(mysql.TypeLonglong)
-		xval, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, ft)
+		xval, err := v.ConvertTo(tc, ft)
 		if err != nil {
 			return d, err
 		}
 
-		value, err = types.ParseTimeFromNum(sc.TypeCtx(), xval.GetInt64(), tp, fsp)
+		value, err = types.ParseTimeFromNum(tc, xval.GetInt64(), tp, fsp)
 		if err != nil {
 			return d, err
 		}
@@ -155,7 +157,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 
 // if timestamp session variable set, use session variable as current time, otherwise use cached time
 // during one sql statement, the "current_time" should be the same
-func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
+func getStmtTimestamp(ctx EvalContext) (time.Time, error) {
 	failpoint.Inject("injectNow", func(val failpoint.Value) {
 		v := time.Unix(int64(val.(int)), 0)
 		failpoint.Return(v, nil)

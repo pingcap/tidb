@@ -58,7 +58,7 @@ func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
 	f, err = os.Open(path)
 	require.NoError(t, err)
 
-	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
+	assertReadAt := func(off int64, assertErr any, assertN int, assertString string) {
 		r := testCase.newReader(f)
 		buf := make([]byte, 10)
 		n, err := r.ReadAt(buf, off)

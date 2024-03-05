@@ -89,7 +89,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	}
 	for i, expr := range p.Exprs {
 		col, ok := expr.(*expression.Column)
-		if !ok || !col.Equal(nil, child.Schema().Columns[i]) {
+		if !ok || !col.EqualColumn(child.Schema().Columns[i]) {
 			return false
 		}
 	}
@@ -97,7 +97,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 }
 
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
-	dst := replace[string(origin.HashCode(nil))]
+	dst := replace[string(origin.HashCode())]
 	if dst != nil {
 		retType, inOperand := origin.RetType, origin.InOperand
 		*origin = *dst
@@ -209,9 +209,10 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	// eliminate duplicate projection: projection with child projection
 	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+			ctx := p.SCtx()
 			for i := range proj.Exprs {
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
-				foldedExpr := expression.FoldConstant(proj.Exprs[i])
+				foldedExpr := expression.FoldConstant(ctx.GetExprCtx(), proj.Exprs[i])
 				// the folded expr should have the same null flag with the original expr, especially for the projection under union, so forcing it here.
 				foldedExpr.GetType().SetFlag((foldedExpr.GetType().GetFlag() & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().GetFlag() & mysql.NotNullFlag))
 				proj.Exprs[i] = foldedExpr
@@ -226,7 +227,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	}
 	exprs := proj.Exprs
 	for i, col := range proj.Schema().Columns {
-		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
+		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
 	appendProjEliminateTraceStep(proj, opt)
 	return p.Children()[0]
@@ -297,7 +298,7 @@ func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Col
 func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column) {
 	la.LogicalJoin.ReplaceExprColumns(replace)
 	for _, coCol := range la.CorCols {
-		dst := replace[string(coCol.Column.HashCode(nil))]
+		dst := replace[string(coCol.Column.HashCode())]
 		if dst != nil {
 			coCol.Column = *dst
 		}

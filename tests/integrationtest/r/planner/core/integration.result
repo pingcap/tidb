@@ -309,7 +309,6 @@ drop table if exists t;
 create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b));
 insert into t values (1,2);
 admin check table t;
-
 select a from t order by a;
 a
 1
@@ -353,9 +352,7 @@ a	b
 Level	Code	Message
 Warning	1815	force_index(planner__core__integration.aaa) is inapplicable, check whether the table(planner__core__integration.aaa) exists
 admin check table t;
-
 admin check index t i_a;
-
 select max(t.col) from (select 'a' as col union all select '' as col) as t;
 max(t.col)
 a
@@ -2272,7 +2269,6 @@ a	b	c	d
 4	a	a   	a
 6	 E	é        	 E
 admin check table t;
-
 set @@tidb_enable_clustered_index = DEFAULT;
 drop table if exists t;
 CREATE TABLE `t` (
@@ -3425,13 +3421,13 @@ abc
 drop table if exists t;
 drop table if exists tbl_29711;
 CREATE TABLE `tbl_29711` (`col_250` text COLLATE utf8_unicode_ci NOT NULL,`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie',PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);
-explain format=brief select col_250,col_251 from tbl_29711 where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
+explain format=brief select col_250,col_251 from tbl_29711 use index (primary) where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
 id	estRows	task	access object	operator info
 TopN	6.00	root		planner__core__integration.tbl_29711.col_250, planner__core__integration.tbl_29711.col_251, offset:0, count:6
 └─IndexLookUp	6.00	root		
-  ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:tbl_29711, index:PRIMARY(col_251, col_250)	range:["Bob","Bob"], ["Charlie","Charlie"], ["David","David"], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:tbl_29711, index:PRIMARY(col_251, col_250)	range:["Bob","David"], keep order:false, stats:pseudo
   └─TopN(Probe)	6.00	cop[tikv]		planner__core__integration.tbl_29711.col_250, planner__core__integration.tbl_29711.col_251, offset:0, count:6
-    └─TableRowIDScan	30.00	cop[tikv]	table:tbl_29711	keep order:false, stats:pseudo
+    └─TableRowIDScan	250.00	cop[tikv]	table:tbl_29711	keep order:false, stats:pseudo
 drop table if exists t29711;
 CREATE TABLE `t29711` (`a` varchar(10) DEFAULT NULL,`b` int(11) DEFAULT NULL,`c` int(11) DEFAULT NULL,KEY `ia` (`a`(2)));
 explain format=brief select * from t29711 use index (ia) order by a limit 10;
@@ -3692,11 +3688,8 @@ analyze table t2;
 set @@tidb_partition_prune_mode='dynamic';
 explain format='brief' select * from t;
 id	estRows	task	access object	operator info
-PartitionUnion	8.00	root		
-├─TableReader	4.00	root		data:TableFullScan
-│ └─TableFullScan	4.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	4.00	root		data:TableFullScan
-  └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
+TableReader	10000.00	root	partition:all	data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 analyze table t;
 explain format='brief' select * from t;
 id	estRows	task	access object	operator info
@@ -3704,17 +3697,11 @@ TableReader	8.00	root	partition:all	data:TableFullScan
 └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
 explain format='brief' select  * from t union all select * from t2;
 id	estRows	task	access object	operator info
-Union	16.00	root		
-├─PartitionUnion	8.00	root		
-│ ├─TableReader	4.00	root		data:TableFullScan
-│ │ └─TableFullScan	4.00	cop[tikv]	table:t, partition:p0	keep order:false
-│ └─TableReader	4.00	root		data:TableFullScan
-│   └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
-└─PartitionUnion	8.00	root		
-  ├─TableReader	4.00	root		data:TableFullScan
-  │ └─TableFullScan	4.00	cop[tikv]	table:t2, partition:p0	keep order:false
-  └─TableReader	4.00	root		data:TableFullScan
-    └─TableFullScan	4.00	cop[tikv]	table:t2, partition:p1	keep order:false
+Union	10008.00	root		
+├─TableReader	8.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
+└─TableReader	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 set @@tidb_partition_prune_mode=DEFAULT;
 drop table if exists t1, t2;
 create table t1 (a int primary key, b int);
@@ -3952,3 +3939,416 @@ p	o	v	a
 3	5	5	3
 3	9	9	9
 set @@tidb_enable_pipelined_window_function=DEFAULT;
+drop table if exists t;
+create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));
+insert into t values ('20000201'), ('19000101');
+analyze table t;
+desc format='brief' select * from t where a < '2000-01-01';
+id	estRows	task	access object	operator info
+TableReader	1.00	root	partition:p1	data:Selection
+└─Selection	1.00	cop[tikv]		lt(planner__core__integration.t.a, 2000-01-01 00:00:00.000000)
+  └─TableFullScan	2.00	cop[tikv]	table:t	keep order:false
+drop user if exists test;
+create user test;
+grant select on test1111 to test@'%';
+Error 1046 (3D000): No database selected
+grant select on * to test@'%';
+Error 1046 (3D000): No database selected
+revoke select on * from test@'%';
+Error 1046 (3D000): No database selected
+use planner__core__integration;
+create table test1111 (id int);
+grant select on test1111 to test@'%';
+drop table if exists t;
+create table t(a int primary key, b varchar(20));
+insert into t values (1,1);
+explain analyze select * from t where a=1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Point_Get_1	1.00	1	root	table:t	time:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
+explain analyze select * from t where a in (1,2,3);
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Batch_Point_Get_1	3.00	1	root	table:t	time:<num>, loops:<num>, RU:<num>, BatchGet:{num_rpc:<num>, total_time:<num>}	handle:[1 2 3], keep order:false, desc:false	N/A	N/A
+drop table if exists t;
+create table t (a int, b int, unique index (a));
+insert into t values (1,1);
+explain analyze select * from t where a=1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Point_Get_1	1.00	1	root	table:t, index:a(a)	time:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	NULL	N/A	N/A
+explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Insert_1	N/A	0	root	NULL	time:<num>, loops:<num>, prepare:<num>, check_insert: {total_time:<num>, mem_insert_time:<num>, prefetch:<num>, fk_check:<num>, rpc:{BatchGet:{num_rpc:<num>, total_time:<num>}}}, RU:<num>	N/A	<num> Bytes	N/A
+drop table if exists t;
+create table t (a int, b int);
+insert into t values (1, 2);
+select count(*) from t where b = 1 and b in (3);
+count(*)
+0
+drop table t;
+create table t (a int, b int as (a + 1), c int as (b + 1));
+begin;
+insert into t (a) values (1);
+select count(*) from t where b = 1 and b in (3);
+count(*)
+0
+select count(*) from t where c = 1 and c in (3);
+count(*)
+0
+drop table if exists t;
+drop view if exists v0;
+create table t(a int, b int);
+set session tidb_isolation_read_engines='tiflash,tidb';
+create view v0 (a, avg_b) as select a, avg(b) from t group by a;
+select * from v0;
+Error 1815 (HY000): Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'.
+set session tidb_isolation_read_engines='tikv,tiflash,tidb';
+select * from v0;
+a	avg_b
+set session tidb_isolation_read_engines=default;
+drop table if exists t1, t2;
+drop view if exists v1, v2, v3, v4, v5;
+create table t1 (a int, b int);
+create table t2 (c int, d int);
+create view v1 as select * from t1 order by a limit 5;
+create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b limit 5;
+create view v3 as select * from v1 order by a limit 5;
+create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b limit 5;
+create view v5 as select * from (select * from t1) as t1 order by a limit 5;
+insert into t1 values (1, 2), (3, 4);
+insert into t2 values (3, 5), (6, 7);
+create temporary table t1 (a int, b int);
+create temporary table t2 (c int, d int);
+select * from t1;
+a	b
+select * from t2;
+c	d
+select * from v1;
+a	b
+1	2
+3	4
+select * from v2;
+a	b
+1	2
+3	4
+3	5
+6	7
+select * from v3;
+a	b
+1	2
+3	4
+select * from v4;
+a	b	c	d
+3	4	3	5
+select * from v5;
+a	b
+1	2
+3	4
+drop table t1, t2;
+drop table if exists t27949;
+create table t27949 (a int, b int, key(b));
+explain format = 'brief' select * from t27949 where b=1;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t27949, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t27949	keep order:false, stats:pseudo
+create global binding for select * from t27949 where b=1 using select * from t27949 ignore index(b) where b=1;
+explain format = 'brief' select * from t27949 where b=1;
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__integration.t27949.b, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t27949	keep order:false, stats:pseudo
+set @@sql_select_limit=100;
+explain format = 'brief' select * from t27949 where b=1;
+id	estRows	task	access object	operator info
+Limit	10.00	root		offset:0, count:100
+└─TableReader	10.00	root		data:Limit
+  └─Limit	10.00	cop[tikv]		offset:0, count:100
+    └─Selection	10.00	cop[tikv]		eq(planner__core__integration.t27949.b, 1)
+      └─TableFullScan	10000.00	cop[tikv]	table:t27949	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, index idx_a(a));
+create binding for select * from t  using select * from t use index(idx_a);
+select * from t;
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+prepare stmt from 'select * from t';
+execute stmt;
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+drop global binding for select * from t27949 where b=1;
+set @@sql_select_limit=default;
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+select avg(0) over w from t1 window w as (order by (select 1));
+avg(0) over w
+select avg(0) over w from t1 where b > (select sum(t2.a) over w from t2) window w as (partition by t1.b);
+Error 3579 (HY000): Window name 'w' is not defined.
+select avg(0) over w1 from t1 where b > (select sum(t2.a) over w2 from t2 window w2 as (partition by t2.b)) window w1 as (partition by t1.b);
+avg(0) over w1
+drop table if exists t1;
+create table t1(a int, b int);
+insert into t1 values (1,1),(2,2);
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+select * from t1;
+a	b
+2	3
+2	3
+drop table t1;
+create table t1 (a int primary key, b int);
+insert into t1 values (1,1),(2,2);
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+Error 1706 (HY000): Primary key/partition key update is not allowed since the table is updated both as 'a' and 'b'.
+drop table t1;
+create table t1 (a int, b int) partition by hash (a) partitions 3;
+insert into t1 values (1,1),(2,2);
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+Error 1706 (HY000): Primary key/partition key update is not allowed since the table is updated both as 'a' and 'b'.
+drop table t1;
+create table t1 (A int, b int) partition by hash (b) partitions 3;
+insert into t1 values (1,1),(2,2);
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+Error 1706 (HY000): Primary key/partition key update is not allowed since the table is updated both as 'a' and 'B'.
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+Error 1706 (HY000): Primary key/partition key update is not allowed since the table is updated both as 'a' and 'B'.
+drop table t1;
+create table t1 (A int, b int) partition by RANGE COLUMNS (b) (partition `pNeg` values less than (0),partition `pPos` values less than MAXVALUE);
+insert into t1 values (1,1),(2,2);
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+Error 1706 (HY000): Primary key/partition key update is not allowed since the table is updated both as 'a' and 'B'.
+drop table t1;
+drop table if exists t1, t2, t3, t4, t5;
+create table t1(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t2(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t3(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t4(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t5(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+select * from t3 straight_join t4 on t3.a = t4.b straight_join t2 on t3.d = t2.c straight_join t1 on t1.a = t2.b straight_join t5 on t4.c = t5.d where t2.b < 100 and t4.a = 10;
+a	b	c	d	a	b	c	d	a	b	c	d	a	b	c	d	a	b	c	d
+select * from information_schema.statements_summary;
+drop table if exists t0;
+drop view if exists v0;
+CREATE TABLE t0(c0 BLOB(298) , c1 BLOB(182) , c2 NUMERIC);
+CREATE VIEW v0(c0) AS SELECT t0.c1 FROM t0;
+INSERT INTO t0 VALUES (-1, 'a', '2046549365');
+CREATE INDEX i0 ON t0(c2);
+SELECT t0.c1, t0.c2 FROM t0 GROUP BY MOD(t0.c0, DEFAULT(t0.c2));
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'planner__core__integration.t0.c1' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+UPDATE t0 SET c2=1413;
+drop table if exists t;
+CREATE TABLE t (
+a set('nwbk','r5','1ad3u','van','ir1z','y','9m','f1','z','e6yd','wfev') NOT NULL DEFAULT 'ir1z,f1,e6yd',
+b enum('soo2','4s4j','qi9om','8ue','i71o','qon','3','3feh','6o1i','5yebx','d') NOT NULL DEFAULT '8ue',
+c varchar(66) DEFAULT '13mdezixgcn',
+PRIMARY KEY (a,b) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY ib(b),
+KEY ia(a)
+)ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;
+INSERT INTO t VALUES('ir1z,f1,e6yd','i71o','13mdezixgcn'),('ir1z,f1,e6yd','d','13mdezixgcn'),('nwbk','8ue','13mdezixgcn');
+select * from t where a between 'e6yd' and 'z' or b <> '8ue';
+a	b	c
+ir1z,f1,e6yd	d	13mdezixgcn
+ir1z,f1,e6yd	i71o	13mdezixgcn
+nwbk	8ue	13mdezixgcn
+select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
+a	b	c
+ir1z,f1,e6yd	d	13mdezixgcn
+ir1z,f1,e6yd	i71o	13mdezixgcn
+nwbk	8ue	13mdezixgcn
+## For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
+explain format='brief' select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(and(ge(planner__core__integration.t.a, "e6yd"), le(planner__core__integration.t.a, "z")), ne(planner__core__integration.t.b, "8ue"))
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists planner__core__integration.first_range;
+create table planner__core__integration.first_range(p int not null, o tinyint not null, v int not null);
+insert into planner__core__integration.first_range (p, o, v) values (0, 0, 0), (1, 1, 1), (1, 2, 2), (1, 4, 4), (1, 8, 8), (2, 0, 0), (2, 3, 3), (2, 10, 10), (2, 13, 13), (2, 15, 15), (3, 1, 1), (3, 3, 3), (3, 5, 5), (3, 9, 9), (3, 15, 15), (3, 20, 20), (3, 31, 31);
+select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
+p	o	v	a
+0	0	0	0
+1	1	1	1
+1	2	2	1
+1	4	4	1
+1	8	8	8
+2	0	0	0
+2	10	10	10
+2	13	13	10
+2	15	15	13
+2	3	3	0
+3	1	1	1
+3	15	15	15
+3	20	20	20
+3	3	3	1
+3	31	31	31
+3	5	5	3
+3	9	9	9
+set @@tidb_enable_pipelined_window_function=0;
+select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
+p	o	v	a
+0	0	0	0
+1	1	1	1
+1	2	2	1
+1	4	4	1
+1	8	8	8
+2	0	0	0
+2	10	10	10
+2	13	13	10
+2	15	15	13
+2	3	3	0
+3	1	1	1
+3	15	15	15
+3	20	20	20
+3	3	3	1
+3	31	31	31
+3	5	5	3
+3	9	9	9
+set @@tidb_enable_pipelined_window_function=DEFAULT;
+drop table if exists t1;
+set tidb_enable_ordered_result_mode = on;
+create table t1(c1 int);
+select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10;
+c1
+set tidb_enable_ordered_result_mode = DEFAULT;
+set tidb_cost_model_version=2;
+drop view if exists v, v1, v2;
+drop table if exists t, t1, t2, t3;
+create table t(a int, b int);
+create table t1(a int, b int);
+create table t2(a int, b int);
+create table t3(a int, b int);
+create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
+select * from v2;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+create global binding for select * from v2 using select /*+ qb_name(qb_v_2, v2.v1@sel_2 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2. v1@sel_2 .v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;
+select * from v2;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+show global bindings where original_sql like '%planner__core__integration%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `planner__core__integration` . `v2`	SELECT /*+ qb_name(`qb_v_2` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_2`) merge_join(`t1`@`qb_v_2`) stream_agg(@`qb_v_2`) qb_name(`qb_v_1` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_1`) merge_join(`t`@`qb_v_1`)*/ * FROM `planner__core__integration`.`v2`	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d1c36cc45519f8c3ec7ffd42ebcc49b1fe160d7a93e23d1568843517ac4009e6	
+drop global binding for select * from v2;
+select * from v2;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+show global bindings where original_sql like '%planner__core__integration%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+set tidb_cost_model_version=default;
+set tidb_cost_model_version=2;
+drop table if exists t1;
+create table t1(a int, b int, index idx_a(a));
+
+## create binding for order_index hint
+select * from t1 where a<10 order by a limit 1;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+show global bindings where original_sql like '%planner__core__integration%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `planner__core__integration` . `t1` where `a` < ? order by `a` limit ?	SELECT /*+ order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
+
+drop global binding for select * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+show global bindings where original_sql like '%planner__core__integration%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+
+## create binding for no_order_index hint
+create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+show global bindings where original_sql like '%planner__core__integration%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `planner__core__integration` . `t1` where `a` < ? order by `a` limit ?	SELECT /*+ no_order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
+
+drop global binding for select * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+show global bindings where original_sql like '%planner__core__integration%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+set tidb_cost_model_version=default;
+drop table if exists t;
+set tidb_opt_fix_control='44262:ON';
+create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7));
+insert into t values(3, 3), (5, 5);
+explain format = 'brief' select * from t where c = 1 and id = c;
+id	estRows	task	access object	operator info
+TableReader	0.01	root	partition:p0	data:Selection
+└─Selection	0.01	cop[tikv]		eq(planner__core__integration.t.c, 1), eq(planner__core__integration.t.id, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists sbtest;
+CREATE TABLE sbtest (
+id int(10) unsigned NOT NULL AUTO_INCREMENT,
+k int(10) unsigned NOT NULL DEFAULT '0',
+c char(120) NOT NULL DEFAULT '',
+pad char(60) NOT NULL DEFAULT '',
+PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+KEY k (k)
+);
+set @@tidb_opt_fix_control = '46177:off';
+explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+id	estRows	task	access object	operator info
+Projection	10.00	root		Column#6->Column#7
+└─Window	10.00	root		row_number()->Column#6 over(order by planner__core__integration.sbtest.k rows between current row and current row)
+  └─IndexReader	10.00	root		index:Selection
+    └─Selection	10.00	cop[tikv]		lt(planner__core__integration.sbtest.id, 10)
+      └─IndexFullScan	10000.00	cop[tikv]	table:sbtest, index:k(k)	keep order:true, stats:pseudo
+explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(Column#6)->Column#5
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		group by:planner__core__integration.sbtest.k, funcs:count(1)->Column#6
+    └─Selection	1.00	cop[tikv]		lt(planner__core__integration.sbtest.id, 1)
+      └─IndexFullScan	10000.00	cop[tikv]	table:sbtest, index:k(k)	keep order:true, stats:pseudo
+set @@tidb_opt_fix_control = '46177:on';
+explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+id	estRows	task	access object	operator info
+Projection	10.00	root		Column#6->Column#7
+└─Window	10.00	root		row_number()->Column#6 over(order by planner__core__integration.sbtest.k rows between current row and current row)
+  └─Sort	10.00	root		planner__core__integration.sbtest.k
+    └─TableReader	10.00	root		data:TableRangeScan
+      └─TableRangeScan	10.00	cop[tikv]	table:sbtest	range:[0,10), keep order:false, stats:pseudo
+explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(1)->Column#5
+└─Sort	1.00	root		planner__core__integration.sbtest.k
+  └─TableReader	1.00	root		data:TableRangeScan
+    └─TableRangeScan	1.00	cop[tikv]	table:sbtest	range:[0,1), keep order:false, stats:pseudo
+set @@tidb_opt_fix_control = default;
+create table sys.t (id int);
+insert into sys.t values (1),(2);
+set tidb_isolation_read_engines='tiflash';
+select * from sys.t;
+id
+1
+2
+drop table sys.t;
+set tidb_isolation_read_engines=DEFAULT;

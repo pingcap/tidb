@@ -581,3 +581,33 @@ set @@tidb_enable_vectorized_expression = false;
 select length(@p);
 set @@tidb_enable_vectorized_expression = true;
 select length(@p);
+
+# TestNotExistFunc
+connect (conn1, localhost, root,,);
+
+## current db is empty
+-- error 1046
+SELECT xxx(1);
+-- error 1046
+SELECT yyy();
+-- error 1305
+SELECT T.upper(1);
+
+## current db is not empty
+use test;
+-- error 1305
+SELECT xxx(1);
+-- error 1305
+SELECT yyy();
+-- error 1305
+SELECT t.upper(1);
+-- error 1305
+SELECT timestampliteral(rand());
+connection default;
+disconnect conn1;
+
+# TestColumnInfoModified
+drop table if exists tab0;
+CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER);
+SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0;
+show create table tab0;

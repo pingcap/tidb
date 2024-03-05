@@ -191,6 +191,9 @@ const (
 const (
 	// SystemDB is the name of system database.
 	SystemDB = "mysql"
+	// SysDB is the name of `sys` schema, which is a set of objects to help users to interpret data collected
+	// in `information_schema`.
+	SysDB = "sys"
 	// GlobalPrivTable is the table in system db contains global scope privilege info.
 	GlobalPrivTable = "global_priv"
 	// UserTable is the table in system db contains user info.
@@ -641,6 +644,9 @@ const (
 	CursorTypeForUpdate
 	CursorTypeScrollable
 )
+
+// ZlibCompressDefaultLevel is the zlib compression level for the compressed protocol
+const ZlibCompressDefaultLevel = 6
 
 const (
 	// CompressionNone is no compression in use

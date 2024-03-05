@@ -10,7 +10,7 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
-    shard_count = 50,
+    shard_count = 32,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -23,7 +23,6 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/internal",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/external",
         "//pkg/testkit/testdata",

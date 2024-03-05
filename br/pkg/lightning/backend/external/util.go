@@ -20,55 +20,90 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // seekPropsOffsets seeks the statistic files to find the largest offset of
 // sorted data file offsets such that the key at offset is less than or equal to
-// the given start key.
+// the given start keys. Caller can specify multiple ascending keys and
+// seekPropsOffsets will return the offsets list for each key.
 func seekPropsOffsets(
 	ctx context.Context,
-	start kv.Key,
+	starts []kv.Key,
 	paths []string,
 	exStorage storage.ExternalStorage,
-) ([]uint64, error) {
-	iter, err := NewMergePropIter(ctx, paths, exStorage)
+	checkHotSpot bool,
+) (_ [][]uint64, err error) {
+	logger := logutil.Logger(ctx)
+	task := log.BeginTask(logger, "seek props offsets")
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
+
+	// adapt the NewMergePropIter argument types
+	multiFileStat := MultipleFilesStat{Filenames: make([][2]string, 0, len(paths))}
+	for _, path := range paths {
+		multiFileStat.Filenames = append(multiFileStat.Filenames, [2]string{"", path})
+	}
+	iter, err := NewMergePropIter(ctx, []MultipleFilesStat{multiFileStat}, exStorage, checkHotSpot)
 	if err != nil {
 		return nil, err
 	}
-	logger := logutil.Logger(ctx)
 	defer func() {
 		if err := iter.Close(); err != nil {
 			logger.Warn("failed to close merge prop iterator", zap.Error(err))
 		}
 	}()
+	offsets4AllKey := make([][]uint64, 0, len(starts))
 	offsets := make([]uint64, len(paths))
+	offsets4AllKey = append(offsets4AllKey, offsets)
 	moved := false
+
+	keyIdx := 0
+	curKey := starts[keyIdx]
 	for iter.Next() {
 		p := iter.prop()
 		propKey := kv.Key(p.firstKey)
-		if propKey.Cmp(start) > 0 {
+		for propKey.Cmp(curKey) > 0 {
 			if !moved {
-				return nil, fmt.Errorf("start key %s is too small for stat files %v",
-					start.String(),
+				return nil, fmt.Errorf("start key %s is too small for stat files %v, propKey %s",
+					curKey.String(),
 					paths,
+					propKey.String(),
 				)
 			}
-			return offsets, nil
+			keyIdx++
+			if keyIdx >= len(starts) {
+				return offsets4AllKey, nil
+			}
+			curKey = starts[keyIdx]
+			newOffsets := slices.Clone(offsets)
+			offsets4AllKey = append(offsets4AllKey, newOffsets)
+			offsets = newOffsets
 		}
 		moved = true
-		offsets[iter.readerIndex()] = p.offset
+		_, idx := iter.readerIndex()
+		offsets[idx] = p.offset
 	}
 	if iter.Error() != nil {
 		return nil, iter.Error()
 	}
-	return offsets, nil
+	for len(offsets4AllKey) < len(starts) {
+		newOffsets := slices.Clone(offsets)
+		offsets4AllKey = append(offsets4AllKey, newOffsets)
+		offsets = newOffsets
+	}
+	return offsets4AllKey, nil
 }
 
 // GetAllFileNames returns data file paths and stat file paths. Both paths are
@@ -209,6 +244,7 @@ type SortedKVMeta struct {
 	StartKey           []byte              `json:"start-key"`
 	EndKey             []byte              `json:"end-key"` // exclusive
 	TotalKVSize        uint64              `json:"total-kv-size"`
+	TotalKVCnt         uint64              `json:"total-kv-cnt"`
 	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
 }
 
@@ -222,6 +258,7 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 		StartKey:           summary.Min.Clone(),
 		EndKey:             summary.Max.Clone().Next(),
 		TotalKVSize:        summary.TotalSize,
+		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
 	}
 }
@@ -239,6 +276,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.StartKey = BytesMin(m.StartKey, other.StartKey)
 	m.EndKey = BytesMax(m.EndKey, other.EndKey)
 	m.TotalKVSize += other.TotalKVSize
+	m.TotalKVCnt += other.TotalKVCnt
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
 }
@@ -284,4 +322,14 @@ func BytesMax(a, b []byte) []byte {
 		return a
 	}
 	return b
+}
+
+func getSpeed(n uint64, dur float64, isBytes bool) string {
+	if dur == 0 {
+		return "-"
+	}
+	if isBytes {
+		return units.BytesSize(float64(n) / dur)
+	}
+	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }

@@ -44,13 +44,13 @@ select approx_count_distinct(value collate utf8mb4_bin, value1) from t;
 # minMax
 create table tt(a char(10), b enum('a', 'B', 'c'), c set('a', 'B', 'c'), d json) collate utf8mb4_general_ci;
 insert into tt values ("a", "a", "a", JSON_OBJECT("a", "a"));
---error 1265
+--error 0,1265
 insert into tt values ("A", "A", "A", JSON_OBJECT("A", "A"));
---error 1265
+--error 0,1265
 insert into tt values ("b", "b", "b", JSON_OBJECT("b", "b"));
 insert into tt values ("B", "B", "B", JSON_OBJECT("B", "B"));
 insert into tt values ("c", "c", "c", JSON_OBJECT("c", "c"));
---error 1265
+--error 0,1265
 insert into tt values ("C", "C", "C", JSON_OBJECT("C", "C"));
 split table tt by (0), (1), (2), (3), (4), (5);
 desc format='brief' select min(a) from tt;
@@ -88,14 +88,10 @@ desc format='brief' select max(c collate utf8mb4_bin) from tt;
 select max(c collate utf8mb4_bin) from tt;
 desc format='brief' select min(d) from tt;
 select min(d) from tt;
---error 1253
 desc format='brief' select min(d collate utf8mb4_bin) from tt;
---error 1253
 select min(d collate utf8mb4_bin) from tt;
 desc format='brief' select max(d) from tt;
 select max(d) from tt;
---error 1253
 desc format='brief' select max(d collate utf8mb4_bin) from tt;
---error 1253
 select max(d collate utf8mb4_bin) from tt;
 

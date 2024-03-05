@@ -34,8 +34,15 @@ const (
 	Fix44855 uint64 = 44855
 	// Fix45132 controls whether to use access range row count to determine access path on the Skyline pruning.
 	Fix45132 uint64 = 45132
+	// Fix45822 controls whether to eliminate apply operator.
+	Fix45822 uint64 = 45822
 	// Fix45798 controls whether to cache plans that access generated columns.
 	Fix45798 uint64 = 45798
+	// Fix46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
+	Fix46177 uint64 = 46177
+	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
+	// This fix-control is test-only.
+	Fix49736 uint64 = 49736
 )
 
 // GetStr fetches the given key from the fix control map as a string type.

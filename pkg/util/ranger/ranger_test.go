@@ -258,7 +258,8 @@ func TestTableRange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
-			sctx := testKit.Session().(sessionctx.Context)
+			sctx := testKit.Session()
+			pctx := sctx.GetPlanCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -270,16 +271,16 @@ func TestTableRange(t *testing.T) {
 			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 			col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 			require.NotNil(t, col)
 			var filter []expression.Expression
-			conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
+			conds, filter = ranger.DetachCondsForColumn(pctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", filter))
-			result, _, _, err := ranger.BuildTableRange(conds, sctx, col.RetType, 0)
+			result, _, _, err := ranger.BuildTableRange(conds, pctx, col.RetType, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -307,7 +308,8 @@ create table t(
 	index idx_float_unsigned(float_unsigned),
 	index idx_double_unsigned(double_unsigned),
 	index idx_int(col_int),
-	index idx_float(col_float)
+	index idx_float(col_float),
+	index idx_int_bigint(a, col_int)
 )`)
 	tests := []struct {
 		indexPos    int
@@ -316,6 +318,13 @@ create table t(
 		filterConds string
 		resultStr   string
 	}{
+		{
+			indexPos:    6,
+			exprStr:     `a = 1 and a = 2`,
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   `[]`,
+		},
 		{
 			indexPos:    0,
 			exprStr:     `a not in (0, 1, 2)`,
@@ -447,7 +456,8 @@ create table t(
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
-			sctx := testKit.Session().(sessionctx.Context)
+			sctx := testKit.Session()
+			pctx := sctx.GetPlanCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -461,11 +471,11 @@ create table t(
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -808,7 +818,8 @@ func TestColumnRange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
-			sctx := testKit.Session().(sessionctx.Context)
+			sctx := testKit.Session()
+			pctx := sctx.GetPlanCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -822,13 +833,13 @@ func TestColumnRange(t *testing.T) {
 			require.True(t, ok)
 			conds := make([]expression.Expression, len(sel.Conditions))
 			for i, cond := range sel.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 			require.NotNil(t, col)
-			conds = ranger.ExtractAccessConditionsForColumn(sctx, conds, col)
+			conds = ranger.ExtractAccessConditionsForColumn(pctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
-			result, _, _, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length, 0)
+			result, _, _, err := ranger.BuildColumnRange(conds, pctx, col.RetType, tt.length, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -965,7 +976,8 @@ func TestIndexRangeForYear(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
-			sctx := testKit.Session().(sessionctx.Context)
+			sctx := testKit.Session()
+			pctx := sctx.GetPlanCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -979,11 +991,11 @@ func TestIndexRangeForYear(t *testing.T) {
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -1033,7 +1045,8 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
-			sctx := testKit.Session().(sessionctx.Context)
+			sctx := testKit.Session()
+			pctx := sctx.GetPlanCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1047,11 +1060,11 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -1098,7 +1111,7 @@ create table t(
 			indexPos:    0,
 			exprStr:     `a LIKE 'abc%'`,
 			accessConds: `[like(test.t.a, abc%, 92)]`,
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, abc%, 92)]",
 			resultStr:   "[[\"abc\",\"abd\")]",
 		},
 		{
@@ -1106,20 +1119,20 @@ create table t(
 			exprStr:     "a LIKE 'abc_'",
 			accessConds: "[like(test.t.a, abc_, 92)]",
 			filterConds: "[like(test.t.a, abc_, 92)]",
-			resultStr:   "[(\"abc\",\"abd\")]",
+			resultStr:   "[[\"abc\",\"abd\")]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
 			accessConds: "[like(test.t.a, abc, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, abc, 92)]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
 			accessConds: "[like(test.t.a, ab\\_c, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, ab\\_c, 92)]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
 		{
@@ -1133,21 +1146,21 @@ create table t(
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
 			accessConds: "[like(test.t.a, \\%a, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, \\%a, 92)]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
 			accessConds: "[like(test.t.a, \\, 92)]",
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, \\, 92)]",
 			resultStr:   "[[\"\\\\\",\"\\\\\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
 			accessConds: `[like(test.t.a, \\a%, 92)]`,
-			filterConds: "[]",
+			filterConds: "[like(test.t.a, \\\\a%, 92)]",
 			resultStr:   "[[\"\\\\a\",\"\\\\b\")]",
 		},
 		{
@@ -1295,7 +1308,7 @@ create table t(
 			exprStr:     `e = "你好啊"`,
 			accessConds: "[eq(test.t.e, 你好啊)]",
 			filterConds: "[eq(test.t.e, 你好啊)]",
-			resultStr:   "[[0xE4BD,0xE4BD]]",
+			resultStr:   "[[\"\\xe4\\xbd\",\"\\xe4\\xbd\"]]",
 		},
 		{
 			indexPos:    2,
@@ -1330,21 +1343,21 @@ create table t(
 			exprStr:     "f >= 'a' and f <= 'B'",
 			accessConds: "[ge(test.t.f, a) le(test.t.f, B)]",
 			filterConds: "[]",
-			resultStr:   "[[\"a\",\"B\"]]",
+			resultStr:   "[[\"\\x00A\",\"\\x00B\"]]",
 		},
 		{
 			indexPos:    4,
 			exprStr:     "f in ('a', 'B')",
 			accessConds: "[in(test.t.f, a, B)]",
 			filterConds: "[]",
-			resultStr:   "[[\"a\",\"a\"] [\"B\",\"B\"]]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"] [\"\\x00B\",\"\\x00B\"]]",
 		},
 		{
 			indexPos:    4,
 			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
 			accessConds: "[eq(test.t.f, a)]",
 			filterConds: "[eq(test.t.f, B)]",
-			resultStr:   "[[\"a\",\"a\"]]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"]]",
 		},
 		{
 			indexPos:    4,
@@ -1358,7 +1371,7 @@ create table t(
 			exprStr:     "d in ('aab', 'aac') and e = 'a'",
 			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
 			filterConds: "[in(test.t.d, aab, aac)]",
-			resultStr:   "[[\"aa\" 0x61,\"aa\" 0x61]]",
+			resultStr:   "[[\"aa\" \"a\",\"aa\" \"a\"]]",
 		},
 		{
 			indexPos:    6,
@@ -1380,7 +1393,7 @@ create table t(
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
-			sctx := testKit.Session().(sessionctx.Context)
+			sctx := testKit.Session()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1394,11 +1407,11 @@ create table t(
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetPlanCtx(), conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -1621,7 +1634,7 @@ func TestTableShardIndex(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from " + tt.tableName + " where " + tt.exprStr
-			sctx := testKit.Session().(sessionctx.Context)
+			sctx := testKit.Session()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1633,7 +1646,7 @@ func TestTableShardIndex(t *testing.T) {
 			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx, cond)
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
 			ds, ok := selection.Children()[0].(*plannercore.DataSource)
 			if !ok {
@@ -1649,7 +1662,7 @@ func TestTableShardIndex(t *testing.T) {
 	// test update statement
 	t.Run("", func(t *testing.T) {
 		sql := "update test6 set c = 1000 where a=50 and b = 50"
-		sctx := testKit.Session().(sessionctx.Context)
+		sctx := testKit.Session()
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
@@ -1667,7 +1680,7 @@ func TestTableShardIndex(t *testing.T) {
 	// test delete statement
 	t.Run("", func(t *testing.T) {
 		sql := "delete from test6 where a = 45 and b = 45;"
-		sctx := testKit.Session().(sessionctx.Context)
+		sctx := testKit.Session()
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
@@ -1686,7 +1699,7 @@ func TestTableShardIndex(t *testing.T) {
 func TestShardIndexFuncSuites(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
-	sctx := testKit.Session().(sessionctx.Context)
+	sctx := testKit.Session()
 
 	// -------------------------------------------
 	// test IsValidShardIndex function
@@ -1696,10 +1709,10 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	col1 := &expression.Column{UniqueID: 1, ID: 1, RetType: longlongType}
 	// col2 is GC column and VirtualExpr = tidb_shard(col0)
 	col2 := &expression.Column{UniqueID: 2, ID: 2, RetType: longlongType}
-	col2.VirtualExpr = expression.NewFunctionInternal(sctx, ast.TiDBShard, col2.RetType, col0)
+	col2.VirtualExpr = expression.NewFunctionInternal(sctx.GetExprCtx(), ast.TiDBShard, col2.RetType, col0)
 	// col3 is GC column and VirtualExpr = abs(col0)
 	col3 := &expression.Column{UniqueID: 3, ID: 3, RetType: longlongType}
-	col3.VirtualExpr = expression.NewFunctionInternal(sctx, ast.Abs, col2.RetType, col0)
+	col3.VirtualExpr = expression.NewFunctionInternal(sctx.GetExprCtx(), ast.Abs, col2.RetType, col0)
 	col4 := &expression.Column{UniqueID: 4, ID: 4, RetType: longlongType}
 
 	cols := []*expression.Column{col0, col1}
@@ -1723,8 +1736,8 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// normal case
 	con1 := &expression.Constant{Value: types.NewDatum(1), RetType: longlongType}
 	con5 := &expression.Constant{Value: types.NewDatum(5), RetType: longlongType}
-	exprEq := expression.NewFunctionInternal(sctx, ast.EQ, col0.RetType, col0, con1)
-	exprIn := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col0, con1, con5)
+	exprEq := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, col0.RetType, col0, con1)
+	exprIn := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col0.RetType, col0, con1, con5)
 	require.NotNil(t, exprEq)
 	require.NotNil(t, exprIn)
 	// input is nil
@@ -1732,13 +1745,13 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// input is column
 	require.Equal(t, len(ranger.ExtractColumnsFromExpr(exprEq.(*expression.ScalarFunction))), 1)
 	// (col0 = 1 and col3 > 1) or (col4 < 5 and 5)
-	exprGt := expression.NewFunctionInternal(sctx, ast.GT, longlongType, col3, con1)
+	exprGt := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.GT, longlongType, col3, con1)
 	require.NotNil(t, exprGt)
-	andExpr1 := expression.NewFunctionInternal(sctx, ast.And, longlongType, exprEq, exprGt)
+	andExpr1 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.And, longlongType, exprEq, exprGt)
 	require.NotNil(t, andExpr1)
-	exprLt := expression.NewFunctionInternal(sctx, ast.LT, longlongType, col4, con5)
-	andExpr2 := expression.NewFunctionInternal(sctx, ast.And, longlongType, exprLt, con5)
-	orExpr2 := expression.NewFunctionInternal(sctx, ast.Or, longlongType, andExpr1, andExpr2)
+	exprLt := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LT, longlongType, col4, con5)
+	andExpr2 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.And, longlongType, exprLt, con5)
+	orExpr2 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.Or, longlongType, andExpr1, andExpr2)
 	require.Equal(t, len(ranger.ExtractColumnsFromExpr(orExpr2.(*expression.ScalarFunction))), 3)
 
 	// -------------------------------------------
@@ -1757,12 +1770,12 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, nil))
 
 	// col1 in (1, 5)
-	exprIn2 := expression.NewFunctionInternal(sctx, ast.In, col1.RetType, col1, con1, con5)
+	exprIn2 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col1.RetType, col1, con1, con5)
 	accessCond[1] = exprIn2
 	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn2.(*expression.ScalarFunction)))
 
 	// col0 in (1, col1)
-	exprIn3 := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col1, con1, col1)
+	exprIn3 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col0.RetType, col1, con1, col1)
 	accessCond[1] = exprIn3
 	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn3.(*expression.ScalarFunction)))
 
@@ -1782,7 +1795,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// -------------------------------------------
 	// test AddExpr4EqAndInCondition function
 	// -------------------------------------------
-	exprIn4 := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col0, con1)
+	exprIn4 := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, col0.RetType, col0, con1)
 	test := []struct {
 		inputConds  []expression.Expression
 		outputConds string
@@ -1806,7 +1819,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	}
 
 	for _, tt := range test {
-		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx, tt.inputConds, shardIndexCols)
+		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx.GetPlanCtx(), tt.inputConds, shardIndexCols)
 		require.Equal(t, fmt.Sprintf("%s", newConds), tt.outputConds)
 	}
 }
@@ -1846,7 +1859,8 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	sctx := tk.Session().(sessionctx.Context)
+	sctx := tk.Session()
+	pctx := sctx.GetPlanCtx()
 
 	// test CNF condition
 	sql := "select * from t1 where a in (10,20,30) and b in (40,50,60) and c >= 70 and c <= 80"
@@ -1854,7 +1868,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds := selection.Conditions
 	require.Equal(t, 4, len(conds))
 	cols, lengths := expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60) ge(test.t1.c, 70) le(test.t1.c, 80)]",
@@ -1862,7 +1876,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10 40 70,10 40 80] [10 50 70,10 50 80] [10 60 70,10 60 80] [20 40 70,20 40 80] [20 50 70,20 50 80] [20 60 70,20 60 80] [30 40 70,30 40 80] [30 50 70,30 50 80] [30 60 70,30 60 80]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota := res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t1.a, 10, 20, 30) in(test.t1.b, 40, 50, 60)]",
@@ -1870,7 +1884,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10 40,10 40] [10 50,10 50] [10 60,10 60] [20 40,20 40] [20 50,20 50] [20 60,20 60] [30 40,30 40] [30 50,30 50] [30 60,30 60]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t1.a, 10, 20, 30)]",
@@ -1878,7 +1892,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10,10] [20,20] [30,30]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -1892,7 +1906,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(eq(test.t1.a, 10), or(eq(test.t1.a, 20), eq(test.t1.a, 30)))]",
@@ -1900,7 +1914,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10,10] [20,20] [30,30]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -1913,7 +1927,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 40)), or(and(eq(test.t1.a, 20), eq(test.t1.b, 50)), and(eq(test.t1.a, 30), eq(test.t1.b, 60))))]",
@@ -1921,7 +1935,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10 40,10 40] [20 50,20 50] [30 60,30 60]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -1935,7 +1949,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 2, len(conds))
 	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40))) eq(test.t1.c, 50)]",
@@ -1943,7 +1957,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10 20 50,10 20 50] [30 40 50,30 40 50]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t1.a, 10), eq(test.t1.b, 20)), and(eq(test.t1.a, 30), eq(test.t1.b, 40)))]",
@@ -1951,7 +1965,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10 20,10 20] [30 40,30 40]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(eq(test.t1.a, 10), eq(test.t1.a, 30))]",
@@ -1959,7 +1973,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[10,10] [30,30]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -1981,7 +1995,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 4, len(conds))
 	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff) ge(test.t2.c, ggg) le(test.t2.c, iii)]",
@@ -1989,7 +2003,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\" \"dd\" \"gg\",\"aa\" \"dd\" \"ii\"] [\"aa\" \"ee\" \"gg\",\"aa\" \"ee\" \"ii\"] [\"aa\" \"ff\" \"gg\",\"aa\" \"ff\" \"ii\"] [\"bb\" \"dd\" \"gg\",\"bb\" \"dd\" \"ii\"] [\"bb\" \"ee\" \"gg\",\"bb\" \"ee\" \"ii\"] [\"bb\" \"ff\" \"gg\",\"bb\" \"ff\" \"ii\"] [\"cc\" \"dd\" \"gg\",\"cc\" \"dd\" \"ii\"] [\"cc\" \"ee\" \"gg\",\"cc\" \"ee\" \"ii\"] [\"cc\" \"ff\" \"gg\",\"cc\" \"ff\" \"ii\"]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t2.a, aaa, bbb, ccc) in(test.t2.b, ddd, eee, fff)]",
@@ -1997,7 +2011,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"aa\" \"ee\",\"aa\" \"ee\"] [\"aa\" \"ff\",\"aa\" \"ff\"] [\"bb\" \"dd\",\"bb\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"bb\" \"ff\",\"bb\" \"ff\"] [\"cc\" \"dd\",\"cc\" \"dd\"] [\"cc\" \"ee\",\"cc\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[in(test.t2.a, aaa, bbb, ccc)]",
@@ -2005,7 +2019,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2019,7 +2033,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(eq(test.t2.a, aaa), or(eq(test.t2.a, bbb), eq(test.t2.a, ccc)))]",
@@ -2027,7 +2041,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\",\"aa\"] [\"bb\",\"bb\"] [\"cc\",\"cc\"]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2040,7 +2054,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, ddd)), or(and(eq(test.t2.a, bbb), eq(test.t2.b, eee)), and(eq(test.t2.a, ccc), eq(test.t2.b, fff))))]",
@@ -2048,7 +2062,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\" \"dd\",\"aa\" \"dd\"] [\"bb\" \"ee\",\"bb\" \"ee\"] [\"cc\" \"ff\",\"cc\" \"ff\"]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2062,7 +2076,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 2, len(conds))
 	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
@@ -2070,7 +2084,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[[\"aa\",\"aa\"] [\"cc\",\"cc\"]]")
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
-	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, quota)
+	res, err = ranger.DetachCondAndBuildRangeForIndex(pctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
@@ -2088,24 +2102,25 @@ func TestRangeFallbackForBuildTableRange(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	sctx := tk.Session().(sessionctx.Context)
+	sctx := tk.Session()
+	pctx := sctx.GetPlanCtx()
 	sql := "select * from t where a in (10,20,30,40,50)"
 	selection := getSelectionFromQuery(t, sctx, sql)
 	conds := selection.Conditions
 	require.Equal(t, 1, len(conds))
 	col := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[0])
 	var filters []expression.Expression
-	conds, filters = ranger.DetachCondsForColumn(sctx, conds, col)
+	conds, filters = ranger.DetachCondsForColumn(pctx, conds, col)
 	require.Equal(t, 1, len(conds))
 	require.Equal(t, 0, len(filters))
-	ranges, access, remained, err := ranger.BuildTableRange(conds, sctx, col.RetType, 0)
+	ranges, access, remained, err := ranger.BuildTableRange(conds, pctx, col.RetType, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[10,10] [20,20] [30,30] [40,40] [50,50]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", fmt.Sprintf("%v", access))
 	require.Equal(t, "[]", fmt.Sprintf("%v", remained))
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota := ranges.MemUsage() - 1
-	ranges, access, remained, err = ranger.BuildTableRange(conds, sctx, col.RetType, quota)
+	ranges, access, remained, err = ranger.BuildTableRange(conds, pctx, col.RetType, quota)
 	require.NoError(t, err)
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", fmt.Sprintf("%v", access))
@@ -2122,24 +2137,25 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	sctx := tk.Session().(sessionctx.Context)
+	sctx := tk.Session()
+	pctx := sctx.GetPlanCtx()
 	sql := "select * from t where a in ('aaa','bbb','ccc','ddd','eee')"
 	selection := getSelectionFromQuery(t, sctx, sql)
 	conds := selection.Conditions
 	require.Equal(t, 1, len(conds))
 	cola := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[0])
 	var filters []expression.Expression
-	conds, filters = ranger.DetachCondsForColumn(sctx, conds, cola)
+	conds, filters = ranger.DetachCondsForColumn(pctx, conds, cola)
 	require.Equal(t, 1, len(conds))
 	require.Equal(t, 0, len(filters))
-	ranges, access, remained, err := ranger.BuildColumnRange(conds, sctx, cola.RetType, types.UnspecifiedLength, 0)
+	ranges, access, remained, err := ranger.BuildColumnRange(conds, pctx, cola.RetType, types.UnspecifiedLength, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[\"aaa\",\"aaa\"] [\"bbb\",\"bbb\"] [\"ccc\",\"ccc\"] [\"ddd\",\"ddd\"] [\"eee\",\"eee\"]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", fmt.Sprintf("%v", access))
 	require.Equal(t, "[]", fmt.Sprintf("%v", remained))
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota := ranges.MemUsage() - 1
-	ranges, access, remained, err = ranger.BuildColumnRange(conds, sctx, cola.RetType, types.UnspecifiedLength, quota)
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, pctx, cola.RetType, types.UnspecifiedLength, quota)
 	require.NoError(t, err)
 	require.Equal(t, "[[NULL,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", fmt.Sprintf("%v", access))
@@ -2150,10 +2166,10 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
 	colb := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[1])
-	conds, filters = ranger.DetachCondsForColumn(sctx, conds, colb)
+	conds, filters = ranger.DetachCondsForColumn(pctx, conds, colb)
 	require.Equal(t, 1, len(conds))
 	require.Equal(t, 0, len(filters))
-	ranges, access, remained, err = ranger.BuildColumnRange(conds, sctx, colb.RetType, types.UnspecifiedLength, 1)
+	ranges, access, remained, err = ranger.BuildColumnRange(conds, pctx, colb.RetType, types.UnspecifiedLength, 1)
 	require.NoError(t, err)
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", fmt.Sprintf("%v", access))
@@ -2262,11 +2278,11 @@ create table t(
 		require.NotNil(t, selection, fmt.Sprintf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
+			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 		}
 		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		require.NotNil(t, cols)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetPlanCtx(), conds, cols, lengths, 0)
 		require.NoError(t, err)
 		require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds), fmt.Sprintf("wrong access conditions for expr: %s", tt.exprStr))
 		require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))

@@ -469,7 +469,7 @@ select * from s;
 
 # TestCheckConstraintOnInsert
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
 -- error 3819
 insert into t1 values (2, 2);
 -- error 3819
@@ -486,14 +486,14 @@ insert into t1 values (13, null);
 insert into t1 values (null, null);
 insert into t1(c1) values (null);
 insert into t1(c2) values (null);
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
 -- error 3819
 insert into t2(c1, c2) values (11, 1);
 insert into t2(c1, c2) values (12, 7);
 
 # TestCheckConstraintOnUpdate
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
 insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 -- error 3819
 update t1 set c2 = -c2;
@@ -503,7 +503,7 @@ update t1 set c2 = c1;
 update t1 set c1 = c1 - 10;
 -- error 3819
 update t1 set c2 = -10 where c2 = 12;
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
 insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 -- error 3819
 update t2 set c2 = c2 - 10;
@@ -511,7 +511,7 @@ update t2 set c2 = c2 - 5;
 
 # TestCheckConstraintOnUpdateWithPartition
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0)) partition by hash(c2) partitions 5;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0)) partition by hash(c2) partitions 5;
 insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 -- error 3819
 update t1 set c2 = -c2;
@@ -521,7 +521,7 @@ update t1 set c2 = c1;
 update t1 set c1 = c1 - 10;
 -- error 3819
 update t1 set c2 = -10 where c2 = 12;
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;
 insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 -- error 3819
 update t2 set c2 = c2 - 10;
@@ -619,7 +619,6 @@ create table t(a int);
 insert into t values(1), (2), (3);
 -- error 3819
 alter table t add constraint check(a < 2);
--- error 3819
 alter table t add constraint check(a < 2) not enforced;
 
 # TestAlterTableDropCheckConstraints
@@ -654,8 +653,36 @@ show create table t;
 # Alter table alter constraint will violate check.
 # Here a=1, b=0 doesn't satisfy "a < b" constraint.
 # Since "a<b" is not enforced, so the insert will success.
-# tk.MustExec("insert into t values(1, 0)")
-# _, err = tk.Exec("alter table t alter constraint haha enforced")
-# require.Errorf(t, err, "[table:3819]Check constraint 'haha' is violated.")
+insert into t values(1, 0);
+-- error 3819
+alter table t alter constraint haha enforced;
+
+# Related issue TiDB#47567, #47631 and #47632.
+# TestCheckConstraintIssue47567
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+CREATE TABLE `t` (`a` int(11) DEFAULT NULL);
+show create table t;
+insert t values(1);
+select * from t;
+-- error 3819
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+-- error 3819
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+alter table t ADD CONSTRAINT chk CHECK (a > 1) NOT ENFORCED;
+-- error 3819
+ALTER TABLE t ALTER CONSTRAINT chk ENFORCED;
+show create table t;
+alter table t drop CONSTRAINT chk;
+show create table t;
+
+# Related issue TiDB#50972, constraint expression should ignore schema and table name when restore
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t;
+create table t(a int, check((test.t.a > 1)));
+show create table t;
+alter table t add constraint chk check((test.t.a < 100));
+show create table t;
+drop table if exists t;
 
 set @@global.tidb_enable_check_constraint = 0;

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
@@ -42,7 +41,7 @@ func BenchmarkChecksum(b *testing.B) {
 	}
 	row := rowcodec.RowData{Cols: cols}
 	for i := 0; i < b.N; i++ {
-		_, err := row.Checksum()
+		_, err := row.Checksum(time.Local)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -57,6 +56,7 @@ func BenchmarkEncode(b *testing.B) {
 	colIDs := []int64{1, 2, 3}
 	var err error
 	for i := 0; i < b.N; i++ {
+		buf = buf[:0]
 		buf, err = xb.Encode(nil, colIDs, oldRow, buf)
 		if err != nil {
 			b.Fatal(err)
@@ -67,7 +67,7 @@ func BenchmarkEncode(b *testing.B) {
 func BenchmarkEncodeFromOldRow(b *testing.B) {
 	b.ReportAllocs()
 	oldRow := types.MakeDatums(1, "abc", 1.1)
-	oldRowData, err := tablecodec.EncodeOldRow(stmtctx.NewStmtCtx(), oldRow, []int64{1, 2, 3}, nil, nil)
+	oldRowData, err := tablecodec.EncodeOldRow(nil, oldRow, []int64{1, 2, 3}, nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}

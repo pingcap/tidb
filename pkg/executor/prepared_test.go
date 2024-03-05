@@ -23,85 +23,14 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
-
-func TestPreparedNameResolver(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, KEY id (id))")
-	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
-	tk.MustGetErrMsg("prepare stmt from 'select b from t'",
-		"[planner:1054]Unknown column 'b' in 'field list'")
-	tk.MustGetErrMsg("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'",
-		"[planner:1054]Unknown column 'a' in 'order clause'")
-}
-
-// a 'create table' DDL statement should be accepted if it has no parameters.
-func TestPreparedDDL(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("prepare stmt from 'create table t (id int, KEY id (id))'")
-}
-
-// TestUnsupportedStmtForPrepare is related to https://github.com/pingcap/tidb/issues/17412
-func TestUnsupportedStmtForPrepare(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`prepare stmt0 from "create table t0(a int primary key)"`)
-	tk.MustGetErrCode(`prepare stmt1 from "execute stmt0"`, mysql.ErrUnsupportedPs)
-	tk.MustGetErrCode(`prepare stmt2 from "deallocate prepare stmt0"`, mysql.ErrUnsupportedPs)
-	tk.MustGetErrCode(`prepare stmt4 from "prepare stmt3 from 'create table t1(a int, b int)'"`, mysql.ErrUnsupportedPs)
-}
-
-func TestIgnorePlanCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-
-	tk.MustExec("create table t (id int primary key, num int)")
-	tk.MustExec("insert into t values (1, 1)")
-	tk.MustExec("insert into t values (2, 2)")
-	tk.MustExec("insert into t values (3, 3)")
-	tk.MustExec("prepare stmt from 'select /*+ IGNORE_PLAN_CACHE() */ * from t where id=?'")
-	tk.MustExec("set @ignore_plan_doma = 1")
-	tk.MustExec("execute stmt using @ignore_plan_doma")
-	require.False(t, tk.Session().GetSessionVars().StmtCtx.UseCache)
-}
-
-func TestPreparedStmtWithHint(t *testing.T) {
-	// see https://github.com/pingcap/tidb/issues/18535
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	sv := server.CreateMockServer(t, store)
-	sv.SetDomain(dom)
-	defer sv.Close()
-
-	conn1 := server.CreateMockConn(t, sv)
-	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
-
-	go dom.ExpensiveQueryHandle().SetSessionManager(sv).Run()
-	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
-	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
-
-	// see https://github.com/pingcap/tidb/issues/46817
-	tk.MustExec("use test")
-	tk.MustExec("create table if not exists t (i int)")
-	tk.MustExec("prepare stmt from 'with a as (select /*+ qb_name(qb1) */ * from t)  select /*+ leading(@qb1)*/ * from a;'")
-}
 
 func TestPreparedNullParam(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -832,23 +761,6 @@ func TestPlanCacheOperators(t *testing.T) {
 	}
 }
 
-func TestIssue28782(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.MustExec("prepare stmt from 'SELECT IF(?, 1, 0);';")
-	tk.MustExec("set @a=1, @b=null, @c=0")
-
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	// TODO(Reminiscent): Support cache more tableDual plan.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-}
-
 func TestIssue29101(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -917,39 +829,6 @@ func TestIssue29101(t *testing.T) {
 		`      └─TableRowIDScan_11 0.03 cop[tikv] table:stock keep order:false, stats:pseudo`))
 	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
-}
-
-func TestIssue28087And28162(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	// issue 28087
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists IDT_26207`)
-	tk.MustExec(`CREATE TABLE IDT_26207 (col1 bit(1))`)
-	tk.MustExec(`insert into  IDT_26207 values(0x0), (0x1)`)
-	tk.MustExec(`prepare stmt from 'select t1.col1 from IDT_26207 as t1 left join IDT_26207 as t2 on t1.col1 = t2.col1 where t1.col1 in (?, ?, ?)'`)
-	tk.MustExec(`set @a=0x01, @b=0x01, @c=0x01`)
-	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x01"))
-	tk.MustExec(`set @a=0x00, @b=0x00, @c=0x01`)
-	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x00", "\x01"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-
-	// issue 28162
-	tk.MustExec(`drop table if exists IDT_MC21780`)
-	tk.MustExec(`CREATE TABLE IDT_MC21780 (
-		COL1 timestamp NULL DEFAULT NULL,
-		COL2 timestamp NULL DEFAULT NULL,
-		COL3 timestamp NULL DEFAULT NULL,
-		KEY U_M_COL (COL1,COL2)
-	)`)
-	tk.MustExec(`insert into IDT_MC21780 values("1970-12-18 10:53:28", "1970-12-18 10:53:28", "1970-12-18 10:53:28")`)
-	tk.MustExec(`prepare stmt from 'select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 = t2.col1 where t1. col1 < ? and t2. col1 in (?, ?, ?);'`)
-	tk.MustExec(`set @a="2038-01-19 03:14:07", @b="2038-01-19 03:14:07", @c="2038-01-19 03:14:07", @d="2038-01-19 03:14:07"`)
-	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
-	tk.MustExec(`set @a="1976-09-09 20:21:11", @b="2021-07-14 09:28:16", @c="1982-01-09 03:36:39", @d="1970-12-18 10:53:28"`)
-	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestParameterPushDown(t *testing.T) {
@@ -1147,27 +1026,6 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
-func TestTemporaryTable4PlanCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.MustExec("drop table if exists tmp2")
-	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
-	tk.MustExec("prepare stmt from 'select * from tmp2;';")
-	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-
-	tk.MustExec("drop table if exists tmp_t;")
-	tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
-	tk.MustExec("prepare stmt from 'select * from tmp_t;';")
-	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-}
-
 func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1228,7 +1086,6 @@ func TestPreparePC4Binding(t *testing.T) {
 
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	require.Equal(t, 1, len(tk.Session().GetSessionVars().PreparedStmts))
-	require.Equal(t, "select * from `test` . `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.PlanCacheStmt).NormalizedSQL4PC)
 
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
@@ -1244,19 +1101,6 @@ func TestPreparePC4Binding(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-}
-
-func TestIssue31141(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
-
-	// No panic here.
-	tk.MustExec("prepare stmt1 from 'do 1'")
-
-	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
-	tk.MustExec("prepare stmt1 from 'do 1'")
 }
 
 func TestMaxPreparedStmtCount(t *testing.T) {

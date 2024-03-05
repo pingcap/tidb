@@ -15,12 +15,10 @@
 package expression
 
 import (
-	"sync"
-
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -36,7 +34,7 @@ type likeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *likeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -46,60 +44,54 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinLikeSig{bf, nil, false, sync.Once{}}
+	sig := &builtinLikeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
 	return sig, nil
 }
 
 type builtinLikeSig struct {
 	baseBuiltinFunc
-	// pattern and isMemorizedPattern is not serialized with builtinLikeSig, treat them as a cache to accelerate
+	// pattern is not serialized with builtinLikeSig, treat them as a cache to accelerate
 	// the evaluation of builtinLikeSig.
-	pattern            collate.WildcardPattern
-	isMemorizedPattern bool
-	once               sync.Once
+	patternCache builtinFuncCache[collate.WildcardPattern]
 }
 
 func (b *builtinLikeSig) Clone() builtinFunc {
 	newSig := &builtinLikeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.pattern = b.pattern
-	newSig.isMemorizedPattern = b.isMemorizedPattern
 	return newSig
 }
 
 // evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
-func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
-	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinLikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	valStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 
-	patternStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	patternStr, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	escape, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	escape, isNull, err := b.args[2].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	memorization := func() {
-		if b.pattern == nil {
-			b.pattern = b.collator().Pattern()
-			if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
-				b.pattern.Compile(patternStr, byte(escape))
-				b.isMemorizedPattern = true
-			}
+	var pattern collate.WildcardPattern
+	if b.args[1].ConstLevel() >= ConstOnlyInContext && b.args[2].ConstLevel() >= ConstOnlyInContext {
+		pattern, err = b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
+			ret := b.collator().Pattern()
+			ret.Compile(patternStr, byte(escape))
+			return ret, nil
+		})
+		intest.AssertNoError(err)
+		if err != nil {
+			return 0, true, err
 		}
-	}
-	// Only be executed once to achieve thread-safe
-	b.once.Do(memorization)
-	if !b.isMemorizedPattern {
-		// Must not use b.pattern to avoid data race
-		pattern := b.collator().Pattern()
+	} else {
+		pattern = b.collator().Pattern()
 		pattern.Compile(patternStr, byte(escape))
-		return boolToInt64(pattern.DoMatch(valStr)), false, nil
 	}
-	return boolToInt64(b.pattern.DoMatch(valStr)), false, nil
+	return boolToInt64(pattern.DoMatch(valStr)), false, nil
 }

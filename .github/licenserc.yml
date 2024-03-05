@@ -16,6 +16,8 @@ header:
     - "**/BUILD.bazel"
     - "WORKSPACE"
     - "WORKSPACE.patchgo"
+    - "MODULE.bazel"
+    - "MODULE.bazel.lock"
     - ".bazelrc"
     - "**/*.key"
     - "**/*.md"
@@ -28,6 +30,7 @@ header:
     - "**/*.example"
     - "**/*.patch"
     - "**/*.bzl"
+    - "**/.git/**"
     - ".codecov.yml"
     - "Jenkinsfile"
     - ".editorconfig"
@@ -50,4 +53,5 @@ header:
     - "OWNERS_ALIASES"
     - "pkg/disttask/**/mock/**/*_mock.go"
     - "pkg/util/sqlexec/mock/*_mock.go"
+    - "pkg/extension/enterprise/"
   comment: on-failure

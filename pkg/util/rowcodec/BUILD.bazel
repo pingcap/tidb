@@ -14,13 +14,12 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
-        "//pkg/parser/terror",
         "//pkg/parser/types",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_multierr//:multierr",
     ],
 )
 

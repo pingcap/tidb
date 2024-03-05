@@ -37,7 +37,7 @@ func BenchmarkCreateContext(b *testing.B) {
 	fun := desc.GetAggFunc(ctx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		fun.CreateContext(ctx.GetSessionVars().StmtCtx)
+		fun.CreateContext(ctx)
 	}
 	b.ReportAllocs()
 }
@@ -53,10 +53,10 @@ func BenchmarkResetContext(b *testing.B) {
 		b.Fatal(err)
 	}
 	fun := desc.GetAggFunc(ctx)
-	evalCtx := fun.CreateContext(ctx.GetSessionVars().StmtCtx)
+	evalCtx := fun.CreateContext(ctx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		fun.ResetContext(ctx.GetSessionVars().StmtCtx, evalCtx)
+		fun.ResetContext(ctx, evalCtx)
 	}
 	b.ReportAllocs()
 }
@@ -74,7 +74,7 @@ func BenchmarkCreateDistinctContext(b *testing.B) {
 	fun := desc.GetAggFunc(ctx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		fun.CreateContext(ctx.GetSessionVars().StmtCtx)
+		fun.CreateContext(ctx)
 	}
 	b.ReportAllocs()
 }
@@ -90,10 +90,10 @@ func BenchmarkResetDistinctContext(b *testing.B) {
 		b.Fatal(err)
 	}
 	fun := desc.GetAggFunc(ctx)
-	evalCtx := fun.CreateContext(ctx.GetSessionVars().StmtCtx)
+	evalCtx := fun.CreateContext(ctx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		fun.ResetContext(ctx.GetSessionVars().StmtCtx, evalCtx)
+		fun.ResetContext(ctx, evalCtx)
 	}
 	b.ReportAllocs()
 }

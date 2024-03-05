@@ -92,7 +92,7 @@ func TestProfileToDatum(t *testing.T) {
 		comment = fmt.Sprintf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
 		equal := true
 		for j, r := range row {
-			v, err := r.Compare(nil, &datums[i][j], collate.GetBinaryCollator())
+			v, err := r.Compare(types.DefaultStmtNoWarningContext, &datums[i][j], collate.GetBinaryCollator())
 			if v != 0 || err != nil {
 				equal = false
 				break

@@ -23,9 +23,9 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -71,15 +71,14 @@ type SchemasReplace struct {
 	globalTableIdMap   map[UpstreamID]DownstreamID
 	needConstructIdMap bool
 
-	ingestRecorder  *ingestrec.IngestRecorder
-	TiflashRecorder *tiflashrec.TiFlashRecorder
-	RewriteTS       uint64        // used to rewrite commit ts in meta kv.
-	TableFilter     filter.Filter // used to filter schema/table
+	delRangeRecorder *brDelRangeExecWrapper
+	ingestRecorder   *ingestrec.IngestRecorder
+	TiflashRecorder  *tiflashrec.TiFlashRecorder
+	RewriteTS        uint64        // used to rewrite commit ts in meta kv.
+	TableFilter      filter.Filter // used to filter schema/table
 
-	genGenGlobalID            func(ctx context.Context) (int64, error)
-	genGenGlobalIDs           func(ctx context.Context, n int) ([]int64, error)
-	insertDeleteRangeForTable func(jobID int64, tableIDs []int64)
-	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64)
+	genGenGlobalID  func(ctx context.Context) (int64, error)
+	genGenGlobalIDs func(ctx context.Context, n int) ([]int64, error)
 
 	AfterTableRewritten func(deleted bool, tableInfo *model.TableInfo)
 }
@@ -112,8 +111,7 @@ func NewSchemasReplace(
 	tableFilter filter.Filter,
 	genID func(ctx context.Context) (int64, error),
 	genIDs func(ctx context.Context, n int) ([]int64, error),
-	insertDeleteRangeForTable func(jobID int64, tableIDs []int64),
-	insertDeleteRangeForIndex func(jobID int64, elementID *int64, tableID int64, indexIDs []int64),
+	recordDeleteRange func(*PreDelRangeQuery),
 ) *SchemasReplace {
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
 	for _, dr := range dbMap {
@@ -126,17 +124,16 @@ func NewSchemasReplace(
 	}
 
 	return &SchemasReplace{
-		DbMap:                     dbMap,
-		globalTableIdMap:          globalTableIdMap,
-		needConstructIdMap:        needConstructIdMap,
-		ingestRecorder:            ingestrec.New(),
-		TiflashRecorder:           tiflashRecorder,
-		RewriteTS:                 restoreTS,
-		TableFilter:               tableFilter,
-		genGenGlobalID:            genID,
-		genGenGlobalIDs:           genIDs,
-		insertDeleteRangeForTable: insertDeleteRangeForTable,
-		insertDeleteRangeForIndex: insertDeleteRangeForIndex,
+		DbMap:              dbMap,
+		globalTableIdMap:   globalTableIdMap,
+		needConstructIdMap: needConstructIdMap,
+		delRangeRecorder:   newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
+		ingestRecorder:     ingestrec.New(),
+		TiflashRecorder:    tiflashRecorder,
+		RewriteTS:          restoreTS,
+		TableFilter:        tableFilter,
+		genGenGlobalID:     genID,
+		genGenGlobalIDs:    genIDs,
 	}
 }
 
@@ -650,7 +647,7 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 				return nil, nil
 			}
 
-			return nil, sr.restoreFromHistory(job, false)
+			return nil, sr.restoreFromHistory(job)
 		}
 		return nil, nil
 	}
@@ -679,349 +676,90 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	return nil, nil
 }
 
-func (sr *SchemasReplace) restoreFromHistory(job *model.Job, isSubJob bool) error {
-	if !job.IsCancelled() {
-		switch job.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if job.State == model.JobStateRollbackDone {
-				return sr.deleteRange(job)
-			}
-			err := sr.ingestRecorder.AddJob(job, isSubJob)
-			return errors.Trace(err)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn,
-			model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
-			return sr.deleteRange(job)
-		case model.ActionMultiSchemaChange:
-			for i, sub := range job.MultiSchemaInfo.SubJobs {
-				proxyJob := sub.ToProxyJob(job, i)
-				// ASSERT: the proxyJob can not be MultiSchemaInfo anymore
-				if err := sr.restoreFromHistory(&proxyJob, true); err != nil {
-					return err
-				}
-			}
+func (sr *SchemasReplace) tryRecordIngestIndex(job *model.Job) error {
+	if job.Type != model.ActionMultiSchemaChange {
+		return sr.ingestRecorder.TryAddJob(job, false)
+	}
+
+	for i, sub := range job.MultiSchemaInfo.SubJobs {
+		proxyJob := sub.ToProxyJob(job, i)
+		// ASSERT: the proxyJob can not be MultiSchemaInfo anymore
+		if err := sr.ingestRecorder.TryAddJob(&proxyJob, true); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (sr *SchemasReplace) deleteRange(job *model.Job) error {
-	lctx := logutil.ContextWithField(context.Background(), logutil.RedactAny("category", "ddl: rewrite delete range"))
-	dbReplace, exist := sr.DbMap[job.SchemaID]
-	if !exist {
-		// skip this mddljob, the same below
-		logutil.CL(lctx).Warn("try to drop a non-existent range, missing oldDBID", zap.Int64("oldDBID", job.SchemaID))
-		return nil
-	}
-
-	// allocate a new fake job id to avoid row conflicts in table `gc_delete_range`
-	newJobID, err := sr.genGenGlobalID(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	switch job.Type {
-	case model.ActionDropSchema:
-		var tableIDs []int64
-		if err := job.DecodeArgs(&tableIDs); err != nil {
-			return errors.Trace(err)
-		}
-		// Note: tableIDs contains partition ids, cannot directly use dbReplace.TableMap
-		/* TODO: use global ID replace map
-		 *
-		 *	for i := 0; i < len(tableIDs); i++ {
-		 *		tableReplace, exist := dbReplace.TableMap[tableIDs[i]]
-		 *		if !exist {
-		 *			return errors.Errorf("DropSchema: try to drop a non-existent table, missing oldTableID")
-		 *		}
-		 *		tableIDs[i] = tableReplace.NewTableID
-		 *	}
-		 */
-
-		argsSet := make(map[int64]struct{}, len(tableIDs))
-		for _, tableID := range tableIDs {
-			argsSet[tableID] = struct{}{}
-		}
-
-		newTableIDs := make([]int64, 0, len(tableIDs))
-		for tableID, tableReplace := range dbReplace.TableMap {
-			if _, exist := argsSet[tableID]; !exist {
-				logutil.CL(lctx).Warn("DropSchema: record a table, but it doesn't exist in job args",
-					zap.Int64("oldTableID", tableID))
-				continue
-			}
-			newTableIDs = append(newTableIDs, tableReplace.TableID)
-			for partitionID, newPartitionID := range tableReplace.PartitionMap {
-				if _, exist := argsSet[partitionID]; !exist {
-					logutil.CL(lctx).Warn("DropSchema: record a partition, but it doesn't exist in job args",
-						zap.Int64("oldPartitionID", partitionID))
-					continue
-				}
-				newTableIDs = append(newTableIDs, newPartitionID)
-			}
-		}
-
-		if len(newTableIDs) != len(tableIDs) {
-			logutil.CL(lctx).Warn(
-				"DropSchema: try to drop a non-existent table/partition, whose oldID doesn't exist in tableReplace")
-			// only drop newTableIDs' ranges
-		}
-
-		if len(newTableIDs) > 0 {
-			sr.insertDeleteRangeForTable(newJobID, newTableIDs)
-		}
-
-		return nil
-	// Truncate will generates new id for table or partition, so ts can be large enough
-	case model.ActionDropTable, model.ActionTruncateTable:
-		tableReplace, exist := dbReplace.TableMap[job.TableID]
-		if !exist {
-			logutil.CL(lctx).Warn("DropTable/TruncateTable: try to drop a non-existent table, missing oldTableID",
-				zap.Int64("oldTableID", job.TableID))
-			return nil
-		}
-
-		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
-		var startKey kv.Key // unused
-		var physicalTableIDs []int64
-		var ruleIDs []string // unused
-		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
-			return errors.Trace(err)
-		}
-		if len(physicalTableIDs) > 0 {
-			newPhysicalTableIDs := make([]int64, 0, len(physicalTableIDs))
-			// delete partition id
-			for _, oldPid := range physicalTableIDs {
-				newPid, exist := tableReplace.PartitionMap[oldPid]
-				if !exist {
-					logutil.CL(lctx).Warn("DropTable/TruncateTable: try to drop a non-existent table, missing oldPartitionID",
-						zap.Int64("oldPartitionID", oldPid))
-					continue
-				}
-				newPhysicalTableIDs = append(newPhysicalTableIDs, newPid)
-			}
-			if len(newPhysicalTableIDs) > 0 {
-				sr.insertDeleteRangeForTable(newJobID, newPhysicalTableIDs)
-			}
-			return nil
-		}
-
-		sr.insertDeleteRangeForTable(newJobID, []int64{tableReplace.TableID})
-		return nil
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		tableReplace, exist := dbReplace.TableMap[job.TableID]
-		if !exist {
-			logutil.CL(lctx).Warn(
-				"DropTablePartition/TruncateTablePartition: try to drop a non-existent table, missing oldTableID",
-				zap.Int64("oldTableID", job.TableID))
-			return nil
-		}
-		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
-			return errors.Trace(err)
-		}
-
-		newPhysicalTableIDs := make([]int64, 0, len(physicalTableIDs))
-		for _, oldPid := range physicalTableIDs {
-			newPid, exist := tableReplace.PartitionMap[oldPid]
-			if !exist {
-				logutil.CL(lctx).Warn(
-					"DropTablePartition/TruncateTablePartition: try to drop a non-existent table, missing oldPartitionID",
-					zap.Int64("oldPartitionID", oldPid))
-				continue
-			}
-			newPhysicalTableIDs = append(newPhysicalTableIDs, newPid)
-		}
-		if len(newPhysicalTableIDs) > 0 {
-			sr.insertDeleteRangeForTable(newJobID, newPhysicalTableIDs)
-		}
-		return nil
-	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		// iff job.State = model.JobStateRollbackDone
-		tableReplace, exist := dbReplace.TableMap[job.TableID]
-		if !exist {
-			logutil.CL(lctx).Warn("AddIndex/AddPrimaryKey roll-back: try to drop a non-existent table, missing oldTableID",
-				zap.Int64("oldTableID", job.TableID))
-			return nil
-		}
-		indexIDs := make([]int64, 1)
-		ifExists := make([]bool, 1)
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexIDs[0], &ifExists[0], &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&indexIDs, &ifExists, &partitionIDs); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		var elementID int64 = 1
-
-		if len(partitionIDs) > 0 {
-			for _, oldPid := range partitionIDs {
-				newPid, exist := tableReplace.PartitionMap[oldPid]
-				if !exist {
-					logutil.CL(lctx).Warn(
-						"AddIndex/AddPrimaryKey roll-back: try to drop a non-existent table, missing oldPartitionID",
-						zap.Int64("oldPartitionID", oldPid))
-					continue
-				}
-
-				sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
-			}
-		} else {
-			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
-		}
-		return nil
-	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		tableReplace, exist := dbReplace.TableMap[job.TableID]
-		if !exist {
-			logutil.CL(lctx).Warn("DropIndex/DropPrimaryKey: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
-			return nil
-		}
-
-		var indexName interface{}
-		var ifExists bool
-		var indexID int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-
-		var elementID int64 = 1
-		indexIDs := []int64{indexID}
-
-		if len(partitionIDs) > 0 {
-			for _, oldPid := range partitionIDs {
-				newPid, exist := tableReplace.PartitionMap[oldPid]
-				if !exist {
-					logutil.CL(lctx).Warn("DropIndex/DropPrimaryKey: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
-					continue
-				}
-				// len(indexIDs) = 1
-				sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
-			}
-		} else {
-			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
-		}
-		return nil
-	case model.ActionDropIndexes: // // Deprecated, we use ActionMultiSchemaChange instead.
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		// Remove data in TiKV.
-		if len(indexIDs) == 0 {
-			return nil
-		}
-
-		tableReplace, exist := dbReplace.TableMap[job.TableID]
-		if !exist {
-			logutil.CL(lctx).Warn("DropIndexes: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
-			return nil
-		}
-
-		var elementID int64 = 1
-		if len(partitionIDs) > 0 {
-			for _, oldPid := range partitionIDs {
-				newPid, exist := tableReplace.PartitionMap[oldPid]
-				if !exist {
-					logutil.CL(lctx).Warn("DropIndexes: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
-					continue
-				}
-				sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
-			}
-		} else {
-			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
-		}
-		return nil
-	case model.ActionDropColumn:
-		var colName model.CIStr
-		var ifExists bool
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		if len(indexIDs) > 0 {
-			tableReplace, exist := dbReplace.TableMap[job.TableID]
-			if !exist {
-				logutil.CL(lctx).Warn("DropColumn: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
-				return nil
-			}
-
-			var elementID int64 = 1
-			if len(partitionIDs) > 0 {
-				for _, oldPid := range partitionIDs {
-					newPid, exist := tableReplace.PartitionMap[oldPid]
-					if !exist {
-						logutil.CL(lctx).Warn("DropColumn: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
-						continue
-					}
-					sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
-				}
-			} else {
-				sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
-			}
-		}
-		return nil
-	case model.ActionDropColumns: // Deprecated, we use ActionMultiSchemaChange instead.
-		var colNames []model.CIStr
-		var ifExists []bool
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		if len(indexIDs) > 0 {
-			tableReplace, exist := dbReplace.TableMap[job.TableID]
-			if !exist {
-				logutil.CL(lctx).Warn("DropColumns: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
-				return nil
-			}
-
-			var elementID int64 = 1
-			if len(partitionIDs) > 0 {
-				for _, oldPid := range partitionIDs {
-					newPid, exist := tableReplace.PartitionMap[oldPid]
-					if !exist {
-						logutil.CL(lctx).Warn("DropColumns: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
-						continue
-					}
-					sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
-				}
-			} else {
-				sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
-			}
-		}
-	case model.ActionModifyColumn:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		if len(indexIDs) == 0 {
-			return nil
-		}
-		tableReplace, exist := dbReplace.TableMap[job.TableID]
-		if !exist {
-			logutil.CL(lctx).Warn("DropColumn: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
-			return nil
-		}
-
-		var elementID int64 = 1
-		if len(partitionIDs) > 0 {
-			for _, oldPid := range partitionIDs {
-				newPid, exist := tableReplace.PartitionMap[oldPid]
-				if !exist {
-					logutil.CL(lctx).Warn("DropColumn: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
-					continue
-				}
-				sr.insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
-			}
-		} else {
-			sr.insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.TableID, indexIDs)
+func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
+	if ddl.JobNeedGC(job) {
+		if err := ddl.AddDelRangeJobInternal(context.TODO(), sr.delRangeRecorder, job); err != nil {
+			return err
 		}
 	}
+
+	return sr.tryRecordIngestIndex(job)
+}
+
+type DelRangeParams struct {
+	JobID    int64
+	ElemID   int64
+	StartKey string
+	EndKey   string
+}
+
+type PreDelRangeQuery struct {
+	Sql        string
+	ParamsList []DelRangeParams
+}
+
+type brDelRangeExecWrapper struct {
+	globalTableIdMap map[UpstreamID]DownstreamID
+
+	recordDeleteRange func(*PreDelRangeQuery)
+
+	// temporary values
+	query *PreDelRangeQuery
+}
+
+func newDelRangeExecWrapper(
+	globalTableIdMap map[UpstreamID]DownstreamID,
+	recordDeleteRange func(*PreDelRangeQuery),
+) *brDelRangeExecWrapper {
+	return &brDelRangeExecWrapper{
+		globalTableIdMap:  globalTableIdMap,
+		recordDeleteRange: recordDeleteRange,
+
+		query: nil,
+	}
+}
+
+// UpdateTSOForJob just does nothing. BR would generate ts after log restore done.
+func (bdr *brDelRangeExecWrapper) UpdateTSOForJob() error {
+	return nil
+}
+
+func (bdr *brDelRangeExecWrapper) PrepareParamsList(sz int) {
+	bdr.query = &PreDelRangeQuery{
+		ParamsList: make([]DelRangeParams, 0, sz),
+	}
+}
+
+func (bdr *brDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
+	newTableID, exists := bdr.globalTableIdMap[tableID]
+	if !exists {
+		log.Warn("failed to find the downstream id when rewrite delete range", zap.Int64("old tableID", tableID))
+	}
+	return newTableID, exists
+}
+
+func (bdr *brDelRangeExecWrapper) AppendParamsList(jobID, elemID int64, startKey, endKey string) {
+	bdr.query.ParamsList = append(bdr.query.ParamsList, DelRangeParams{jobID, elemID, startKey, endKey})
+}
+
+func (bdr *brDelRangeExecWrapper) ConsumeDeleteRange(ctx context.Context, sql string) error {
+	bdr.query.Sql = sql
+	bdr.recordDeleteRange(bdr.query)
+	bdr.query = nil
 	return nil
 }

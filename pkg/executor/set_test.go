@@ -101,9 +101,9 @@ func TestSetVar(t *testing.T) {
 	require.False(t, vars.IsAutocommit())
 
 	tk.MustExec("set @@sql_mode = 'strict_trans_tables'")
-	require.True(t, vars.StrictSQLMode)
+	require.True(t, vars.SQLMode.HasStrictMode())
 	tk.MustExec("set @@sql_mode = ''")
-	require.False(t, vars.StrictSQLMode)
+	require.False(t, vars.SQLMode.HasStrictMode())
 
 	tk.MustExec("set names utf8")
 	charset, collation := vars.GetCharsetInfo()
@@ -652,6 +652,12 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"))
+	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
+	tk.MustExec("set global pd_enable_follower_handle_region = 1")
+	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("1"))
+	tk.MustExec("set global pd_enable_follower_handle_region = 0")
+	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
+	require.Error(t, tk.ExecToErr("set pd_enable_follower_handle_region = 1"))
 
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -809,13 +815,13 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_force_inline_cte").Check(testkit.Rows("1"))
 
 	// test tidb_auto_analyze_partition_batch_size
-	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1")) // default value is 1
+	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("128")) // default value is 128
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 2")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("2"))
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 0")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1")) // min value is 1
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 9999")
-	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1024")) // max value is 1024
+	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("8192")) // max value is 8192
 
 	// test variable 'tidb_opt_prefix_index_single_scan'
 	// global scope
@@ -902,172 +908,54 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_schema_version_cache_limit").Check(testkit.Rows("2"))
 	tk.MustExec("set @@global.tidb_schema_version_cache_limit=64;")
 	tk.MustQuery("select @@global.tidb_schema_version_cache_limit").Check(testkit.Rows("64"))
-}
 
-func TestGetSetNoopVars(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	// test tidb_idle_transaction_timeout
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout = 2")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("2"))
+	tk.MustGetErrMsg("SET SESSION tidb_idle_transaction_timeout='x';", "[variable:1232]Incorrect argument type to variable 'tidb_idle_transaction_timeout'")
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout=31536001;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_idle_transaction_timeout value: '31536001'"))
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout = 0")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout=31536000;")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout = 1")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("SET GLOBAL tidb_idle_transaction_timeout='x';", "[variable:1232]Incorrect argument type to variable 'tidb_idle_transaction_timeout'")
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout=31536001;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_idle_transaction_timeout value: '31536001'"))
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout = 0")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout=31536000;")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
 
-	// By default you can get/set noop sysvars without issue.
-	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("OFF"))
-	tk.MustQuery("SHOW VARIABLES LIKE 'query_cache_type'").Check(testkit.Rows("query_cache_type OFF"))
-	tk.MustExec("SET query_cache_type=2")
-	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("DEMAND"))
-	// When tidb_enable_noop_variables is OFF, you can GET in @@ context
-	// and always SET. But you can't see in SHOW VARIABLES.
-	// Warnings are also returned.
-	tk.MustExec("SET GLOBAL tidb_enable_noop_variables = OFF")
-	defer tk.MustExec("SET GLOBAL tidb_enable_noop_variables = ON")
-	tk.MustQuery("SELECT @@global.tidb_enable_noop_variables").Check(testkit.Rows("OFF"))
-	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("DEMAND"))
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8145 variable query_cache_type has no effect in TiDB"))
-	tk.MustQuery("SHOW VARIABLES LIKE 'query_cache_type'").Check(testkit.Rows())
-	tk.MustExec("SET query_cache_type = OFF")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8144 setting query_cache_type has no effect in TiDB"))
-	// but the change is still effective.
-	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("OFF"))
+	// test tidb_txn_entry_size_limit
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_txn_entry_size_limit = 1024")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("1024"))
+	tk.MustExec("set session tidb_txn_entry_size_limit = 125829120")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("125829120"))
 
-	// Only ON and OFF supported
-	err := tk.ExecToErr("SET GLOBAL tidb_enable_noop_variables = 2")
-	require.Error(t, err)
-	require.Equal(t, "[variable:1231]Variable 'tidb_enable_noop_variables' can't be set to the value of '2'", err.Error())
+	tk.MustGetErrMsg("set session tidb_txn_entry_size_limit = 'x'", "[variable:1232]Incorrect argument type to variable 'tidb_txn_entry_size_limit'")
+	tk.MustGetErrMsg("set session tidb_txn_entry_size_limit = 18446744073709551616", "[variable:1232]Incorrect argument type to variable 'tidb_txn_entry_size_limit'")
 
-	err = tk.ExecToErr("SET GLOBAL tidb_enable_noop_variables = 'warn'")
-	require.Error(t, err)
-	require.Equal(t, "[variable:1231]Variable 'tidb_enable_noop_variables' can't be set to the value of 'warn'", err.Error())
-}
+	tk.MustExec("set session tidb_txn_entry_size_limit = 125829121")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_txn_entry_size_limit value: '125829121'"))
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("125829120"))
+	tk.MustExec("set session tidb_txn_entry_size_limit = -1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_txn_entry_size_limit value: '-1'"))
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("0"))
 
-func TestTruncateIncorrectIntSessionVar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	testCases := []struct {
-		sessionVarName string
-		minValue       int
-		maxValue       int
-	}{
-		{"auto_increment_increment", 1, 65535},
-		{"auto_increment_offset", 1, 65535},
-	}
-
-	for _, tc := range testCases {
-		name := tc.sessionVarName
-		selectSQL := fmt.Sprintf("select @@%s;", name)
-		validValue := tc.minValue + (tc.maxValue-tc.minValue)/2
-		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, validValue))
-		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", validValue)))
-
-		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.minValue-1))
-		warnMsg := fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.minValue-1)
-		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
-		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.minValue)))
-
-		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.maxValue+1))
-		warnMsg = fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.maxValue+1)
-		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
-		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.maxValue)))
-	}
-}
-
-func TestSetCharset(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	sessionVars := tk.Session().GetSessionVars()
-
-	var characterSetVariables = []string{
-		"character_set_client",
-		"character_set_connection",
-		"character_set_results",
-		"character_set_server",
-		"character_set_database",
-		"character_set_system",
-		"character_set_filesystem",
-	}
-
-	check := func(args ...string) {
-		for i, v := range characterSetVariables {
-			sVar, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v)
-			require.NoError(t, err)
-			require.Equal(t, args[i], sVar, fmt.Sprintf("%d: %s", i, characterSetVariables[i]))
-		}
-	}
-
-	check(
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8",
-		"binary",
-	)
-
-	tk.MustExec(`SET NAMES latin1`)
-	check(
-		"latin1",
-		"latin1",
-		"latin1",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8",
-		"binary",
-	)
-
-	tk.MustExec(`SET NAMES default`)
-	check(
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8",
-		"binary",
-	)
-
-	// Issue #1523
-	tk.MustExec(`SET NAMES binary`)
-	check(
-		"binary",
-		"binary",
-		"binary",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8",
-		"binary",
-	)
-
-	tk.MustExec(`SET NAMES utf8`)
-	check(
-		"utf8",
-		"utf8",
-		"utf8",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8",
-		"binary",
-	)
-
-	tk.MustExec(`SET CHARACTER SET latin1`)
-	check(
-		"latin1",
-		"utf8mb4",
-		"latin1",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8",
-		"binary",
-	)
-
-	tk.MustExec(`SET CHARACTER SET default`)
-	check(
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8mb4",
-		"utf8",
-		"binary",
-	)
+	tk.MustExec("set session tidb_txn_entry_size_limit = 2048")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 0"))
+	tk.MustExec("set global tidb_txn_entry_size_limit = 4096")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 4096"))
+	tk.MustExec("set global tidb_txn_entry_size_limit = 0")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 0"))
 }
 
 func TestSetCollationAndCharset(t *testing.T) {
@@ -1118,7 +1006,19 @@ func TestValidateSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	err := tk.ExecToErr("set global tidb_distsql_scan_concurrency='fff';")
+	err := tk.ExecToErr("set global tidb_analyze_distsql_scan_concurrency='fff';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
+
+	tk.MustExec("set global tidb_analyze_distsql_scan_concurrency=-2;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_analyze_distsql_scan_concurrency value: '-2'"))
+
+	err = tk.ExecToErr("set @@tidb_analyze_distsql_scan_concurrency='fff';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
+
+	tk.MustExec("set @@tidb_analyze_distsql_scan_concurrency=-2;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_analyze_distsql_scan_concurrency value: '-2'"))
+
+	err = tk.ExecToErr("set global tidb_distsql_scan_concurrency='fff';")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set global tidb_distsql_scan_concurrency=-2;")
@@ -1498,27 +1398,6 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.allow_auto_random_explicit_insert;").Check(testkit.Rows("1"))
 }
 
-func TestSelectGlobalVar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@global.max_connections=100;")
-
-	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("100"))
-	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("100"))
-
-	tk.MustExec("set @@global.max_connections=0;")
-
-	// test for unknown variable.
-	err := tk.ExecToErr("select @@invalid")
-	require.True(t, terror.ErrorEqual(err, variable.ErrUnknownSystemVar), fmt.Sprintf("err %v", err))
-	err = tk.ExecToErr("select @@global.invalid")
-	require.True(t, terror.ErrorEqual(err, variable.ErrUnknownSystemVar), fmt.Sprintf("err %v", err))
-}
-
 func TestSetConcurrency(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1723,72 +1602,6 @@ func TestEnableNoopFunctionsVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set global read_only = abc"))
 }
 
-// https://github.com/pingcap/tidb/issues/29670
-func TestDefaultBehavior(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("InnoDB"))
-	tk.MustExec("SET GLOBAL default_storage_engine = 'somethingweird'")
-	tk.MustExec("SET default_storage_engine = 'MyISAM'")
-	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("MyISAM"))
-	tk.MustExec("SET default_storage_engine = DEFAULT") // reads from global value
-	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("somethingweird"))
-	tk.MustExec("SET @@SESSION.default_storage_engine = @@GLOBAL.default_storage_engine") // example from MySQL manual
-	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("somethingweird"))
-	tk.MustExec("SET GLOBAL default_storage_engine = 'somethingweird2'")
-	tk.MustExec("SET default_storage_engine = @@GLOBAL.default_storage_engine") // variation of example
-	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("somethingweird2"))
-	tk.MustExec("SET default_storage_engine = DEFAULT")        // restore default again for session global
-	tk.MustExec("SET GLOBAL default_storage_engine = DEFAULT") // restore default for global
-	tk.MustQuery("SELECT @@SESSION.default_storage_engine, @@GLOBAL.default_storage_engine").Check(testkit.Rows("somethingweird2 InnoDB"))
-
-	// Try sql_mode option which has validation
-	err := tk.ExecToErr("SET GLOBAL sql_mode = 'DEFAULT'") // illegal now
-	require.EqualError(t, err, `ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'DEFAULT'`)
-	tk.MustExec("SET GLOBAL sql_mode = DEFAULT")
-}
-
-func TestTiDBReadOnly(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
-	tk.MustExec("SET GLOBAL tidb_restricted_read_only = ON")
-	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("1"))
-
-	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
-	err := tk.ExecToErr("SET GLOBAL tidb_super_read_only = OFF")
-	require.Error(t, err)
-	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
-
-	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
-	tk.MustExec("SET GLOBAL tidb_restricted_read_only = OFF")
-	tk.MustQuery("SELECT @@GLOBAL.tidb_restricted_read_only").Check(testkit.Rows("0"))
-	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("1"))
-
-	// it is ok to turn off tidb_super_read_only now
-	tk.MustExec("SET GLOBAL tidb_super_read_only = OFF")
-	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("0"))
-}
-
-func TestRemovedSysVars(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// test for tidb_enable_noop_functions
-	// In SET context, it just noops:
-	tk.MustExec(`SET tidb_enable_global_temporary_table = 1`)
-	tk.MustExec(`SET tidb_slow_log_masking = 1`)
-	tk.MustExec(`SET GLOBAL tidb_enable_global_temporary_table = 1`)
-	tk.MustExec(`SET GLOBAL tidb_slow_log_masking = 1`)
-
-	// In SELECT context it returns a specifc error
-	// (to avoid presenting dummy data)
-	tk.MustGetErrCode("SELECT @@tidb_slow_log_masking", errno.ErrVariableNoLongerSupported)
-	tk.MustGetErrCode("SELECT @@tidb_enable_global_temporary_table", errno.ErrVariableNoLongerSupported)
-}
-
 func TestSetClusterConfig(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1939,233 +1752,4 @@ func TestSetTopSQLVariables(t *testing.T) {
 
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
-}
-
-func TestPreparePlanCacheValid(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	// global scope
-	tk.MustQuery("select @@global.tidb_session_plan_cache_size").Check(testkit.Rows("100")) // default value
-	tk.MustExec("SET GLOBAL tidb_session_plan_cache_size = 0")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1292 Truncated incorrect tidb_session_plan_cache_size value: '0'"))
-	tk.MustQuery("select @@global.tidb_session_plan_cache_size").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_session_plan_cache_size = 2")
-	tk.MustQuery("select @@global.tidb_session_plan_cache_size").Check(testkit.Rows("2"))
-	// session scope
-	tk.MustQuery("select @@session.tidb_session_plan_cache_size").Check(testkit.Rows("100")) // default value
-	tk.MustExec("SET SESSION tidb_session_plan_cache_size = 0")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1292 Truncated incorrect tidb_session_plan_cache_size value: '0'"))
-	tk.MustQuery("select @@session.tidb_session_plan_cache_size").Check(testkit.Rows("1"))
-	tk.MustExec("SET SESSION tidb_session_plan_cache_size = 2")
-	tk.MustQuery("select @@session.tidb_session_plan_cache_size").Check(testkit.Rows("2"))
-
-	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = -0.1")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_memory_guard_ratio value: '-0.1'"))
-	tk.MustQuery("select @@global.tidb_prepared_plan_cache_memory_guard_ratio").Check(testkit.Rows("0"))
-	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 2.2")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1292 Truncated incorrect tidb_prepared_plan_cache_memory_guard_ratio value: '2.2'"))
-	tk.MustQuery("select @@global.tidb_prepared_plan_cache_memory_guard_ratio").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 0.5")
-	tk.MustQuery("select @@global.tidb_prepared_plan_cache_memory_guard_ratio").Check(testkit.Rows("0.5"))
-
-	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 0")
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("0"))
-	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 1")
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_enable_prepared_plan_cache = 0")
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache").Check(testkit.Rows("0"))
-}
-
-func TestInstanceScopeSwitching(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	// enable 'switching' to SESSION variables
-	tk.MustExec("set tidb_enable_legacy_instance_scope = 1")
-	tk.MustExec("set tidb_general_log = 1")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_general_log will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
-
-	// disable 'switching' to SESSION variables
-	tk.MustExec("set tidb_enable_legacy_instance_scope = 0")
-	tk.MustGetErrCode("set tidb_general_log = 1", errno.ErrGlobalVariable)
-}
-
-func TestGcMaxWaitTime(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("set global tidb_gc_max_wait_time = 1000")
-	tk.MustExec("set global tidb_gc_life_time = \"72h\"")
-	tk.MustExec("set global tidb_gc_life_time = \"24h\"")
-	tk.MustExec("set global tidb_gc_life_time = \"10m\"")
-
-	tk.MustExec("set global tidb_gc_max_wait_time = 86400")
-	tk.MustExec("set global tidb_gc_life_time = \"72h\"")
-	tk.MustExec("set global tidb_gc_max_wait_time = 1000")
-}
-
-func TestTiFlashFineGrainedShuffle(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	// Default is 0.
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("0"))
-	// Min val is -1.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -2")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
-
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 1024")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("1024"))
-	// Max val is 1024.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 1025")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("1024"))
-
-	// Default is 8192.
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_batch_size;").Check(testkit.Rows("8192"))
-
-	// Min is 1.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_batch_size = 0")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_batch_size;").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_batch_size = -1")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_batch_size;").Check(testkit.Rows("1"))
-
-	// Max is uint64_max.
-	tk.MustExec("set @@tiflash_fine_grained_shuffle_batch_size = 18446744073709551615")
-	tk.MustQuery("select @@tiflash_fine_grained_shuffle_batch_size;").Check(testkit.Rows("18446744073709551615"))
-
-	// Test set global.
-	tk.MustExec("set global tiflash_fine_grained_shuffle_stream_count = -1")
-	tk.MustExec("set global tiflash_fine_grained_shuffle_batch_size = 8192")
-}
-
-func TestSetTiFlashFastScanVariable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values(1);")
-
-	// check the default tiflash read mode
-	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@tiflash_fastscan=ON;")
-	tk.MustQuery("select @@session.tiflash_fastscan").Check(testkit.Rows("1"))
-
-	tk.MustExec("set GLOBAL tiflash_fastscan=OFF;")
-	tk.MustQuery("select @@global.tiflash_fastscan").Check(testkit.Rows("0"))
-}
-
-func TestSetPlanCacheMemoryMonitor(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_memory_monitor=OFF;")
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_memory_monitor=1;")
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_memory_monitor=off;")
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_memory_monitor").Check(testkit.Rows("0"))
-}
-
-func TestSetChunkReuseVariable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_reuse_chunk=ON;")
-	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
-	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=ON;")
-	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@tidb_enable_reuse_chunk=OFF;")
-	tk.MustQuery("select @@session.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
-	tk.MustExec("set GLOBAL tidb_enable_reuse_chunk=OFF;")
-	tk.MustQuery("select @@global.tidb_enable_reuse_chunk").Check(testkit.Rows("0"))
-
-	// error value
-	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
-}
-
-func TestSetMppVersionVariable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("UNSPECIFIED"))
-	tk.MustExec("SET SESSION mpp_version = -1")
-	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("-1"))
-	tk.MustExec("SET SESSION mpp_version = 0")
-	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("0"))
-	tk.MustExec("SET SESSION mpp_version = 1")
-	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("1"))
-	tk.MustExec("SET SESSION mpp_version = 2")
-	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("2"))
-	tk.MustExec("SET SESSION mpp_version = unspecified")
-	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("unspecified"))
-	{
-		tk.MustGetErrMsg("SET SESSION mpp_version = 3", "incorrect value: 3. mpp_version options: -1 (unspecified), 0, 1, 2")
-	}
-	{
-		tk.MustExec("SET GLOBAL mpp_version = 1")
-		tk.MustQuery("select @@global.mpp_version").Check(testkit.Rows("1"))
-		tk.MustExec("SET GLOBAL mpp_version = -1")
-		tk.MustQuery("select @@global.mpp_version").Check(testkit.Rows("-1"))
-	}
-}
-
-func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustGetErrMsg(
-		"SET SESSION mpp_exchange_compression_mode = 123",
-		"incorrect value: `123`. mpp_exchange_compression_mode options: NONE, FAST, HIGH_COMPRESSION, UNSPECIFIED")
-	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("UNSPECIFIED"))
-
-	tk.MustExec("SET SESSION mpp_exchange_compression_mode = none")
-	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("none"))
-	tk.MustExec("SET SESSION mpp_exchange_compression_mode = fast")
-	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("fast"))
-	tk.MustExec("SET SESSION mpp_exchange_compression_mode = HIGH_COMPRESSION")
-	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("HIGH_COMPRESSION"))
-
-	{
-		tk.MustExec("SET GLOBAL mpp_exchange_compression_mode = none")
-		tk.MustQuery("select @@global.mpp_exchange_compression_mode").Check(testkit.Rows("none"))
-	}
-	{
-		tk.MustExec("SET mpp_version = 0")
-		tk.MustExec("SET mpp_exchange_compression_mode = unspecified")
-		require.Equal(t, len(tk.Session().GetSessionVars().StmtCtx.GetWarnings()), 0)
-	}
-	{
-		tk.MustExec("SET mpp_version = 0")
-		tk.MustExec("SET mpp_exchange_compression_mode = HIGH_COMPRESSION")
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		require.Equal(t, len(warnings), 1)
-		require.Equal(t, warnings[0].Err.Error(), "mpp exchange compression won't work under current mpp version 0")
-	}
-}
-
-func TestDeprecateEnableTiFlashPipelineModel(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set @@global.tidb_enable_tiflash_pipeline_model = 1`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1681 tidb_enable_tiflash_pipeline_model is deprecated and will be removed in a future release."))
 }

@@ -44,7 +44,7 @@ func newLocalColumnPool() *localColumnPool {
 	newColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
 	return &localColumnPool{
 		sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return newColumn.CopyConstruct(nil)
 			},
 		},
@@ -82,12 +82,12 @@ func (r *localColumnPool) MemoryUsage() (sum int64) {
 }
 
 // vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.
-func vecEvalIntByRows(sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
+func vecEvalIntByRows(ctx EvalContext, sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
-		res, isNull, err := sig.evalInt(input.GetRow(i))
+		res, isNull, err := sig.evalInt(ctx, input.GetRow(i))
 		if err != nil {
 			return err
 		}
@@ -98,11 +98,11 @@ func vecEvalIntByRows(sig builtinFunc, input *chunk.Chunk, result *chunk.Column)
 }
 
 // vecEvalStringByRows uses the non-vectorized(row-based) interface `evalString` to eval the expression.
-func vecEvalStringByRows(sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
+func vecEvalStringByRows(sig builtinFunc, ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		res, isNull, err := sig.evalString(input.GetRow(i))
+		res, isNull, err := sig.evalString(ctx, input.GetRow(i))
 		if err != nil {
 			return err
 		}

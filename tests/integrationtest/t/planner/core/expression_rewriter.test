@@ -227,3 +227,48 @@ create table t2(a int);
 create table t(a int);
 select * from t where  exists ( select a from ( select a from t1 union all select a from t2) u where t.a=u.a);
 
+# TestIfNullEliminateColName
+drop table if exists t, t1;
+create table t(a int not null, b int not null);
+select ifnull(a,b) from t;
+drop table if exists t;
+create table t(e int not null, b int);
+insert into t values(1, 1);
+create table t1(e int not null, b int);
+insert into t1 values(1, 1);
+select b from t where ifnull(e, b);
+select b from t1 where ifnull(e, b);
+
+# TestIssue20007
+drop table if exists t1, t2;
+create table t1 (c_int int, c_str varchar(40), c_datetime datetime, primary key(c_int));
+create table t2 (c_int int, c_str varchar(40), c_datetime datetime, primary key (c_datetime)) partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')), partition p1 values less than (to_days('2020-04-01')), partition p2 values less than (to_days('2020-06-01')), partition p3 values less than maxvalue);
+insert into t1 (c_int, c_str, c_datetime) values (1, 'xenodochial bassi', '2020-04-29 03:22:51'), (2, 'epic wiles', '2020-01-02 23:29:51'), (3, 'silly burnell', '2020-02-25 07:43:07');
+insert into t2 (c_int, c_str, c_datetime) values (1, 'trusting matsumoto', '2020-01-07 00:57:18'), (2, 'pedantic boyd', '2020-06-08 23:12:16'), (null, 'strange hypatia', '2020-05-23 17:45:27');
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+
+# TestDefaultCollationForUTF8MB4
+set @a = 'xx';
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+select collation(_utf8mb4'12345');
+select collation(_utf8mb4'xxx' collate utf8mb4_general_ci);
+select collation(_utf8mb4'@a');
+select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
+set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+select collation(_utf8mb4'12345');
+select collation(_utf8mb4'12345' collate utf8mb4_general_ci);
+select collation(_utf8mb4'@a');
+select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
+
+set @@session.default_collation_for_utf8mb4=default;
+

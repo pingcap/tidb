@@ -25,7 +25,7 @@ CREATE USER 'testnotexist'@'localhost';
 CREATE DATABASE IF NOT EXISTS privilege__privileges;
 CREATE TABLE privilege__privileges.t1 (a int);
 connect (testnotexist,localhost,testnotexist,,);
-connection testnotexist; 
+connection testnotexist;
 --error 1142
 SELECT * FROM privilege__privileges.t1;
 --error 1142
@@ -193,20 +193,17 @@ connection default;
 
 --echo # TestCheckPointGetDBPrivilege
 CREATE USER 'tester'@'localhost';
-GRANT SELECT,UPDATE ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT SELECT,UPDATE ON privilege__privileges2.* TO  'tester'@'localhost';
 create database if not exists privilege__privileges;
 create table privilege__privileges.t(id int, v int, primary key(id));
 insert into privilege__privileges.t(id, v) values(1, 1);
 
 connect (tester,localhost,tester,,);
-connection tester;
-use privilege__privileges;
 --error ErrTableaccessDenied
 select * from privilege__privileges.t where id = 1;
 --error ErrTableaccessDenied
 update privilege__privileges.t set v = 2 where id = 1;
 disconnect tester;
-connection default;
 DROP USER 'tester'@'localhost';
 
 # TestGrantLockTables
@@ -237,7 +234,7 @@ GRANT ALL ON *.* TO 'hasgrant';
 GRANT ALL ON mysql.* TO 'withoutgrant';
 connect (hasgrant,localhost,hasgrant,,);
 connection hasgrant;
---error WITHOUT GRANT OPTION
+--error 8121
 REVOKE SELECT ON mysql.* FROM 'withoutgrant';
 
 connection default;
@@ -369,6 +366,8 @@ connection default;
 
 
 # TestCreateDropUser
+drop user if exists tcd1, tcd2, tcd3, usr1;
+drop resource group if exists rg1;
 CREATE USER tcd1, tcd2;
 GRANT ALL ON *.* to tcd2 WITH GRANT OPTION;
 
@@ -513,9 +512,8 @@ connection default;
 CREATE USER 'tableaccess'@'localhost';
 CREATE TABLE fieldlistt1 (a int);
 connect (field_list,localhost,tableaccess,,);
-connection field_list;
 --error ErrTableaccessDenied
-desc fieldlistt1;
+desc privilege__privileges.fieldlistt1;
 disconnect field_list;
 connection default;
 
@@ -594,18 +592,18 @@ connection nobodyuser2;
 ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
 ALTER USER 'nobodyuser2' IDENTIFIED BY '';
 ALTER USER 'nobodyuser3' IDENTIFIED BY '';
---error Access denied;
+--error 1227
 ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
---error Access denied;
+--error 1227
 ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
 disconnect nobodyuser2;
 
 connect (nobodyuser3,localhost,nobodyuser3,,);
 connection nobodyuser3;
 ALTER USER 'nobodyuser3' IDENTIFIED BY '';
---error Access denied
+--error 1227
 ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
---error Access denied
+--error 1227
 ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
 disconnect nobodyuser3;
 
@@ -613,7 +611,7 @@ connect (nobodyuser5,localhost,nobodyuser5,,);
 connection nobodyuser5;
 ALTER USER 'nobodyuser2' IDENTIFIED BY '';
 ALTER USER 'nobodyuser3' IDENTIFIED BY '';
---error Access denied
+--error 1227
 ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
 disconnect nobodyuser5;
 
@@ -636,12 +634,12 @@ CREATE USER ru6@localhost;
 
 connect (ru1,localhost,ru1,,);
 connection ru1;
---error Access denied
+--error 1227
 RENAME USER ru3 TO ru4;
 connection default;
 GRANT UPDATE ON mysql.user TO 'ru1'@'localhost';
 connection ru1;
---error Access denied
+--error 1227
 RENAME USER ru3 TO ru4;
 connection default;
 GRANT CREATE USER ON *.* TO 'ru1'@'localhost';
@@ -650,22 +648,21 @@ RENAME USER ru3 TO ru4;
 RENAME USER 'ru4'@'%' TO 'ru3'@'localhost';
 RENAME USER 'ru3'@'localhost' TO 'ru3'@'%';
 connection default;
---error Operation RENAME USER failed
+--error 1396
 RENAME USER ru3 TO ru1@localhost;
 connection ru1;
---error Operation RENAME USER failed
+--error 1396
 RENAME USER ru4 TO ru5@localhost;
---error Operation RENAME USER failed
+--error 1396
 RENAME USER ru3 TO ru3;
---error Operation RENAME USER failed
+--error 1396
 RENAME USER ru3 TO ru5@localhost, ru4 TO ru7;
---error Operation RENAME USER failed
+--error 1396
 RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost;
---error Operation RENAME USER failed
 RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost;
---error Operation RENAME USER failed
+--error 1470
 RENAME USER 'ru6@localhost' TO '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost';
---error Operation RENAME USER failed
+--error 1470
 RENAME USER 'ru6@localhost' TO 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X';
 connection default;
 DROP USER ru6@localhost;
@@ -736,7 +733,7 @@ disconnect superuser;
 
 connect (nobodyuser,localhost,nobodyuser,,);
 connection nobodyuser;
---error Fail
+--error 1044
 SET PASSWORD for 'superuser' = 'newpassword';
 disconnect nobodyuser;
 connection default;
@@ -807,4 +804,43 @@ SHOW GRANTS FOR CURRENT_USER() USING notgranted;
 SHOW GRANTS FOR current_user() USING otherrole;
 SHOW GRANTS FOR joe USING otherrole;
 disconnect joe;
+connection default;
+
+set global tidb_enable_resource_control = default;
+
+# TestAdmin
+create table privilege__privileges.admin(a int, KEY idx_a (`a`));
+create user without_super;
+connect (without_super,localhost,without_super,,);
+connection without_super;
+-- error 8121
+admin set bdr role primary;
+-- error 8121
+admin show bdr role;
+-- error 8121
+admin unset bdr role;
+-- error 8121
+admin cancel ddl jobs 10;
+-- error 8121
+admin pause ddl jobs 10;
+-- error 8121
+admin resume ddl jobs 10;
+-- error 8121
+admin checksum table privilege__privileges.admin;
+-- error 8121
+admin check table privilege__privileges.admin;
+-- error 8121
+admin check index privilege__privileges.admin idx_a;
+-- error 8121
+admin show ddl jobs;
+-- error 8121
+admin show ddl job queries 10;
+-- error 8121
+ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
+-- error 8121
+ADMIN SHOW SLOW RECENT 3;
+-- error 8121
+ADMIN SHOW SLOW TOP ALL 3;
+
+disconnect without_super;
 connection default;

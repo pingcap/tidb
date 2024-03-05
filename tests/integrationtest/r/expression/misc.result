@@ -238,7 +238,7 @@ select /*+ unknown_hint(c1)*/ 1;
 1
 1
 Level	Code	Message
-Warning	1064	Optimizer hint syntax error at line 1 column 23 near "unknown_hint(c1)*/" 
+Warning	8061	Optimizer hint unknown_hint is not supported by TiDB and is ignored
 select 1 from /*+ test1() */ t;
 1
 Level	Code	Message
@@ -268,7 +268,6 @@ create table t (c1 varchar(100), c2 varchar(128));
 prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
 set @a='1',@b=repeat('x', 80);
 execute pr1 using @a,@b;
-
 drop table if exists t;
 create table t(a int, b int, index(a));
 insert into t values (null, 0), (null, 1), (10, 11), (10, 12);
@@ -431,7 +430,6 @@ a
 36
 36
 with cte1(a) as (select 36) update t1 set a = 1 where a in (select a from cte1);
-
 select * from t1;
 a
 2
@@ -439,7 +437,6 @@ a
 1
 1
 with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte, t1 set t1.a=1;
-
 select * from t1;
 a
 1
@@ -470,35 +467,26 @@ create table t(a int, b tinyint as(a+100) unique key);
 insert ignore into t values(200, default);
 update t set a=1 where a=200;
 admin check table t;
-
 delete from t;
 insert ignore into t values(200, default);
 admin check table t;
-
 insert ignore into t values(200, default) on duplicate key update a=100;
 admin check table t;
-
 delete from t;
 admin check table t;
-
 begin;
 insert ignore into t values(200, default);
 update t set a=1 where a=200;
 admin check table t;
-
 delete from t;
 insert ignore into t values(200, default);
 admin check table t;
-
 insert ignore into t values(200, default) on duplicate key update a=100;
 admin check table t;
-
 delete from t;
 admin check table t;
-
 commit;
 admin check table t;
-
 drop table if exists t;
 create table t (c_enum enum('c', 'b', 'a'));
 insert into t values ('a'), ('b'), ('c'), ('a'), ('b'), ('a');
@@ -1007,3 +995,29 @@ set @@tidb_enable_vectorized_expression = true;
 select length(@p);
 length(@p)
 19
+SELECT xxx(1);
+Error 1046 (3D000): No database selected
+SELECT yyy();
+Error 1046 (3D000): No database selected
+SELECT T.upper(1);
+Error 1305 (42000): FUNCTION t.upper does not exist
+use test;
+SELECT xxx(1);
+Error 1305 (42000): FUNCTION test.xxx does not exist
+SELECT yyy();
+Error 1305 (42000): FUNCTION test.yyy does not exist
+SELECT t.upper(1);
+Error 1305 (42000): FUNCTION t.upper does not exist
+SELECT timestampliteral(rand());
+Error 1305 (42000): FUNCTION test.timestampliteral does not exist
+drop table if exists tab0;
+CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER);
+SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0;
++ - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16
+show create table tab0;
+Table	Create Table
+tab0	CREATE TABLE `tab0` (
+  `col0` int(11) DEFAULT NULL,
+  `col1` int(11) DEFAULT NULL,
+  `col2` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

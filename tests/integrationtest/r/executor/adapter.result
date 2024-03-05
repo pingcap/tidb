@@ -1,4 +1,4 @@
-set @a = now();
+set @a = now(6);
 drop table if exists t;
 create table t(a int);
 insert into t values (1), (1), (1), (1), (1);
@@ -29,6 +29,6 @@ a	a
 1	1
 1	1
 1	1
-select timestampdiff(second,@a, now()) < 1;
-timestampdiff(second,@a, now()) < 1
+select timestampdiff(microsecond, @a, now(6)) < 1000000;
+timestampdiff(microsecond, @a, now(6)) < 1000000
 1

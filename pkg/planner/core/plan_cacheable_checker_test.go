@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -197,7 +198,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 
 	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
+		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -253,7 +254,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 
 	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
+		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -318,7 +319,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt.(*ast.SelectStmt).TableHints = append(stmt.(*ast.SelectStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
+		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -346,6 +347,14 @@ func TestCacheable(t *testing.T) {
 		},
 	}
 	require.True(t, core.Cacheable(stmt, is))
+}
+
+func TestIssue49166(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c int)`)
+	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
 }
 
 func TestNonPreparedPlanCacheable(t *testing.T) {
@@ -416,14 +425,14 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	for _, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 		require.False(t, ok)
 	}
 
 	for _, q := range supported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 		require.True(t, ok)
 	}
 }
@@ -444,11 +453,11 @@ func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {
 	sctx := tk.Session()
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 
-	core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+	core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 		if !ok {
 			b.Fatal()
 		}

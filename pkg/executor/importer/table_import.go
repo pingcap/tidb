@@ -23,12 +23,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -37,15 +39,32 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	pd "github.com/tikv/pd/client"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/util"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -71,10 +90,9 @@ var (
 )
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
-func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (string, error) {
-	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
-	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
+func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (string, error) {
+	importDir := GetImportRootDir(tidbCfg)
+	sortDir := filepath.Join(importDir, id)
 
 	if info, err := os.Stat(importDir); err != nil || !info.IsDir() {
 		if err != nil && !os.IsNotExist(err) {
@@ -109,29 +127,6 @@ func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (
 	return sortDir, nil
 }
 
-// GetTiKVModeSwitcherWithPDClient creates a new TiKV mode switcher with its pd Client.
-func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (pd.Client, local.TiKVModeSwitcher, error) {
-	tidbCfg := tidb.GetGlobalConfig()
-	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-	tls, err := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		hostPort,
-		nil, nil, nil,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	tlsOpt := tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
-}
-
 // GetCachedKVStoreFrom gets a cached kv store from PD address.
 // Callers should NOT close the kv store.
 func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
@@ -159,7 +154,8 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 		return 0, 0, err
 	}
 	tlsOpt := tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
+	addrs := strings.Split(tidbCfg.Path, ",")
+	pdCli, err := NewClientWithContext(ctx, addrs, tlsOpt)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -168,7 +164,12 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 }
 
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
+func NewTableImporter(
+	ctx context.Context,
+	e *LoadDataController,
+	id string,
+	kvStore tidbkv.Storage,
+) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -177,7 +178,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 
 	tidbCfg := tidb.GetGlobalConfig()
 	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
-	dir, err := prepareSortDir(e, taskID, tidbCfg)
+	dir, err := prepareSortDir(e, id, tidbCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -194,24 +195,16 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		return nil, err
 	}
 
-	// no need to close kvStore, since it's a cached store.
-	kvStore, err := GetCachedKVStoreFrom(tidbCfg.Path, tls)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-
-	// todo: use a real region size getter
-	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
-	localBackend, err := local.NewBackend(param.GroupCtx, tls, backendConfig, regionSizeGetter)
+	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
+	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
 		return nil, err
 	}
 
 	return &TableImporter{
-		JobImportParam:     param,
 		LoadDataController: e,
+		id:                 id,
 		backend:            localBackend,
 		tableInfo: &checkpoints.TidbTableInfo{
 			ID:   e.Table.Meta().ID,
@@ -221,7 +214,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		encTable: tbl,
 		dbID:     e.DBID,
 		kvStore:  kvStore,
-		logger:   e.logger,
+		logger:   e.logger.With(zap.String("import-id", id)),
 		// this is the value we use for 50TiB data parallel import.
 		// this might not be the optimal value.
 		// todo: use different default for single-node import and distributed import.
@@ -234,8 +227,11 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 
 // TableImporter is a table importer.
 type TableImporter struct {
-	*JobImportParam
 	*LoadDataController
+	// id is the unique id for this importer.
+	// it's the task id if we are running in distributed framework, else it's an
+	// uuid. we use this id to create a unique directory for this importer.
+	id        string
 	backend   *local.Backend
 	tableInfo *checkpoints.TidbTableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
@@ -249,6 +245,50 @@ type TableImporter struct {
 	regionSplitKeys int64
 	diskQuota       int64
 	diskQuotaLock   *syncutil.RWMutex
+
+	rowCh chan QueryRow
+}
+
+// NewTableImporterForTest creates a new table importer for test.
+func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, store tidbkv.Storage, helper local.StoreHelper) (*TableImporter, error) {
+	idAlloc := kv.NewPanickingAllocators(0)
+	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+	}
+
+	tidbCfg := tidb.GetGlobalConfig()
+	dir, err := prepareSortDir(e, id, tidbCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
+	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
+	if err != nil {
+		return nil, err
+	}
+
+	return &TableImporter{
+		LoadDataController: e,
+		id:                 id,
+		backend:            localBackend,
+		tableInfo: &checkpoints.TidbTableInfo{
+			ID:   e.Table.Meta().ID,
+			Name: e.Table.Meta().Name.O,
+			Core: e.Table.Meta(),
+		},
+		encTable:      tbl,
+		dbID:          e.DBID,
+		kvStore:       store,
+		logger:        e.logger.With(zap.String("import-id", id)),
+		diskQuotaLock: new(syncutil.RWMutex),
+	}, nil
+}
+
+// GetCodec gets the codec of the kv store.
+func (ti *TableImporter) GetCodec() tikv.Codec {
+	return ti.kvStore.GetCodec()
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -299,12 +339,11 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEnc
 	return NewTableKVEncoder(cfg, ti)
 }
 
-func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
+func (e *LoadDataController) calculateSubtaskCnt() int {
 	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
 	// and evenly distribute them to subtasks.
-	// so we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
-	// we calculate subtask count first by round(TotalFileSize / maxEngineSize), then adjust maxEngineSize
-	//
+	// we calculate subtask count first by round(TotalFileSize / maxEngineSize)
+
 	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
 	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
 	// see https://github.com/pingcap/tidb/blob/b4183e1dc9bb01fb81d3aa79ca4b5b74387c6c2a/br/pkg/lightning/mydump/region.go#L109
@@ -315,13 +354,33 @@ func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
 	// [750, 1250)            2    [375, 625)
 	// [1250, 1750)           3    [416, 583)
 	// [1750, 2250)           4    [437, 562)
-	maxEngineSize := int64(e.MaxEngineSize)
+	var (
+		subtaskCount  float64
+		maxEngineSize = int64(e.MaxEngineSize)
+	)
 	if e.TotalFileSize <= maxEngineSize {
-		return e.TotalFileSize
+		subtaskCount = 1
+	} else {
+		subtaskCount = math.Round(float64(e.TotalFileSize) / float64(e.MaxEngineSize))
 	}
-	subtaskCount := math.Round(float64(e.TotalFileSize) / float64(maxEngineSize))
-	adjusted := math.Ceil(float64(e.TotalFileSize) / subtaskCount)
-	return int64(adjusted)
+
+	// for global sort task, since there is no overlap,
+	// we make sure subtask count is a multiple of execute nodes count
+	if e.IsGlobalSort() && e.ExecuteNodesCnt > 0 {
+		subtaskCount = math.Ceil(subtaskCount/float64(e.ExecuteNodesCnt)) * float64(e.ExecuteNodesCnt)
+	}
+	return int(subtaskCount)
+}
+
+func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
+	subtaskCount := e.calculateSubtaskCnt()
+	// we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
+	return int64(math.Ceil(float64(e.TotalFileSize) / float64(subtaskCount)))
+}
+
+// SetExecuteNodeCnt sets the execute node count.
+func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
+	e.ExecuteNodesCnt = cnt
 }
 
 // PopulateChunks populates chunks from table regions.
@@ -345,7 +404,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		ColumnCnt:      len(e.Table.Meta().Columns),
 		EngineDataSize: adjustedMaxEngineSize,
 		MaxChunkSize:   int64(config.MaxRegionSize),
-		Concurrency:    int(e.ThreadCnt),
+		Concurrency:    e.ThreadCnt,
 		IOWorkers:      nil,
 		Store:          e.dataStore,
 		TableMeta:      tableMeta,
@@ -427,8 +486,9 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*
 		Compact:            threshold > 0,
 		CompactConcurrency: 4,
 		CompactThreshold:   threshold,
+		BlockSize:          16 * 1024,
 	}
-	fullTableName := ti.fullTableName()
+	fullTableName := ti.FullTableName()
 	// todo: cleanup all engine data on any error since we don't support checkpoint for now
 	// some return path, didn't make sure all data engine and index engine are cleaned up.
 	// maybe we can add this in upper level to clean the whole local-sort directory
@@ -449,7 +509,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 	//	dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	//}
 	mgr := backend.MakeEngineManager(ti.backend)
-	return mgr.OpenEngine(ctx, dataEngineCfg, ti.fullTableName(), engineID)
+	return mgr.OpenEngine(ctx, dataEngineCfg, ti.FullTableName(), engineID)
 }
 
 // ImportAndCleanup imports the engine and cleanup the engine data.
@@ -461,14 +521,8 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 		// each row is encoded into 1 data key
 		kvCount = ti.backend.GetImportedKVCount(closedEngine.GetUUID())
 	}
-	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
 	return kvCount, multierr.Combine(importErr, cleanupErr)
-}
-
-// FullTableName return FQDN of the table.
-func (ti *TableImporter) fullTableName() string {
-	return common.UniqueTable(ti.DBName, ti.Table.Meta().Name.O)
 }
 
 // Backend returns the backend of the importer.
@@ -561,6 +615,117 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	}
 }
 
+// SetSelectedRowCh sets the channel to receive selected rows.
+func (ti *TableImporter) SetSelectedRowCh(ch chan QueryRow) {
+	ti.rowCh = ch
+}
+
+func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {
+	// outer context might be done, so we create a new context here.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	closedEngine, err := engine.Close(ctx)
+	if err != nil {
+		ti.logger.Error("close engine failed", zap.Error(err))
+		return
+	}
+	if err = closedEngine.Cleanup(ctx); err != nil {
+		ti.logger.Error("cleanup engine failed", zap.Error(err))
+	}
+}
+
+// ImportSelectedRows imports selected rows.
+func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.Context) (*JobImportResult, error) {
+	var (
+		err                     error
+		dataEngine, indexEngine *backend.OpenedEngine
+	)
+	metrics := tidbmetrics.GetRegisteredImportMetrics(promutil.NewDefaultFactory(),
+		prometheus.Labels{
+			proto.TaskIDLabelName: ti.id,
+		})
+	ctx = metric.WithCommonMetric(ctx, metrics)
+	defer func() {
+		tidbmetrics.UnregisterImportMetrics(metrics)
+		if dataEngine != nil {
+			ti.closeAndCleanupEngine(dataEngine)
+		}
+		if indexEngine != nil {
+			ti.closeAndCleanupEngine(indexEngine)
+		}
+	}()
+
+	dataEngine, err = ti.OpenDataEngine(ctx, 1)
+	if err != nil {
+		return nil, err
+	}
+	indexEngine, err = ti.OpenIndexEngine(ctx, common.IndexEngineID)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		mu         sync.Mutex
+		checksum   = verify.NewKVGroupChecksumWithKeyspace(ti.GetCodec())
+		colSizeMap = make(map[int64]int64)
+	)
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+	for i := 0; i < ti.ThreadCnt; i++ {
+		eg.Go(func() error {
+			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
+			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.GetCodec())
+			progress := NewProgress()
+			defer func() {
+				mu.Lock()
+				defer mu.Unlock()
+				checksum.Add(chunkChecksum)
+				for k, v := range progress.GetColSize() {
+					colSizeMap[k] += v
+				}
+			}()
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, progress, ti.logger, chunkChecksum)
+		})
+	}
+	if err = eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	closedDataEngine, err := dataEngine.Close(ctx)
+	if err != nil {
+		return nil, err
+	}
+	failpoint.Inject("mockImportFromSelectErr", func() {
+		failpoint.Return(nil, errors.New("mock import from select error"))
+	})
+	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		return nil, err
+	}
+	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
+
+	closedIndexEngine, err := indexEngine.Close(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		return nil, err
+	}
+
+	allocators := ti.Allocators()
+	maxIDs := map[autoid.AllocatorType]int64{
+		autoid.RowIDAllocType:    allocators.Get(autoid.RowIDAllocType).Base(),
+		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
+		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
+	}
+	if err = PostProcess(ctx, se, maxIDs, ti.Plan, checksum, ti.logger); err != nil {
+		return nil, err
+	}
+
+	return &JobImportResult{
+		Affected:   uint64(dataKVCount),
+		ColSizeMap: colSizeMap,
+	}, nil
+}
+
 func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 {
 	sz, err := common.GetStorageSize(sortDir)
 	if err != nil {
@@ -585,4 +750,239 @@ func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 
 	default:
 		return diskQuota
 	}
+}
+
+// PostProcess does the post-processing for the task.
+// exported for testing.
+func PostProcess(
+	ctx context.Context,
+	se sessionctx.Context,
+	maxIDs map[autoid.AllocatorType]int64,
+	plan *Plan,
+	localChecksum *verify.KVGroupChecksum,
+	logger *zap.Logger,
+) (err error) {
+	callLog := log.BeginTask(logger.With(zap.Object("checksum", localChecksum)), "post process")
+	defer func() {
+		callLog.End(zap.ErrorLevel, err)
+	}()
+
+	if err = RebaseAllocatorBases(ctx, maxIDs, plan, logger); err != nil {
+		return err
+	}
+
+	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), se, logger)
+}
+
+type autoIDRequirement struct {
+	store     tidbkv.Storage
+	autoidCli *autoid.ClientDiscover
+}
+
+func (r *autoIDRequirement) Store() tidbkv.Storage {
+	return r.store
+}
+
+func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
+}
+
+// RebaseAllocatorBases rebase the allocator bases.
+func RebaseAllocatorBases(ctx context.Context, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
+	callLog := log.BeginTask(logger, "rebase allocators")
+	defer func() {
+		callLog.End(zap.ErrorLevel, err)
+	}()
+
+	if !common.TableHasAutoID(plan.DesiredTableInfo) {
+		return nil
+	}
+
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err2 := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err2 != nil {
+		return err2
+	}
+
+	// no need to close kvStore, since it's a cached store.
+	kvStore, err2 := GetCachedKVStoreFrom(tidbCfg.Path, tls)
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+	addrs := strings.Split(tidbCfg.Path, ",")
+	etcdCli, err := clientv3.New(clientv3.Config{
+		Endpoints:        addrs,
+		AutoSyncInterval: 30 * time.Second,
+		TLS:              tls.TLSConfig(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
+	autoidCli := autoid.NewClientDiscover(etcdCli)
+	r := autoIDRequirement{store: kvStore, autoidCli: autoidCli}
+	err = common.RebaseTableAllocators(ctx, maxIDs, &r, plan.DBID, plan.DesiredTableInfo)
+	if err1 := etcdCli.Close(); err1 != nil {
+		logger.Info("close etcd client error", zap.Error(err1))
+	}
+	autoidCli.ResetConn(nil)
+	return errors.Trace(err)
+}
+
+// VerifyChecksum verify the checksum of the table.
+func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, se sessionctx.Context, logger *zap.Logger) error {
+	if plan.Checksum == config.OpLevelOff {
+		return nil
+	}
+	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+
+	failpoint.Inject("waitCtxDone", func() {
+		<-ctx.Done()
+	})
+
+	remoteChecksum, err := checksumTable(ctx, se, plan, logger)
+	if err != nil {
+		if plan.Checksum != config.OpLevelOptional {
+			return err
+		}
+		logger.Warn("checksumTable failed, will skip this error and go on", zap.Error(err))
+	}
+	if remoteChecksum != nil {
+		if !remoteChecksum.IsEqual(&localChecksum) {
+			err2 := common.ErrChecksumMismatch.GenWithStackByArgs(
+				remoteChecksum.Checksum, localChecksum.Sum(),
+				remoteChecksum.TotalKVs, localChecksum.SumKVS(),
+				remoteChecksum.TotalBytes, localChecksum.SumSize(),
+			)
+			if plan.Checksum == config.OpLevelOptional {
+				logger.Warn("verify checksum failed, but checksum is optional, will skip it", zap.Error(err2))
+				err2 = nil
+			}
+			return err2
+		}
+		logger.Info("checksum pass", zap.Object("local", &localChecksum))
+	}
+	return nil
+}
+
+func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
+	var (
+		tableName                    = common.UniqueTable(plan.DBName, plan.TableInfo.Name.L)
+		sql                          = "ADMIN CHECKSUM TABLE " + tableName
+		maxErrorRetryCount           = 3
+		distSQLScanConcurrencyFactor = 1
+		remoteChecksum               *local.RemoteChecksum
+		txnErr                       error
+		doneCh                       = make(chan struct{})
+	)
+	checkCtx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		<-doneCh
+	}()
+
+	go func() {
+		<-checkCtx.Done()
+		se.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		close(doneCh)
+	}()
+
+	distSQLScanConcurrencyBak := se.GetSessionVars().DistSQLScanConcurrency()
+	defer func() {
+		se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrencyBak)
+	}()
+	ctx = util.WithInternalSourceType(checkCtx, tidbkv.InternalImportInto)
+	for i := 0; i < maxErrorRetryCount; i++ {
+		txnErr = func() error {
+			// increase backoff weight
+			if err := setBackoffWeight(se, plan, logger); err != nil {
+				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
+			}
+
+			newConcurrency := mathutil.Max(plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency)
+			logger.Info("checksum with adjusted distsql scan concurrency", zap.Int("concurrency", newConcurrency))
+			se.GetSessionVars().SetDistSQLScanConcurrency(newConcurrency)
+
+			// TODO: add resource group name
+
+			rs, err := sqlexec.ExecSQL(ctx, se, sql)
+			if err != nil {
+				return err
+			}
+			if len(rs) < 1 {
+				return errors.New("empty checksum result")
+			}
+
+			failpoint.Inject("errWhenChecksum", func() {
+				failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
+			})
+
+			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
+			// 	mysql> admin checksum table test.t;
+			// +---------+------------+---------------------+-----------+-------------+
+			// | Db_name | Table_name | Checksum_crc64_xor  | Total_kvs | Total_bytes |
+			// +---------+------------+---------------------+-----------+-------------+
+			// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
+			// +---------+------------+-------------
+			remoteChecksum = &local.RemoteChecksum{
+				Schema:     rs[0].GetString(0),
+				Table:      rs[0].GetString(1),
+				Checksum:   rs[0].GetUint64(2),
+				TotalKVs:   rs[0].GetUint64(3),
+				TotalBytes: rs[0].GetUint64(4),
+			}
+			return nil
+		}()
+		if !common.IsRetryableError(txnErr) {
+			break
+		}
+		distSQLScanConcurrencyFactor *= 2
+		logger.Warn("retry checksum table", zap.Int("retry count", i+1), zap.Error(txnErr))
+	}
+	return remoteChecksum, txnErr
+}
+
+func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) error {
+	backoffWeight := local.DefaultBackoffWeight
+	if val, ok := plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
+		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
+			backoffWeight = weight
+		}
+	}
+	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
+	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+}
+
+// GetImportRootDir returns the root directory for import.
+// The directory structure is like:
+//
+//	-> /path/to/tidb-tmpdir
+//	  -> import-4000
+//	  -> 1
+//	  -> some-uuid
+//
+// exported for testing.
+func GetImportRootDir(tidbCfg *tidb.Config) string {
+	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
+	return filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+}
+
+// FlushTableStats flushes the stats of the table.
+func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
+	if err := sessiontxn.NewTxn(ctx, se); err != nil {
+		return err
+	}
+	sessionVars := se.GetSessionVars()
+	sessionVars.TxnCtxMu.Lock()
+	defer sessionVars.TxnCtxMu.Unlock()
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
+	se.StmtCommit(ctx)
+	return se.CommitTxn(ctx)
 }

@@ -46,9 +46,8 @@ func (e *mockErrorOperator) Open(_ context.Context) error {
 func (e *mockErrorOperator) Next(_ context.Context, _ *chunk.Chunk) error {
 	if e.toPanic {
 		panic("next panic")
-	} else {
-		return errors.New("next error")
 	}
+	return errors.New("next error")
 }
 
 func (e *mockErrorOperator) Close() error {
@@ -88,11 +87,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	}
 	mockOpr = mockErrorOperator{baseExec, true, false}
 	explainExec.analyzeExec = &mockOpr
-	defer func() {
-		panicErr := recover()
-		require.NotNil(t, panicErr)
-		require.True(t, mockOpr.closed)
-	}()
-	_, _ = explainExec.generateExplainInfo(tmpCtx)
-	require.FailNow(t, "generateExplainInfo should panic")
+	_, err = explainExec.generateExplainInfo(tmpCtx)
+	require.EqualError(t, err, "next panic, close error")
+	require.True(t, mockOpr.closed)
 }

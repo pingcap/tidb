@@ -18,7 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -139,8 +139,24 @@ const (
 // to be any type.
 type PartialResult unsafe.Pointer
 
+// AggPartialResultMapper contains aggregate function results
+type AggPartialResultMapper map[string][]PartialResult
+
+type serializer interface {
+	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
+	SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper)
+
+	// DeserializePartialResult deserializes from bytes to PartialResult.
+	DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64)
+}
+
+// AggFuncUpdateContext is used to update the aggregate result.
+type AggFuncUpdateContext = exprctx.EvalContext
+
 // AggFunc is the interface to evaluate the aggregate functions.
 type AggFunc interface {
+	serializer
+
 	// AllocPartialResult allocates a specific data structure to store the
 	// partial result, initializes it, and converts it to PartialResult to
 	// return back. The second returned value is the memDelta used to trace
@@ -162,21 +178,21 @@ type AggFunc interface {
 	// partial result according to the functionality and the state of the
 	// aggregate function. The returned value is the memDelta used to trace memory
 	// usage.
-	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
+	UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific
 	// data structure which stores the partial results, and then evaluate the
 	// final result using the partial results as input values. The returned value
 	// is the memDelta used to trace memory usage.
-	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error)
+	MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error)
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
 	// input PartialResult to the specific data structure which stores the
 	// partial result and then calculates the final result and append that
 	// final result to the chunk provided.
-	AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error
+	AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error
 }
 
 type baseAggFunc struct {
@@ -192,8 +208,15 @@ type baseAggFunc struct {
 	retTp *types.FieldType
 }
 
-func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
+func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
 	return 0, nil
+}
+
+func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *SerializeHelper) {
+}
+
+func (*baseAggFunc) DeserializePartialResult(_ *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.
@@ -204,11 +227,35 @@ type SlidingWindowAggFunc interface {
 	// PartialResult stores the intermediate result which will be used in the next
 	// sliding window, ensure call ResetPartialResult after a frame are evaluated
 	// completely.
-	Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+	Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
 
 // MaxMinSlidingWindowAggFunc is the interface to evaluate the max/min agg function using sliding window
 type MaxMinSlidingWindowAggFunc interface {
 	// SetWindowStart sets the start position of window
 	SetWindowStart(start uint64)
+}
+
+type deserializeFunc func(*deserializeHelper) (PartialResult, int64)
+
+func deserializePartialResultCommon(src *chunk.Chunk, ordinal int, deserializeFuncImpl deserializeFunc) ([]PartialResult, int64) {
+	dataCol := src.Column(ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := deserializeFuncImpl(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	if len(partialResults) != src.NumRows() {
+		panic("Fail to deserialize partial result")
+	}
+
+	return partialResults, totalMemDelta
 }

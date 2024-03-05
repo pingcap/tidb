@@ -545,7 +545,7 @@ func TestGetDecimalDatum(t *testing.T) {
 	decType.SetFlen(4)
 	decType.SetDecimal(2)
 	sc := stmtctx.NewStmtCtx()
-	decDatum, err := datum.ConvertTo(sc, decType)
+	decDatum, err := datum.ConvertTo(sc.TypeCtx(), decType)
 	require.NoError(t, err)
 
 	chk := NewChunkWithCapacity([]*types.FieldType{decType}, 32)

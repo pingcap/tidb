@@ -20,11 +20,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTimeFormatMethod(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	tblDate := []struct {
 		Input  string
 		Format string
@@ -68,7 +69,7 @@ func TestTimeFormatMethod(t *testing.T) {
 		},
 	}
 	for i, tt := range tblDate {
-		tm, err := types.ParseTime(typeCtx, tt.Input, mysql.TypeDatetime, 6, nil)
+		tm, err := types.ParseTime(typeCtx, tt.Input, mysql.TypeDatetime, 6)
 		require.NoErrorf(t, err, "Parse time fail: %s", tt.Input)
 
 		str, err := tm.DateFormat(tt.Format)
@@ -78,7 +79,7 @@ func TestTimeFormatMethod(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	tests := []struct {
 		input  string
 		format string

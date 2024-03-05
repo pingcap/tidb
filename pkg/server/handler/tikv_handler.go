@@ -98,7 +98,8 @@ func (t *TikvHandlerTool) GetHandle(tb table.PhysicalTable, params map[string]st
 		}
 		tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 		var handleBytes []byte
-		handleBytes, err = codec.EncodeKey(sc, nil, pkDts...)
+		handleBytes, err = codec.EncodeKey(sc.TimeZone(), nil, pkDts...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -119,7 +120,7 @@ func (t *TikvHandlerTool) GetMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
+	encodedKey, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow, handle, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -160,7 +161,7 @@ func (*TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values 
 			data[i].SetNull()
 		case 1:
 			bDatum := types.NewStringDatum(vals[0])
-			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
+			cDatum, err := bDatum.ConvertTo(sc.TypeCtx(), &col.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

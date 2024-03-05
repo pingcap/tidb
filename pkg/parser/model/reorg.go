@@ -28,6 +28,7 @@ type DDLReorgMeta struct {
 	WarningsCount     map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location          *TimeZoneLocation                `json:"location"`
 	ReorgTp           ReorgType                        `json:"reorg_tp"`
+	IsFastReorg       bool                             `json:"is_fast_reorg"`
 	IsDistReorg       bool                             `json:"is_dist_reorg"`
 	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	ResourceGroupName string                           `json:"resource_group_name"`

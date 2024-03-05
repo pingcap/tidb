@@ -32,7 +32,7 @@ type inGener struct {
 	defaultGener
 }
 
-func (g inGener) gen() interface{} {
+func (g inGener) gen() any {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}

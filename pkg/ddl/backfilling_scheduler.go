@@ -18,11 +18,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"go.uber.org/zap"
 )
@@ -135,18 +138,24 @@ func newSessCtx(
 	resourceGroupName string,
 ) (sessionctx.Context, error) {
 	sessCtx := newContext(store)
-	if err := initSessCtx(sessCtx, sqlMode, tzLocation); err != nil {
+	if err := initSessCtx(sessCtx, sqlMode, tzLocation, resourceGroupName); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sessCtx.GetSessionVars().ResourceGroupName = resourceGroupName
 	return sessCtx, nil
 }
 
+// initSessCtx initializes the session context. Be careful to the timezone.
 func initSessCtx(
 	sessCtx sessionctx.Context,
 	sqlMode mysql.SQLMode,
 	tzLocation *model.TimeZoneLocation,
+	resGroupName string,
 ) error {
+	// Correct the initial timezone.
+	tz := *time.UTC
+	sessCtx.GetSessionVars().TimeZone = &tz
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
+
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
@@ -156,20 +165,51 @@ func initSessCtx(
 		return errors.Trace(err)
 	}
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
-	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+
+	errLevels := sessCtx.GetSessionVars().StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
+	errLevels[errctx.ErrGroupDividedByZero] =
+		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
+	sessCtx.GetSessionVars().StmtCtx.SetErrLevels(errLevels)
 
 	typeFlags := types.StrictFlags.
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
+	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = resGroupName
 
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
-	_ = sessCtx.GetDomainInfoSchema()
+	if _, ok := sessCtx.(*mock.Context); ok {
+		_ = sessCtx.GetDomainInfoSchema()
+	}
 	return nil
+}
+
+func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
+	sv := sessCtx.GetSessionVars()
+	rowEncoder := sv.RowEncoder.Enable
+	sqlMode := sv.SQLMode
+	var timezone *time.Location
+	if sv.TimeZone != nil {
+		// Copy the content of timezone instead of pointer because it may be changed.
+		tz := *sv.TimeZone
+		timezone = &tz
+	}
+	typeFlags := sv.StmtCtx.TypeFlags()
+	errLevels := sv.StmtCtx.ErrLevels()
+	resGroupName := sv.StmtCtx.ResourceGroupName
+	return func(usedSessCtx sessionctx.Context) {
+		uv := usedSessCtx.GetSessionVars()
+		uv.RowEncoder.Enable = rowEncoder
+		uv.SQLMode = sqlMode
+		uv.TimeZone = timezone
+		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.StmtCtx.SetErrLevels(errLevels)
+		uv.StmtCtx.ResourceGroupName = resGroupName
+	}
 }
 
 func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
@@ -257,13 +297,13 @@ func (b *txnBackfillScheduler) close(force bool) {
 	if b.closed {
 		return
 	}
+	b.closed = true
 	close(b.taskCh)
 	if force {
 		closeBackfillWorkers(b.workers)
 	}
 	b.wg.Wait()
 	close(b.resultCh)
-	b.closed = true
 }
 
 type ingestBackfillScheduler struct {
@@ -333,6 +373,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	if b.closed {
 		return
 	}
+	b.closed = true
 	close(b.taskCh)
 	if b.copReqSenderPool != nil {
 		b.copReqSenderPool.close(force)
@@ -357,7 +398,6 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		jobID := b.reorgInfo.ID
 		b.backendCtx.ResetWorkers(jobID)
 	}
-	b.closed = true
 }
 
 func (b *ingestBackfillScheduler) sendTask(task *reorgBackfillTask) {

@@ -93,7 +93,7 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 	// mocked data
 	mockRowKey233 := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(233))
 	mockValue233, err := tablecodec.EncodeRow(
-		sessVars.StmtCtx, []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, &rd,
+		sessVars.StmtCtx.TimeZone(), []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, &rd,
 	)
 	require.Nil(t, err)
 	fakeRowInsertion := mutation{key: []byte{1, 1}, value: []byte{1, 1, 1}}
@@ -268,7 +268,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 				table := MockTableFromMeta(&tableInfo).(*TableCommon)
 				var handle, corruptedHandle kv.Handle
 				if isCommonHandle {
-					encoded, err := codec.EncodeKey(sessVars.StmtCtx, nil, rowToInsert[0])
+					encoded, err := codec.EncodeKey(sessVars.StmtCtx.TimeZone(), nil, rowToInsert[0])
 					require.Nil(t, err)
 					corrupted := make([]byte, len(encoded))
 					copy(corrupted, encoded)
@@ -306,7 +306,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					// test checkHandleConsistency
 					rowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, handle)
 					corruptedRowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, corruptedHandle)
-					rowValue, err := tablecodec.EncodeRow(sessVars.StmtCtx, rowToInsert, []int64{1, 2}, nil, nil, &rd)
+					rowValue, err := tablecodec.EncodeRow(sessVars.StmtCtx.TimeZone(), rowToInsert, []int64{1, 2}, nil, nil, &rd)
 					require.Nil(t, err)
 					rowMutation := mutation{key: rowKey, value: rowValue}
 					corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}
@@ -327,15 +327,15 @@ func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, sessVars *
 		return nil, nil, err
 	}
 	key, distinct, err := tablecodec.GenIndexKey(
-		sessVars.StmtCtx, &tableInfo, indexInfo, 1, indexedValues, handle, nil,
+		sessVars.StmtCtx.TimeZone(), &tableInfo, indexInfo, 1, indexedValues, handle, nil,
 	)
 	if err != nil {
 		return nil, nil, err
 	}
 	rsData := TryGetHandleRestoredDataWrapper(table.meta, rowToInsert, nil, indexInfo)
 	value, err := tablecodec.GenIndexValuePortal(
-		sessVars.StmtCtx, &tableInfo, indexInfo, NeedRestoredData(indexInfo.Columns, tableInfo.Columns),
-		distinct, false, indexedValues, handle, 0, rsData,
+		sessVars.StmtCtx.TimeZone(), &tableInfo, indexInfo, NeedRestoredData(indexInfo.Columns, tableInfo.Columns),
+		distinct, false, indexedValues, handle, 0, rsData, nil,
 	)
 	if err != nil {
 		return nil, nil, err

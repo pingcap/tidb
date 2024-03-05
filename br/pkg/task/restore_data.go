@@ -77,7 +77,13 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	tc.EnableGlobalKill = false
 	tidbconfig.StoreGlobalConfig(tc)
 
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	client := restore.NewRestoreClient(
+		mgr.GetPDClient(),
+		mgr.GetPDHTTPClient(),
+		mgr.GetTLSConfig(),
+		keepaliveCfg,
+		false,
+	)
 
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {

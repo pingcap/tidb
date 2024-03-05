@@ -127,7 +127,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		var indexName interface{}
+		var indexName any
 		ifNotExists := make([]bool, 1)
 		indexID := make([]int64, 1)
 		var partitionIDs []int64
@@ -194,7 +194,7 @@ func (d *ddl) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Jo
 	}
 
 	// Check delete range.
-	if jobNeedGC(historyJob) {
+	if JobNeedGC(historyJob) {
 		d.checkDeleteRangeCnt(historyJob)
 	}
 

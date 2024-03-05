@@ -251,23 +251,21 @@
               "Enable binding": true,
               "IsStmtNode": true,
               "Matched": true,
-              "Matched bindings": {
-                "Bindings": [
-                  {
-                    "BindSQL": "SELECT * FROM `test`.`t` USE INDEX () WHERE `col1` = 100",
-                    "Charset": "utf8mb4",
-                    "Collation": "utf8mb4_bin",
-                    "CreateTime": 0,
-                    "PlanDigest": "",
-                    "SQLDigest": "36ceb6159adb3ac83539ec90c861ac4be4bc5cdb5fa02f70542744a4af640eac",
-                    "Source": "manual",
-                    "Status": "enabled",
-                    "UpdateTime": 0
-                  }
-                ],
-                "Db": "test",
-                "OriginalSQL": "select * from `test` . `t` where `col1` = ?"
-              },
+              "Matched bindings": [
+                {
+                  "BindSQL": "SELECT * FROM `test`.`t` USE INDEX () WHERE `col1` = 100",
+                  "Charset": "utf8mb4",
+                  "Collation": "utf8mb4_bin",
+                  "CreateTime": 0,
+                  "Db": "test",
+                  "OriginalSQL": "select * from `test` . `t` where `col1` = ?",
+                  "PlanDigest": "",
+                  "SQLDigest": "36ceb6159adb3ac83539ec90c861ac4be4bc5cdb5fa02f70542744a4af640eac",
+                  "Source": "manual",
+                  "Status": "enabled",
+                  "UpdateTime": 0
+                }
+              ],
               "Scope": "session",
               "Used binding": true
             },

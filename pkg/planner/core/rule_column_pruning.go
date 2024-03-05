@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 )
 
 type columnPruner struct {
@@ -33,8 +34,11 @@ type columnPruner struct {
 
 func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
-	err := lp.PruneColumns(lp.Schema().Columns, opt)
-	return lp, planChanged, err
+	lp, err := lp.PruneColumns(lp.Schema().Columns, opt)
+	if err != nil {
+		return nil, planChanged, err
+	}
+	return lp, planChanged, nil
 }
 
 // ExprsHasSideEffects checks if any of the expressions has side effects.
@@ -70,12 +74,11 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 // the level projection expressions construction is left to the last logical optimize rule)
 //
 // so when do the rule_column_pruning here, we just prune the schema is enough.
-func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	child := p.children[0]
+func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	// Expand need those extra redundant distinct group by columns projected from underlying projection.
 	// distinct GroupByCol must be used by aggregate above, to make sure this, append distinctGroupByCol again.
 	parentUsedCols = append(parentUsedCols, p.distinctGroupByCol...)
-	used := expression.GetUsedList(parentUsedCols, p.Schema())
+	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -86,14 +89,18 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	}
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
 	// Underlying still need to keep the distinct group by columns and parent used columns.
-	return child.PruneColumns(parentUsedCols, opt)
+	var err error
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
-func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	child := p.children[0]
-	used := expression.GetUsedList(parentUsedCols, p.schema)
+func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
@@ -107,20 +114,30 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
-	return child.PruneColumns(selfUsedCols, opt)
+	var err error
+	p.children[0], err = p.children[0].PruneColumns(selfUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	child := p.children[0]
 	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
-	return child.PruneColumns(parentUsedCols, opt)
+	var err error
+	p.children[0], err = child.PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	child := la.children[0]
-	used := expression.GetUsedList(parentUsedCols, la.Schema())
+	used := expression.GetUsedList(la.SCtx().GetExprCtx(), parentUsedCols, la.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	prunedFunctions := make([]*aggregation.AggFuncDesc, 0)
 	prunedGroupByItems := make([]expression.Expression, 0)
@@ -159,12 +176,12 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		var err error
 		var newAgg *aggregation.AggFuncDesc
 		if allFirstRow {
-			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
+			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
 		} else {
-			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		la.AggFuncs = append(la.AggFuncs, newAgg)
 		col := &expression.Column{
@@ -191,10 +208,13 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		}
 	}
 	appendGroupByItemsPruneTraceStep(la, prunedGroupByItems, opt)
-	err := child.PruneColumns(selfUsedCols, opt)
+	var err error
+	la.children[0], err = child.PruneColumns(selfUsedCols, opt)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	// update children[0]
+	child = la.children[0]
 	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
 	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
 	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
@@ -205,7 +225,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			la.SetChildren(childOfChild)
 		}
 	}
-	return nil
+	return la, nil
 }
 
 func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (byItems []*util.ByItems,
@@ -215,7 +235,7 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		pruned := true
-		hash := string(byItem.Expr.HashCode(nil))
+		hash := string(byItem.Expr.HashCode())
 		_, hashMatch := seen[hash]
 		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
@@ -242,28 +262,37 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 // PruneColumns implements LogicalPlan interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
-func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	child := ls.children[0]
+func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	var cols []*expression.Column
 	ls.ByItems, cols = pruneByItems(ls, ls.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
-	return child.PruneColumns(parentUsedCols, opt)
+	var err error
+	ls.children[0], err = ls.children[0].PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return ls, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
-func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	child := lt.children[0]
 	var cols []*expression.Column
 	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
-	return child.PruneColumns(parentUsedCols, opt)
+	var err error
+	lt.children[0], err = child.PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return lt, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	used := expression.GetUsedList(parentUsedCols, p.schema)
+func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.schema)
 	hasBeenUsed := false
 	for i := range used {
 		hasBeenUsed = hasBeenUsed || used[i]
@@ -274,25 +303,27 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	if !hasBeenUsed {
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
+		for i := range used {
+			used[i] = true
+		}
 	}
-	for _, child := range p.Children() {
-		err := child.PruneColumns(parentUsedCols, opt)
+	var err error
+	for i, child := range p.Children() {
+		p.Children()[i], err = child.PruneColumns(parentUsedCols, opt)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	prunedColumns := make([]*expression.Column, 0)
-	if hasBeenUsed {
-		// keep the schema of LogicalUnionAll same as its children's
-		used := expression.GetUsedList(p.children[0].Schema().Columns, p.schema)
-		for i := len(used) - 1; i >= 0; i-- {
-			if !used[i] {
-				prunedColumns = append(prunedColumns, p.schema.Columns[i])
-				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
-			}
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			prunedColumns = append(prunedColumns, p.schema.Columns[i])
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 		}
-		appendColumnPruneTraceStep(p, prunedColumns, opt)
+	}
+	appendColumnPruneTraceStep(p, prunedColumns, opt)
+	if hasBeenUsed {
 		// It's possible that the child operator adds extra columns to the schema.
 		// Currently, (*LogicalAggregation).PruneColumns() might do this.
 		// But we don't need such columns, so we add an extra Projection to prune this column when this happened.
@@ -303,7 +334,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 				for j, col := range schema.Columns {
 					exprs[j] = col
 				}
-				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.SCtx(), p.SelectBlockOffset())
+				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.SCtx(), p.QueryBlockOffset())
 				proj.SetSchema(schema)
 
 				proj.SetChildren(child)
@@ -311,11 +342,11 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 			}
 		}
 	}
-	return nil
+	return p, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
@@ -326,15 +357,20 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 	}
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
-	return p.children[0].PruneColumns(parentUsedCols, opt)
+	var err error
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	used := expression.GetUsedList(parentUsedCols, ds.schema)
+func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	used := expression.GetUsedList(ds.SCtx().GetExprCtx(), parentUsedCols, ds.schema)
 
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
-	exprUsed := expression.GetUsedList(exprCols, ds.schema)
+	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx(), exprCols, ds.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.schema.Columns
@@ -378,11 +414,11 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
 	}
-	return nil
+	return ds, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	switch p.TableInfo.Name.O {
 	case infoschema.TableStatementsSummary,
 		infoschema.TableStatementsSummaryHistory,
@@ -394,12 +430,13 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 		infoschema.ClusterTableTiDBTrx,
 		infoschema.TableDataLockWaits,
 		infoschema.TableDeadlocks,
-		infoschema.ClusterTableDeadlocks:
+		infoschema.ClusterTableDeadlocks,
+		infoschema.TableTables:
 	default:
-		return nil
+		return p, nil
 	}
 	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(parentUsedCols, p.schema)
+	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.schema.Len() > 1 {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
@@ -409,12 +446,12 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 		}
 	}
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
-	return nil
+	return p, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	used := expression.GetUsedList(parentUsedCols, p.Schema())
+func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -423,7 +460,7 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt
 		}
 	}
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
-	return nil
+	return p, nil
 }
 
 func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
@@ -459,18 +496,19 @@ func (p *LogicalJoin) mergeSchema() {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	leftCols, rightCols := p.extractUsedCols(parentUsedCols)
 
-	err := p.children[0].PruneColumns(leftCols, opt)
+	var err error
+	p.children[0], err = p.children[0].PruneColumns(leftCols, opt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	addConstOneForEmptyProjection(p.children[0])
 
-	err = p.children[1].PruneColumns(rightCols, opt)
+	p.children[1], err = p.children[1].PruneColumns(rightCols, opt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	addConstOneForEmptyProjection(p.children[1])
 
@@ -480,16 +518,25 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		parentUsedCols = append(parentUsedCols, joinCol)
 	}
 	p.inlineProjection(parentUsedCols, opt)
-	return nil
+	return p, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
+	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
+	var err error
+	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {
+		applyEliminateTraceStep(la.Children()[1], opt)
+		resultPlan := la.Children()[0]
+		// reEnter the new child's column pruning, returning child[0] as a new child here.
+		return resultPlan.PruneColumns(parentUsedCols, opt)
+	}
 
-	err := la.children[1].PruneColumns(rightCols, opt)
+	// column pruning for child-1.
+	la.children[1], err = la.children[1].PruneColumns(rightCols, opt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	addConstOneForEmptyProjection(la.children[1])
 
@@ -498,20 +545,29 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 		leftCols = append(leftCols, &col.Column)
 	}
 
-	err = la.children[0].PruneColumns(leftCols, opt)
+	// column pruning for child-0.
+	la.children[0], err = la.children[0].PruneColumns(leftCols, opt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	addConstOneForEmptyProjection(la.children[0])
-
 	la.mergeSchema()
-	return nil
+	return la, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	var err error
 	if !IsSelectForUpdateLockType(p.Lock.LockType) {
-		return p.baseLogicalPlan.PruneColumns(parentUsedCols, opt)
+		// when use .baseLogicalPlan to call the PruneColumns, it means current plan itself has
+		// nothing to pruning or plan change, so they resort to its children's column pruning logic.
+		// so for the returned logical plan here, p is definitely determined, we just need to collect
+		// those extra deeper call error in handling children's column pruning.
+		_, err = p.baseLogicalPlan.PruneColumns(parentUsedCols, opt)
+		if err != nil {
+			return nil, err
+		}
+		return p, nil
 	}
 
 	for tblID, cols := range p.tblID2Handle {
@@ -525,17 +581,21 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
 	}
-	return p.children[0].PruneColumns(parentUsedCols, opt)
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	windowColumns := p.GetWindowResultColumns()
 	cnt := 0
 	for _, col := range parentUsedCols {
 		used := false
 		for _, windowColumn := range windowColumns {
-			if windowColumn.Equal(nil, col) {
+			if windowColumn.EqualColumn(col) {
 				used = true
 				break
 			}
@@ -547,14 +607,15 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	}
 	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
-	err := p.children[0].PruneColumns(parentUsedCols, opt)
+	var err error
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	p.SetSchema(p.children[0].Schema().Clone())
 	p.Schema().Append(windowColumns...)
-	return nil
+	return p, nil
 }
 
 func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*expression.Column {
@@ -573,19 +634,20 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
+func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
-		return nil
+		return p, nil
 	}
 
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
-	if err := p.children[0].PruneColumns(parentUsedCols, opt); err != nil {
-		return err
+	var err error
+	if p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt); err != nil {
+		return nil, err
 	}
 	p.schema = nil
 	p.inlineProjection(savedUsedCols, opt)
-	return nil
+	return p, nil
 }
 
 func (*columnPruner) name() string {
@@ -706,11 +768,28 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 
 // PruneColumns implements the interface of LogicalPlan.
 // LogicalCTE just do a empty function call. It's logical optimize is indivisual phase.
-func (*LogicalCTE) PruneColumns(_ []*expression.Column, _ *logicalOptimizeOp) error {
-	return nil
+func (p *LogicalCTE) PruneColumns(_ []*expression.Column, _ *logicalOptimizeOp) (LogicalPlan, error) {
+	return p, nil
 }
 
 // PruneColumns implements the interface of LogicalPlan.
-func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	return p.children[len(p.children)-1].PruneColumns(parentUsedCols, opt)
+func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	var err error
+	p.children[len(p.children)-1], err = p.children[len(p.children)-1].PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func applyEliminateTraceStep(lp LogicalPlan, opt *logicalOptimizeOp) {
+	action := func() string {
+		buffer := bytes.NewBufferString(
+			fmt.Sprintf("%v_%v is eliminated.", lp.TP(), lp.ID()))
+		return buffer.String()
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v can be eliminated because it hasn't been used by it's parent.", lp.TP(), lp.ID())
+	}
+	opt.appendStepToCurrent(lp.ID(), lp.TP(), reason, action)
 }

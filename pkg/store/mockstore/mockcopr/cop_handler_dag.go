@@ -32,12 +32,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -82,7 +84,8 @@ func (h coprHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		execDetails = e.ExecDetails()
 	}
 
-	selResp := h.initSelectResponse(err, dagCtx.evalCtx.sc.GetWarnings(), e.Counts())
+	sc := dagCtx.evalCtx.sctx.GetSessionVars().StmtCtx
+	selResp := h.initSelectResponse(err, sc.GetWarnings(), e.Counts())
 	if err == nil {
 		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
 	}
@@ -107,13 +110,13 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	sc := flagsAndTzToStatementContext(dagReq.Flags, tz)
+	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
 
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
 		startTS:   req.StartTs,
-		evalCtx:   &evalContext{sc: sc},
+		evalCtx:   &evalContext{sctx: sctx},
 	}
 	var e executor
 	if len(dagReq.Executors) == 0 {
@@ -301,7 +304,7 @@ func (h coprHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 			return nil, errors.Trace(err)
 		}
 	}
-	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, pbConds)
+	conds, err := convertToExprs(ctx.evalCtx.sctx, ctx.evalCtx.fieldTps, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -322,7 +325,7 @@ func (h coprHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]agg
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
 		var aggExpr aggregation.Aggregation
-		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
+		aggExpr, _, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sctx.GetExprCtx())
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
@@ -338,7 +341,7 @@ func (h coprHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]agg
 			return nil, nil, nil, errors.Trace(err)
 		}
 	}
-	groupBys, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, executor.Aggregation.GetGroupBy())
+	groupBys, err := convertToExprs(ctx.evalCtx.sctx, ctx.evalCtx.fieldTps, executor.Aggregation.GetGroupBy())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -371,7 +374,7 @@ func (h coprHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	aggCtxs := make([]*aggregation.AggEvaluateContext, 0, len(aggs))
 	for _, agg := range aggs {
-		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sc))
+		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sctx.GetExprCtx()))
 	}
 	groupByCollators := make([]collate.Collator, 0, len(groupBys))
 	for _, expr := range groupBys {
@@ -407,11 +410,11 @@ func (h coprHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 		totalCount: int(topN.Limit),
 		topNSorter: topNSorter{
 			orderByItems: topN.OrderBy,
-			sc:           ctx.evalCtx.sc,
+			sc:           ctx.evalCtx.sctx.GetSessionVars().StmtCtx,
 		},
 	}
 
-	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, pbConds)
+	conds, err := convertToExprs(ctx.evalCtx.sctx, ctx.evalCtx.fieldTps, pbConds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -430,7 +433,7 @@ type evalContext struct {
 	colIDs      map[int64]int
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
-	sc          *stmtctx.StatementContext
+	sctx        sessionctx.Context
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
@@ -450,7 +453,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
 	var err error
 	for _, offset := range relatedColOffsets {
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone())
+		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sctx.GetSessionVars().StmtCtx.TimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -458,11 +461,14 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 	return nil
 }
 
-// flagsAndTzToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
-func flagsAndTzToStatementContext(flags uint64, tz *time.Location) *stmtctx.StatementContext {
+// flagsAndTzToSessionContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
+func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
+	sctx := mock.NewContext()
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
-	return sc
+	sctx.GetSessionVars().StmtCtx = sc
+	sctx.GetSessionVars().TimeZone = tz
+	return sctx
 }
 
 // MockGRPCClientStream is exported for testing purpose.
@@ -486,10 +492,10 @@ func (mockClientStream) CloseSend() error { return nil }
 func (mockClientStream) Context() context.Context { return nil }
 
 // SendMsg implements grpc.ClientStream interface
-func (mockClientStream) SendMsg(m interface{}) error { return nil }
+func (mockClientStream) SendMsg(m any) error { return nil }
 
 // RecvMsg implements grpc.ClientStream interface
-func (mockClientStream) RecvMsg(m interface{}) error { return nil }
+func (mockClientStream) RecvMsg(m any) error { return nil }
 
 type mockBathCopErrClient struct {
 	mockClientStream
@@ -544,7 +550,7 @@ func (h coprHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeChunk:
 		colTypes := h.constructRespSchema(dagCtx)
-		loc := dagCtx.evalCtx.sc.TimeZone()
+		loc := dagCtx.evalCtx.sctx.GetSessionVars().StmtCtx.TimeZone()
 		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
 		if err != nil {
 			return err

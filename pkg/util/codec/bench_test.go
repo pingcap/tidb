@@ -16,6 +16,7 @@ package codec
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -30,7 +31,7 @@ func composeEncodedData(size int) []byte {
 	for i := 0; i < size; i++ {
 		values = append(values, types.NewDatum(i))
 	}
-	bs, _ := EncodeValue(nil, nil, values...)
+	bs, _ := EncodeValue(time.UTC, nil, values...)
 	return bs
 }
 

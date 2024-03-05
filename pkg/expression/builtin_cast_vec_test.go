@@ -112,7 +112,7 @@ type dateTimeGenerWithFsp struct {
 	fsp int
 }
 
-func (g *dateTimeGenerWithFsp) gen() interface{} {
+func (g *dateTimeGenerWithFsp) gen() any {
 	result := g.defaultGener.gen()
 	if t, ok := result.(types.Time); ok {
 		t.SetFsp(g.fsp)
@@ -123,7 +123,7 @@ func (g *dateTimeGenerWithFsp) gen() interface{} {
 
 type randJSONDuration struct{}
 
-func (g *randJSONDuration) gen() interface{} {
+func (g *randJSONDuration) gen() any {
 	d := types.Duration{
 		Duration: time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond,
 		Fsp:      3}
@@ -132,7 +132,7 @@ func (g *randJSONDuration) gen() interface{} {
 
 type datetimeJSONGener struct{}
 
-func (g *datetimeJSONGener) gen() interface{} {
+func (g *datetimeJSONGener) gen() any {
 	year := rand.Intn(2200)
 	month := rand.Intn(10) + 1
 	day := rand.Intn(20) + 1
@@ -158,7 +158,8 @@ func TestVectorizedBuiltinCastFunc(t *testing.T) {
 
 func TestVectorizedCastRealAsTime(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeDatetime))
+	ctx := createContext(t)
+	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeDatetime))
 	if err != nil {
 		panic(err)
 	}
@@ -171,9 +172,9 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 
 	for _, input := range inputs {
 		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), input.NumRows())
-		require.NoError(t, cast.vecEvalTime(input, result))
+		require.NoError(t, cast.vecEvalTime(ctx, input, result))
 		for i := 0; i < input.NumRows(); i++ {
-			res, isNull, err := cast.evalTime(input.GetRow(i))
+			res, isNull, err := cast.evalTime(ctx, input.GetRow(i))
 			require.NoError(t, err)
 			if expect[i] == nil {
 				require.True(t, result.IsNull(i))
@@ -245,7 +246,8 @@ func genCastRealAsTime() (*chunk.Chunk, []*types.Time) {
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
+	ctx := mock.NewContext()
+	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	if err != nil {
 		panic(err)
 	}
@@ -262,9 +264,9 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 
 	for _, input := range inputs {
 		result := chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), input.NumRows())
-		require.NoError(t, cast.vecEvalDecimal(input, result))
+		require.NoError(t, cast.vecEvalDecimal(ctx, input, result))
 		for i := 0; i < input.NumRows(); i++ {
-			res, isNull, err := cast.evalDecimal(input.GetRow(i))
+			res, isNull, err := cast.evalDecimal(ctx, input.GetRow(i))
 			require.False(t, isNull)
 			require.NoError(t, err)
 			require.Zero(t, result.GetDecimal(i).Compare(res))

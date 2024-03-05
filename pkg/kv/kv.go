@@ -37,6 +37,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 )
 
@@ -52,7 +53,7 @@ const UnCommitIndexKVFlag byte = '1'
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
-	TxnEntrySizeLimit uint64 = config.DefTxnEntrySizeLimit
+	TxnEntrySizeLimit = atomic.NewUint64(config.DefTxnEntrySizeLimit)
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit = atomic.NewUint64(config.DefTxnTotalSizeLimit)
 )
@@ -217,8 +218,6 @@ type Transaction interface {
 	SetMemoryFootprintChangeHook(func(uint64))
 	// Len returns the number of entries in the DB.
 	Len() int
-	// Reset reset the Transaction to initial states.
-	Reset()
 	// Commit commits the transaction operations to KV store.
 	Commit(context.Context) error
 	// Rollback undoes the transaction operations to KV store.
@@ -234,9 +233,9 @@ type Transaction interface {
 	LockKeysFunc(ctx context.Context, lockCtx *LockCtx, fn func(), keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
-	SetOption(opt int, val interface{})
+	SetOption(opt int, val any)
 	// GetOption returns the option
-	GetOption(opt int) interface{}
+	GetOption(opt int) any
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
@@ -249,9 +248,9 @@ type Transaction interface {
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
-	SetVars(vars interface{})
+	SetVars(vars any)
 	// GetVars gets variables from the transaction.
-	GetVars() interface{}
+	GetVars() any
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
@@ -299,7 +298,7 @@ type FairLockingController interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars interface{}, option *ClientSendOption) Response
+	Send(ctx context.Context, req *Request, vars any, option *ClientSendOption) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -591,6 +590,8 @@ type Request struct {
 
 	// ConnID stores the session connection id.
 	ConnID uint64
+	// ConnAlias stores the session connection alias.
+	ConnAlias string
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
@@ -637,7 +638,7 @@ type Snapshot interface {
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
-	SetOption(opt int, val interface{})
+	SetOption(opt int, val any)
 }
 
 // SnapshotInterceptor is used to intercept snapshot's read operation
@@ -692,7 +693,7 @@ type Storage interface {
 	// Describe returns of brief introduction of the storage
 	Describe() string
 	// ShowStatus returns the specified status of the storage
-	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	ShowStatus(ctx context.Context, key string) (any, error)
 	// GetMemCache return memory manager of the storage.
 	GetMemCache() MemManager
 	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
@@ -713,6 +714,7 @@ type EtcdBackend interface {
 // StorageWithPD is used to get pd client.
 type StorageWithPD interface {
 	GetPDClient() pd.Client
+	GetPDHTTPClient() pdhttp.Client
 }
 
 // FnKeyCmp is the function for iterator the keys

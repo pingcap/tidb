@@ -82,7 +82,7 @@ func convertAddIdxJob2RollbackJob(
 	}
 
 	// the second and the third args will be used in onDropIndex.
-	job.Args = []interface{}{idxNames, ifExists, getPartitionIDs(tblInfo)}
+	job.Args = []any{idxNames, ifExists, getPartitionIDs(tblInfo)}
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateDeleteOnly)
 	if err1 != nil {
@@ -197,7 +197,7 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	columnInfo.State = model.StateDeleteOnly
 	job.SchemaState = model.StateDeleteOnly
 
-	job.Args = []interface{}{col.Name}
+	job.Args = []any{col.Name}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -339,7 +339,7 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	job.Args = []interface{}{partNames}
+	job.Args = []any{partNames}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -498,8 +498,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
-		model.ActionModifySchemaDefaultPlacement,
-		model.ActionRecoverSchema, model.ActionAlterCheckConstraint:
+		model.ActionModifySchemaDefaultPlacement, model.ActionRecoverSchema:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:
 		err = rollingBackMultiSchemaChange(job)
@@ -507,6 +506,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingBackAddConstraint(d, t, job)
 	case model.ActionDropCheckConstraint:
 		ver, err = rollingBackDropConstraint(t, job)
+	case model.ActionAlterCheckConstraint:
+		ver, err = rollingBackAlterConstraint(d, t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -554,7 +555,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 }
 
 func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	job.State = model.JobStateRollingback
 	_, tblInfo, constrInfoInMeta, _, err := checkAddCheckConstraint(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -565,18 +565,17 @@ func rollingBackAddConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
-	// Add constraint has stored constraint info into meta, that means the job has at least
-	// arrived write only state.
-	originalState := constrInfoInMeta.State
-	constrInfoInMeta.State = model.StateWriteOnly
-	job.SchemaState = model.StateWriteOnly
-
-	job.Args = []interface{}{constrInfoInMeta.Name}
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != constrInfoInMeta.State)
-	if err != nil {
-		return ver, errors.Trace(err)
+	for i, constr := range tblInfo.Constraints {
+		if constr.Name.L == constrInfoInMeta.Name.L {
+			tblInfo.Constraints = append(tblInfo.Constraints[0:i], tblInfo.Constraints[i+1:]...)
+			break
+		}
 	}
-	return ver, dbterror.ErrCancelledDDLJob
+	if job.IsRollingback() {
+		job.State = model.JobStateRollbackDone
+	}
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	return ver, errors.Trace(err)
 }
 
 func rollingBackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -593,4 +592,26 @@ func rollingBackDropConstraint(t *meta.Meta, job *model.Job) (ver int64, err err
 	// Can not rollback like drop other element, so just continue to drop constraint.
 	job.State = model.JobStateRunning
 	return ver, nil
+}
+
+func rollingBackAlterConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, tblInfo, constraintInfo, enforced, err := checkAlterCheckConstraint(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if constraintInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+
+	// Only alter check constraints ENFORCED can get here.
+	constraintInfo.Enforced = !enforced
+	constraintInfo.State = model.StatePublic
+	if job.IsRollingback() {
+		job.State = model.JobStateRollbackDone
+	}
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
+	return ver, errors.Trace(err)
 }

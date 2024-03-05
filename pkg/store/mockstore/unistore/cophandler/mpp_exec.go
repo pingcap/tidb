@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -61,7 +61,7 @@ type mppExec interface {
 }
 
 type baseMPPExec struct {
-	sc *stmtctx.StatementContext
+	sctx sessionctx.Context
 
 	mppCtx *MPPCtx
 
@@ -304,7 +304,7 @@ func (e *indexScanExec) Process(key, value []byte) error {
 			e.prevVals[i] = append(e.prevVals[i][:0], values[i]...)
 		}
 	}
-	decoder := codec.NewDecoder(e.chk, e.sc.TimeZone())
+	decoder := codec.NewDecoder(e.chk, e.sctx.GetSessionVars().StmtCtx.TimeZone())
 	for i, value := range values {
 		if i < len(e.fieldTypes) {
 			_, err = decoder.DecodeOne(value, i, e.fieldTypes[i])
@@ -559,7 +559,7 @@ func (e *topNExec) open() error {
 		for i := 0; i < numRows; i++ {
 			row := chk.GetRow(i)
 			for j, cond := range e.conds {
-				d, err := cond.Eval(row)
+				d, err := cond.Eval(e.sctx.GetExprCtx(), row)
 				if err != nil {
 					return err
 				}
@@ -611,6 +611,7 @@ func (e *exchSenderExec) open() error {
 func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 	var oldRow []types.Datum
 	oldChunks := make([]tipb.Chunk, 0)
+	sc := e.sctx.GetSessionVars().StmtCtx
 	for i := 0; i < chk.NumRows(); i++ {
 		oldRow = oldRow[:0]
 		for _, outputOff := range e.outputOffsets {
@@ -619,7 +620,8 @@ func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 		}
 		var err error
 		var oldRowBuf []byte
-		oldRowBuf, err = codec.EncodeValue(e.sc, oldRowBuf[:0], oldRow...)
+		oldRowBuf, err = codec.EncodeValue(sc.TimeZone(), oldRowBuf[:0], oldRow...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -640,6 +642,8 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 			panic(err)
 		}
 	}()
+
+	sc := e.sctx.GetSessionVars().StmtCtx
 	for {
 		chk, err := e.children[0].next()
 		if err != nil {
@@ -663,7 +667,7 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 				hashVals.Reset()
 				// use hash values to get unique uint64 to mod.
 				// collect all the hash key datum.
-				err := codec.HashChunkRow(e.sc, hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
+				err := codec.HashChunkRow(sc.TypeCtx(), hashVals, row, e.hashKeyTypes, e.hashKeyOffsets, payload)
 				if err != nil {
 					for _, tunnel := range e.tunnels {
 						tunnel.ErrCh <- err
@@ -850,7 +854,7 @@ type joinExec struct {
 }
 
 func (e *joinExec) getHashKey(keyCol types.Datum) (str string, err error) {
-	keyCol, err = keyCol.ConvertTo(e.sc, e.comKeyTp)
+	keyCol, err = keyCol.ConvertTo(e.sctx.GetSessionVars().StmtCtx.TypeCtx(), e.comKeyTp)
 	if err != nil {
 		return str, errors.Trace(err)
 	}
@@ -1006,13 +1010,15 @@ func (e *aggExec) getGroupKey(row chunk.Row) (*chunk.MutRow, []byte, error) {
 	}
 	key := make([]byte, 0, DefaultBatchSize)
 	gbyRow := chunk.MutRowFromTypes(e.groupByTypes)
+	sc := e.sctx.GetSessionVars().StmtCtx
 	for i, item := range e.groupByExprs {
-		v, err := item.Eval(row)
+		v, err := item.Eval(e.sctx.GetExprCtx(), row)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		gbyRow.SetDatum(i, v)
-		b, err := codec.EncodeValue(e.sc, nil, v)
+		b, err := codec.EncodeValue(sc.TimeZone(), nil, v)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1026,7 +1032,7 @@ func (e *aggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
 		for _, agg := range e.aggExprs {
-			aggCtxs = append(aggCtxs, agg.CreateContext(e.sc))
+			aggCtxs = append(aggCtxs, agg.CreateContext(e.sctx.GetExprCtx()))
 		}
 		e.aggCtxsMap[string(groupKey)] = aggCtxs
 	}
@@ -1059,7 +1065,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 
 			aggCtxs := e.getContexts(gk)
 			for i, agg := range e.aggExprs {
-				err = agg.Update(aggCtxs[i], e.sc, row)
+				err = agg.Update(aggCtxs[i], e.sctx.GetSessionVars().StmtCtx, row)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1076,7 +1082,7 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 			result := agg.GetResult(aggCtxs[i])
 			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
 				var err error
-				result, err = result.ConvertTo(e.sc, e.fieldTypes[i])
+				result, err = result.ConvertTo(e.sctx.GetSessionVars().StmtCtx.TypeCtx(), e.fieldTypes[i])
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1125,7 +1131,7 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 			row := chk.GetRow(rows)
 			passCheck := true
 			for _, cond := range e.conditions {
-				d, err := cond.Eval(row)
+				d, err := cond.Eval(e.sctx.GetExprCtx(), row)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1133,11 +1139,7 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 				if d.IsNull() {
 					passCheck = false
 				} else {
-					isBool, err := d.ToBool(e.sc.TypeCtx())
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					isBool, err = expression.HandleOverflowOnSelection(e.sc, isBool, err)
+					isBool, err := d.ToBool(e.sctx.GetSessionVars().StmtCtx.TypeCtx())
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
@@ -1180,7 +1182,7 @@ func (e *projExec) next() (*chunk.Chunk, error) {
 		row := chk.GetRow(i)
 		newRow := chunk.MutRowFromTypes(e.fieldTypes)
 		for i, expr := range e.exprs {
-			d, err := expr.Eval(row)
+			d, err := expr.Eval(e.sctx.GetExprCtx(), row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

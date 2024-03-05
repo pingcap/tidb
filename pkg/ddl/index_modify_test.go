@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -278,9 +277,9 @@ LOOP:
 	keys = append(keys, otherKeys...)
 
 	// test index key
-	expectedRows := make([][]interface{}, 0, len(keys))
+	expectedRows := make([][]any, 0, len(keys))
 	for _, key := range keys {
-		expectedRows = append(expectedRows, []interface{}{fmt.Sprintf("%v", key)})
+		expectedRows = append(expectedRows, []any{fmt.Sprintf("%v", key)})
 	}
 	tk.MustQuery(fmt.Sprintf("select c1 from test_add_index where c3 >= %d order by c1", start)).Check(expectedRows)
 	tk.MustExec("admin check table test_add_index")
@@ -679,13 +678,13 @@ func TestAddIndexWithPK(t *testing.T) {
 }
 
 func TestAddGlobalIndex(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
@@ -776,7 +775,7 @@ func checkGlobalIndexRow(
 	it.Close()
 
 	// Check global index entry.
-	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, idxVals...)
 	require.NoError(t, err)
 	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
 	require.NoError(t, err)

@@ -64,15 +64,15 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 	// create index for "insert t values (3, 2, "abc", "abc")
 	idxColVals := types.MakeDatums("abc")
 	handleColVals := types.MakeDatums(3, 2)
-	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
+	encodedHandle, err := codec.EncodeKey(sc.TimeZone(), nil, handleColVals...)
 	require.NoError(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
 	require.NoError(t, err)
 	_ = idxNonUnique
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
-		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
+		key, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
+		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
 		val, err := txn.Get(context.Background(), key)
 		require.NoError(t, err)
@@ -126,15 +126,15 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 	// create index for "insert t values ('abc', 1, 1)"
 	idxColVals := types.MakeDatums(1)
 	handleColVals := types.MakeDatums("abc")
-	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
+	encodedHandle, err := codec.EncodeKey(sc.TimeZone(), nil, handleColVals...)
 	require.NoError(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
 	require.NoError(t, err)
 
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
-		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
+		key, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
+		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
 		val, err := txn.Get(context.Background(), key)
 		require.NoError(t, err)

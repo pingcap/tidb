@@ -45,6 +45,7 @@ import (
 	"io"
 	"net"
 	"os/user"
+	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -54,10 +55,12 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -97,11 +100,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
+	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -113,9 +120,20 @@ const (
 	connStatusWaitShutdown = 3                           // Notified by server to close.
 )
 
+var (
+	statusCompression          = "Compression"
+	statusCompressionAlgorithm = "Compression_algorithm"
+	statusCompressionLevel     = "Compression_level"
+)
+
+var (
+	// ConnectionInMemCounterForTest is a variable to count live connection object
+	ConnectionInMemCounterForTest = atomic.Int64{}
+)
+
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
-	return &clientConn{
+	cc := &clientConn{
 		server:       s,
 		connectionID: s.dom.NextConnID(),
 		collation:    mysql.DefaultCollationID,
@@ -127,6 +145,14 @@ func newClientConn(s *Server) *clientConn {
 		quit:         make(chan struct{}),
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
+
+	if intest.InTest {
+		ConnectionInMemCounterForTest.Add(1)
+		runtime.SetFinalizer(cc, func(*clientConn) {
+			ConnectionInMemCounterForTest.Add(-1)
+		})
+	}
+	return cc
 }
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -160,8 +186,9 @@ type clientConn struct {
 	lastActive    time.Time             // last active time
 	authPlugin    string                // default authentication plugin
 	isUnixSocket  bool                  // connection is Unix Socket file
-	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets.
-	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
+	closeOnce     sync.Once             // closeOnce is used to make sure clientConn closes only once
+	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets
+	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8
 	socketCredUID uint32                // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -323,8 +350,10 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	// With mysql --compression-algorithms=zlib,zstd both flags are set, the result is Zlib
 	if cc.capability&mysql.ClientCompress > 0 {
 		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
+		cc.ctx.SetCompressionAlgorithm(mysql.CompressionZlib)
 	} else if cc.capability&mysql.ClientZstdCompressionAlgorithm > 0 {
 		cc.pkt.SetCompressionAlgorithm(mysql.CompressionZstd)
+		cc.ctx.SetCompressionAlgorithm(mysql.CompressionZstd)
 	}
 
 	return err
@@ -333,38 +362,58 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	connections := len(cc.server.clients)
-	cc.server.rwlock.Unlock()
-	return closeConn(cc, connections)
-}
-
-// closeConn should be idempotent.
-// It will be called on the same `clientConn` more than once to avoid connection leak.
-func closeConn(cc *clientConn, connections int) error {
-	metrics.ConnGauge.Set(float64(connections))
-	if cc.connectionID > 0 {
-		cc.server.dom.ReleaseConnID(cc.connectionID)
-		cc.connectionID = 0
-	}
-	if cc.bufReadConn != nil {
-		err := cc.bufReadConn.Close()
-		if err != nil {
-			// We need to expect connection might have already disconnected.
-			// This is because closeConn() might be called after a connection read-timeout.
-			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+	resourceGroupName, count := "", 0
+	if ctx := cc.getCtx(); ctx != nil {
+		resourceGroupName = ctx.GetSessionVars().ResourceGroupName
+		count = cc.server.ConnNumByResourceGroup[resourceGroupName]
+		if count <= 1 {
+			delete(cc.server.ConnNumByResourceGroup, resourceGroupName)
+		} else {
+			cc.server.ConnNumByResourceGroup[resourceGroupName]--
 		}
 	}
-	// Close statements and session
-	// This will release advisory locks, row locks, etc.
-	if ctx := cc.getCtx(); ctx != nil {
-		return ctx.Close()
-	}
-	return nil
+	cc.server.rwlock.Unlock()
+	return closeConn(cc, resourceGroupName, count)
+}
+
+// closeConn is idempotent and thread-safe.
+// It will be called on the same `clientConn` more than once to avoid connection leak.
+func closeConn(cc *clientConn, resourceGroupName string, count int) error {
+	var err error
+	cc.closeOnce.Do(func() {
+		metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
+
+		if cc.connectionID > 0 {
+			cc.server.dom.ReleaseConnID(cc.connectionID)
+			cc.connectionID = 0
+		}
+		if cc.bufReadConn != nil {
+			err := cc.bufReadConn.Close()
+			if err != nil {
+				// We need to expect connection might have already disconnected.
+				// This is because closeConn() might be called after a connection read-timeout.
+				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+			}
+		}
+		// Close statements and session
+		// This will release advisory locks, row locks, etc.
+		if ctx := cc.getCtx(); ctx != nil {
+			err = ctx.Close()
+		}
+	})
+	return err
 }
 
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	return closeConn(cc, len(cc.server.clients))
+	name := cc.getCtx().GetSessionVars().ResourceGroupName
+	count := cc.server.ConnNumByResourceGroup[name]
+	if count <= 1 {
+		delete(cc.server.ConnNumByResourceGroup, name)
+	} else {
+		cc.server.ConnNumByResourceGroup[name]--
+	}
+	return closeConn(cc, name, count-1)
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
@@ -443,6 +492,14 @@ func (cc *clientConn) writePacket(data []byte) error {
 		}
 	})
 	return cc.pkt.WritePacket(data)
+}
+
+func (cc *clientConn) getWaitTimeout(ctx context.Context) uint64 {
+	sessVars := cc.ctx.GetSessionVars()
+	if sessVars.InTxn() && sessVars.IdleTransactionTimeout > 0 {
+		return uint64(sessVars.IdleTransactionTimeout)
+	}
+	return cc.getSessionVarsWaitTimeout(ctx)
 }
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
@@ -546,7 +603,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
-	cc.pkt.SetZstdLevel(resp.ZstdLevel)
+	cc.pkt.SetZstdLevel(zstd.EncoderLevelFromZstd(resp.ZstdLevel))
 
 	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
@@ -575,7 +632,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return errors.New("Unknown auth plugin")
 	}
 
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	if err != nil {
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
@@ -716,7 +773,7 @@ func (cc *clientConn) openSession() error {
 	return nil
 }
 
-func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) error {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, zstdLevel int) error {
 	// Open a context unless this was done before.
 	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
@@ -744,6 +801,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 		return err
 	}
 	cc.ctx.SetPort(port)
+	cc.ctx.SetCompressionLevel(zstdLevel)
 	if cc.dbname != "" {
 		_, err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
@@ -946,9 +1004,7 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 					break
 				}
 			}
-			if err := rs.Close(); err != nil {
-				return err
-			}
+			rs.Close()
 		}
 	}
 	logutil.Logger(ctx).Debug("init_connect complete")
@@ -1017,7 +1073,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
 		// default 28800(8h), FIXME: should not block at here when we kill the connection.
-		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
+		waitTimeout := cc.getWaitTimeout(ctx)
 		cc.pkt.SetReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
 		data, err := cc.readPacket()
@@ -1084,9 +1140,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if ctx := cc.getCtx(); ctx != nil {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
-			for _, dbName := range session.GetDBNames(cc.getCtx().GetSessionVars()) {
-				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
+			vars := cc.getCtx().GetSessionVars()
+			for _, dbName := range session.GetDBNames(vars) {
+				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName, vars.ResourceGroupName).Inc()
 			}
+
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
@@ -1135,20 +1193,25 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		return
 	}
 
+	vars := cc.getCtx().GetSessionVars()
+	resourceGroupName := vars.ResourceGroupName
 	var counter prometheus.Counter
-	if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
-		counter = server_metrics.QueryTotalCountErr[cmd]
-	} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
-		counter = server_metrics.QueryTotalCountOk[cmd]
+	if len(resourceGroupName) == 0 || resourceGroupName == resourcegroup.DefaultResourceGroupName {
+		if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
+			counter = server_metrics.QueryTotalCountErr[cmd]
+		} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
+			counter = server_metrics.QueryTotalCountOk[cmd]
+		}
 	}
+
 	if counter != nil {
 		counter.Inc()
 	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
-			metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resourceGroupName).Inc()
 		} else {
-			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "OK", resourceGroupName).Inc()
 		}
 	}
 
@@ -1174,9 +1237,8 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
-	vars := cc.getCtx().GetSessionVars()
 	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.ResourceGroupName).Observe(cost.Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 	}
 }
 
@@ -1198,7 +1260,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
 		var r tracing.Region
-		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		r, ctx = tracing.StartRegionWithNewRootSpan(ctx, "server.dispatch")
 		defer r.End()
 	}
 
@@ -1517,93 +1579,6 @@ func (cc *clientConn) writeReq(ctx context.Context, filePath string) error {
 	return cc.flush(ctx)
 }
 
-// handleLoadData does the additional work after processing the 'load data' query.
-// It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *executor.LoadDataWorker) error {
-	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if loadDataWorker == nil {
-		return errors.New("load data info is empty")
-	}
-	infile := loadDataWorker.GetInfilePath()
-	err := cc.writeReq(ctx, infile)
-	if err != nil {
-		return err
-	}
-
-	var (
-		// use Pipe to convert cc.readPacket to io.Reader
-		r, w    = io.Pipe()
-		drained bool
-		wg      sync.WaitGroup
-	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		//nolint: errcheck
-		defer w.Close()
-
-		var (
-			data []byte
-			err2 error
-		)
-		for {
-			if len(data) == 0 {
-				data, err2 = cc.readPacket()
-				if err2 != nil {
-					w.CloseWithError(err2)
-					return
-				}
-				// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
-				if len(data) == 0 {
-					drained = true
-					return
-				}
-			}
-
-			n, err3 := w.Write(data)
-			if err3 != nil {
-				logutil.Logger(ctx).Error("write data meet error", zap.Error(err3))
-				return
-			}
-			data = data[n:]
-		}
-	}()
-
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
-	err = loadDataWorker.LoadLocal(ctx, r)
-	_ = r.Close()
-	wg.Wait()
-
-	if err != nil {
-		if !drained {
-			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
-		}
-		// drain the data from client conn util empty packet received, otherwise the connection will be reset
-		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
-		for !drained {
-			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().SQLKiller.Signal, 1, 0) {
-				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
-				return exeerrors.ErrQueryInterrupted
-			}
-			curData, err1 := cc.readPacket()
-			if err1 != nil {
-				logutil.Logger(ctx).Error("drain reading left data encounter errors", zap.Error(err1))
-				break
-			}
-			if len(curData) == 0 {
-				drained = true
-				logutil.Logger(ctx).Info("draining finished for error", zap.Error(err))
-				break
-			}
-		}
-	}
-	return err
-}
-
 // getDataFromPath gets file contents from file path.
 func (cc *clientConn) getDataFromPath(ctx context.Context, path string) ([]byte, error) {
 	err := cc.writeReq(ctx, path)
@@ -1767,7 +1742,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
-		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
+		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts, sql)
 		if err != nil {
 			for _, stmt := range stmts {
 				cc.onExtensionStmtEnd(stmt, false, err)
@@ -1843,7 +1818,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
 // For pessimistic transaction, the keys will be batch locked.
-func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode, sqls string) ([]plannercore.Plan, error) {
 	txn, err := cc.ctx.Txn(false)
 	if err != nil {
 		return nil, err
@@ -1867,13 +1842,14 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
+	isCommonHandle := make(map[string]bool, 0)
 
 	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			if v.PartitionInfo != nil {
-				tableID = v.PartitionInfo.ID
+			if v.PartitionDef != nil {
+				tableID = v.PartitionDef.ID
 			} else {
 				tableID = v.TblInfo.ID
 			}
@@ -1884,16 +1860,17 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					return err1
 				}
 				idxKeys = append(idxKeys, idxKey)
+				isCommonHandle[string(hack.String(idxKey))] = v.TblInfo.IsCommonHandle
 			} else {
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			if v.PartitionInfos != nil && len(v.PartitionIDs) == 0 {
+			if v.PartitionDefs != nil && len(v.PartitionIDs) == 0 {
 				// skip when PartitionIDs is not initialized.
 				return nil
 			}
 			getPhysID := func(i int) int64 {
-				if v.PartitionInfos == nil {
+				if v.PartitionDefs == nil {
 					return v.TblInfo.ID
 				}
 				return v.PartitionIDs[i]
@@ -1906,6 +1883,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 						return err1
 					}
 					idxKeys = append(idxKeys, idxKey)
+					isCommonHandle[string(hack.String(idxKey))] = v.TblInfo.IsCommonHandle
 				}
 			} else {
 				for i, handle := range v.Handles {
@@ -1929,7 +1907,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}
-		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
+		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), stmt)
 		pointPlans[i] = p
 		if p == nil {
 			continue
@@ -1970,12 +1948,14 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return pointPlans, nil
 	}
 	snapshot := txn.GetSnapshot()
+	setResourceGroupTaggerForMultiStmtPrefetch(snapshot, sqls)
 	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
 	if err1 != nil {
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, false)
+		isCommonHd := isCommonHandle[idxKey]
+		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, isCommonHd)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -1999,13 +1979,48 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	return pointPlans, nil
 }
 
+func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls string) {
+	if !topsqlstate.TopSQLEnabled() {
+		return
+	}
+	normalized, digest := parser.NormalizeDigest(sqls)
+	topsql.AttachAndRegisterSQLInfo(context.Background(), normalized, digest, false)
+	snapshot.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(func(req *tikvrpc.Request) {
+		if req == nil {
+			return
+		}
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	}))
+}
+
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
 // Currently, the first return value is used to fall back to TiKV when TiFlash is down.
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
+func (cc *clientConn) handleStmt(
+	ctx context.Context, stmt ast.StmtNode,
+	warns []stmtctx.SQLWarn, lastStmt bool,
+) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(plugin.Starting)
+
+	// if stmt is load data stmt, store the channel that reads from the conn
+	// into the ctx for executor to use
+	if s, ok := stmt.(*ast.LoadDataStmt); ok {
+		if s.FileLocRef == ast.FileLocClient {
+			err := cc.preprocessLoadDataLocal(ctx)
+			defer cc.postprocessLoadDataLocal()
+			if err != nil {
+				return false, err
+			}
+		}
+	}
+
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
 	// - If rs is not nil, the statement tracker detachment from session tracker
@@ -2013,8 +2028,9 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	// - If the rs is nil and err is not nil, the detachment will be done in
 	//   the `handleNoDelay`.
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer rs.Close()
 	}
+
 	if err != nil {
 		// If error is returned during the planner phase or the executor.Open
 		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
@@ -2049,24 +2065,95 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 			execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
 		}
 	}
-	if err != nil {
-		return false, err
+	return false, err
+}
+
+// Preprocess LOAD DATA. Load data from a local file requires reading from the connection.
+// The function pass a builder to build the connection reader to the context,
+// which will be used in LoadDataExec.
+func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return servererr.ErrNotAllowedCommand
 	}
 
-	return false, nil
+	var readerBuilder executor.LoadDataReaderBuilder = func(filepath string) (
+		io.ReadCloser, error,
+	) {
+		err := cc.writeReq(ctx, filepath)
+		if err != nil {
+			return nil, err
+		}
+
+		drained := false
+		r, w := io.Pipe()
+
+		go func() {
+			var errOccurred error
+
+			defer func() {
+				if errOccurred != nil {
+					// Continue reading packets to drain the connection
+					for !drained {
+						data, err := cc.readPacket()
+						if err != nil {
+							logutil.Logger(ctx).Error(
+								"drain connection failed in load data",
+								zap.Error(err),
+							)
+							break
+						}
+						if len(data) == 0 {
+							drained = true
+						}
+					}
+				}
+				err := w.CloseWithError(errOccurred)
+				if err != nil {
+					logutil.Logger(ctx).Error(
+						"close pipe failed in `load data`",
+						zap.Error(err),
+					)
+				}
+			}()
+
+			for {
+				data, err := cc.readPacket()
+				if err != nil {
+					errOccurred = err
+					return
+				}
+
+				if len(data) == 0 {
+					drained = true
+					return
+				}
+
+				// Write all content in `data`
+				for len(data) > 0 {
+					n, err := w.Write(data)
+					if err != nil {
+						errOccurred = err
+						return
+					}
+					data = data[n:]
+				}
+			}
+		}()
+
+		return r, nil
+	}
+
+	cc.ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+
+	return nil
+}
+
+func (cc *clientConn) postprocessLoadDataLocal() {
+	cc.ctx.ClearValue(executor.LoadDataReaderBuilderKey)
 }
 
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
-	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
-	if loadDataInfo != nil {
-		handled = true
-		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataWorker)); err != nil {
-			return handled, err
-		}
-	}
 
 	loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
 	if loadStats != nil {
@@ -2148,14 +2235,14 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 		if r == nil {
 			return
 		}
-		if recoverdErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
+		recoverdErr, ok := r.(error)
+		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
 			panic(r)
-		} else {
-			runErr = recoverdErr
 		}
+		runErr = recoverdErr
 		// TODO(jianzhang.zj: add metrics here)
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.Stack("stack"), zap.Any("recover", r))
 	}()
@@ -2284,6 +2371,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if stmtDetail != nil {
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
+	}
+	if err := rs.Finish(); err != nil {
+		return false, err
 	}
 
 	if stmtDetail != nil {
@@ -2435,7 +2525,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			fakeResp.Auth = newpass
 		}
 	}
-	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin); err != nil {
+	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)
@@ -2581,4 +2671,45 @@ func (cc *clientConn) ReadPacket() ([]byte, error) {
 // Flush implements `conn.AuthConn` interface
 func (cc *clientConn) Flush(ctx context.Context) error {
 	return cc.flush(ctx)
+}
+
+type compressionStats struct{}
+
+// Stats returns the connection statistics.
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any, 3)
+
+	switch vars.CompressionAlgorithm {
+	case mysql.CompressionNone:
+		m[statusCompression] = "OFF"
+		m[statusCompressionAlgorithm] = ""
+		m[statusCompressionLevel] = 0
+	case mysql.CompressionZlib:
+		m[statusCompression] = "ON"
+		m[statusCompressionAlgorithm] = "zlib"
+		m[statusCompressionLevel] = mysql.ZlibCompressDefaultLevel
+	case mysql.CompressionZstd:
+		m[statusCompression] = "ON"
+		m[statusCompressionAlgorithm] = "zstd"
+		m[statusCompressionLevel] = vars.CompressionLevel
+	default:
+		logutil.BgLogger().Debug(
+			"unexpected compression algorithm value",
+			zap.Int("algorithm", vars.CompressionAlgorithm),
+		)
+		m[statusCompression] = "OFF"
+		m[statusCompressionAlgorithm] = ""
+		m[statusCompressionLevel] = 0
+	}
+
+	return m, nil
+}
+
+// GetScope gets the status variables scope.
+func (*compressionStats) GetScope(_ string) variable.ScopeFlag {
+	return variable.ScopeSession
+}
+
+func init() {
+	variable.RegisterStatistics(&compressionStats{})
 }

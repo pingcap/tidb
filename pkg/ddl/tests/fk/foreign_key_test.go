@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -457,23 +457,6 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
-func TestCreateTableWithForeignKeyDML(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int key, a int);")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 values (1, 1)")
-	tk.MustExec("update t1 set a = 2 where id = 1")
-
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))")
-
-	tk.MustExec("commit")
-}
-
 func TestCreateTableWithForeignKeyError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -752,40 +735,6 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 	}
 }
 
-func TestModifyColumnWithForeignKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t1 (id int key, b varchar(10), index(b));")
-	tk.MustExec("create table t2 (a varchar(10), constraint fk foreign key (a) references t1(b));")
-	tk.MustExec("insert into t1 values (1, '123456789');")
-	tk.MustExec("insert into t2 values ('123456789');")
-	tk.MustGetErrMsg("alter table t1 modify column b varchar(5);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
-	tk.MustGetErrMsg("alter table t1 modify column b bigint;", "[ddl:3780]Referencing column 'a' and referenced column 'b' in foreign key constraint 'fk' are incompatible.")
-	tk.MustExec("alter table t1 modify column b varchar(20);")
-	tk.MustGetErrMsg("alter table t1 modify column b varchar(10);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
-	tk.MustExec("alter table t2 modify column a varchar(20);")
-	tk.MustExec("alter table t2 modify column a varchar(21);")
-	tk.MustGetErrMsg("alter table t2 modify column a varchar(5);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
-	tk.MustGetErrMsg("alter table t2 modify column a bigint;", "[ddl:3780]Referencing column 'a' and referenced column 'b' in foreign key constraint 'fk' are incompatible.")
-
-	tk.MustExec("drop table t2")
-	tk.MustExec("drop table t1")
-	tk.MustExec("create table t1 (id int key, b decimal(10, 5), index(b));")
-	tk.MustExec("create table t2 (a decimal(10, 5), constraint fk foreign key (a) references t1(b));")
-	tk.MustExec("insert into t1 values (1, 12345.67891);")
-	tk.MustExec("insert into t2 values (12345.67891);")
-	tk.MustGetErrMsg("alter table t1 modify column b decimal(10, 6);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
-	tk.MustGetErrMsg("alter table t1 modify column b decimal(10, 3);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
-	tk.MustGetErrMsg("alter table t1 modify column b decimal(5, 2);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
-	tk.MustGetErrMsg("alter table t1 modify column b decimal(20, 10);", "[ddl:1833]Cannot change column 'b': used in a foreign key constraint 'fk' of table 'test.t2'")
-	tk.MustGetErrMsg("alter table t2 modify column a decimal(30, 15);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
-	tk.MustGetErrMsg("alter table t2 modify column a decimal(5, 2);", "[ddl:1832]Cannot change column 'a': used in a foreign key constraint 'fk'")
-}
-
 func TestDropChildTableForeignKeyMetaInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -921,22 +870,6 @@ func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
 	}
 }
 
-func TestDropTableWithForeignKeyReferred(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t1 (id int key, b int, index(b));")
-	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
-	tk.MustExec("create table t3 (id int key, b int, foreign key fk_b(b) references t2(id));")
-	err := tk.ExecToErr("drop table if exists t1,t2;")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", err.Error())
-	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
-}
-
 func TestDropIndexNeededInForeignKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1038,24 +971,6 @@ func getTableInfoReferredForeignKeys(t *testing.T, dom *domain.Domain, db, tb st
 	return dom.InfoSchema().GetTableReferredForeignKeys(db, tb)
 }
 
-func TestDropColumnWithForeignKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t1 (id int key, a int, b int, index(b), CONSTRAINT fk foreign key (a) references t1(b))")
-	tk.MustGetErrMsg("alter table t1 drop column a;", "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'")
-	tk.MustGetErrMsg("alter table t1 drop column b;", "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't1'")
-
-	tk.MustExec("drop table t1")
-	tk.MustExec("create table t1 (id int key, b int, index(b));")
-	tk.MustExec("create table t2 (a int, b int, constraint fk foreign key (a) references t1(b));")
-	tk.MustGetErrMsg("alter table t1 drop column b;", "[ddl:1829]Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't2'")
-	tk.MustGetErrMsg("alter table t2 drop column a;", "[ddl:1828]Cannot drop column 'a': needed in a foreign key constraint 'fk'")
-}
-
 func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1143,35 +1058,6 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
-func TestDropDatabaseWithForeignKeyReferred(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t1 (id int key, b int, index(b));")
-	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
-	tk.MustExec("create database test2")
-	tk.MustExec("create table test2.t3 (id int key, b int, foreign key fk_b(b) references test.t2(id));")
-	err := tk.ExecToErr("drop database test;")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", err.Error())
-	tk.MustExec("set @@foreign_key_checks=0;")
-	tk.MustExec("drop database test")
-
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("create database test")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int key, b int, index(b));")
-	tk.MustExec("create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));")
-	err = tk.ExecToErr("drop database test;")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:3730]Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.", err.Error())
-	tk.MustExec("drop table test2.t3")
-	tk.MustExec("drop database test")
-}
-
 func TestAddForeignKey(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1227,10 +1113,10 @@ func TestAddForeignKey(t *testing.T) {
 		require.Equal(t, names[i], fkInfo.Name.L)
 		require.Equal(t, model.StatePublic, fkInfo.State)
 	}
-	tk.MustGetDBError("insert into t2 (id, b) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, b) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannererrors.ErrNoReferencedRow2)
 
 	// Test add multiple foreign key constraint in one statement but failed.
 	tk.MustExec("alter table t2 drop foreign key fk")
@@ -1621,35 +1507,6 @@ func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
 	return diff
 }
 
-func TestMultiSchemaAddForeignKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (a int, b int);")
-	tk.MustExec("alter table t2 add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
-	tk.MustExec("alter table t2 add column c int, add column d int")
-	tk.MustExec("alter table t2 add foreign key (c) references t1(id), add foreign key (d) references t1(id), add index(c), add index(d)")
-	tk.MustExec("drop table t2")
-	tk.MustExec("create table t2 (a int, b int, index idx1(a), index idx2(b));")
-	tk.MustGetErrMsg("alter table t2 drop index idx1, drop index idx2, add foreign key (a) references t1(id), add foreign key (b) references t1(id)",
-		"[ddl:1553]Cannot drop index 'idx1': needed in a foreign key constraint")
-	tk.MustExec("alter table t2 drop index idx1, drop index idx2")
-	tk.MustExec("alter table t2 add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
-	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` int(11) DEFAULT NULL,\n" +
-		"  KEY `fk_1` (`a`),\n" +
-		"  KEY `fk_2` (`b`),\n" +
-		"  CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `test`.`t1` (`id`),\n" +
-		"  CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("drop table t2")
-	tk.MustExec("create table t2 (a int, b int, index idx0(a,b), index idx1(a), index idx2(b));")
-	tk.MustExec("alter table t2 drop index idx1, add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
-}
-
 func TestAddForeignKeyInBigTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1664,42 +1521,6 @@ func TestAddForeignKeyInBigTable(t *testing.T) {
 	start := time.Now()
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
 	require.Less(t, time.Since(start), time.Minute)
-}
-
-func TestForeignKeyWithCacheTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-	// Test foreign key refer cache table.
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
-	tk.MustExec("alter table t1 cache;")
-	tk.MustExec("create table t2 (b int);")
-	tk.MustExec("alter  table t2 add constraint fk foreign key (b) references t1(id) on delete cascade on update cascade")
-	tk.MustExec("insert into t2 values (1),(2),(3),(4)")
-	tk.MustGetDBError("insert into t2 values (5)", plannercore.ErrNoReferencedRow2)
-	tk.MustExec("update t1 set id = id+10 where id=1")
-	tk.MustExec("delete from t1 where id<10")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("11"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("11"))
-	tk.MustExec("alter table t1 nocache;")
-	tk.MustExec("drop table t1,t2;")
-
-	// Test add foreign key on cache table.
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (b int);")
-	tk.MustExec("alter  table t2 add constraint fk foreign key (b) references t1(id) on delete cascade on update cascade")
-	tk.MustExec("alter table t2 cache;")
-	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
-	tk.MustExec("insert into t2 values (1),(2),(3),(4)")
-	tk.MustGetDBError("insert into t2 values (5)", plannercore.ErrNoReferencedRow2)
-	tk.MustExec("update t1 set id = id+10 where id=1")
-	tk.MustExec("delete from t1 where id<10")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("11"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("11"))
-	tk.MustExec("alter table t2 nocache;")
-	tk.MustExec("drop table t1,t2;")
 }
 
 func TestForeignKeyAndConcurrentDDL(t *testing.T) {
@@ -1809,29 +1630,4 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 			require.Equal(t, ca.err2, err2.Error())
 		}
 	}
-}
-
-func TestForeignKeyAndRenameIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@foreign_key_checks=1;")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int key, b int, index idx1(b));")
-	tk.MustExec("create table t2 (id int key, b int, constraint fk foreign key (b) references t1(b));")
-	tk.MustExec("insert into t1 values (1,1),(2,2)")
-	tk.MustExec("insert into t2 values (1,1),(2,2)")
-	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("delete from t1 where id=1", plannercore.ErrRowIsReferenced2)
-	tk.MustExec("alter table t1 rename index idx1 to idx2")
-	tk.MustExec("alter table t2 rename index fk to idx")
-	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("delete from t1 where id=1", plannercore.ErrRowIsReferenced2)
-	tk.MustExec("alter table t2 drop foreign key fk")
-	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete cascade on update cascade")
-	tk.MustExec("alter table t1 rename index idx2 to idx3")
-	tk.MustExec("alter table t2 rename index idx to idx0")
-	tk.MustExec("delete from t1 where id=1")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("2 2"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("2 2"))
-	tk.MustExec("admin check table t1,t2")
 }

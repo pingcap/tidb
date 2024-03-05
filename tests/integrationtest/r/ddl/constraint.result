@@ -458,7 +458,6 @@ create table t(a int CHECK (a != 0));
 prepare stmt from 'insert into t values(?)';
 set @a = 1;
 execute stmt using @a;
-
 set @a = 0;
 execute stmt using @a;
 Error 3819 (HY000): Check constraint 't_chk_1' is violated.
@@ -481,55 +480,55 @@ select * from s;
 a
 1
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
 insert into t1 values (2, 2);
 Error 3819 (HY000): Check constraint 't1_chk_1' is violated.
 insert into t1 values (9, 2);
 Error 3819 (HY000): Check constraint 't1_chk_2' is violated.
 insert into t1 values (14, -4);
-Error 3819 (HY000): Check constraint 'c2_positive' is violated.
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
 insert into t1(c1) values (9);
 Error 3819 (HY000): Check constraint 't1_chk_2' is violated.
 insert into t1(c2) values (-3);
-Error 3819 (HY000): Check constraint 'c2_positive' is violated.
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
 insert into t1 values (14, 4);
 insert into t1 values (null, 4);
 insert into t1 values (13, null);
 insert into t1 values (null, null);
 insert into t1(c1) values (null);
 insert into t1(c2) values (null);
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
 insert into t2(c1, c2) values (11, 1);
 Error 3819 (HY000): Check constraint 't2_chk_3' is violated.
 insert into t2(c1, c2) values (12, 7);
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0));
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
 insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 update t1 set c2 = -c2;
-Error 3819 (HY000): Check constraint 'c2_positive' is violated.
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
 update t1 set c2 = c1;
 Error 3819 (HY000): Check constraint 't1_chk_1' is violated.
 update t1 set c1 = c1 - 10;
 Error 3819 (HY000): Check constraint 't1_chk_2' is violated.
 update t1 set c2 = -10 where c2 = 12;
-Error 3819 (HY000): Check constraint 'c2_positive' is violated.
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15));
 insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 update t2 set c2 = c2 - 10;
 Error 3819 (HY000): Check constraint 't2_chk_3' is violated.
 update t2 set c2 = c2 - 5;
 drop table if exists t1, t2;
-CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0)) partition by hash(c2) partitions 5;
+CREATE TABLE t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0)) partition by hash(c2) partitions 5;
 insert into t1 values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 update t1 set c2 = -c2;
-Error 3819 (HY000): Check constraint 'c2_positive' is violated.
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
 update t1 set c2 = c1;
 Error 3819 (HY000): Check constraint 't1_chk_1' is violated.
 update t1 set c1 = c1 - 10;
 Error 3819 (HY000): Check constraint 't1_chk_2' is violated.
 update t1 set c2 = -10 where c2 = 12;
-Error 3819 (HY000): Check constraint 'c2_positive' is violated.
-CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;
+Error 3819 (HY000): Check constraint 'c2_positive_for_t1' is violated.
+CREATE TABLE t2 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t2 CHECK (c2 > 0), c3 int as (c1 + c2) check(c3 > 15)) partition by hash(c2) partitions 5;
 insert into t2(c1, c2) values (11, 12), (12, 13), (13, 14), (14, 15), (15, 16);
 update t2 set c2 = c2 - 10;
 Error 3819 (HY000): Check constraint 't2_chk_3' is violated.
@@ -720,7 +719,6 @@ insert into t values(1), (2), (3);
 alter table t add constraint check(a < 2);
 Error 3819 (HY000): Check constraint 't_chk_1' is violated.
 alter table t add constraint check(a < 2) not enforced;
-Error 3819 (HY000): Check constraint 't_chk_1' is violated.
 drop table if exists t;
 set @@global.tidb_enable_check_constraint = 1;
 create table t(a int not null check(a>0), b int, constraint haha check(a < b), check(a<b+1));
@@ -789,4 +787,56 @@ t	CREATE TABLE `t` (
 CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
 CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert into t values(1, 0);
+alter table t alter constraint haha enforced;
+Error 3819 (HY000): Check constraint 'haha' is violated.
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+CREATE TABLE `t` (`a` int(11) DEFAULT NULL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert t values(1);
+select * from t;
+a
+1
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+alter table t ADD CONSTRAINT chk CHECK (a > 1) NOT ENFORCED;
+ALTER TABLE t ALTER CONSTRAINT chk ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `chk` CHECK ((`a` > 1)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t drop CONSTRAINT chk;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t;
+create table t(a int, check((test.t.a > 1)));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK (((`a` > 1)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add constraint chk check((test.t.a < 100));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `t_chk_1` CHECK (((`a` > 1))),
+CONSTRAINT `chk` CHECK (((`a` < 100)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
 set @@global.tidb_enable_check_constraint = 0;

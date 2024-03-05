@@ -103,7 +103,7 @@ addr = "127.0.0.1:8287"
 # Current supports three resolution algorithms:
 #  - none: doesn't detect duplicate records, which has the best performance of the three algorithms, but probably leads to
 #    inconsistent data in the target TiDB.
-#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB. Note that this
+#  - record: only records duplicate records to `lightning_task_info.conflict_error_v2` table on the target TiDB. Note that this
 #    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
 #  - remove: records all duplicate records like the 'record' algorithm and remove all duplicate records to ensure a consistent
 #    state in the target TiDB.
@@ -140,6 +140,18 @@ addr = "127.0.0.1:8287"
 #local-writer-mem-cache-size = '128MiB'
 # Limit the write bandwidth to each tikv store. The unit is 'Bytes per second'. 0 means no limit.
 #store-write-bwlimit = 0
+# Limit the size of each SQL query executed on downstream TiDB server in logical mode (TiDB backend).
+# This is the desired length of the VALUES part of each INSERT/REPLACE statement executed in a single transaction.
+# This is not a hard limit; the actual SQL executed may be longer or shorter depending on the actual content imported.
+# The default value is optimized for import speed when Lightning is the only client of the cluster.
+# Because of implementation details of Lightning, the value is capped at 96 KiB and larger values are ignored.
+# This value may be decreased to reduce the stress on the cluster due to large transaction.
+#logical-import-batch-size = '96KiB'
+# Limit the maximum number of rows inserted per transaction in logical mode (TiDB backend).
+# When both `logical-import-batch-size` and `logical-import-batch-rows` are defined,
+# the rows will be split in a way to respect both settings.
+# This value may be decreased to reduce the stress on the cluster due to large transaction.
+#logical-import-batch-rows = 65536
 
 [mydumper]
 # block size of file reading

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
 type gcSubstituter struct {
@@ -63,7 +64,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	// detect the read_from_storage(tiflash) hints, since virtual column will
 	// block the mpp task spreading (only supporting MPP table scan), causing
 	// mpp plan fail the cost comparison with tikv index plan.
-	if ds.preferStoreType&preferTiFlash != 0 {
+	if ds.preferStoreType&h.PreferTiFlash != 0 {
 		return
 	}
 	for _, p := range ds.possibleAccessPaths {
@@ -85,7 +86,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 
 func tryToSubstituteExpr(expr *expression.Expression, lp LogicalPlan, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column, opt *logicalOptimizeOp) bool {
 	changed := false
-	if (*expr).Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+	if (*expr).Equal(lp.SCtx().GetExprCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
 		schema.ColumnIndex(col) != -1 {
 		*expr = col
 		appendSubstituteColumnStep(lp, candidateExpr, col, opt)
@@ -117,7 +118,6 @@ func substituteExpression(cond expression.Expression, lp LogicalPlan, exprToColu
 	if !ok {
 		return false
 	}
-	sctx := lp.SCtx().GetSessionVars().StmtCtx
 	changed := false
 	collectChanged := func(partial bool) {
 		if partial && !changed {
@@ -127,7 +127,7 @@ func substituteExpression(cond expression.Expression, lp LogicalPlan, exprToColu
 	defer func() {
 		// If the argument is not changed, hash code doesn't need to recount again.
 		if changed {
-			expression.ReHashCode(sf, sctx)
+			expression.ReHashCode(sf)
 		}
 	}()
 	var expr *expression.Expression
@@ -198,7 +198,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 			for i := 0; i < len(aggFunc.Args); i++ {
 				tp = aggFunc.Args[i].GetType().EvalType()
 				for candidateExpr, column := range exprToColumn {
-					if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+					if aggFunc.Args[i].Equal(lp.SCtx().GetExprCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
 						x.Schema().ColumnIndex(column) != -1 {
 						aggFunc.Args[i] = column
 						appendSubstituteColumnStep(lp, candidateExpr, column, opt)
@@ -209,7 +209,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 		for i := 0; i < len(x.GroupByItems); i++ {
 			tp = x.GroupByItems[i].GetType().EvalType()
 			for candidateExpr, column := range exprToColumn {
-				if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+				if x.GroupByItems[i].Equal(lp.SCtx().GetExprCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
 					x.Schema().ColumnIndex(column) != -1 {
 					x.GroupByItems[i] = column
 					appendSubstituteColumnStep(lp, candidateExpr, column, opt)

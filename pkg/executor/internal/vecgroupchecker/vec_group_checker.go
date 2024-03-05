@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -28,7 +27,7 @@ import (
 // VecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
 // It is usually used for streamAgg
 type VecGroupChecker struct {
-	ctx           sessionctx.Context
+	ctx           expression.EvalContext
 	releaseBuffer func(buf *chunk.Column)
 
 	// set these functions for testing
@@ -61,7 +60,7 @@ type VecGroupChecker struct {
 }
 
 // NewVecGroupChecker creates a new VecGroupChecker
-func NewVecGroupChecker(ctx sessionctx.Context, items []expression.Expression) *VecGroupChecker {
+func NewVecGroupChecker(ctx expression.EvalContext, items []expression.Expression) *VecGroupChecker {
 	return &VecGroupChecker{
 		ctx:          ctx,
 		GroupByItems: items,
@@ -93,12 +92,15 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 			return false, err
 		}
 	}
-	e.firstGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.firstGroupKey, e.firstRowDatums...)
+	ec := e.ctx.ErrCtx()
+	e.firstGroupKey, err = codec.EncodeKey(e.ctx.Location(), e.firstGroupKey, e.firstRowDatums...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}
 
-	e.lastGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, e.lastGroupKey, e.lastRowDatums...)
+	e.lastGroupKey, err = codec.EncodeKey(e.ctx.Location(), e.lastGroupKey, e.lastRowDatums...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}

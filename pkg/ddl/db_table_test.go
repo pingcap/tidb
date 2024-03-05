@@ -637,19 +637,6 @@ func TestLockTables(t *testing.T) {
 	tk.MustGetErrMsg("commit",
 		"previous statement: insert into t1 set a=1: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 
-	// Test lock table by other session in transaction and commit with retry.
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 set a=1")
-	tk2.MustExec("lock tables t1 write")
-	tk.MustGetDBError("commit", infoschema.ErrTableLocked)
-
-	// Test for lock the same table multiple times.
-	tk2.MustExec("lock tables t1 write")
-	tk2.MustExec("lock tables t1 write, t2 read")
-
 	// Test lock tables and drop tables
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
@@ -793,9 +780,9 @@ func TestAddColumn2(t *testing.T) {
 	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Session(), kv.IntHandle(1), writeOnlyTable.WritableCols())
 	require.NoError(t, err)
 	require.Equal(t, 3, len(oldRow))
-	err = writeOnlyTable.RemoveRecord(tk.Session(), kv.IntHandle(1), oldRow)
+	err = writeOnlyTable.RemoveRecord(tk.Session().GetTableCtx(), kv.IntHandle(1), oldRow)
 	require.NoError(t, err)
-	_, err = writeOnlyTable.AddRecord(tk.Session(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
+	_, err = writeOnlyTable.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	require.NoError(t, err)
 	tk.Session().StmtCommit(ctx)
 	err = tk.Session().CommitTxn(ctx)
@@ -857,4 +844,28 @@ func TestDropTables(t *testing.T) {
 
 	failedSQL = "show create table t1;"
 	tk.MustGetErrCode(failedSQL, errno.ErrNoSuchTable)
+}
+
+func TestCreateConstraintForTable(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1, t2")
+	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
+	tk.MustExec("CREATE TABLE t1 (id INT PRIMARY KEY, CONSTRAINT c1 CHECK (id<50))")
+	failedSQL := "CREATE TABLE t2 (id INT PRIMARY KEY, CONSTRAINT c1 CHECK (id<50))"
+	tk.MustGetErrCode(failedSQL, errno.ErrCheckConstraintDupName)
+
+	tk.MustExec("CREATE TABLE t2 (id INT PRIMARY KEY)")
+	failedSQL = "ALTER TABLE t2 ADD CONSTRAINT c1 CHECK (id<50)"
+	tk.MustGetErrCode(failedSQL, errno.ErrCheckConstraintDupName)
+
+	tk.MustExec("DROP DATABASE IF EXISTS test2")
+	tk.MustExec("CREATE DATABASE test2")
+	tk.MustExec("CREATE TABLE test2.t1 (id INT PRIMARY KEY, CONSTRAINT c1 CHECK (id<50))")
+	rs, err := tk.Exec("SHOW TABLES FROM test2 LIKE 't1'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "t1")
 }

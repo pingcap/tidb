@@ -43,49 +43,70 @@ type Aggregation interface {
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
 	// CreateContext creates a new AggEvaluateContext for the aggregation function.
-	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
+	CreateContext(ctx expression.EvalContext) *AggEvaluateContext
 
 	// ResetContext resets the content of the evaluate context.
-	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
+	ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext)
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
-func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.StatementContext) (Aggregation, error) {
+func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx expression.BuildContext) (Aggregation, *AggFuncDesc, error) {
 	args := make([]expression.Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
-		arg, err := expression.PBToExpr(child, fieldTps, sc)
+		arg, err := expression.PBToExpr(ctx, child, fieldTps)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, arg)
 	}
 	switch expr.Tp {
 	case tipb.ExprType_Sum:
-		return &sumFunction{aggFunction: newAggFunc(ast.AggFuncSum, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncSum, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &sumFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Count:
-		return &countFunction{aggFunction: newAggFunc(ast.AggFuncCount, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncCount, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &countFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Avg:
-		return &avgFunction{aggFunction: newAggFunc(ast.AggFuncAvg, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncAvg, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &avgFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_GroupConcat:
-		return &concatFunction{aggFunction: newAggFunc(ast.AggFuncGroupConcat, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncGroupConcat, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &concatFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Max:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMax, args, false), isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
+		aggF := newAggFunc(ast.AggFuncMax, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &maxMinFunction{aggFunction: aggF, isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Min:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false), ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
+		aggF := newAggFunc(ast.AggFuncMin, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &maxMinFunction{aggFunction: aggF, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_First:
-		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncFirstRow, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &firstRowFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Agg_BitOr:
-		return &bitOrFunction{aggFunction: newAggFunc(ast.AggFuncBitOr, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncBitOr, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &bitOrFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Agg_BitXor:
-		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncBitXor, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &bitXorFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Agg_BitAnd:
-		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
+		aggF := newAggFunc(ast.AggFuncBitAnd, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &bitAndFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	}
-	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
+	return nil, nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
 
 // AggEvaluateContext is used to store intermediate result when calculating aggregate functions.
 type AggEvaluateContext struct {
+	Ctx             expression.EvalContext
 	DistinctChecker *distinctChecker
 	Count           int64
 	Value           types.Datum
@@ -125,24 +146,25 @@ func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool)
 }
 
 // CreateContext implements Aggregation interface.
-func (af *aggFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext {
-	evalCtx := &AggEvaluateContext{}
+func (af *aggFunction) CreateContext(ctx expression.EvalContext) *AggEvaluateContext {
+	evalCtx := &AggEvaluateContext{Ctx: ctx}
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(sc)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	return evalCtx
 }
 
-func (af *aggFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (af *aggFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(sc)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
+	evalCtx.Ctx = ctx
 	evalCtx.Value.SetNull()
 }
 
 func (af *aggFunction) updateSum(ctx types.Context, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[0]
-	value, err := a.Eval(row)
+	value, err := a.Eval(evalCtx.Ctx, row)
 	if err != nil {
 		return err
 	}

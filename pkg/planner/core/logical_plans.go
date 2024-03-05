@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -116,48 +118,6 @@ func (tp JoinType) String() string {
 	return "unsupported join type"
 }
 
-const (
-	// Hint flag for join
-	preferINLJ uint = 1 << iota
-	preferINLHJ
-	preferINLMJ
-	preferHJBuild
-	preferHJProbe
-	preferHashJoin
-	preferNoHashJoin
-	preferMergeJoin
-	preferNoMergeJoin
-	preferNoIndexJoin
-	preferNoIndexHashJoin
-	preferNoIndexMergeJoin
-	preferBCJoin
-	preferShuffleJoin
-	preferRewriteSemiJoin
-
-	// Hint flag to specify the join with direction
-	preferLeftAsINLJInner
-	preferRightAsINLJInner
-	preferLeftAsINLHJInner
-	preferRightAsINLHJInner
-	preferLeftAsINLMJInner
-	preferRightAsINLMJInner
-	preferLeftAsHJBuild
-	preferRightAsHJBuild
-	preferLeftAsHJProbe
-	preferRightAsHJProbe
-
-	// Hint flag for Agg
-	preferHashAgg
-	preferStreamAgg
-	preferMPP1PhaseAgg
-	preferMPP2PhaseAgg
-)
-
-const (
-	preferTiKV = 1 << iota
-	preferTiFlash
-)
-
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer
@@ -168,7 +128,7 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *tableHintInfo
+	hintInfo            *h.PlanHints
 	preferJoinType      uint
 	preferJoinOrder     bool
 	leftPreferJoinType  uint
@@ -218,7 +178,7 @@ func (p *LogicalJoin) isNAAJ() bool {
 // Shallow shallow copies a LogicalJoin struct.
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p
-	return join.Init(p.SCtx(), p.SelectBlockOffset())
+	return join.Init(p.SCtx(), p.QueryBlockOffset())
 }
 
 // ExtractFD implements the interface LogicalPlan.
@@ -452,28 +412,29 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 	copy(cpOtherConditions, p.OtherConditions)
 	copy(cpEqualConditions, p.EqualConditions)
 
+	exprCtx := p.SCtx().GetExprCtx()
 	// try to substitute columns in these condition.
 	for i, cond := range cpLeftConditions {
-		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
+		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpRightConditions {
-		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
+		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpOtherConditions {
-		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
+		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpEqualConditions {
 		var tmp expression.Expression
-		if hasFail, tmp = expression.ColumnSubstituteAll(cond, schema, exprs); hasFail {
+		if hasFail, tmp = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 		cpEqualConditions[i] = tmp.(*expression.ScalarFunction)
@@ -721,16 +682,10 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 }
 
 func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expression) (expression.Expression, bool) {
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	sc.CanonicalHashCode = true
-	defer func() {
-		sc.CanonicalHashCode = false
-	}()
-
 	// since all the original group items has been projected even single col,
 	// let's check the origin gby expression here, and map it to new gby col.
 	for i, oneExpr := range p.distinctGbyExprs {
-		if bytes.Equal(expr.HashCode(sc), oneExpr.HashCode(sc)) {
+		if bytes.Equal(expr.CanonicalHashCode(), oneExpr.CanonicalHashCode()) {
 			// found
 			return p.distinctGroupByCol[i], true
 		}
@@ -741,11 +696,6 @@ func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expr
 
 // CheckGroupingFuncArgsInGroupBy checks whether grouping function args is in grouping items.
 func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expression.Expression) ([]*expression.Column, error) {
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	sc.CanonicalHashCode = true
-	defer func() {
-		sc.CanonicalHashCode = false
-	}()
 	// build GBYColMap
 	distinctGBYColMap := make(map[int64]struct{}, len(p.distinctGroupByCol))
 	for _, oneDistinctGBYCol := range p.distinctGroupByCol {
@@ -758,7 +708,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 		// since all the original group items has been projected even single col,
 		// let's check the origin gby expression here, and map it to new gby col.
 		for i, oneExpr := range p.distinctGbyExprs {
-			if bytes.Equal(oneArg.HashCode(sc), oneExpr.HashCode(sc)) {
+			if bytes.Equal(oneArg.CanonicalHashCode(), oneExpr.CanonicalHashCode()) {
 				refPos = i
 				break
 			}
@@ -779,7 +729,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 				}
 			}
 			if !find {
-				return nil, ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
+				return nil, plannererrors.ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
 			}
 		}
 	}
@@ -877,21 +827,21 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 			// take c as constant column here.
 			continue
 		case *expression.Constant:
-			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			var (
 				ok               bool
 				constantUniqueID int
 			)
 			if constantUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
 				constantUniqueID = outputColsUniqueIDsArray[idx]
-				fds.RegisterUniqueID(string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx)), constantUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode()), constantUniqueID)
 			}
 			fds.AddConstants(intset.NewFastIntSet(constantUniqueID))
 		case *expression.ScalarFunction:
 			// t1(a,b,c), t2(m,n)
 			// select a, (select c+n from t2 where m=b) from t1;
 			// expr(c+n) contains correlated column , but we can treat it as constant here.
-			hashCode := string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			var (
 				ok             bool
 				scalarUniqueID int
@@ -967,8 +917,9 @@ type LogicalAggregation struct {
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 
-	// aggHints stores aggregation hint information.
-	aggHints aggHintInfo
+	// PreferAggType And PreferAggToCop stores aggregation hint information.
+	PreferAggType  uint
+	PreferAggToCop bool
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -1037,7 +988,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 			// shouldn't be here, interpreted as pos param by plan builder.
 			continue
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(la.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			var (
 				ok             bool
 				scalarUniqueID int
@@ -1128,7 +1079,8 @@ func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
 	// partialAgg (in cascades planner) should share the same hint, instead
 	// of a copy.
-	la.aggHints = agg.aggHints
+	la.PreferAggType = agg.PreferAggType
+	la.PreferAggToCop = agg.PreferAggToCop
 }
 
 // IsPartialModeAgg returns if all of the AggFuncs are partialMode.
@@ -1238,7 +1190,7 @@ func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) intset.FastIntSet {
+func extractConstantCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) intset.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -1246,18 +1198,18 @@ func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Con
 		constObjs      []expression.Expression
 		constUniqueIDs = intset.NewFastIntSet()
 	)
-	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, conditions)
+	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx.GetExprCtx(), constObjs, conditions)
 	for _, constObj := range constObjs {
 		switch x := constObj.(type) {
 		case *expression.Column:
 			constUniqueIDs.Insert(int(x.UniqueID))
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				constUniqueIDs.Insert(uniqueID)
 			} else {
 				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode()), scalarUniqueID)
 				constUniqueIDs.Insert(scalarUniqueID)
 			}
 		}
@@ -1265,7 +1217,7 @@ func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Con
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]intset.FastIntSet {
+func extractEquivalenceCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) [][]intset.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]intset.FastIntSet, 0, len(equivObjsPair))
@@ -1279,12 +1231,12 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.
 		case *expression.Column:
 			lhsUniqueID = int(x.UniqueID)
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				lhsUniqueID = uniqueID
 			} else {
 				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode()), scalarUniqueID)
 				lhsUniqueID = scalarUniqueID
 			}
 		}
@@ -1293,12 +1245,12 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.
 		case *expression.Column:
 			rhsUniqueID = int(x.UniqueID)
 		case *expression.ScalarFunction:
-			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			hashCode := string(x.HashCode())
 			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
 				rhsUniqueID = uniqueID
 			} else {
 				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
-				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				fds.RegisterUniqueID(string(x.HashCode()), scalarUniqueID)
 				rhsUniqueID = scalarUniqueID
 			}
 		}
@@ -1396,7 +1348,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 		for _, col := range innerPlan.Schema().Columns {
 			if cc.UniqueID == col.CorrelatedColUniqueID {
 				ccc := &cc.Column
-				cond := expression.NewFunctionInternal(la.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
+				cond := expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
 				eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 			}
 		}
@@ -1419,9 +1371,13 @@ type LogicalMaxOneRow struct {
 }
 
 // LogicalTableDual represents a dual table plan.
+// Note that sometimes we don't set schema for LogicalTableDual (most notably in buildTableDual()), which means
+// outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
+// cause any actual problems now.
 type LogicalTableDual struct {
 	logicalSchemaProducer
 
+	// RowCount could only be 0 or 1.
 	RowCount int
 }
 
@@ -1458,12 +1414,17 @@ type LogicalUnionScan struct {
 	handleCols HandleCols
 }
 
+// GetAllConds Exported for unit test.
+func (ds *DataSource) GetAllConds() []expression.Expression {
+	return ds.allConds
+}
+
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
-	IndexHints    []indexHintInfo
+	IndexHints    []h.HintedIndex
 	table         table.Table
 	tableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
@@ -1471,7 +1432,7 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []indexHintInfo
+	indexMergeHints []h.HintedIndex
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -1585,9 +1546,11 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
+	sctx := p.SCtx()
+	exprCtx := sctx.GetExprCtx()
 	for i, col := range p.IdxCols {
-		if col.Equal(nil, prop.SortItems[0].Col) {
-			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
+		if col.Equal(exprCtx, prop.SortItems[0].Col) {
+			return matchIndicesProp(sctx, p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
 		} else if i >= p.EqCondCount {
 			break
 		}
@@ -1606,9 +1569,9 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema())
-	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(ts)
 	return sg
@@ -1623,7 +1586,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 		FullIdxColLens: path.FullIdxColLens,
 		IdxCols:        path.IdxCols,
 		IdxColLens:     path.IdxColLens,
-	}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
@@ -1634,7 +1597,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 		Source:        ds,
 		IsIndexGather: true,
 		Index:         path.Index,
-	}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(is)
 	return sg
@@ -1658,12 +1621,17 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	return gathers
 }
 
-func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, conds []expression.Expression) error {
+func detachCondAndBuildRangeForPath(
+	sctx PlanContext,
+	path *util.AccessPath,
+	conds []expression.Expression,
+	histColl *statistics.HistColl,
+) error {
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
 		return nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx(), conds, path.IdxCols, path.IdxColLens, ds.SCtx().GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return err
 	}
@@ -1679,7 +1647,7 @@ func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, cond
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(ds.SCtx(), ds.tableStats.HistColl, path.Index.ID, path.Ranges)
+	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
 	return err
 }
 
@@ -1691,7 +1659,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	if len(conds) == 0 {
 		return nil
 	}
-	if err := ds.detachCondAndBuildRangeForPath(path, conds); err != nil {
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.tableStats.HistColl); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
@@ -1753,6 +1721,9 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if len(conds) == 0 {
 		return nil
 	}
+	// for cnf condition combination, c=1 and c=2 and (1 member of (a)),
+	// c=1 and c=2 will derive invalid range represented by an access condition as constant of 0 (false).
+	// later this constant of 0 will be built as empty range.
 	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.SCtx(), conds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
@@ -1764,7 +1735,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				continue
 			}
 			lCol, lOk := eqFunc.GetArgs()[0].(*expression.Column)
-			if lOk && lCol.Equal(ds.SCtx(), pkCol) {
+			if lOk && lCol.Equal(ds.SCtx().GetExprCtx(), pkCol) {
 				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
 				if rOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1774,7 +1745,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				}
 			}
 			rCol, rOk := eqFunc.GetArgs()[1].(*expression.Column)
-			if rOk && rCol.Equal(ds.SCtx(), pkCol) {
+			if rOk && rCol.Equal(ds.SCtx().GetExprCtx(), pkCol) {
 				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
 				if lOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1818,7 +1789,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			alreadyHandle := false
 			for _, col := range path.IdxCols {
-				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+				if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
 					alreadyHandle = true
 				}
 			}
@@ -1833,7 +1804,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			}
 		}
 	}
-	err := ds.detachCondAndBuildRangeForPath(path, conds)
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.tableStats.HistColl)
 	return err
 }
 
@@ -1954,10 +1925,10 @@ type LogicalTopN struct {
 
 	ByItems []*util.ByItems
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  limitHintInfo
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -1983,11 +1954,11 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  limitHintInfo
-	IsPartial   bool
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
+	IsPartial        bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -2092,7 +2063,7 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
 		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
 			var err error
-			fb.CompareCols[0], err = expression.NewFunctionBase(ctx, ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+			fb.CompareCols[0], err = expression.NewFunctionBase(ctx.GetExprCtx(), ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
 			if err != nil {
 				return err
 			}
@@ -2124,7 +2095,7 @@ func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
 }
 
 // EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualPartitionBy(newWindow *LogicalWindow) bool {
 	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
 		return false
 	}
@@ -2141,7 +2112,7 @@ func (p *LogicalWindow) EqualPartitionBy(_ sessionctx.Context, newWindow *Logica
 }
 
 // EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
-func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualOrderBy(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
 	if len(p.OrderBy) != len(newWindow.OrderBy) {
 		return false
 	}
@@ -2155,7 +2126,7 @@ func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalW
 }
 
 // EqualFrame checks whether two LogicalWindow.Frames are equal.
-func (p *LogicalWindow) EqualFrame(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+func (p *LogicalWindow) EqualFrame(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
 	if (p.Frame == nil && newWindow.Frame != nil) ||
 		(p.Frame != nil && newWindow.Frame == nil) {
 		return false
@@ -2339,6 +2310,7 @@ type CTEClass struct {
 	// pushDownPredicates may be push-downed by different references.
 	pushDownPredicates []expression.Expression
 	ColumnMap          map[string]*expression.Column
+	isOuterMostCTE     bool
 }
 
 const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
@@ -2370,11 +2342,10 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 type LogicalCTE struct {
 	logicalSchemaProducer
 
-	cte            *CTEClass
-	cteAsName      model.CIStr
-	cteName        model.CIStr
-	seedStat       *property.StatsInfo
-	isOuterMostCTE bool
+	cte       *CTEClass
+	cteAsName model.CIStr
+	cteName   model.CIStr
+	seedStat  *property.StatsInfo
 
 	onlyUsedAsStorage bool
 }

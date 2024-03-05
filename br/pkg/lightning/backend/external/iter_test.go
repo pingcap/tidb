@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/rand"
@@ -58,15 +60,6 @@ func (r *trackOpenFileReader) Close() error {
 	return nil
 }
 
-func getEncodedData(key, value []byte) []byte {
-	buf := make([]byte, 8*2+len(key)+len(value))
-	binary.BigEndian.PutUint64(buf, uint64(len(key)))
-	copy(buf[8:], key)
-	binary.BigEndian.PutUint64(buf[8+len(key):], uint64(len(value)))
-	copy(buf[8*2+len(key):], value)
-	return buf
-}
-
 func TestMergeKVIter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
@@ -90,12 +83,13 @@ func TestMergeKVIter(t *testing.T) {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
+		kvStore.Close()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 0)
 	require.NoError(t, err)
 	// close one empty file immediately in NewMergeKVIter
 	require.EqualValues(t, 2, trackStore.opened.Load())
@@ -142,12 +136,13 @@ func TestOneUpstream(t *testing.T) {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
+		kvStore.Close()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, trackStore.opened.Load())
 
@@ -184,14 +179,14 @@ func TestAllEmpty(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5, false, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 
-	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5)
+	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5, false, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
@@ -220,6 +215,7 @@ func TestCorruptContent(t *testing.T) {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
+		kvStore.Close()
 		if i == 0 {
 			_, err = writer.Write(ctx, []byte("corrupt"))
 			require.NoError(t, err)
@@ -229,7 +225,7 @@ func TestCorruptContent(t *testing.T) {
 	}
 
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
-	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
+	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, trackStore.opened.Load())
 
@@ -317,7 +313,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 
 	offsets := make([]uint64, len(dataNames))
 
-	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048)
+	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048, true, 0)
 	require.NoError(t, err)
 
 	for iter.Next() {
@@ -326,13 +322,44 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 	require.NoError(t, err)
 }
 
-func TestHotspot(t *testing.T) {
-	backup := checkHotspotPeriod
-	checkHotspotPeriod = 2
-	t.Cleanup(func() {
-		checkHotspotPeriod = backup
-	})
+type eofReader struct {
+	storage.ExternalFileReader
+}
 
+func (r eofReader) Seek(_ int64, _ int) (int64, error) {
+	return 0, nil
+}
+
+func (r eofReader) Read(_ []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func TestReadAfterCloseConnReader(t *testing.T) {
+	ctx := context.Background()
+
+	reader := &byteReader{
+		ctx:           ctx,
+		storageReader: eofReader{},
+		smallBuf:      []byte{0, 255, 255, 255, 255, 255, 255, 255},
+		curBufOffset:  8,
+		logger:        logutil.Logger(ctx),
+	}
+	reader.curBuf = [][]byte{reader.smallBuf}
+	pool := membuf.NewPool()
+	reader.concurrentReader.largeBufferPool = pool.NewBuffer()
+	reader.concurrentReader.store = storage.NewMemStorage()
+
+	// set current reader to concurrent reader, and then close it
+	reader.concurrentReader.now = true
+	err := reader.switchConcurrentMode(false)
+	require.NoError(t, err)
+
+	wrapKVReader := &kvReader{reader}
+	_, _, err = wrapKVReader.nextKV()
+	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestHotspot(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 
@@ -357,13 +384,15 @@ func TestHotspot(t *testing.T) {
 			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
 			require.NoError(t, err)
 		}
+		kvStore.Close()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
 
 	// readerBufSize = 8+5+8+5, every KV will cause reload
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26)
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26, true, 0)
 	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 2
 	// after read key00 and key01 from reader_0, it becomes hotspot
 	require.True(t, iter.Next())
 	require.Equal(t, "key00", string(iter.Key()))
@@ -413,15 +442,10 @@ func TestHotspot(t *testing.T) {
 }
 
 func TestMemoryUsageWhenHotspotChange(t *testing.T) {
-	backup := checkHotspotPeriod
-	checkHotspotPeriod = 10
-	t.Cleanup(func() {
-		checkHotspotPeriod = backup
-	})
-	backup2 := ConcurrentReaderBufferSizePerConc
+	backup := ConcurrentReaderBufferSizePerConc
 	ConcurrentReaderBufferSizePerConc = 100 * 1024 * 1024 // 100MB, make memory leak more obvious
 	t.Cleanup(func() {
-		ConcurrentReaderBufferSizePerConc = backup2
+		ConcurrentReaderBufferSizePerConc = backup
 	})
 
 	getMemoryInUse := func() uint64 {
@@ -452,7 +476,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 		rc.reset()
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
-		for j := 0; j < checkHotspotPeriod; j++ {
+		for j := 0; j < 1000; j++ {
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)
 			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))
@@ -470,8 +494,9 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	beforeMem := getMemoryInUse()
 
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024)
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024, true, 16)
 	require.NoError(t, err)
+	iter.iter.checkHotspotPeriod = 10
 	i := 0
 	for cur > 0 {
 		cur--
@@ -487,4 +512,261 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 	// before the fix, delta is about 7.5GB
 	require.Less(t, delta, uint64(4*1024*1024*1024))
 	_ = iter.Close()
+}
+
+type myInt int
+
+func (m myInt) sortKey() []byte {
+	return []byte{byte(m)}
+}
+
+func (m myInt) cloneInnerFields() {}
+
+func (m myInt) len() int { return 1 }
+
+type intReader struct {
+	ints   []int
+	refCnt *atomic.Int64
+}
+
+const errInt = -1
+
+func (i *intReader) path() string { return "" }
+
+func (i *intReader) next() (myInt, error) {
+	if len(i.ints) == 0 {
+		return 0, io.EOF
+	}
+	ret := i.ints[0]
+	i.ints = i.ints[1:]
+	if ret == errInt {
+		return 0, fmt.Errorf("mock error")
+	}
+	return myInt(ret), nil
+}
+
+func (i *intReader) switchConcurrentMode(bool) error { return nil }
+
+func (i *intReader) close() error {
+	i.refCnt.Dec()
+	return nil
+}
+
+func buildOpener(in [][]int, refCnt *atomic.Int64) []readerOpenerFn[myInt, *intReader] {
+	ret := make([]readerOpenerFn[myInt, *intReader], 0, len(in))
+	for _, ints := range in {
+		ints := ints
+		ret = append(ret, func() (**intReader, error) {
+			refCnt.Inc()
+			r := &intReader{ints, refCnt}
+			return &r, nil
+		})
+	}
+	return ret
+}
+
+func TestLimitSizeMergeIter(t *testing.T) {
+	ctx := context.Background()
+	refCnt := atomic.NewInt64(0)
+	readerOpeners := buildOpener([][]int{
+		{1, 2, 3}, {4, 5, 6}, {7, 8, 9},
+	}, refCnt)
+	weight := []int64{1, 1, 1}
+
+	oneToNine := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	for limit := int64(1); limit <= 4; limit++ {
+		refCnt.Store(0)
+		i, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+		require.NoError(t, err)
+		var got []int
+		ok, _ := i.next()
+		for ok {
+			got = append(got, int(i.curr))
+			require.LessOrEqual(t, refCnt.Load(), limit)
+			ok, _ = i.next()
+		}
+		require.NoError(t, i.err)
+		require.Equal(t, oneToNine, got)
+
+		// check it can return error
+		for errIdx := 1; errIdx <= 9; errIdx++ {
+			nums := make([]int, 9)
+			for i := range nums {
+				nums[i] = i + 1
+				if nums[i] == errIdx {
+					nums[i] = errInt
+				}
+			}
+			readerOpeners := buildOpener([][]int{nums[:3], nums[3:6], nums[6:]}, refCnt)
+			i, err = newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+			if err != nil {
+				require.EqualError(t, err, "mock error")
+				continue
+			}
+			var got []int
+			ok, _ = i.next()
+			for ok {
+				got = append(got, int(i.curr))
+				ok, _ = i.next()
+			}
+			require.ErrorContains(t, i.err, "mock error")
+			require.Less(t, len(got), 9)
+		}
+	}
+}
+
+func TestLimitSizeMergeIterDiffWeight(t *testing.T) {
+	ctx := context.Background()
+	refCnt := atomic.NewInt64(0)
+	readerOpeners := buildOpener([][]int{
+		{1, 4, 7}, {2, 5}, {3},
+		{10},
+		{11, 14, 17}, {12, 15}, {13},
+	}, refCnt)
+	weight := []int64{
+		1, 1, 1,
+		3,
+		1, 1, 1,
+	}
+	limit := int64(3)
+
+	expected := []int{1, 2, 3, 4, 5, 7, 10, 11, 12, 13, 14, 15, 17}
+	expectedRefCnt := []int64{3, 3, 3, 2, 2, 1, 1, 3, 3, 3, 2, 2, 1}
+	iter, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+	require.NoError(t, err)
+	for i, exp := range expected {
+		ok, _ := iter.next()
+		require.True(t, ok)
+		require.Equal(t, exp, int(iter.curr), "i: %d", i)
+		require.Equal(t, expectedRefCnt[i], refCnt.Load(), "i: %d", i)
+	}
+
+	ok, _ := iter.next()
+	require.False(t, ok)
+	require.NoError(t, iter.err)
+	require.Equal(t, int64(0), refCnt.Load())
+}
+
+type slowOpenStorage struct {
+	*storage.MemStorage
+	sleep   time.Duration
+	openCnt atomic.Int32
+}
+
+func (s *slowOpenStorage) Open(
+	ctx context.Context,
+	filePath string,
+	o *storage.ReaderOption,
+) (storage.ExternalFileReader, error) {
+	time.Sleep(s.sleep)
+	s.openCnt.Inc()
+	return s.MemStorage.Open(ctx, filePath, o)
+}
+
+func TestMergePropBaseIter(t *testing.T) {
+	// this test should be finished around 1 second. However, due to CI is not
+	// stable, we don't check the time.
+	oneOpenSleep := time.Second
+
+	fileNum := 16
+	filenames := make([]string, fileNum)
+	for i := range filenames {
+		filenames[i] = fmt.Sprintf("/test%06d", i)
+	}
+	ctx := context.Background()
+	store := &slowOpenStorage{
+		MemStorage: storage.NewMemStorage(),
+		sleep:      oneOpenSleep,
+	}
+	for i, filename := range filenames {
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		prop := &rangeProperty{firstKey: []byte{byte(i)}}
+		buf := encodeMultiProps(nil, []*rangeProperty{prop})
+		_, err = writer.Write(ctx, buf)
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	multiStat := MultipleFilesStat{MaxOverlappingNum: 1}
+	for _, f := range filenames {
+		multiStat.Filenames = append(multiStat.Filenames, [2]string{"", f})
+	}
+	iter, err := newMergePropBaseIter(ctx, multiStat, store)
+	require.NoError(t, err)
+	for i := 0; i < fileNum; i++ {
+		p, err := iter.next()
+		require.NoError(t, err)
+		require.EqualValues(t, i, p.firstKey[0])
+	}
+
+	_, err = iter.next()
+	require.ErrorIs(t, err, io.EOF)
+	require.EqualValues(t, fileNum, store.openCnt.Load())
+}
+
+func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {
+	fileNum := 100
+	filenames := make([]string, fileNum)
+	for i := range filenames {
+		filenames[i] = fmt.Sprintf("/test%06d", i)
+	}
+	ctx := context.Background()
+	store := &slowOpenStorage{
+		MemStorage: storage.NewMemStorage(),
+	}
+	// empty file so reader will be closed at init
+	for _, filename := range filenames {
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	multiStat := MultipleFilesStat{MaxOverlappingNum: 1}
+	for _, f := range filenames {
+		multiStat.Filenames = append(multiStat.Filenames, [2]string{"", f})
+	}
+	iter, err := newMergePropBaseIter(ctx, multiStat, store)
+	require.NoError(t, err)
+
+	_, err = iter.next()
+	require.ErrorIs(t, err, io.EOF)
+	require.EqualValues(t, fileNum, store.openCnt.Load())
+}
+
+func TestCloseLimitSizeMergeIterHalfway(t *testing.T) {
+	fileNum := 10000
+	filenames := make([]string, fileNum)
+	for i := range filenames {
+		filenames[i] = fmt.Sprintf("/test%06d", i)
+	}
+	ctx := context.Background()
+	store := &trackOpenMemStorage{MemStorage: storage.NewMemStorage()}
+
+	for i, filename := range filenames {
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		prop := &rangeProperty{firstKey: []byte{byte(i)}}
+		buf := encodeMultiProps(nil, []*rangeProperty{prop})
+		_, err = writer.Write(ctx, buf)
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	multiStat := MultipleFilesStat{MaxOverlappingNum: 1}
+	for _, f := range filenames {
+		multiStat.Filenames = append(multiStat.Filenames, [2]string{"", f})
+	}
+	iter, err := newMergePropBaseIter(ctx, multiStat, store)
+	require.NoError(t, err)
+
+	_, err = iter.next()
+	require.NoError(t, err)
+
+	err = iter.close()
+	require.NoError(t, err)
+	require.EqualValues(t, 0, store.opened.Load())
 }

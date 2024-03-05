@@ -38,11 +38,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	exec.BaseExecutor
+	indexUsageReporter *exec.IndexUsageReporter
 
 	tblInfo     *model.TableInfo
 	idxInfo     *model.IndexInfo
@@ -164,6 +166,12 @@ func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
+	if e.indexUsageReporter != nil && e.idxInfo != nil {
+		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
+		// We cannot distinguish how many rows are coming from each partition. Here, we calculate all index usages
+		// percentage according to the row counts for the whole table.
+		e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+	}
 	e.inited = 0
 	e.index = 0
 	return nil
@@ -186,14 +194,14 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(e.Base().Ctx(), e.Schema(), e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
 		e.index++
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), req)
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
@@ -226,12 +234,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 
 			var physID int64
-			if len(e.planPhysIDs) > 0 {
-				physID = e.planPhysIDs[i]
+			if e.partPos == core.GlobalWithoutColumnPos {
+				physID = e.tblInfo.ID
 			} else {
-				physID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, idxVals[e.partPos])
-				if err != nil {
-					continue
+				if len(e.planPhysIDs) > 0 {
+					physID = e.planPhysIDs[i]
+				} else {
+					physID, err = core.GetPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
+					if err != nil {
+						continue
+					}
 				}
 			}
 
@@ -300,8 +312,18 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				indexKeys = append(indexKeys, key)
 			}
 			if e.tblInfo.Partition != nil {
-				pid := tablecodec.DecodeTableID(key)
-				e.physIDs = append(e.physIDs, pid)
+				var pid int64
+				if e.idxInfo.Global {
+					segs := tablecodec.SplitIndexValue(handleVal)
+					_, pid, err = codec.DecodeInt(segs.PartitionID)
+					if err != nil {
+						return err
+					}
+					e.physIDs = append(e.physIDs, pid)
+				} else {
+					pid = tablecodec.DecodeTableID(key)
+					e.physIDs = append(e.physIDs, pid)
+				}
 				if e.lock {
 					e.UpdateDeltaForTableID(pid)
 				}
@@ -364,7 +386,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		} else {
 			if handle.IsInt() {
 				d := types.NewIntDatum(handle.IntValue())
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -373,7 +395,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if err1 != nil {
 					return err1
 				}
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}

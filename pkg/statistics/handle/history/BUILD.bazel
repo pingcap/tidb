@@ -10,6 +10,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

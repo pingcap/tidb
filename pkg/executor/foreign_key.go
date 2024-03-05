@@ -174,7 +174,7 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 	if len(oldVals) == len(newVals) {
 		isSameValue := true
 		for i := range oldVals {
-			cmp, err := oldVals[i].Compare(sc, &newVals[i], collate.GetCollator(oldVals[i].Collation()))
+			cmp, err := oldVals[i].Compare(sc.TypeCtx(), &newVals[i], collate.GetCollator(oldVals[i].Collation()))
 			if err != nil || cmp != 0 {
 				isSameValue = false
 				break
@@ -278,7 +278,7 @@ func (fkc *FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, v
 		}
 		return key, true, nil
 	}
-	key, distinct, err := fkc.Idx.GenIndexKey(sc, vals, nil, nil)
+	key, distinct, err := fkc.Idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), vals, nil, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -292,7 +292,8 @@ func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, va
 	if len(vals) == 1 && fkc.Idx == nil {
 		return kv.IntHandle(vals[0].GetInt64()), nil
 	}
-	handleBytes, err := codec.EncodeKey(sc, nil, vals...)
+	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, vals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +465,8 @@ func (h *fkValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row
 	if err != nil || h.hasNullValue(vals) {
 		return nil, err
 	}
-	keyBuf, err := codec.EncodeKey(sc, nil, vals...)
+	keyBuf, err := codec.EncodeKey(sc.TimeZone(), nil, vals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -687,7 +689,8 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	if err != nil {
 		return err
 	}
-	newValsKey, err := codec.EncodeKey(sc, nil, newVals...)
+	newValsKey, err := codec.EncodeKey(sc.TimeZone(), nil, newVals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -757,7 +760,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx, stmtNode, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), stmtNode, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}

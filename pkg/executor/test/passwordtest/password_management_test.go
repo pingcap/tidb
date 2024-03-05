@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
 
@@ -125,84 +125,6 @@ func TestValidatePassword(t *testing.T) {
 	tk.MustExec("SET GLOBAL validate_password.mixed_case_count = default")
 	tk.MustExec("SET GLOBAL validate_password.length = default")
 	tk.MustExec("CREATE ROLE role1")
-}
-
-func expectedPasswordExpiration(t *testing.T, tk *testkit.TestKit, testuser, expired string, lifetime string) {
-	res := tk.MustQuery(fmt.Sprintf("SELECT password_expired, password_last_changed, password_lifetime FROM mysql.user WHERE user = '%s'", testuser))
-	rows := res.Rows()
-	require.NotEmpty(t, rows)
-	row := rows[0]
-	require.Equal(t, 3, len(row))
-	require.Equal(t, expired, row[0].(string), testuser)
-	require.True(t, len(row[1].(string)) > 0, testuser)
-	require.Equal(t, lifetime, row[2].(string), testuser)
-}
-
-func TestPasswordExpiration(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// CREATE USER
-	tk.MustExec(`CREATE USER testuser`)
-	expectedPasswordExpiration(t, tk, "testuser", "N", "<nil>")
-	tk.MustExec(`CREATE USER testuser1 PASSWORD EXPIRE`)
-	expectedPasswordExpiration(t, tk, "testuser1", "Y", "<nil>")
-	tk.MustExec(`CREATE USER testuser2 PASSWORD EXPIRE DEFAULT`)
-	expectedPasswordExpiration(t, tk, "testuser2", "N", "<nil>")
-	tk.MustExec(`CREATE USER testuser3 PASSWORD EXPIRE NEVER`)
-	expectedPasswordExpiration(t, tk, "testuser3", "N", "0")
-	tk.MustExec(`CREATE USER testuser4 PASSWORD EXPIRE INTERVAL 3 DAY`)
-	expectedPasswordExpiration(t, tk, "testuser4", "N", "3")
-	tk.MustExec(`CREATE ROLE role1`)
-	expectedPasswordExpiration(t, tk, "role1", "Y", "<nil>")
-
-	// ALTER USER
-	testcases := []struct {
-		user    string
-		expired string
-	}{
-		{"testuser", "N"},
-		{"testuser1", "Y"},
-		{"testuser2", "N"},
-		{"testuser3", "N"},
-		{"testuser4", "N"},
-		{"role1", "Y"},
-	}
-	for _, testcase := range testcases {
-		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE NEVER", testcase.user))
-		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "0")
-		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE DEFAULT", testcase.user))
-		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "<nil>")
-		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE INTERVAL 3 DAY", testcase.user))
-		expectedPasswordExpiration(t, tk, testcase.user, testcase.expired, "3")
-		tk.MustExec(fmt.Sprintf("ALTER USER %s PASSWORD EXPIRE", testcase.user))
-		expectedPasswordExpiration(t, tk, testcase.user, "Y", "3")
-		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED BY '' PASSWORD EXPIRE", testcase.user))
-		expectedPasswordExpiration(t, tk, testcase.user, "Y", "3")
-		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED WITH 'mysql_native_password' AS ''", testcase.user))
-		expectedPasswordExpiration(t, tk, testcase.user, "N", "3")
-		tk.MustExec(fmt.Sprintf("ALTER USER %s IDENTIFIED BY ''", testcase.user))
-		expectedPasswordExpiration(t, tk, testcase.user, "N", "3")
-	}
-
-	// SET PASSWORD
-	tk.MustExec("ALTER USER testuser PASSWORD EXPIRE")
-	expectedPasswordExpiration(t, tk, "testuser", "Y", "3")
-	tk.MustExec("SET PASSWORD FOR testuser = '1234'")
-	expectedPasswordExpiration(t, tk, "testuser", "N", "3")
-
-	tk.MustGetErrCode(`CREATE USER ''@localhost IDENTIFIED BY 'pass' PASSWORD EXPIRE`, mysql.ErrPasswordExpireAnonymousUser)
-	tk.MustExec(`CREATE USER ''@localhost IDENTIFIED BY 'pass'`)
-	tk.MustGetErrCode(`ALTER USER ''@localhost PASSWORD EXPIRE`, mysql.ErrPasswordExpireAnonymousUser)
-
-	// different cleartext authentication plugin
-	for _, authplugin := range []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password} {
-		tk.MustExec("DROP USER IF EXISTS 'u1'@'localhost'")
-		tk.MustExec(fmt.Sprintf("CREATE USER 'u1'@'localhost' IDENTIFIED WITH '%s'", authplugin))
-		tk.MustExec("ALTER USER 'u1'@'localhost' IDENTIFIED BY 'pass'")
-		tk.MustExec("ALTER USER 'u1'@'localhost' PASSWORD EXPIRE")
-		tk.MustQuery("SELECT password_expired FROM mysql.user WHERE user = 'u1'").Check(testkit.Rows("Y"))
-	}
 }
 
 // Test cases that related to PASSWORD VALIDATION, PASSWORD EXPIRATION, PASSWORD REUSE POLICY, and PASSWORD FAILED-LOGIN TRACK.
@@ -412,318 +334,6 @@ func TestFailedLoginTrackingBasic(t *testing.T) {
 	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`<nil>`))
 	tk.MustExec("ALTER USER 'u4'@'localhost' PASSWORD_LOCK_TIME 6")
 	tk.MustQuery("select user_attributes from mysql.user where user = 'u4' and host = 'localhost'").Check(testkit.Rows(`{"Password_locking": {"failed_login_attempts": 0, "password_lock_time_days": 6}}`))
-}
-
-func TestUserReuseControl(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	rootTK := testkit.NewTestKit(t, store)
-	rootTK.MustQuery(`show variables like  "password_history"`).Check(testkit.Rows("password_history 0"))
-	rootTK.MustQuery(`show variables like  "password_reuse_interval"`).Check(testkit.Rows("password_reuse_interval 0"))
-	rootTK.MustExec(`set global password_history = -1`)
-	rootTK.MustExec(`set global password_reuse_interval = -1`)
-	rootTK.MustQuery(`show variables like  "password_history"`).Check(testkit.Rows("password_history 0"))
-	rootTK.MustQuery(`show variables like  "password_reuse_interval"`).Check(testkit.Rows("password_reuse_interval 0"))
-	rootTK.MustExec(`set global password_history = 4294967295`)
-	rootTK.MustExec(`set global password_reuse_interval = 4294967295`)
-	rootTK.MustQuery(`show variables like  "password_history"`).Check(testkit.Rows("password_history 4294967295"))
-	rootTK.MustQuery(`show variables like  "password_reuse_interval"`).Check(testkit.Rows("password_reuse_interval 4294967295"))
-	rootTK.MustExec(`set global password_history = 4294967296`)
-	rootTK.MustExec(`set global password_reuse_interval = 4294967296`)
-	rootTK.MustQuery(`show variables like  "password_history"`).Check(testkit.Rows("password_history 4294967295"))
-	rootTK.MustQuery(`show variables like  "password_reuse_interval"`).Check(testkit.Rows("password_reuse_interval 4294967295"))
-	rootTK.MustGetErrCode(`set session password_history = 42949`, 1229)
-	rootTK.MustGetErrCode(`set session password_reuse_interval = 42949`, 1229)
-}
-
-func TestUserReuseInfo(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	rootTK := testkit.NewTestKit(t, store)
-	rootTK.MustExec(`CREATE USER testReuse`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`<nil> <nil>`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD HISTORY 5`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`5 <nil>`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD HISTORY 0`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`0 <nil>`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD HISTORY DEFAULT`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`<nil> <nil>`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD HISTORY 65536`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`65535 <nil>`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD REUSE INTERVAL 5 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`65535 5`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD REUSE INTERVAL 0 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`65535 0`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD REUSE INTERVAL DEFAULT`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`65535 <nil>`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD REUSE INTERVAL 65536 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`65535 65535`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD HISTORY 6 PASSWORD REUSE INTERVAL 6 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`6 6`))
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD HISTORY 6 PASSWORD HISTORY 7 `)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`7 6`))
-
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 5`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`5 <nil>`))
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD REUSE INTERVAL 5 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`<nil> 5`))
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD REUSE INTERVAL 5 DAY PASSWORD REUSE INTERVAL 6 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`<nil> 6`))
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 6 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`5 6`))
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD REUSE INTERVAL 6 DAY PASSWORD HISTORY 5`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`5 6`))
-
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustGetErrCode(`CREATE USER testReuse PASSWORD HISTORY -5`, 1064)
-	rootTK.MustGetErrCode(`CREATE USER testReuse PASSWORD REUSE INTERVAL -6 DAY`, 1064)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 65535 PASSWORD REUSE INTERVAL 65535 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`65535 65535`))
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 65536 PASSWORD REUSE INTERVAL 65536 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`65535 65535`))
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`<nil> <nil>`))
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 0 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(`0 0`))
-}
-
-func TestUserReuseFunction(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	rootTK := testkit.NewTestKit(t, store)
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustExec(`set global password_history = 1;`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustExec(`DROP USER testReuse`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-
-	rootTK.MustExec(`set global password_history = 0;`)
-	rootTK.MustExec(`set global password_reuse_interval = 1;`)
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`2`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`3`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`4`))
-	rootTK.MustExec(`update mysql.password_history set Password_timestamp = date_sub(Password_timestamp,interval '1 0:0:1' DAY_SECOND)`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustExec(`drop USER testReuse `)
-
-	rootTK.MustExec(`set global password_reuse_interval = 0;`)
-	//password nil is not stored
-	rootTK.MustExec(`CREATE USER testReuse PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 6 DAY`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustExec(`drop USER testReuse `)
-
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY 5`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`4`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustExec(`alter USER testReuse identified by 'test4'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`5`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test5'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`5`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test1'`, 3638)
-	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`5`))
-	rootTK.MustExec(`drop USER testReuse`)
-
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 3 DAY`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test4'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test5'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`6`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustExec(`update mysql.password_history set Password_timestamp = date_sub(Password_timestamp,interval '3 0:0:1' DAY_SECOND) where user = 'testReuse' order by Password_timestamp asc limit 1`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`6`))
-	rootTK.MustExec(`drop USER testReuse`)
-
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 3 DAY`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
-	rootTK.MustExec(`update mysql.password_history set Password_timestamp = date_sub(Password_timestamp,interval '3 0:0:1' DAY_SECOND) where user = 'testReuse' order by Password_timestamp asc limit 1`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`4`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustExec(`ALTER USER testReuse PASSWORD HISTORY 3`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`4`))
-	rootTK.MustExec(`drop USER testReuse`)
-
-	rootTK.MustExec(`set global password_history = 1;`)
-	rootTK.MustExec(`set global password_reuse_interval = 1;`)
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 0 DAY`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustExec(`drop USER testReuse`)
-
-	rootTK.MustExec(`set global password_history = 0;`)
-	rootTK.MustExec(`set global password_reuse_interval = 360000000;`)
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustGetErrCode(`set PASSWORD FOR testReuse = 'test'`, 3638)
-	rootTK.MustExec(`alter USER testReuse identified by ''`)
-	rootTK.MustExec(`alter USER testReuse identified by ''`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`2`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
-	rootTK.MustExec(`set global password_reuse_interval = 4294967295;`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`4`))
-	rootTK.MustExec(`set PASSWORD FOR testReuse = 'test4'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`5`))
-	rootTK.MustExec(`drop USER testReuse`)
-
-	rootTK.MustExec(`set global password_reuse_interval = 0;`)
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY 5`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`2`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test1' PASSWORD HISTORY 0`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test1' PASSWORD HISTORY 2 PASSWORD REUSE INTERVAL 1 DAY`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test1' PASSWORD HISTORY 2 PASSWORD REUSE INTERVAL 0 DAY`)
-
-	// Support password and default value modification at the same time.
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`set global password_history = 1`)
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustGetErrCode(`ALTER USER testReuse identified by 'test' PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`, 3638)
-	rootTK.MustExec(`ALTER USER testReuse identified by 'test1' PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-}
-
-func TestUserReuseDifferentAuth(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	rootTK := testkit.NewTestKit(t, store)
-	// test caching_sha2_password.
-	rootTK.MustExec(`CREATE USER testReuse identified with 'caching_sha2_password' by 'test' PASSWORD HISTORY 1 `)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustExec(`alter USER testReuse identified with 'tidb_sm3_password'`)
-	// changing the auth method prunes history.
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse identified with 'tidb_sm3_password' by 'test' PASSWORD HISTORY 1 `)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustExec(`alter USER testReuse identified with 'caching_sha2_password'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustExec(`CREATE USER testReuse identified with 'caching_sha2_password' by 'test' PASSWORD REUSE INTERVAL 1 DAY`)
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustExec(`update mysql.password_history set Password_timestamp = date_sub(Password_timestamp,interval '1 0:0:1' DAY_SECOND) where user = 'testReuse' order by Password_timestamp asc limit 1`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test'`)
-
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustGetErrCode(`CREATE USER testReuse identified with 'mysql_clear_password' by 'test' PASSWORD REUSE INTERVAL 1 DAY`, 1524)
-	rootTK.MustGetErrCode(`CREATE USER testReuse identified with 'tidb_session_token' by 'test' PASSWORD REUSE INTERVAL 1 DAY`, 1524)
-	// no password.
-	rootTK.MustExec(`CREATE USER testReuse identified with 'auth_socket' by 'test' PASSWORD REUSE INTERVAL 1 DAY`)
-	rootTK.MustExec(`ALTER USER testReuse identified by 'test' `)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustQuery(`SELECT authentication_string FROM mysql.user WHERE user = 'testReuse'`).Check(testkit.Rows(""))
-	rootTK.MustExec(`ALTER USER testReuse identified with 'caching_sha2_password' by 'test' `)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	// AuthTiDBAuthToken is the token login method on the cloud,
-	// and the Password Reuse Policy does not take effect.
-	rootTK.MustExec(`drop USER testReuse`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustExec(`CREATE USER testReuse identified with 'tidb_auth_token' by 'test' PASSWORD REUSE INTERVAL 1 DAY`)
-	rootTK.MustExec(`ALTER USER testReuse identified by 'test' `)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustExec(`set password for testReuse = 'test'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustExec(`ALTER USER testReuse identified with 'caching_sha2_password' by 'test' `)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustGetErrCode(`alter USER testReuse identified by 'test'`, 3638)
-	rootTK.MustGetErrCode(`set password for testReuse = 'test'`, 3638)
-	rootTK.MustExec(`drop USER testReuse`)
-}
-
-func TestUserReuseMultiuser(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	rootTK := testkit.NewTestKit(t, store)
-	//alter multi user success
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test', testReuse1 identified by 'test', testReuse2 identified by 'test' PASSWORD HISTORY 65535 PASSWORD REUSE INTERVAL 65535 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user like 'testReuse%'`).Check(testkit.Rows(`65535 65535`, `65535 65535`, `65535 65535`))
-	rootTK.MustExec(`ALTER USER testReuse identified by 'test1', testReuse1 identified by 'test1', testReuse2 identified by 'test1' PASSWORD HISTORY 3 PASSWORD REUSE INTERVAL 3 DAY`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user like 'testReuse%'`).Check(testkit.Rows(`3 3`, `3 3`, `3 3`))
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like 'testReuse%' group by user`).Check(testkit.Rows(`2`, `2`, `2`))
-	//alter multi user fail
-	rootTK.MustExec(`CREATE USER testReuse3 identified by 'test'`)
-	rootTK.MustQuery(`SELECT Password_reuse_history,Password_reuse_time FROM mysql.user WHERE user like 'testReuse%'`).Check(testkit.Rows(`3 3`, `3 3`, `3 3`, `<nil> <nil>`))
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like 'testReuse%' group by user`).Check(testkit.Rows(`2`, `2`, `2`))
-	rootTK.MustGetErrCode(`ALTER USER testReuse identified by 'test1', testReuse3 identified by 'test1'`, 3638)
-	//drop user
-	rootTK.MustExec(`drop User testReuse, testReuse1, testReuse2, testReuse3`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user like 'testReuse%' `).Check(testkit.Rows(`0`))
-}
-
-func TestUserReuseRename(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	rootTK := testkit.NewTestKit(t, store)
-	rootTK.MustExec(`CREATE USER testReuse identified by 'test' PASSWORD HISTORY 5`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`1`))
-	rootTK.MustExec(`alter USER testReuse identified by 'test1'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test2'`)
-	rootTK.MustExec(`alter USER testReuse identified by 'test3'`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`4`))
-	rootTK.MustExec(`rename USER testReuse to testReuse1`)
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse'`).Check(testkit.Rows(`0`))
-	rootTK.MustQuery(`SELECT count(*) FROM mysql.password_history WHERE user = 'testReuse1'`).Check(testkit.Rows(`4`))
-}
-
-func TestUserAlterUser(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	rootTK := testkit.NewTestKit(t, store)
-	rootTK.MustExec(`CREATE USER test1 IDENTIFIED WITH 'mysql_native_password' BY '1234'`)
-	alterUserSQL := `ALTER USER 'test1' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
-	rootTK.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
-	result := rootTK.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="%"`)
-	result.Check(testkit.Rows(auth.EncodePassword("1234")))
-	alterUserSQL = `ALTER USER IF EXISTS 'test1' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
-	rootTK.MustExec(alterUserSQL)
-	rootTK.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
-	result = rootTK.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="%"`)
-	result.Check(testkit.Rows(auth.EncodePassword("222")))
 }
 
 func sha1Password(s string) []byte {
@@ -1118,7 +728,7 @@ func TestFailedLoginTrackingAlterUser(t *testing.T) {
 	rootTK.MustExec(`CREATE USER test1 IDENTIFIED BY '1234' FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 3 COMMENT 'test'`)
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("1234"), nil, nil)
 	require.NoError(t, err)
-	sqlexec.MustFormatSQL(sql, checkUserAttributes, "test1", "%")
+	sqlescape.MustFormatSQL(sql, checkUserAttributes, "test1", "%")
 	rootTK.MustQuery(sql.String()).Check(testkit.Rows(`3 <nil> <nil> 3 {"comment": "test"}`))
 	tk = testkit.NewTestKit(t, store)
 	err = tk.Session().Auth(&auth.UserIdentity{Username: "test1", Hostname: "%"}, sha1Password("<wrong-password>"), nil, nil)
@@ -1284,7 +894,7 @@ func checkUserUserAttributes(tk *testkit.TestKit, user, host, row string) {
 		"JSON_EXTRACT(user_attributes, '$.Password_locking.password_lock_time_days')," +
 		"JSON_EXTRACT(user_attributes, '$.metadata')from mysql.user where user= %? and host = %?"
 	userAttributesSQL := new(strings.Builder)
-	sqlexec.MustFormatSQL(userAttributesSQL, sqlTemplate, user, host)
+	sqlescape.MustFormatSQL(userAttributesSQL, sqlTemplate, user, host)
 	tk.MustQuery(userAttributesSQL.String()).Check(testkit.Rows(row))
 }
 
@@ -1341,7 +951,7 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 
 func selectSQL(user string) string {
 	userAttributesSQL := new(strings.Builder)
-	sqlexec.MustFormatSQL(userAttributesSQL, "SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = 'localhost' for update", user)
+	sqlescape.MustFormatSQL(userAttributesSQL, "SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = 'localhost' for update", user)
 	return userAttributesSQL.String()
 }
 

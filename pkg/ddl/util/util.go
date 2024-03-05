@@ -197,7 +197,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
-		paramNames := make([]interface{}, 0, len(varNames))
+		paramNames := make([]any, 0, len(varNames))
 		for i, name := range varNames {
 			if i > 0 {
 				buf.WriteString(", ")
@@ -293,8 +293,8 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 	opts ...clientv3.OpOption) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
-		if IsContextDone(ctx) {
-			return errors.Trace(ctx.Err())
+		if err = ctx.Err(); err != nil {
+			return errors.Trace(err)
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
@@ -309,16 +309,6 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 	return errors.Trace(err)
 }
 
-// IsContextDone checks if context is done.
-func IsContextDone(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return true
-	default:
-	}
-	return false
-}
-
 // WrapKey2String wraps the key to a string.
 func WrapKey2String(key []byte) string {
 	if len(key) == 0 {
@@ -328,7 +318,7 @@ func WrapKey2String(key []byte) string {
 }
 
 const (
-	getRaftKvVersionSQL = "show config where type = 'tikv' and name = 'storage.engine'"
+	getRaftKvVersionSQL = "select `value` from information_schema.cluster_config where type = 'tikv' and `key` = 'storage.engine'"
 	raftKv2             = "raft-kv2"
 )
 
@@ -359,6 +349,6 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	// All nodes should have the same type of engine
-	raftVersion := rows[0].GetString(3)
+	raftVersion := rows[0].GetString(0)
 	return raftVersion == raftKv2, nil
 }

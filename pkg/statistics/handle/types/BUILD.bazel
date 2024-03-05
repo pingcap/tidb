@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "types",
+    srcs = ["interfaces.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/types",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/statistics/handle/util",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/sqlexec",
+    ],
+)

@@ -120,11 +120,11 @@ Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 create database test;
 Error 1007 (HY000): Can't create database 'test'; database exists
 create database test1 character set uft8;
-[parser:1115]Unknown character set: 'uft8'
+Error 1115 (42000): Unknown character set: 'uft8'
 create database test2 character set gkb;
-[parser:1115]Unknown character set: 'gkb'
+Error 1115 (42000): Unknown character set: 'gkb'
 create database test3 character set laitn1;
-[parser:1115]Unknown character set: 'laitn1'
+Error 1115 (42000): Unknown character set: 'laitn1'
 drop database db_not_exist;
 Error 1008 (HY000): Can't drop database 'db_not_exist'; database doesn't exist
 create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3));
@@ -139,7 +139,7 @@ Error 1166 (42000): Incorrect column name '_tidb_rowid'
 create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int);
 Error 1059 (42000): Identifier name 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long
 create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1));
-Error 1061 (42000): duplicate key name aa
+Error 1061 (42000): Duplicate key name 'aa'
 create table test_error_code1 (c1 int, c2 int, c3 int, key(c_not_exist));
 Error 1072 (42000): column does not exist: c_not_exist
 create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist));
@@ -151,11 +151,11 @@ Error 1067 (42000): Invalid default value for 'a'
 CREATE TABLE `t` (`a` double DEFAULT now());
 Error 1067 (42000): Invalid default value for 'a'
 create table t1(a int) character set uft8;
-[parser:1115]Unknown character set: 'uft8'
+Error 1115 (42000): Unknown character set: 'uft8'
 create table t1(a int) character set gkb;
-[parser:1115]Unknown character set: 'gkb'
+Error 1115 (42000): Unknown character set: 'gkb'
 create table t1(a int) character set laitn1;
-[parser:1115]Unknown character set: 'laitn1'
+Error 1115 (42000): Unknown character set: 'laitn1'
 create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));
 Error 1239 (42000): Incorrect foreign key definition for 'fk_1': Key reference and table reference don't match
 create table test_error_code_2;
@@ -240,7 +240,7 @@ alter table test_error_code_succ add index idx (c_not_exist);
 Error 1072 (42000): column does not exist: c_not_exist
 alter table test_error_code_succ add index idx (c1);
 alter table test_error_code_succ add index idx (c1);
-Error 1061 (42000): index already exist idx
+Error 1061 (42000): Duplicate key name 'idx'
 alter table test_error_code_succ drop index idx_not_exist;
 Error 1091 (42000): index idx_not_exist doesn't exist
 alter table test_error_code_succ drop column c3;
@@ -701,7 +701,7 @@ rename table t to t1;
 insert into t1 values();
 select * from t1;
 a
-101
+2
 drop table if exists t;
 drop table if exists t1;
 create table t(a int) auto_id_cache 100;
@@ -714,7 +714,7 @@ rename table t to t1;
 insert into t1 values();
 select _tidb_rowid from t1;
 _tidb_rowid
-101
+2
 drop table if exists t;
 drop table if exists t1;
 create table t(a int null, b int auto_increment unique) auto_id_cache 100;
@@ -727,7 +727,7 @@ rename table t to t1;
 insert into t1(b) values(NULL);
 select b, _tidb_rowid from t1;
 b	_tidb_rowid
-101	102
+3	4
 delete from t1;
 alter table t1 auto_id_cache 200;
 show create table t1;
@@ -736,17 +736,17 @@ t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) NOT NULL AUTO_INCREMENT,
   UNIQUE KEY `b` (`b`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=201 /*T![auto_id_cache] AUTO_ID_CACHE=200 */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=101 /*T![auto_id_cache] AUTO_ID_CACHE=200 */
 insert into t1(b) values(NULL);
 select b, _tidb_rowid from t1;
 b	_tidb_rowid
-201	202
+101	102
 delete from t1;
 rename table t1 to t;
 insert into t(b) values(NULL);
 select b, _tidb_rowid from t;
 b	_tidb_rowid
-401	402
+103	104
 delete from t;
 drop table if exists t;
 drop table if exists t1;
@@ -770,7 +770,7 @@ rename table t to t1;
 insert into t1(a) values(NULL);
 select a from t1;
 a
-7
+5
 drop table if exists t;
 create table t(a int) auto_id_cache = 9223372036854775808;
 Error 1105 (HY000): table option auto_id_cache overflows int64
@@ -805,7 +805,7 @@ alter table t1 alter index a invisible;
 Error 3522 (HY000): A primary key index cannot be invisible
 create table t2(a int, primary key(a));
 alter table t2 alter index PRIMARY invisible;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible;" 
 create table t3(a int NOT NULL, b int);
 alter table t3 add index idx((a+b));
 select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't3' order by index_name;
@@ -1216,3 +1216,85 @@ alter table t reorganize partition p0 into (partition p01 values less than (10),
 show warnings;
 Level	Code	Message
 Warning	1105	The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now
+drop table if exists t;
+create table t (a int, b real);
+alter table t add primary key ((a+b)) nonclustered;
+Error 3756 (HY000): The primary key cannot be an expression index
+create table t(a int, index((cast(a as JSON))));
+Error 3753 (HY000): Cannot create an expression index on a function that returns a JSON or GEOMETRY value
+drop table if exists t;
+create table t (a int, b real);
+alter table t add primary key ((a+b)) nonclustered;
+Error 3756 (HY000): The primary key cannot be an expression index
+alter table t add index ((rand()));
+Error 3758 (HY000): Expression of expression index 'expression_index' contains a disallowed function
+alter table t add index ((now()+1));
+Error 3758 (HY000): Expression of expression index 'expression_index' contains a disallowed function
+alter table t add column (_V$_idx_0 int);
+alter table t add index idx((a+1));
+Error 1060 (42S21): Duplicate column name '_V$_idx_0'
+alter table t drop column _V$_idx_0;
+alter table t add index idx((a+1));
+alter table t add column (_V$_idx_0 int);
+Error 1060 (42S21): Duplicate column name '_V$_idx_0'
+alter table t drop index idx;
+alter table t add column (_V$_idx_0 int);
+alter table t add column (_V$_expression_index_0 int);
+alter table t add index ((a+1));
+Error 1060 (42S21): Duplicate column name '_V$_expression_index_0'
+alter table t drop column _V$_expression_index_0;
+alter table t add index ((a+1));
+alter table t drop column _V$_expression_index_0;
+Error 1091 (42000): Can't DROP '_V$_expression_index_0'; check that column/key exists
+alter table t add column e int as (_V$_expression_index_0 + 1);
+Error 1054 (42S22): Unknown column '_v$_expression_index_0' in 'generated column function'
+drop table if exists t;
+create table t (j json, key k (((j,j))));
+Error 3800 (HY000): Expression of expression index 'k' cannot refer to a row value
+create table t (j json, key k ((j+1),(j+1)));
+create table t1 (col1 int, index ((concat(''))));
+Error 3761 (HY000): The used storage engine cannot index the expression 'concat(_utf8mb4'')'
+CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);
+Error 3756 (HY000): The primary key cannot be an expression index
+drop table if exists t;
+create table t(id char(10) primary key, short_name char(10), name char(10), key n((upper(`name`))));
+update t t1 set t1.short_name='a' where t1.id='1';
+set @@tidb_enable_strict_double_type_check = 'ON';
+drop table if exists double_type_check;
+create table double_type_check(id int, c double(10));
+Error 1149 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
+set @@tidb_enable_strict_double_type_check = 'OFF';
+create table double_type_check(id int, c double(10));
+set @@tidb_enable_strict_double_type_check = default;
+drop table if exists t1, t2, tt;
+begin;
+create temporary table t1(id int primary key, v int);
+select * from t1;
+id	v
+insert into t1 values(123, 456);
+select * from t1 where id=123;
+id	v
+123	456
+truncate table t1;
+select * from t1 where id=123;
+id	v
+commit;
+create table tt(id int);
+begin;
+create temporary table t1(id int);
+insert into tt select * from t1;
+drop table tt;
+create table t2(id int primary key, v int);
+insert into t2 values(234, 567);
+begin;
+create temporary table t2(id int primary key, v int);
+select * from t2 where id=234;
+id	v
+commit;
+drop table if exists t;
+create table t(a int, b int as ((grouping(a))) stored);
+Error 1111 (HY000): Invalid use of group function
+create table t(a int);
+alter table t add column  b int as ((grouping(a))) stored;
+Error 1111 (HY000): Invalid use of group function
+drop table t;

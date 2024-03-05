@@ -75,14 +75,14 @@ func TestCodecKey(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for i, datums := range table {
 		comment := fmt.Sprintf("%d %v", i, datums)
-		b, err := EncodeKey(sc, nil, datums.Input...)
+		b, err := EncodeKey(sc.TimeZone(), nil, datums.Input...)
 		require.NoError(t, err, comment)
 
 		args, err := Decode(b, 1)
 		require.NoError(t, err, comment)
 		require.Equal(t, datums.Expect, args, comment)
 
-		b, err = EncodeValue(sc, nil, datums.Input...)
+		b, err = EncodeValue(sc.TimeZone(), nil, datums.Input...)
 		require.NoError(t, err, comment)
 
 		size, err := estimateValuesSize(sc, datums.Input)
@@ -96,14 +96,14 @@ func TestCodecKey(t *testing.T) {
 
 	var raw types.Datum
 	raw.SetRaw([]byte("raw"))
-	_, err := EncodeKey(sc, nil, raw)
+	_, err := EncodeKey(sc.TimeZone(), nil, raw)
 	require.Error(t, err)
 }
 
 func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, error) {
 	size := 0
 	for _, val := range vals {
-		length, err := EstimateValueSize(sc, val)
+		length, err := EstimateValueSize(sc.TypeCtx(), val)
 		if err != nil {
 			return 0, err
 		}
@@ -216,10 +216,10 @@ func TestCodecKeyCompare(t *testing.T) {
 	}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, datums := range table {
-		b1, err := EncodeKey(sc, nil, datums.Left...)
+		b1, err := EncodeKey(sc.TimeZone(), nil, datums.Left...)
 		require.NoError(t, err)
 
-		b2, err := EncodeKey(sc, nil, datums.Right...)
+		b2, err := EncodeKey(sc.TimeZone(), nil, datums.Right...)
 		require.NoError(t, err)
 
 		comparedRes := bytes.Compare(b1, b2)
@@ -520,7 +520,7 @@ func TestBytes(t *testing.T) {
 
 func parseTime(t *testing.T, s string) types.Time {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	m, err := types.ParseTime(sc.TypeCtx(), s, mysql.TypeDatetime, types.DefaultFsp, nil)
+	m, err := types.ParseTime(sc.TypeCtx(), s, mysql.TypeDatetime, types.DefaultFsp)
 	require.NoError(t, err)
 	return m
 }
@@ -541,7 +541,7 @@ func TestTime(t *testing.T) {
 	for _, timeDatum := range tbl {
 		m := types.NewDatum(parseTime(t, timeDatum))
 
-		b, err := EncodeKey(sc, nil, m)
+		b, err := EncodeKey(sc.TimeZone(), nil, m)
 		require.NoError(t, err)
 		v, err := Decode(b, 1)
 		require.NoError(t, err)
@@ -568,9 +568,9 @@ func TestTime(t *testing.T) {
 		m1 := types.NewDatum(parseTime(t, timeData.Arg1))
 		m2 := types.NewDatum(parseTime(t, timeData.Arg2))
 
-		b1, err := EncodeKey(sc, nil, m1)
+		b1, err := EncodeKey(sc.TimeZone(), nil, m1)
 		require.NoError(t, err)
-		b2, err := EncodeKey(sc, nil, m2)
+		b2, err := EncodeKey(sc.TimeZone(), nil, m2)
 		require.NoError(t, err)
 
 		ret := bytes.Compare(b1, b2)
@@ -588,7 +588,7 @@ func TestDuration(t *testing.T) {
 	for _, duration := range tbl {
 		m := parseDuration(t, duration)
 
-		b, err := EncodeKey(sc, nil, types.NewDatum(m))
+		b, err := EncodeKey(sc.TimeZone(), nil, types.NewDatum(m))
 		require.NoError(t, err)
 		v, err := Decode(b, 1)
 		require.NoError(t, err)
@@ -610,9 +610,9 @@ func TestDuration(t *testing.T) {
 		m1 := parseDuration(t, durations.Arg1)
 		m2 := parseDuration(t, durations.Arg2)
 
-		b1, err := EncodeKey(sc, nil, types.NewDatum(m1))
+		b1, err := EncodeKey(sc.TimeZone(), nil, types.NewDatum(m1))
 		require.NoError(t, err)
-		b2, err := EncodeKey(sc, nil, types.NewDatum(m2))
+		b2, err := EncodeKey(sc.TimeZone(), nil, types.NewDatum(m2))
 		require.NoError(t, err)
 
 		ret := bytes.Compare(b1, b2)
@@ -643,7 +643,7 @@ func TestDecimal(t *testing.T) {
 		err := dec.FromString([]byte(decimalNum))
 		require.NoError(t, err)
 
-		b, err := EncodeKey(sc, nil, types.NewDatum(dec))
+		b, err := EncodeKey(sc.TimeZone(), nil, types.NewDatum(dec))
 		require.NoError(t, err)
 		v, err := Decode(b, 1)
 		require.NoError(t, err)
@@ -654,8 +654,8 @@ func TestDecimal(t *testing.T) {
 	}
 
 	tblCmp := []struct {
-		Arg1 interface{}
-		Arg2 interface{}
+		Arg1 any
+		Arg2 any
 		Ret  int
 	}{
 		// Test for float type decimal.
@@ -734,17 +734,17 @@ func TestDecimal(t *testing.T) {
 		d2.SetLength(30)
 		d2.SetFrac(6)
 
-		b1, err := EncodeKey(sc, nil, d1)
+		b1, err := EncodeKey(sc.TimeZone(), nil, d1)
 		require.NoError(t, err)
-		b2, err := EncodeKey(sc, nil, d2)
+		b2, err := EncodeKey(sc.TimeZone(), nil, d2)
 		require.NoError(t, err)
 
 		ret := bytes.Compare(b1, b2)
 		require.Equalf(t, decimalNums.Ret, ret, "%v %x %x", decimalNums, b1, b2)
 
-		b1, err = EncodeValue(sc, b1[:0], d1)
+		b1, err = EncodeValue(sc.TimeZone(), b1[:0], d1)
 		require.NoError(t, err)
-		size, err := EstimateValueSize(sc, d1)
+		size, err := EstimateValueSize(sc.TypeCtx(), d1)
 		require.NoError(t, err)
 		require.Len(t, b1, size)
 	}
@@ -761,7 +761,7 @@ func TestDecimal(t *testing.T) {
 		b, err := EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		require.NoError(t, err)
 		decs = append(decs, b)
-		size, err := EstimateValueSize(sc, d)
+		size, err := EstimateValueSize(sc.TypeCtx(), d)
 		require.NoError(t, err)
 		// size - 1 because the flag occupy 1 bit.
 		require.Len(t, b, size-1)
@@ -782,13 +782,15 @@ func TestDecimal(t *testing.T) {
 	decimalDatum := types.NewDatum(d)
 	decimalDatum.SetLength(20)
 	decimalDatum.SetFrac(5)
-	_, err = EncodeValue(sc, nil, decimalDatum)
+	_, err = EncodeValue(sc.TimeZone(), nil, decimalDatum)
+	err = sc.HandleError(err)
 	require.NoError(t, err)
 
-	sc.OverflowAsWarning = true
+	sc.SetTypeFlags(types.DefaultStmtFlags.WithTruncateAsWarning(true))
 	decimalDatum.SetLength(12)
 	decimalDatum.SetFrac(10)
-	_, err = EncodeValue(sc, nil, decimalDatum)
+	_, err = EncodeValue(sc.TimeZone(), nil, decimalDatum)
+	err = sc.HandleError(err)
 	require.NoError(t, err)
 }
 
@@ -878,7 +880,7 @@ func TestCut(t *testing.T) {
 	}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for i, datums := range table {
-		b, err := EncodeKey(sc, nil, datums.Input...)
+		b, err := EncodeKey(sc.TimeZone(), nil, datums.Input...)
 		require.NoErrorf(t, err, "%d %v", i, datums)
 
 		var d []byte
@@ -887,7 +889,7 @@ func TestCut(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, d)
 
-			ed, err1 := EncodeKey(sc, nil, e)
+			ed, err1 := EncodeKey(sc.TimeZone(), nil, e)
 			require.NoError(t, err1)
 			require.Equalf(t, ed, d, "%d:%d %#v", i, j, e)
 		}
@@ -895,7 +897,7 @@ func TestCut(t *testing.T) {
 	}
 
 	for i, datums := range table {
-		b, err := EncodeValue(sc, nil, datums.Input...)
+		b, err := EncodeValue(sc.TimeZone(), nil, datums.Input...)
 		require.NoErrorf(t, err, "%d %v", i, datums)
 
 		var d []byte
@@ -904,7 +906,7 @@ func TestCut(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, d)
 
-			ed, err1 := EncodeValue(sc, nil, e)
+			ed, err1 := EncodeValue(sc.TimeZone(), nil, e)
 			require.NoError(t, err1)
 			require.Equalf(t, ed, d, "%d:%d %#v", i, j, e)
 		}
@@ -912,7 +914,7 @@ func TestCut(t *testing.T) {
 	}
 
 	input := 42
-	b, err := EncodeValue(sc, nil, types.NewDatum(input))
+	b, err := EncodeValue(sc.TimeZone(), nil, types.NewDatum(input))
 	require.NoError(t, err)
 	rem, n, err := CutColumnID(b)
 	require.NoError(t, err)
@@ -935,7 +937,7 @@ func TestCutOneError(t *testing.T) {
 func TestSetRawValues(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
-	rowData, err := EncodeValue(sc, nil, datums...)
+	rowData, err := EncodeValue(sc.TimeZone(), nil, datums...)
 	require.NoError(t, err)
 
 	values := make([]types.Datum, 4)
@@ -944,7 +946,7 @@ func TestSetRawValues(t *testing.T) {
 
 	for i, rawVal := range values {
 		require.IsType(t, types.KindRaw, rawVal.Kind())
-		encoded, encodedErr := EncodeValue(sc, nil, datums[i])
+		encoded, encodedErr := EncodeValue(sc.TimeZone(), nil, datums[i])
 		require.NoError(t, encodedErr)
 		require.Equal(t, rawVal.GetBytes(), encoded)
 	}
@@ -963,7 +965,7 @@ func TestDecodeOneToChunk(t *testing.T) {
 				require.True(t, expect.IsNull())
 			} else {
 				if got.Kind() != types.KindMysqlDecimal {
-					cmp, err := got.Compare(sc, &expect, collate.GetCollator(tp.GetCollate()))
+					cmp, err := got.Compare(sc.TypeCtx(), &expect, collate.GetCollator(tp.GetCollate()))
 					require.NoError(t, err)
 					require.Equalf(t, 0, cmp, "expect: %v, got %v", expect, got)
 				} else {
@@ -988,13 +990,13 @@ func TestHashGroup(t *testing.T) {
 	tp1 := tp
 	tp1.SetFlen(20)
 	tp1.SetDecimal(5)
-	_, err := HashGroupKey(sc, 3, chk1.Column(0), buf1, tp1)
+	_, err := HashGroupKey(sc.TimeZone(), 3, chk1.Column(0), buf1, tp1)
 	require.Error(t, err)
 
 	tp2 := tp
 	tp2.SetFlen(12)
 	tp2.SetDecimal(10)
-	_, err = HashGroupKey(sc, 3, chk1.Column(0), buf1, tp2)
+	_, err = HashGroupKey(sc.TimeZone(), 3, chk1.Column(0), buf1, tp2)
 	require.Error(t, err)
 }
 
@@ -1010,7 +1012,7 @@ func datumsForTest(_ *stmtctx.StatementContext) ([]types.Datum, []*types.FieldTy
 	_tp4 := types.NewFieldType(mysql.TypeBit)
 	_tp4.SetFlen(8)
 	table := []struct {
-		value interface{}
+		value any
 		tp    *types.FieldType
 	}{
 		{nil, types.NewFieldType(mysql.TypeNull)},
@@ -1068,7 +1070,7 @@ func datumsForTest(_ *stmtctx.StatementContext) ([]types.Datum, []*types.FieldTy
 func chunkForTest(t *testing.T, sc *stmtctx.StatementContext, datums []types.Datum, tps []*types.FieldType, rowCount int) *chunk.Chunk {
 	decoder := NewDecoder(chunk.New(tps, 32, 32), sc.TimeZone())
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
-		encoded, err := EncodeValue(sc, nil, datums...)
+		encoded, err := EncodeValue(sc.TimeZone(), nil, datums...)
 		require.NoError(t, err)
 		decoder.buf = make([]byte, 0, len(encoded))
 		for colIdx, tp := range tps {
@@ -1084,13 +1086,13 @@ func TestDecodeRange(t *testing.T) {
 	require.Error(t, err)
 
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
-	rowData, err := EncodeValue(nil, nil, datums...)
+	rowData, err := EncodeValue(time.UTC, nil, datums...)
 	require.NoError(t, err)
 
 	datums1, _, err := DecodeRange(rowData, len(datums), nil, nil)
 	require.NoError(t, err)
 	for i, datum := range datums1 {
-		cmp, err := datum.Compare(nil, &datums[i], collate.GetBinaryCollator())
+		cmp, err := datum.Compare(types.DefaultStmtNoWarningContext, &datums[i], collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -1102,7 +1104,7 @@ func TestDecodeRange(t *testing.T) {
 	}
 }
 
-func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
+func testHashChunkRowEqual(t *testing.T, a, b any, equal bool) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	buf1 := make([]byte, 1)
 	buf2 := make([]byte, 1)
@@ -1122,10 +1124,10 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 	chk2.AppendDatum(0, &d)
 
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
+	err1 := HashChunkRow(sc.TypeCtx(), h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
+	err2 := HashChunkRow(sc.TypeCtx(), h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
 	sum2 := h.Sum32()
 	require.NoError(t, err1)
 	require.NoError(t, err2)
@@ -1134,7 +1136,7 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 	} else {
 		require.NotEqual(t, sum2, sum1)
 	}
-	e, err := EqualChunkRow(sc,
+	e, err := EqualChunkRow(sc.TypeCtx(),
 		chk1.GetRow(0), []*types.FieldType{tp1}, []int{0},
 		chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
 	require.NoError(t, err)
@@ -1156,16 +1158,16 @@ func TestHashChunkRow(t *testing.T) {
 		colIdx[i] = i
 	}
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
+	err1 := HashChunkRow(sc.TypeCtx(), h, chk.GetRow(0), tps, colIdx, buf)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc, h, chk.GetRow(0), tps, colIdx, buf)
+	err2 := HashChunkRow(sc.TypeCtx(), h, chk.GetRow(0), tps, colIdx, buf)
 	sum2 := h.Sum32()
 
 	require.NoError(t, err1)
 	require.NoError(t, err2)
 	require.Equal(t, sum2, sum1)
-	e, err := EqualChunkRow(sc,
+	e, err := EqualChunkRow(sc.TypeCtx(),
 		chk.GetRow(0), tps, colIdx,
 		chk.GetRow(0), tps, colIdx)
 	require.NoError(t, err)
@@ -1255,10 +1257,10 @@ func TestHashChunkColumns(t *testing.T) {
 	// Test hash value of the first 12 `Null` columns
 	for i := 0; i < 12; i++ {
 		require.True(t, chk.GetRow(0).IsNull(i))
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
+		err1 := HashChunkSelected(sc.TypeCtx(), vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(sc.TypeCtx(), rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc.TypeCtx(), rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc.TypeCtx(), rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
 		require.NoError(t, err1)
 		require.NoError(t, err2)
 		require.NoError(t, err3)
@@ -1280,10 +1282,10 @@ func TestHashChunkColumns(t *testing.T) {
 
 		require.False(t, chk.GetRow(0).IsNull(i))
 
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
+		err1 := HashChunkSelected(sc.TypeCtx(), vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(sc.TypeCtx(), rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc.TypeCtx(), rowHash[1], chk.GetRow(1), tps[i:i+1], colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc.TypeCtx(), rowHash[2], chk.GetRow(2), tps[i:i+1], colIdx[i:i+1], buf)
 
 		require.NoError(t, err1)
 		require.NoError(t, err2)

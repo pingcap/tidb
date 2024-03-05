@@ -5,7 +5,6 @@ create table t (i int unique key);
 set @@tidb_dml_batch_size = 1;
 insert ignore into t select * from t0;
 admin check table t;
-
 drop table if exists t,t0;
 set @@tidb_dml_batch_size = default;
 drop table if exists t1, t2;
@@ -470,7 +469,6 @@ delete from t2 where j = 3;
 commit;
 Error 1062 (23000): Duplicate entry '1' for key 't2.idx'
 admin check table t2;
-
 create table t3(i int, j int, primary key(i));
 begin;
 insert into t3 values(1, 3);
@@ -483,7 +481,6 @@ delete from t4 where j = 3;
 insert into t4 values(2, 3);
 commit;
 admin check table t4;
-
 select * from t4;
 i	j
 2	3
@@ -494,7 +491,6 @@ delete from t5 where j = 3;
 insert into t5 values(1, 4);
 commit;
 admin check table t5;
-
 select * from t5;
 i	j
 1	4
@@ -667,7 +663,6 @@ Error 1062 (23000): Duplicate entry '1' for key 't.idx'
 insert into t values (100, 'd');
 Error 1526 (HY000): Table has no partition for value 100
 admin check table t;
-
 insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null);
 select * from t partition (p0) order by id;
 id	name
@@ -747,7 +742,6 @@ Error 1062 (23000): Duplicate entry '1' for key 't.idx'
 insert into t values (100, 'd');
 Error 1526 (HY000): Table has no partition for value from column_list
 admin check table t;
-
 insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null);
 select * from t partition (p0) order by id;
 id	name
@@ -1810,9 +1804,7 @@ create table t2 ( c_int int, c_str varchar(40) character set latin1 collate lati
 insert into t1 values (3, 'fervent brattain');
 insert into t2 values (3, 'fervent brattain');
 admin check table t1;
-
 admin check table t2;
-
 create table t3 (x varchar(40) CHARACTER SET ascii COLLATE ascii_bin, UNIQUE KEY uk(x(4)));
 insert into t3 select 'abc ';
 insert into t3 select 'abc d';
@@ -1886,5 +1878,271 @@ create table t (a timestamp on update current_timestamp(0), b int, primary key (
 insert into t values ('2023-06-11 10:00:00', 1);
 update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00';
 admin check table t;
-
 drop table if exists t;
+drop table if exists t_securities;
+create table t_securities(id bigint not null auto_increment primary key, security_id varchar(8), market_id smallint, security_type int, unique key uu(security_id, market_id));
+insert into t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+replace into t_securities (security_id, market_id, security_type) select security_id+1, 1, security_type from t_securities  where security_id="7";
+INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+select * from t_securities;
+id	security_id	market_id	security_type
+1	1	2	7
+2	7	1	7
+3	8	1	7
+insert into t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+insert into t_securities (security_id, market_id, security_type) select security_id+2, 1, security_type from t_securities  where security_id="7";
+INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+select * from t_securities;
+id	security_id	market_id	security_type
+1	1	2	7
+2	7	1	7
+3	8	1	7
+8	9	1	7
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a bigint key auto_random (3), b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));
+set @@allow_auto_random_explicit_insert = true;
+replace into t values  (1,1);
+insert into t (b) values (2);
+insert into t (b) values (3);
+insert into t (b) values (4);
+insert into t (b) values (5);
+insert into t (b) values (6);
+insert into t (b) values (7);
+insert into t (b) values (8);
+insert into t (b) values (9);
+select b from t order by b;
+b
+1
+2
+3
+4
+5
+6
+7
+8
+9
+update t set b=b+1 where a=1;
+select b from t where a=1;
+b
+2
+update t set b=b+1 where a<2;
+select b from t where a<2;
+b
+3
+insert into t values (1, 1) on duplicate key update b=b+1;
+select b from t where a=1;
+b
+4
+set @@session.tidb_enable_list_partition = default;
+set @@allow_auto_random_explicit_insert = default;
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a bigint key auto_increment, b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));
+set @@allow_auto_random_explicit_insert = true;
+replace into t values  (1,1);
+insert into t (b) values (2);
+insert into t (b) values (3);
+insert into t (b) values (4);
+insert into t (b) values (5);
+insert into t (b) values (6);
+insert into t (b) values (7);
+insert into t (b) values (8);
+insert into t (b) values (9);
+select b from t order by b;
+b
+1
+2
+3
+4
+5
+6
+7
+8
+9
+update t set b=b+1 where a=1;
+select b from t where a=1;
+b
+2
+update t set b=b+1 where a<2;
+select b from t where a<2;
+b
+3
+insert into t values (1, 1) on duplicate key update b=b+1;
+select b from t where a=1;
+b
+4
+set @@session.tidb_enable_list_partition = default;
+set @@allow_auto_random_explicit_insert = default;
+drop table if exists replace_test;
+create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);
+replace replace_test (c1) values (1),(2),(NULL);
+affected rows: 3
+info: Records: 3  Duplicates: 0  Warnings: 0
+begin;
+replace replace_test (c1) values ();
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+begin;
+replace replace_test (c1, c2) values (1,2),(1);
+Error 1136 (21S01): Column count doesn't match value count at row 2
+rollback;
+begin;
+replace replace_test (xxx) values (3);
+Error 1054 (42S22): Unknown column 'xxx' in 'field list'
+rollback;
+begin;
+replace replace_test_xxx (c1) values ();
+Error 1146 (42S02): Table 'executor__write.replace_test_xxx' doesn't exist
+rollback;
+replace replace_test set c1 = 3;
+affected rows: 1
+info: 
+begin;
+replace replace_test set c1 = 4, c1 = 5;
+Error 1110 (42000): Column 'c1' specified twice
+rollback;
+begin;
+replace replace_test set xxx = 6;
+Error 1054 (42S22): Unknown column 'xxx' in 'field list'
+rollback;
+drop table if exists replace_test_1;
+create table replace_test_1 (id int, c1 int);
+replace replace_test_1 select id, c1 from replace_test;
+affected rows: 4
+info: Records: 4  Duplicates: 0  Warnings: 0
+begin;
+replace replace_test_1 select c1 from replace_test;
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+create table replace_test_2 (id int, c1 int);
+replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;
+affected rows: 8
+info: Records: 8  Duplicates: 0  Warnings: 0
+drop table if exists replace_test_3;
+create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2));
+replace into replace_test_3 set c2=1;
+affected rows: 1
+info: 
+replace into replace_test_3 set c2=1;
+affected rows: 1
+info: 
+replace into replace_test_3 set c1=1, c2=1;
+affected rows: 2
+info: 
+replace into replace_test_3 set c2=NULL;
+affected rows: 1
+info: 
+replace into replace_test_3 set c2=NULL;
+affected rows: 1
+info: 
+drop table if exists replace_test_4;
+create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2));
+replace into replace_test_4 set c2=NULL;
+affected rows: 1
+info: 
+replace into replace_test_4 set c2=NULL;
+affected rows: 1
+info: 
+drop table if exists replace_test_5;
+create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2));
+replace into replace_test_5 set c1=1, c2=2;
+affected rows: 1
+info: 
+replace into replace_test_5 set c1=1, c2=2;
+affected rows: 1
+info: 
+drop table if exists tIssue989;
+CREATE TABLE tIssue989 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));
+insert into tIssue989 (a, b) values (1, 2);
+affected rows: 1
+info: 
+replace into tIssue989(a, b) values (111, 2);
+affected rows: 2
+info: 
+select * from tIssue989;
+a	b
+111	2
+drop table if exists tIssue1012;
+CREATE TABLE tIssue1012 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));
+insert into tIssue1012 (a, b) values (1, 2);
+insert into tIssue1012 (a, b) values (2, 1);
+replace into tIssue1012(a, b) values (1, 1);
+affected rows: 3
+info: 
+select * from tIssue1012;
+a	b
+1	1
+drop table if exists t1;
+create table t1(a int primary key, b int);
+insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);
+replace into t1 values(1,1);
+affected rows: 1
+info: 
+replace into t1 values(1,1),(2,2);
+affected rows: 2
+info: Records: 2  Duplicates: 0  Warnings: 0
+replace into t1 values(4,14),(5,15),(6,16),(7,17),(8,18);
+affected rows: 7
+info: Records: 5  Duplicates: 2  Warnings: 0
+replace into t1 select * from (select 1, 2) as tmp;
+affected rows: 2
+info: Records: 1  Duplicates: 1  Warnings: 0
+drop table if exists t1, t2;
+create table t1 (a int primary key, b int default 20, c int default 30);
+insert into t1 value (1, 2, 3);
+replace t1 set a=1, b=default;
+select * from t1;
+a	b	c
+1	20	30
+replace t1 set a=2, b=default, c=default;
+select * from t1;
+a	b	c
+1	20	30
+2	20	30
+replace t1 set a=2, b=default(c), c=default(b);
+select * from t1;
+a	b	c
+1	20	30
+2	30	20
+replace t1 set a=default(b)+default(c);
+select * from t1;
+a	b	c
+1	20	30
+2	30	20
+50	20	30
+create table t2 (pk int primary key, a int default 1, b int generated always as (-a) virtual, c int generated always as (-a) stored);
+replace t2 set pk=1, b=default;
+select * from t2;
+pk	a	b	c
+1	1	-1	-1
+replace t2 set pk=2, a=10, b=default;
+select * from t2;
+pk	a	b	c
+1	1	-1	-1
+2	10	-10	-10
+replace t2 set pk=2, c=default, a=20;
+select * from t2;
+pk	a	b	c
+1	1	-1	-1
+2	20	-20	-20
+replace t2 set pk=2, a=default, b=default, c=default;
+select * from t2;
+pk	a	b	c
+1	1	-1	-1
+2	1	-1	-1
+replace t2 set pk=3, a=default(a), b=default, c=default;
+select * from t2;
+pk	a	b	c
+1	1	-1	-1
+2	1	-1	-1
+3	1	-1	-1
+replace t2 set b=default(a);
+Error 3105 (HY000): The value specified for generated column 'b' in table 't2' is not allowed.
+replace t2 set a=default(b), b=default(b);
+Error 3105 (HY000): The value specified for generated column 'a' in table 't2' is not allowed.
+replace t2 set a=default(a), c=default(c);
+Error 1364 (HY000): Field 'pk' doesn't have a default value
+replace t2 set c=default(a);
+Error 3105 (HY000): The value specified for generated column 'c' in table 't2' is not allowed.
+drop table t1, t2;

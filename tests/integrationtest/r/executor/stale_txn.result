@@ -1,0 +1,44 @@
+select * from information_schema.ddl_jobs as of timestamp now();
+drop table if exists t1;
+create table t1 (id int primary key, v int);
+insert into t1 values(1, 10);
+select sleep(0.1);
+sleep(0.1)
+0
+set @a=now(6);
+select sleep(0.1);
+sleep(0.1)
+0
+update t1 set v=100 where id=1;
+select * from t1 as of timestamp @a where v=(select v from t1 as of timestamp @a where id=1);
+id	v
+1	10
+select (select v from t1 as of timestamp @a where id=1) as v;
+v
+10
+set tidb_txn_mode='pessimistic';
+set tx_isolation = 'READ-COMMITTED';
+drop table if exists t1;
+create table t1 (id int primary key, v int);
+insert into t1 values(1, 10);
+select sleep(0.1);
+sleep(0.1)
+0
+set @a=now(6);
+select sleep(0.1);
+sleep(0.1)
+0
+update t1 set v=100 where id=1;
+set autocommit=0;
+select * from t1 as of timestamp @a;
+id	v
+1	10
+set tidb_txn_mode = default;
+set tx_isolation = default;
+set autocommit = default;
+drop table if exists t1;
+create table t1 (id int primary key, v int);
+select * from t1 as of timestamp NULL;
+Error 8135 (HY000): invalid as of timestamp: as of timestamp cannot be NULL
+start transaction read only as of timestamp NULL;
+Error 8135 (HY000): invalid as of timestamp: as of timestamp cannot be NULL

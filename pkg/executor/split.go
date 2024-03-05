@@ -164,8 +164,9 @@ func (e *SplitIndexRegionExec) getSplitIdxKeysFromValueList() (keys [][]byte, er
 func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
 	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
 	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	sc := e.Ctx().GetSessionVars().StmtCtx
 	for _, v := range e.valueLists {
-		idxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, v, kv.IntHandle(math.MinInt64), nil)
+		idxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), v, kv.IntHandle(math.MinInt64), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -226,13 +227,14 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
 	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
-	lowerIdxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, e.lower, kv.IntHandle(math.MinInt64), nil)
+	sc := e.Ctx().GetSessionVars().StmtCtx
+	lowerIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), e.lower, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
 	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
 	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
-	upperIdxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, e.upper, kv.IntHandle(math.MinInt64), nil)
+	upperIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), e.upper, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -823,8 +825,12 @@ func getRegionInfo(store helper.Storage, regions []regionMeta) ([]regionMeta, er
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
+	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	if err != nil {
+		return regions, err
+	}
 	for i := range regions {
-		regionInfo, err := tikvHelper.GetRegionInfoByID(regions[i].region.Id)
+		regionInfo, err := pdCli.GetRegionByID(context.TODO(), regions[i].region.Id)
 		if err != nil {
 			return nil, err
 		}

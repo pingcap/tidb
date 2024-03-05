@@ -115,7 +115,12 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	var genCols []GeneratedCol
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
-			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names, true)
+			expr, err := expression.BuildSimpleExpr(
+				se.GetExprCtx(),
+				col.GeneratedExpr.Internal(),
+				expression.WithInputSchemaAndNames(schema, names, meta),
+				expression.WithAllowCastArray(true),
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -148,6 +153,21 @@ type Pairs struct {
 	MemBuf   *MemBuf
 }
 
+// GroupedPairs is a map from index ID to KvPairs.
+type GroupedPairs map[int64][]common.KvPair
+
+// SplitIntoChunks implements the encode.Rows interface. It just satisfies the
+// type system and should never be called.
+func (GroupedPairs) SplitIntoChunks(int) []encode.Rows {
+	panic("not implemented")
+}
+
+// Clear implements the encode.Rows interface. It just satisfies the type system
+// and should never be called.
+func (GroupedPairs) Clear() encode.Rows {
+	panic("not implemented")
+}
+
 // MakeRowsFromKvPairs converts a KvPair slice into a Rows instance. This is
 // mainly used for testing only. The resulting Rows instance should only be used
 // for the importer backend.
@@ -166,7 +186,21 @@ func MakeRowFromKvPairs(pairs []common.KvPair) encode.Row {
 // back into a slice of KvPair. This method panics if the Rows is not
 // constructed in such way.
 func Rows2KvPairs(rows encode.Rows) []common.KvPair {
-	return rows.(*Pairs).Pairs
+	switch v := rows.(type) {
+	case *Pairs:
+		return v.Pairs
+	case GroupedPairs:
+		cnt := 0
+		for _, pairs := range v {
+			cnt += len(pairs)
+		}
+		res := make([]common.KvPair, 0, cnt)
+		for _, pairs := range v {
+			res = append(res, pairs...)
+		}
+		return res
+	}
+	panic(fmt.Sprintf("unknown Rows type %T", rows))
 }
 
 // Row2KvPairs converts a Row instance constructed from MakeRowFromKvPairs
@@ -227,7 +261,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 			return nil, kvcodec.LogKVConvertFailed(row, j, ExtraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		alloc := kvcodec.Table.Allocators(kvcodec.SessionCtx).Get(autoid.RowIDAllocType)
+		alloc := kvcodec.Table.Allocators(kvcodec.SessionCtx.GetTableCtx()).Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -319,37 +353,6 @@ func (kvs *Pairs) ClassifyAndAppend(
 
 	*data = dataKVs
 	*indices = indexKVs
-}
-
-// SplitIntoChunks splits the key-value pairs into chunks.
-func (kvs *Pairs) SplitIntoChunks(splitSize int) []encode.Rows {
-	if len(kvs.Pairs) == 0 {
-		return nil
-	}
-
-	res := make([]encode.Rows, 0, 1)
-	i := 0
-	cumSize := 0
-	for j, pair := range kvs.Pairs {
-		size := len(pair.Key) + len(pair.Val)
-		if i < j && cumSize+size > splitSize {
-			res = append(res, &Pairs{Pairs: kvs.Pairs[i:j]})
-			i = j
-			cumSize = 0
-		}
-		cumSize += size
-	}
-
-	if i == 0 {
-		res = append(res, kvs)
-	} else {
-		res = append(res, &Pairs{
-			Pairs:    kvs.Pairs[i:],
-			BytesBuf: kvs.BytesBuf,
-			MemBuf:   kvs.MemBuf,
-		})
-	}
-	return res
 }
 
 // Clear clears the key-value pairs.

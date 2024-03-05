@@ -76,7 +76,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		err = Preprocess(context.Background(), sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			testdata.OnRecord(func() {

@@ -29,19 +29,20 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/tikv/client-go/v2/util"
 )
 
-func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []interface{}) {
+func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []any) {
 	s.Equal(strconv.Itoa(int(jobInfo.ID)), row[0])
 
 	urlExpected, err := url.Parse(jobInfo.Parameters.FileLocation)
@@ -57,7 +58,7 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	s.Equal(strconv.Itoa(int(jobInfo.TableID)), row[3])
 	s.Equal(jobInfo.Step, row[4])
 	s.Equal(jobInfo.Status, row[5])
-	s.Equal(units.HumanSize(float64(jobInfo.SourceFileSize)), row[6])
+	s.Equal(units.BytesSize(float64(jobInfo.SourceFileSize)), row[6])
 	if jobInfo.Summary == nil {
 		s.Equal("<nil>", row[7].(string))
 	} else {
@@ -98,9 +99,9 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.ErrorIs(err, exeerrors.ErrLoadDataJobNotFound)
 
 	// test show job by id using test_show_job1
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job1", Hostname: "localhost"}, nil, nil, nil))
 	result1 := s.tk.MustQuery(fmt.Sprintf(`import into t1 FROM 'gs://test-show-job/t.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`,
 		gcsEndpoint)).Rows()
@@ -147,7 +148,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Equal(result2, rows)
 
 	// show import jobs with root
-	checkJobsMatch := func(rows [][]interface{}) {
+	checkJobsMatch := func(rows [][]any) {
 		s.GreaterOrEqual(len(rows), 2) // other cases may create import jobs
 		var matched int
 		for _, r := range rows {
@@ -183,7 +184,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	checkJobsMatch(rows)
 
 	// show running jobs with 2 subtasks
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterSubtaskFinish", `return(true)`)
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish", `return(true)`)
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-show-job", Name: "t2.csv"},
 		Content:     []byte("3\n4"),
@@ -193,7 +194,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	go func() {
 		defer wg.Done()
 		// wait first subtask finish
-		<-scheduler.TestSyncChan
+		<-taskexecutor.TestSyncChan
 
 		jobInfo = &importer.JobInfo{
 			ID:          importer.TestLastImportJobID.Load(),
@@ -235,16 +236,16 @@ func (s *mockGCSSuite) TestShowJob() {
 		s.True(got)
 
 		// resume the scheduler
-		scheduler.TestSyncChan <- struct{}{}
+		taskexecutor.TestSyncChan <- struct{}{}
 		// wait second subtask finish
-		<-scheduler.TestSyncChan
+		<-taskexecutor.TestSyncChan
 		rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 		s.Len(rows, 1)
 		jobInfo.Summary.ImportedRows = 4
 		s.compareJobInfoWithoutTime(jobInfo, rows[0])
-		// resume the scheduler, need disable failpoint first, otherwise the post-process subtask will be blocked
-		s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterSubtaskFinish"))
-		scheduler.TestSyncChan <- struct{}{}
+		// resume the taskexecutor, need disable failpoint first, otherwise the post-process subtask will be blocked
+		s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish"))
+		taskexecutor.TestSyncChan <- struct{}{}
 	}()
 	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s' with thread=1, __max_engine_size='1'`, gcsEndpoint))
 	wg.Wait()
@@ -338,7 +339,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
 	// subtask fail with error
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
 	result3 := s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-detached-job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
 	s.Len(result3, 1)
@@ -371,10 +372,21 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 }
 
+func (s *mockGCSSuite) getTaskByJobID(ctx context.Context, jobID int64) *proto.Task {
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	taskKey := importinto.TaskKey(jobID)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	s.NoError(err)
+	return task
+}
+
 func (s *mockGCSSuite) TestCancelJob() {
 	s.prepareAndUseDB("test_cancel_job")
 	s.tk.MustExec("CREATE TABLE t1 (i INT PRIMARY KEY);")
 	s.tk.MustExec("CREATE TABLE t2 (i INT PRIMARY KEY);")
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test_cancel_job", Name: "t.csv"},
 		Content:     []byte("1\n2"),
@@ -397,18 +409,9 @@ func (s *mockGCSSuite) TestCancelJob() {
 	err = s.tk.ExecToErr("cancel import job 9999999999")
 	s.ErrorIs(err, exeerrors.ErrLoadDataJobNotFound)
 
-	getTask := func(jobID int64) *proto.Task {
-		globalTaskManager, err := storage.GetTaskManager()
-		s.NoError(err)
-		taskKey := importinto.TaskKey(jobID)
-		globalTask, err := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
-		s.NoError(err)
-		return globalTask
-	}
-
 	// cancel a running job created by self
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job1", Hostname: "localhost"}, nil, nil, nil))
 	result1 := s.tk.MustQuery(fmt.Sprintf(`import into t1 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
@@ -417,9 +420,6 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(err)
 	// wait job started
 	<-importinto.TestSyncChan
-	// dist framework has bug, the cancelled status might be overridden by running status,
-	// so we wait it turn running before cancel, see https://github.com/pingcap/tidb/issues/44443
-	time.Sleep(3 * time.Second)
 	s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID1))
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 	s.Len(rows, 1)
@@ -440,7 +440,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	s.Require().Eventually(func() bool {
-		task := getTask(int64(jobID1))
+		task := s.getTaskByJobID(ctx, int64(jobID1))
 		return task.State == proto.TaskStateReverted
 	}, maxWaitTime, 500*time.Millisecond)
 
@@ -449,7 +449,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel a job created by test_cancel_job1 using test_cancel_job2, should fail
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
-	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), core.ErrSpecificAccessDenied)
+	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), plannererrors.ErrSpecificAccessDenied)
 	// cancel by root, should pass privilege check
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
@@ -458,8 +458,8 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitCtxDone", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone", "return(true)")
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
 	s.Len(result2, 1)
@@ -467,9 +467,22 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(err)
 	// wait job reach post-process phase
 	<-importinto.TestSyncChan
-	s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID2))
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID2))
+	}()
+	s.Require().Eventually(func() bool {
+		task := s.getTaskByJobID(ctx, int64(jobID2))
+		return task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning
+	}, 10*time.Second, 500*time.Millisecond)
 	// resume the job
 	importinto.TestSyncChan <- struct{}{}
+	wg.Wait()
+	// cancel import job will wait dist task done
+	task := s.getTaskByJobID(ctx, int64(jobID2))
+	s.Equal(proto.TaskStateReverted, task.State)
 	rows2 := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 	s.Len(rows2, 1)
 	jobInfo = &importer.JobInfo{
@@ -488,63 +501,75 @@ func (s *mockGCSSuite) TestCancelJob() {
 		ErrorMessage:   "cancelled by user",
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows2[0])
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, importinto.StepPostProcess)
+		subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task2.ID, proto.ImportStepPostProcess)
 		s.NoError(err2)
-		s.Len(subtasks, 2) // framework will generate a subtask when canceling
+		s.Len(subtasks, 1)
 		var cancelled bool
 		for _, st := range subtasks {
-			if st.State == proto.TaskStateCanceled {
+			if st.State == proto.SubtaskStateCanceled {
 				cancelled = true
 				break
 			}
 		}
-		return globalTask.State == proto.TaskStateReverted && cancelled
+		return task2.State == proto.TaskStateReverted && cancelled
 	}, maxWaitTime, 1*time.Second)
 
-	// todo: enable it when https://github.com/pingcap/tidb/issues/44443 fixed
-	//// cancel a pending job created by test_cancel_job2 using root
-	//s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
-	//s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted", "return(true)")
-	//result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
-	//	gcsEndpoint)).Rows()
-	//s.Len(result2, 1)
-	//jobID2, err := strconv.Atoi(result2[0][0].(string))
-	//s.NoError(err)
-	//// wait job reached to the point before job started
-	//<-loaddata.TestSyncChan
-	//s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	//s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID2))
-	//// resume the job
-	//loaddata.TestSyncChan <- struct{}{}
-	//rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
-	//s.Len(rows, 1)
-	//jobInfo = &importer.JobInfo{
-	//	ID:          int64(jobID2),
-	//	TableSchema: "test_cancel_job",
-	//	TableName:   "t2",
-	//	TableID:     tableID2,
-	//	CreatedBy:   "test_cancel_job2@localhost",
-	//	Parameters: importer.ImportParameters{
-	//		FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
-	//		Format:       importer.DataFormatCSV,
-	//	},
-	//	SourceFileSize: 3,
-	//	Status:         "cancelled",
-	//	Step:           "",
-	//	ErrorMessage:   "cancelled by user",
-	//}
-	//s.compareJobInfoWithoutTime(jobInfo, rows[0])
-	//s.Require().Eventually(func() bool {
-	//	task := getTask(int64(jobID2))
-	//	return task.State == proto.TaskStateReverted
-	//}, 10*time.Second, 500*time.Millisecond)
+	// cancel a pending job created by test_cancel_job2 using root
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone"))
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted", "return(true)")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec("truncate table t2")
+	tableID2 = do.MustGetTableID(s.T(), "test_cancel_job", "t2")
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
+	result2 = s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
+		gcsEndpoint)).Rows()
+	s.Len(result2, 1)
+	jobID2, err = strconv.Atoi(result2[0][0].(string))
+	s.NoError(err)
+	// wait job reached to the point before job started
+	<-importinto.TestSyncChan
+	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	wg = sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID2))
+	}()
+	s.Require().Eventually(func() bool {
+		task := s.getTaskByJobID(ctx, int64(jobID2))
+		return task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning
+	}, 10*time.Second, 500*time.Millisecond)
+	// resume the job
+	importinto.TestSyncChan <- struct{}{}
+	wg.Wait()
+	task = s.getTaskByJobID(ctx, int64(jobID2))
+	s.Equal(proto.TaskStateReverted, task.State)
+	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
+	s.Len(rows, 1)
+	jobInfo = &importer.JobInfo{
+		ID:          int64(jobID2),
+		TableSchema: "test_cancel_job",
+		TableName:   "t2",
+		TableID:     tableID2,
+		CreatedBy:   "test_cancel_job2@localhost",
+		Parameters: importer.ImportParameters{
+			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			Format:       importer.DataFormatCSV,
+		},
+		SourceFileSize: 3,
+		Status:         "cancelled",
+		Step:           "importing",
+		ErrorMessage:   "cancelled by user",
+	}
+	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 }
 
 func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
@@ -570,13 +595,13 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		SourceFileSize: 3,
 		Status:         "failed",
 		Step:           importer.JobStepValidating,
-		ErrorMessage:   "injected error after StepImport",
+		ErrorMessage:   "injected error after ImportStepImport",
 	}
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchPostProcessSubtask", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchPostProcessSubtask", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	err = s.tk.QueryToErr(fmt.Sprintf(`import into t1 FROM 'gs://fail_job_after_import/t.csv?endpoint=%s'`, gcsEndpoint))
-	s.ErrorContains(err, "injected error after StepImport")
+	s.ErrorContains(err, "injected error after ImportStepImport")
 	result1 := s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 	s.Len(result1, 1)
 	jobID1, err := strconv.Atoi(result1[0][0].(string))
@@ -587,6 +612,8 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 
 func (s *mockGCSSuite) TestKillBeforeFinish() {
 	s.cleanupSysTables()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	s.tk.MustExec("DROP DATABASE IF EXISTS kill_job;")
 	s.tk.MustExec("CREATE DATABASE kill_job;")
 	s.tk.MustExec(`CREATE TABLE kill_job.t (a INT, b INT, c int);`)
@@ -595,9 +622,9 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 		Content:     []byte("1,11,111"),
 	})
 
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeSortChunk", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/cancellableCtx", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeSortChunk", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/executor/cancellableCtx", "return(true)")
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -617,13 +644,13 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
 	s.Len(rows, 1)
 	s.Equal("cancelled", rows[0][5])
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		return globalTask.State == proto.TaskStateReverted
+		return task.State == proto.TaskStateReverted
 	}, maxWaitTime, 1*time.Second)
 }

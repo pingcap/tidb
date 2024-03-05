@@ -42,6 +42,7 @@ const (
 	LitErrCloseWriterErr    string = "close writer error"
 	LitErrReadSortPath      string = "cannot read sort path"
 	LitErrCleanSortPath     string = "cannot cleanup sort path"
+	LitErrResetEngineFail   string = "reset engine failed"
 	LitWarnEnvInitFail      string = "initialize environment failed"
 	LitWarnConfigError      string = "build config for backend failed"
 	LitInfoEnvInitSucc      string = "init global ingest backend environment finished"

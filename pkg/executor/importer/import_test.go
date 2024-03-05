@@ -18,6 +18,10 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"os/user"
+	"path"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -29,27 +33,39 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/expression"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 func TestInitDefaultOptions(t *testing.T) {
-	plan := &Plan{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockNumCpu", "return(1)"))
+	plan := &Plan{
+		DataSourceType: DataSourceTypeQuery,
+	}
+	plan.initDefaultOptions(10)
+	require.Equal(t, 2, plan.ThreadCnt)
+
+	plan = &Plan{
+		DataSourceType: DataSourceTypeFile,
+	}
 	variable.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
 		variable.CloudStorageURI.Store("")
 	})
-	plan.initDefaultOptions()
+	plan.initDefaultOptions(1)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
-	require.Equal(t, int64(1), plan.ThreadCnt)
+	require.Equal(t, 1, plan.ThreadCnt)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
@@ -59,15 +75,15 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockNumCpu", "return(10)"))
-	plan.initDefaultOptions()
-	require.Equal(t, int64(5), plan.ThreadCnt)
+	plan.initDefaultOptions(10)
+	require.Equal(t, 5, plan.ThreadCnt)
 }
 
 // for negative case see TestImportIntoOptionsNegativeCase
 func TestInitOptionsPositiveCase(t *testing.T) {
-	ctx := mock.NewContext()
-	defer ctx.Close()
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
 	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
 		options := []*plannercore.LoadDataOpt{}
@@ -75,7 +91,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		for _, opt := range inOptions {
 			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = expression.RewriteSimpleExprWithNames(ctx, opt.Value, nil, nil)
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
 				require.NoError(t, err)
 			}
 			options = append(options, &loadDataOpt)
@@ -100,12 +116,13 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		recordErrorsOption+"=123, "+
 		detachedOption+", "+
 		disableTiKVImportModeOption+", "+
-		maxEngineSizeOption+"='100gib'",
+		maxEngineSizeOption+"='100gib', "+
+		disablePrecheckOption,
 	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	plan := &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, "utf8", *plan.Charset, sql)
 	require.Equal(t, "aaa", plan.FieldsTerminatedBy, sql)
@@ -116,7 +133,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
-	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
+	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
 	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
@@ -124,6 +141,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.True(t, plan.DisableTiKVImportMode, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
 	require.Empty(t, plan.CloudStorageURI, sql)
+	require.True(t, plan.DisablePrecheck, sql)
 
 	// set cloud storage uri
 	variable.CloudStorageURI.Store("s3://bucket/path")
@@ -131,7 +149,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		variable.CloudStorageURI.Store("")
 	})
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI, sql)
 
@@ -140,7 +158,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql2, "", "")
 	require.NoError(t, err, sql2)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql2)
 	require.Equal(t, "s3://bucket/path2", plan.CloudStorageURI, sql2)
 	// override with gs
@@ -148,7 +166,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql3, "", "")
 	require.NoError(t, err, sql3)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3)
 	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
 	// override with empty string, force use local sort
@@ -156,20 +174,26 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql4, "", "")
 	require.NoError(t, err, sql4)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql4)
 	require.Equal(t, "", plan.CloudStorageURI, sql4)
 }
 
 func TestAdjustOptions(t *testing.T) {
 	plan := &Plan{
-		DiskQuota:     1,
-		ThreadCnt:     100000000,
-		MaxWriteSpeed: 10,
+		DiskQuota:      1,
+		ThreadCnt:      100000000,
+		MaxWriteSpeed:  10,
+		DataSourceType: DataSourceTypeFile,
 	}
-	plan.adjustOptions()
-	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt)
+	plan.adjustOptions(16)
+	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+
+	plan.ThreadCnt = 100000000
+	plan.DataSourceType = DataSourceTypeQuery
+	plan.adjustOptions(16)
+	require.Equal(t, 32, plan.ThreadCnt)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -287,4 +311,114 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
+}
+
+func TestGetBackendWorkerConcurrency(t *testing.T) {
+	c := &LoadDataController{
+		Plan: &Plan{
+			ThreadCnt: 3,
+		},
+	}
+	require.Equal(t, 32, c.getBackendWorkerConcurrency())
+	c.Plan.CloudStorageURI = "xxx"
+	require.Equal(t, 6, c.getBackendWorkerConcurrency())
+	c.Plan.ThreadCnt = 123
+	require.Equal(t, 246, c.getBackendWorkerConcurrency())
+}
+
+func TestSupportedSuffixForServerDisk(t *testing.T) {
+	username, err := user.Current()
+	require.NoError(t, err)
+	if username.Name == "root" {
+		t.Skip("it cannot run as root")
+	}
+	tempDir := t.TempDir()
+	ctx := context.Background()
+
+	fileName := filepath.Join(tempDir, "test.csv")
+	require.NoError(t, os.WriteFile(fileName, []byte{}, 0o644))
+	fileName2 := filepath.Join(tempDir, "test.csv.gz")
+	require.NoError(t, os.WriteFile(fileName2, []byte{}, 0o644))
+	c := LoadDataController{
+		Plan: &Plan{
+			Format:       DataFormatCSV,
+			InImportInto: true,
+		},
+		logger: zap.NewExample(),
+	}
+	// no suffix
+	c.Path = filepath.Join(tempDir, "test")
+	require.ErrorIs(t, c.InitDataFiles(ctx), exeerrors.ErrLoadDataInvalidURI)
+	// unknown suffix
+	c.Path = filepath.Join(tempDir, "test.abc")
+	require.ErrorIs(t, c.InitDataFiles(ctx), exeerrors.ErrLoadDataInvalidURI)
+	c.Path = fileName
+	require.NoError(t, c.InitDataFiles(ctx))
+	c.Path = fileName2
+	require.NoError(t, c.InitDataFiles(ctx))
+
+	var allData []string
+	for i := 0; i < 3; i++ {
+		fileName := fmt.Sprintf("server-%d.csv", i)
+		var content []byte
+		rowCnt := 2
+		for j := 0; j < rowCnt; j++ {
+			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", i*rowCnt+j, i*rowCnt+j))...)
+			allData = append(allData, fmt.Sprintf("%d test-%d", i*rowCnt+j, i*rowCnt+j))
+		}
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), content, 0o644))
+	}
+	// directory without permission
+	require.NoError(t, os.MkdirAll(path.Join(tempDir, "no-perm"), 0o700))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm", "no-perm.csv"), []byte("1,1"), 0o644))
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o000))
+	t.Cleanup(func() {
+		// make sure TempDir RemoveAll cleanup works
+		_ = os.Chmod(path.Join(tempDir, "no-perm"), 0o700)
+	})
+	// file without permission
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "no-perm.csv"), []byte("1,1"), 0o644))
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm.csv"), 0o000))
+
+	// relative path
+	c.Path = "~/file.csv"
+	err2 := c.InitDataFiles(ctx)
+	require.ErrorIs(t, err2, exeerrors.ErrLoadDataInvalidURI)
+	require.ErrorContains(t, err2, "URI of data source is invalid")
+	// non-exist parent directory
+	c.Path = "/path/to/non/exists/file.csv"
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
+	require.ErrorContains(t, err, "no such file or directory")
+	// without permission to parent dir
+	c.Path = path.Join(tempDir, "no-perm", "no-perm.csv")
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "permission denied")
+	// file not exists
+	c.Path = path.Join(tempDir, "not-exists.csv")
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "no such file or directory")
+	// file without permission
+	c.Path = path.Join(tempDir, "no-perm.csv")
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "permission denied")
+	// we don't have read access to 'no-perm' directory, so walk-dir fails
+	c.Path = path.Join(tempDir, "server-*.csv")
+	err = c.InitDataFiles(ctx)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataCantRead)
+	require.ErrorContains(t, err, "permission denied")
+	// grant read access to 'no-perm' directory, should ok now.
+	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
+	c.Path = path.Join(tempDir, "server-*.csv")
+	require.NoError(t, c.InitDataFiles(ctx))
+}
+
+func TestGetDataSourceType(t *testing.T) {
+	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
+		SelectPlan: &plannercore.PhysicalSelection{},
+	}))
+	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
 }

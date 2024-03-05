@@ -78,6 +78,16 @@ select cast(col4 as time(31)) from t where col1 is null;
 Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
 select cast(col5 as time(31)) from t where col1 is null;
 Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+drop table if exists t;
+create table t(a varchar(50));
+insert into t values ('2020-01-01 12:00:00.123456 +0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456 -0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456');
+select cast(a as datetime(3)) from t;
+cast(a as datetime(3))
+2020-01-01 12:00:00.123
+2020-01-01 12:00:00.123
+2020-01-01 12:00:00.123
 drop table if exists t1;
 create table t1 (c1 text);
 insert into t1 values ('a');
@@ -88,3 +98,23 @@ cast('61qw' as decimal)
 61
 Level	Code	Message
 Warning	1292	Truncated incorrect DECIMAL value: '61qw'
+drop table if exists t;
+create table t (y year);
+insert into t values (cast('14:15' as time));
+select 1 from t where y = YEAR(CURDATE());
+1
+1
+select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
+cast(cast('14:15' as time) as year) = YEAR(CURDATE())
+1
+explain select null as a union all select 'a' as a;
+id	estRows	task	access object	operator info
+Union_8	2.00	root		
+├─Projection_10	1.00	root		<nil>->Column#3
+│ └─TableDual_11	1.00	root		rows:1
+└─Projection_12	1.00	root		a->Column#3
+  └─TableDual_13	1.00	root		rows:1
+select null as a union all select 'a' as a;
+a
+NULL
+a

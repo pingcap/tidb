@@ -17,6 +17,7 @@ package chunk
 import (
 	"fmt"
 	"math/bits"
+	"math/rand"
 	"reflect"
 	"time"
 	"unsafe"
@@ -80,6 +81,16 @@ type DefaultColumnAllocator struct{}
 // NewColumn implements the ColumnAllocator interface.
 func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, capacity int) *Column {
 	return newColumn(getFixedLen(ft), capacity)
+}
+
+// NewEmptyColumn creates a new column with nothing.
+func NewEmptyColumn(ft *types.FieldType) *Column {
+	elemLen := getFixedLen(ft)
+	col := Column{}
+	if elemLen != varElemLen {
+		col.elemBuf = make([]byte, elemLen)
+	}
+	return &col
 }
 
 // NewColumn creates a new column with the specific type and capacity.
@@ -760,5 +771,14 @@ func (c *Column) MergeNulls(cols ...*Column) {
 			// bit 0 is null, 1 is not null, so do AND operations here.
 			c.nullBitmap[i] &= col.nullBitmap[i]
 		}
+	}
+}
+
+// DestroyDataForTest destroies data in the column so that
+// we can test if data in column are deeply copied.
+func (c *Column) DestroyDataForTest() {
+	dataByteNum := len(c.data)
+	for i := 0; i < dataByteNum; i++ {
+		c.data[i] = byte(rand.Intn(256))
 	}
 }

@@ -589,7 +589,7 @@ select * from t partition(p3) order by id;
 insert ignore into t values  (15, 'a'),(17,'a');
 select * from t partition(p0,p1,p2) order by id;
 select * from t partition(p3) order by id;
---error 1062
+--error 1526
 insert into t values (100, 'd');
 delete from t;
 insert into t values  (1, 'a'),(2,'b'),(3,'c');
@@ -611,7 +611,7 @@ select * from t order by id;
 --error 1062
 update t set id=id+17 where id in (3,10);
 select * from t order by id;
---error 1062
+--error 1526
 update t set id=id*2 where id in (3,20);
 select * from t order by id;
 delete from t;
@@ -624,7 +624,7 @@ select * from t partition(p2) order by id;
 select * from t partition(p3) order by id;
 replace into t values  (1, 'x'),(7,'x');
 select * from t order by id;
---error 1062
+--error 1526
 replace into t values  (10,'x'),(50,'x');
 select * from t order by id;
 delete from t where id = 3;
@@ -721,7 +721,7 @@ select * from t order by id;
 --error 1062
 update t set id=id+1 where location='w' and id in (1,2);
 select * from t order by id;
---error 1062
+--error 1526
 update t set id=id+3 where location='w' and id in (1,2);
 select * from t order by id;
 update t set location='s', id=14 where location='e' and id=8;
@@ -1147,3 +1147,206 @@ insert into t values ('2023-06-11 10:00:00', 1);
 update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00';
 admin check table t;
 drop table if exists t;
+
+# TestMutipleReplaceAndInsertInOneSession
+drop table if exists t_securities;
+create table t_securities(id bigint not null auto_increment primary key, security_id varchar(8), market_id smallint, security_type int, unique key uu(security_id, market_id));
+insert into t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+replace into t_securities (security_id, market_id, security_type) select security_id+1, 1, security_type from t_securities  where security_id="7";
+INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+--sorted_result
+select * from t_securities;
+
+connect (conn1, localhost, root,,executor__write);
+insert into t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+insert into t_securities (security_id, market_id, security_type) select security_id+2, 1, security_type from t_securities  where security_id="7";
+INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+--sorted_result
+select * from t_securities;
+
+connection default;
+disconnect conn1;
+
+# TestListPartitionWithAutoRandom
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a bigint key auto_random (3), b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));
+set @@allow_auto_random_explicit_insert = true;
+replace into t values  (1,1);
+insert into t (b) values (2);
+insert into t (b) values (3);
+insert into t (b) values (4);
+insert into t (b) values (5);
+insert into t (b) values (6);
+insert into t (b) values (7);
+insert into t (b) values (8);
+insert into t (b) values (9);
+select b from t order by b;
+update t set b=b+1 where a=1;
+select b from t where a=1;
+update t set b=b+1 where a<2;
+select b from t where a<2;
+insert into t values (1, 1) on duplicate key update b=b+1;
+select b from t where a=1;
+
+set @@session.tidb_enable_list_partition = default;
+set @@allow_auto_random_explicit_insert = default;
+
+# TestListPartitionWithAutoIncrement
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a bigint key auto_increment, b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));
+set @@allow_auto_random_explicit_insert = true;
+replace into t values  (1,1);
+insert into t (b) values (2);
+insert into t (b) values (3);
+insert into t (b) values (4);
+insert into t (b) values (5);
+insert into t (b) values (6);
+insert into t (b) values (7);
+insert into t (b) values (8);
+insert into t (b) values (9);
+select b from t order by b;
+update t set b=b+1 where a=1;
+select b from t where a=1;
+update t set b=b+1 where a<2;
+select b from t where a<2;
+insert into t values (1, 1) on duplicate key update b=b+1;
+select b from t where a=1;
+
+set @@session.tidb_enable_list_partition = default;
+set @@allow_auto_random_explicit_insert = default;
+
+
+# TestReplace
+drop table if exists replace_test;
+create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);
+--enable_info
+replace replace_test (c1) values (1),(2),(NULL);
+--disable_info
+begin;
+-- error 1136
+replace replace_test (c1) values ();
+rollback;
+begin;
+-- error 1136
+replace replace_test (c1, c2) values (1,2),(1);
+rollback;
+begin;
+-- error 1054
+replace replace_test (xxx) values (3);
+rollback;
+begin;
+-- error 1146
+replace replace_test_xxx (c1) values ();
+rollback;
+--enable_info
+replace replace_test set c1 = 3;
+--disable_info
+begin;
+-- error 1110
+replace replace_test set c1 = 4, c1 = 5;
+rollback;
+begin;
+-- error 1054
+replace replace_test set xxx = 6;
+rollback;
+
+drop table if exists replace_test_1;
+create table replace_test_1 (id int, c1 int);
+--enable_info
+replace replace_test_1 select id, c1 from replace_test;
+--disable_info
+begin;
+--error 1136
+replace replace_test_1 select c1 from replace_test;
+rollback;
+
+create table replace_test_2 (id int, c1 int);
+--enable_info
+replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;
+--disable_info
+
+drop table if exists replace_test_3;
+create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2));
+--enable_info
+replace into replace_test_3 set c2=1;
+replace into replace_test_3 set c2=1;
+replace into replace_test_3 set c1=1, c2=1;
+replace into replace_test_3 set c2=NULL;
+replace into replace_test_3 set c2=NULL;
+--disable_info
+
+drop table if exists replace_test_4;
+create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2));
+--enable_info
+replace into replace_test_4 set c2=NULL;
+replace into replace_test_4 set c2=NULL;
+--disable_info
+
+drop table if exists replace_test_5;
+create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2));
+--enable_info
+replace into replace_test_5 set c1=1, c2=2;
+replace into replace_test_5 set c1=1, c2=2;
+--disable_info
+
+drop table if exists tIssue989;
+CREATE TABLE tIssue989 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));
+--enable_info
+insert into tIssue989 (a, b) values (1, 2);
+replace into tIssue989(a, b) values (111, 2);
+--disable_info
+select * from tIssue989;
+
+drop table if exists tIssue1012;
+CREATE TABLE tIssue1012 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));
+insert into tIssue1012 (a, b) values (1, 2);
+insert into tIssue1012 (a, b) values (2, 1);
+--enable_info
+replace into tIssue1012(a, b) values (1, 1);
+--disable_info
+select * from tIssue1012;
+
+drop table if exists t1;
+create table t1(a int primary key, b int);
+insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);
+--enable_info
+replace into t1 values(1,1);
+replace into t1 values(1,1),(2,2);
+replace into t1 values(4,14),(5,15),(6,16),(7,17),(8,18);
+replace into t1 select * from (select 1, 2) as tmp;
+--disable_info
+
+drop table if exists t1, t2;
+create table t1 (a int primary key, b int default 20, c int default 30);
+insert into t1 value (1, 2, 3);
+replace t1 set a=1, b=default;
+select * from t1;
+replace t1 set a=2, b=default, c=default;
+select * from t1;
+replace t1 set a=2, b=default(c), c=default(b);
+select * from t1;
+replace t1 set a=default(b)+default(c);
+select * from t1;
+create table t2 (pk int primary key, a int default 1, b int generated always as (-a) virtual, c int generated always as (-a) stored);
+replace t2 set pk=1, b=default;
+select * from t2;
+replace t2 set pk=2, a=10, b=default;
+select * from t2;
+replace t2 set pk=2, c=default, a=20;
+select * from t2;
+replace t2 set pk=2, a=default, b=default, c=default;
+select * from t2;
+replace t2 set pk=3, a=default(a), b=default, c=default;
+select * from t2;
+-- error 3105
+replace t2 set b=default(a);
+-- error 3105
+replace t2 set a=default(b), b=default(b);
+-- error 1364
+replace t2 set a=default(a), c=default(c);
+-- error 3105
+replace t2 set c=default(a);
+drop table t1, t2;
+

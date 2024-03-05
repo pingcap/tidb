@@ -12,6 +12,7 @@ go_library(
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",
         "@com_github_aws_aws_sdk_go//aws/session",
+        "@com_github_aws_aws_sdk_go//service/cloudwatch",
         "@com_github_aws_aws_sdk_go//service/ec2",
         "@com_github_aws_aws_sdk_go//service/ec2/ec2iface",
         "@com_github_pingcap_errors//:errors",

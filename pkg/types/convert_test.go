@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,10 +32,9 @@ type invalidMockType struct {
 }
 
 // Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
+func Convert(val any, target *FieldType) (v any, err error) {
 	d := NewDatum(val)
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	ret, err := d.ConvertTo(sc, target)
+	ret, err := d.ConvertTo(DefaultStmtNoWarningContext, target)
 	if err != nil {
 		return ret.GetValue(), errors.Trace(err)
 	}
@@ -149,14 +147,14 @@ func TestConvertType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.1", vv.(Duration).String())
 	typeCtx := DefaultStmtNoWarningContext
-	vd, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
+	vd, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
 	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
 	require.NoError(t, err)
 	v, err = Convert(vd, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
-	vt, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2, nil)
+	vt, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	require.Equal(t, "2010-10-10 10:11:11.12", vt.String())
 	require.NoError(t, err)
 	v, err = Convert(vt, ft)
@@ -273,7 +271,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, int64(2015), v)
 	v, err = Convert(ZeroDuration, ft)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), v)
+	require.Equal(t, int64(time.Now().Year()), v)
 	bj1, err := ParseBinaryJSONFromString("99")
 	require.NoError(t, err)
 	v, err = Convert(bj1, ft)
@@ -324,7 +322,7 @@ func TestConvertType(t *testing.T) {
 	require.Error(t, err)
 }
 
-func testToString(t *testing.T, val interface{}, expect string) {
+func testToString(t *testing.T, val any, expect string) {
 	b, err := ToString(val)
 	require.NoError(t, err)
 	require.Equal(t, expect, b)
@@ -345,7 +343,7 @@ func TestConvertToString(t *testing.T) {
 	testToString(t, Enum{Name: "a", Value: 1}, "a")
 	testToString(t, Set{Name: "a", Value: 1}, "a")
 
-	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	require.NoError(t, err)
 	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
@@ -383,8 +381,7 @@ func TestConvertToString(t *testing.T) {
 		ft.SetFlen(tt.flen)
 		ft.SetCharset(tt.charset)
 		inputDatum := NewStringDatum(tt.input)
-		sc := stmtctx.NewStmtCtx()
-		outputDatum, err := inputDatum.ConvertTo(sc, ft)
+		outputDatum, err := inputDatum.ConvertTo(DefaultStmtNoWarningContext, ft)
 		if tt.input != tt.output {
 			require.True(t, ErrDataTooLong.Equal(err), "flen: %d, charset: %s, input: %s, output: %s", tt.flen, tt.charset, tt.input, tt.output)
 		} else {
@@ -420,10 +417,9 @@ func TestConvertToStringWithCheck(t *testing.T) {
 		ft.SetFlen(255)
 		ft.SetCharset(tt.outputChs)
 		inputDatum := NewStringDatum(tt.input)
-		sc := stmtctx.NewStmtCtx()
-		flags := tt.newFlags(sc.TypeFlags())
-		sc.SetTypeFlags(flags)
-		outputDatum, err := inputDatum.ConvertTo(sc, ft)
+		ctx := DefaultStmtNoWarningContext
+		ctx = ctx.WithFlags(tt.newFlags(DefaultStmtFlags))
+		outputDatum, err := inputDatum.ConvertTo(ctx, ft)
 		if len(tt.output) == 0 {
 			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
 		} else {
@@ -460,8 +456,7 @@ func TestConvertToBinaryString(t *testing.T) {
 		ft.SetFlen(255)
 		ft.SetCharset(tt.outputCharset)
 		inputDatum := NewCollationStringDatum(tt.input, tt.inputCollate)
-		sc := stmtctx.NewStmtCtx()
-		outputDatum, err := inputDatum.ConvertTo(sc, ft)
+		outputDatum, err := inputDatum.ConvertTo(DefaultStmtNoWarningContext, ft)
 		if len(tt.output) == 0 {
 			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
 		} else {
@@ -555,34 +550,22 @@ func TestStrToNum(t *testing.T) {
 }
 
 func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
-	testCases := []struct {
-		inSelect bool
-		inDelete bool
-	}{
-		{true, false},
-		{false, true},
-	}
-	sc := stmtctx.NewStmtCtx()
-	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
-	for _, tc := range testCases {
-		sc.InSelectStmt = tc.inSelect
-		sc.InDeleteStmt = tc.inDelete
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithTruncateAsWarning(true))
 
-		str := ""
-		expect := 0
+	str := ""
+	expect := 0
 
-		val, err := StrToInt(sc.TypeCtxOrDefault(), str, false)
-		require.NoError(t, err)
-		require.Equal(t, int64(expect), val)
+	val, err := StrToInt(ctx, str, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(expect), val)
 
-		val1, err := StrToUint(sc.TypeCtxOrDefault(), str, false)
-		require.NoError(t, err)
-		require.Equal(t, uint64(expect), val1)
+	val1, err := StrToUint(ctx, str, false)
+	require.NoError(t, err)
+	require.Equal(t, uint64(expect), val1)
 
-		val2, err := StrToFloat(sc.TypeCtxOrDefault(), str, false)
-		require.NoError(t, err)
-		require.Equal(t, float64(expect), val2)
-	}
+	val2, err := StrToFloat(ctx, str, false)
+	require.NoError(t, err)
+	require.Equal(t, float64(expect), val2)
 }
 
 func TestFieldTypeToStr(t *testing.T) {
@@ -594,16 +577,14 @@ func TestFieldTypeToStr(t *testing.T) {
 	require.Equal(t, "binary", v)
 }
 
-func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
+func accept(t *testing.T, tp byte, value any, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
 		ft.AddFlag(mysql.UnsignedFlag)
 	}
 	d := NewDatum(value)
-	sc := stmtctx.NewStmtCtx()
-	sc.SetTimeZone(time.UTC)
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-	casted, err := d.ConvertTo(sc, ft)
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
+	casted, err := d.ConvertTo(ctx, ft)
 	require.NoErrorf(t, err, "%v", ft)
 	if casted.IsNull() {
 		require.Equal(t, "<nil>", expected)
@@ -614,22 +595,21 @@ func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected st
 	}
 }
 
-func unsignedAccept(t *testing.T, tp byte, value interface{}, expected string) {
+func unsignedAccept(t *testing.T, tp byte, value any, expected string) {
 	accept(t, tp, value, true, expected)
 }
 
-func signedAccept(t *testing.T, tp byte, value interface{}, expected string) {
+func signedAccept(t *testing.T, tp byte, value any, expected string) {
 	accept(t, tp, value, false, expected)
 }
 
-func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
+func deny(t *testing.T, tp byte, value any, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
 		ft.AddFlag(mysql.UnsignedFlag)
 	}
 	d := NewDatum(value)
-	sc := stmtctx.NewStmtCtx()
-	casted, err := d.ConvertTo(sc, ft)
+	casted, err := d.ConvertTo(DefaultStmtNoWarningContext, ft)
 	require.Error(t, err)
 	if casted.IsNull() {
 		require.Equal(t, "<nil>", expected)
@@ -640,15 +620,15 @@ func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected stri
 	}
 }
 
-func unsignedDeny(t *testing.T, tp byte, value interface{}, expected string) {
+func unsignedDeny(t *testing.T, tp byte, value any, expected string) {
 	deny(t, tp, value, true, expected)
 }
 
-func signedDeny(t *testing.T, tp byte, value interface{}, expected string) {
+func signedDeny(t *testing.T, tp byte, value any, expected string) {
 	deny(t, tp, value, false, expected)
 }
 
-func strvalue(v interface{}) string {
+func strvalue(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
@@ -883,12 +863,11 @@ func TestGetValidInt(t *testing.T) {
 		{"123e+", "123", true, true},
 		{"123de", "123", true, true},
 	}
-	sc := stmtctx.NewStmtCtx()
-	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
-	sc.InSelectStmt = true
+	warnings := &warnStore{}
+	ctx := NewContext(DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, warnings)
 	warningCount := 0
 	for i, tt := range tests {
-		prefix, err := getValidIntPrefix(sc.TypeCtxOrDefault(), tt.origin, false)
+		prefix, err := getValidIntPrefix(ctx, tt.origin, false)
 		require.NoError(t, err)
 		require.Equal(t, tt.valid, prefix)
 		if tt.signed {
@@ -897,13 +876,13 @@ func TestGetValidInt(t *testing.T) {
 			_, err = strconv.ParseUint(prefix, 10, 64)
 		}
 		require.NoError(t, err)
-		warnings := sc.GetWarnings()
+		warn := warnings.GetWarnings()
 		if tt.warning {
-			require.Lenf(t, warnings, warningCount+1, "%d", i)
-			require.True(t, terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal))
+			require.Lenf(t, warn, warningCount+1, "%d", i)
+			require.True(t, terror.ErrorEqual(warn[len(warn)-1], ErrTruncatedWrongVal))
 			warningCount++
 		} else {
-			require.Len(t, warnings, warningCount)
+			require.Len(t, warn, warningCount)
 		}
 	}
 
@@ -927,10 +906,9 @@ func TestGetValidInt(t *testing.T) {
 		{"123e+", "123", true},
 		{"123de", "123", true},
 	}
-	sc.SetTypeFlags(DefaultStmtFlags)
-	sc.InSelectStmt = false
+	ctx = ctx.WithFlags(DefaultStmtFlags)
 	for _, tt := range tests2 {
-		prefix, err := getValidIntPrefix(sc.TypeCtxOrDefault(), tt.origin, false)
+		prefix, err := getValidIntPrefix(ctx, tt.origin, false)
 		if tt.warning {
 			require.True(t, terror.ErrorEqual(err, ErrTruncatedWrongVal))
 		} else {
@@ -1017,12 +995,12 @@ func TestConvertTime(t *testing.T) {
 	}
 
 	for _, timezone := range timezones {
-		sc := stmtctx.NewStmtCtxWithTimeZone(timezone)
-		testConvertTimeTimeZone(t, sc)
+		ctx := DefaultStmtNoWarningContext.WithLocation(timezone)
+		testConvertTimeTimeZone(t, ctx)
 	}
 }
 
-func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
+func testConvertTimeTimeZone(t *testing.T, ctx Context) {
 	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
 	tests := []struct {
 		input  Time
@@ -1054,7 +1032,7 @@ func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
 	for _, test := range tests {
 		var d Datum
 		d.SetMysqlTime(test.input)
-		nd, err := d.ConvertTo(sc, test.target)
+		nd, err := d.ConvertTo(ctx, test.target)
 		require.NoError(t, err)
 		v := nd.GetMysqlTime()
 		require.Equal(t, test.expect.Type(), v.Type())
@@ -1084,7 +1062,7 @@ func TestConvertJSONToInt(t *testing.T) {
 		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
 
-		casted, err := ConvertJSONToInt64(stmtctx.NewStmtCtx(), j, false)
+		casted, err := ConvertJSONToInt64(DefaultStmtNoWarningContext, j, false)
 		if tt.err {
 			require.Error(t, err, tt)
 		} else {
@@ -1096,13 +1074,13 @@ func TestConvertJSONToInt(t *testing.T) {
 
 func TestConvertJSONToFloat(t *testing.T) {
 	var tests = []struct {
-		in  interface{}
+		in  any
 		out float64
 		ty  JSONTypeCode
 		err bool
 	}{
-		{in: make(map[string]interface{}), ty: JSONTypeCodeObject, err: true},
-		{in: make([]interface{}, 0), ty: JSONTypeCodeArray, err: true},
+		{in: make(map[string]any), ty: JSONTypeCodeObject, err: true},
+		{in: make([]any, 0), ty: JSONTypeCodeArray, err: true},
 		{in: int64(3), out: 3, ty: JSONTypeCodeInt64},
 		{in: int64(-3), out: -3, ty: JSONTypeCodeInt64},
 		{in: uint64(1 << 63), out: 1 << 63, ty: JSONTypeCodeUint64},
@@ -1287,7 +1265,7 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 		{"-10000000000000000000.0", 0, false},
 	}
 	for _, ca := range cases {
-		result, err := convertDecimalStrToUint(stmtctx.NewStmtCtx(), ca.input, math.MaxUint64, 0)
+		result, err := convertDecimalStrToUint(ca.input, math.MaxUint64, 0)
 		if !ca.succ {
 			require.Error(t, err)
 		} else {
@@ -1296,11 +1274,11 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 		require.Equal(t, ca.result, result, "input=%v", ca.input)
 	}
 
-	result, err := convertDecimalStrToUint(stmtctx.NewStmtCtx(), "-99.0", math.MaxUint8, 0)
+	result, err := convertDecimalStrToUint("-99.0", math.MaxUint8, 0)
 	require.Error(t, err)
 	require.Equal(t, uint64(0), result)
 
-	result, err = convertDecimalStrToUint(stmtctx.NewStmtCtx(), "-100.0", math.MaxUint8, 0)
+	result, err = convertDecimalStrToUint("-100.0", math.MaxUint8, 0)
 	require.Error(t, err)
 	require.Equal(t, uint64(0), result)
 }

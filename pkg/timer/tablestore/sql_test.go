@@ -578,7 +578,7 @@ type mockSession struct {
 	sqlexec.SQLExecutor
 }
 
-func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, _ error) {
+func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, _ error) {
 	ret := p.Called(ctx, sql, args)
 	if r := ret.Get(0); r != nil {
 		rs = r.(sqlexec.RecordSet)
@@ -625,7 +625,7 @@ func TestTakeSession(t *testing.T) {
 	se.AssertExpectations(t)
 
 	// Put session failed
-	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
 		Return(nil, errors.New("mockErr")).
 		Once()
 	se.On("Close").Once()
@@ -639,7 +639,7 @@ func TestTakeSession(t *testing.T) {
 	require.Equal(t, r, se)
 	require.NotNil(t, back)
 	require.Nil(t, err)
-	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
 		Return(nil, nil).
 		Once()
 	pool.On("Put", se).Once()
@@ -652,7 +652,7 @@ func TestRunInTxn(t *testing.T) {
 	se := &mockSession{}
 
 	// success
-	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []any(nil)).
 		Return(nil, nil).
 		Once()
 	se.On("ExecuteInternal", matchCtx, mock.MatchedBy(func(sql string) bool {
@@ -660,7 +660,7 @@ func TestRunInTxn(t *testing.T) {
 	}), mock.Anything).
 		Return(nil, nil).
 		Once()
-	se.On("ExecuteInternal", matchCtx, "COMMIT", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "COMMIT", []any(nil)).
 		Return(nil, nil).
 		Once()
 	require.Nil(t, runInTxn(context.Background(), se, func() error {
@@ -670,7 +670,7 @@ func TestRunInTxn(t *testing.T) {
 	se.AssertExpectations(t)
 
 	// start txn failed
-	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []any(nil)).
 		Return(nil, errors.New("mockBeginErr")).
 		Once()
 	err := runInTxn(context.Background(), se, func() error { return nil })
@@ -678,10 +678,10 @@ func TestRunInTxn(t *testing.T) {
 	se.AssertExpectations(t)
 
 	// exec failed, rollback success
-	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []any(nil)).
 		Return(nil, nil).
 		Once()
-	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
 		Return(nil, nil).
 		Once()
 	err = runInTxn(context.Background(), se, func() error { return errors.New("mockFuncErr") })
@@ -689,13 +689,13 @@ func TestRunInTxn(t *testing.T) {
 	se.AssertExpectations(t)
 
 	// commit failed
-	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []any(nil)).
 		Return(nil, nil).
 		Once()
-	se.On("ExecuteInternal", matchCtx, "COMMIT", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "COMMIT", []any(nil)).
 		Return(nil, errors.New("commitErr")).
 		Once()
-	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
 		Return(nil, nil).
 		Once()
 	err = runInTxn(context.Background(), se, func() error { return nil })
@@ -703,10 +703,10 @@ func TestRunInTxn(t *testing.T) {
 	se.AssertExpectations(t)
 
 	// rollback failed
-	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "BEGIN PESSIMISTIC", []any(nil)).
 		Return(nil, nil).
 		Once()
-	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []interface{}(nil)).
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
 		Return(nil, errors.New("rollbackErr")).
 		Once()
 	err = runInTxn(context.Background(), se, func() error { return errors.New("mockFuncErr") })

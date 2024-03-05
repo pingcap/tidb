@@ -50,32 +50,33 @@ func NewKeyValueStore(
 }
 
 // addEncodedData saves encoded key-value pairs to the KeyValueStore.
-// data layout: keyLen + key + valueLen + value. If the accumulated
+// data layout: keyLen + valueLen + key + value. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
-func (s *KeyValueStore) addEncodedData(val []byte) error {
-	_, err := s.dataWriter.Write(s.ctx, val)
+func (s *KeyValueStore) addEncodedData(data []byte) error {
+	_, err := s.dataWriter.Write(s.ctx, data)
 	if err != nil {
 		return err
 	}
 
-	keyLen := binary.BigEndian.Uint64(val)
-	key := val[lengthBytes : lengthBytes+keyLen]
+	keyLen := binary.BigEndian.Uint64(data)
+	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
+
 	if len(s.rc.currProp.firstKey) == 0 {
 		s.rc.currProp.firstKey = key
 	}
 	s.rc.currProp.lastKey = key
 
-	s.offset += uint64(len(val))
-	s.rc.currProp.size += uint64(len(val) - lengthBytes*2)
+	s.offset += uint64(len(data))
+	s.rc.currProp.size += uint64(len(data) - 2*lengthBytes)
 	s.rc.currProp.keys++
 
 	if s.rc.currProp.size >= s.rc.propSizeDist ||
 		s.rc.currProp.keys >= s.rc.propKeysDist {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)
-
+		// reset currProp, and start to update this prop.
 		s.rc.currProp.firstKey = nil
 		s.rc.currProp.offset = s.offset
 		s.rc.currProp.keys = 0

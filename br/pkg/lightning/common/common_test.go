@@ -51,7 +51,7 @@ func newTableInfo(t *testing.T,
 		if err := m.CreateDatabase(&model.DBInfo{ID: dbID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
-		return m.CreateTableOrView(dbID, tableInfo)
+		return m.CreateTableOrView(dbID, "", tableInfo)
 	})
 	require.NoError(t, err)
 	return tableInfo
@@ -134,11 +134,11 @@ func TestAllocGlobalAutoID(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range cases {
 		ti := newTableInfo(t, 1, c.tableID, c.createTableSQL, kvStore)
-		allocators, err := common.GetGlobalAutoIDAlloc(kvStore, 1, ti)
+		allocators, err := common.GetGlobalAutoIDAlloc(mockRequirement{kvStore}, 1, ti)
 		if c.expectErrStr == "" {
 			require.NoError(t, err, c.tableID)
-			require.NoError(t, common.RebaseGlobalAutoID(ctx, 123, kvStore, 1, ti))
-			base, idMax, err := common.AllocGlobalAutoID(ctx, 100, kvStore, 1, ti)
+			require.NoError(t, common.RebaseGlobalAutoID(ctx, 123, mockRequirement{kvStore}, 1, ti))
+			base, idMax, err := common.AllocGlobalAutoID(ctx, 100, mockRequirement{kvStore}, 1, ti)
 			require.NoError(t, err, c.tableID)
 			require.Equal(t, int64(123), base, c.tableID)
 			require.Equal(t, int64(223), idMax, c.tableID)
@@ -160,6 +160,18 @@ func TestAllocGlobalAutoID(t *testing.T) {
 	}
 }
 
+type mockRequirement struct {
+	kv.Storage
+}
+
+func (r mockRequirement) Store() kv.Storage {
+	return r.Storage
+}
+
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return nil
+}
+
 func TestRebaseTableAllocators(t *testing.T) {
 	storePath := t.TempDir()
 	kvStore, err := mockstore.NewMockStore(mockstore.WithPath(storePath))
@@ -169,7 +181,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	})
 	ti := newTableInfo(t, 1, 42,
 		"create table t42 (a int primary key nonclustered auto_increment) AUTO_ID_CACHE 1", kvStore)
-	allocators, err := common.GetGlobalAutoIDAlloc(kvStore, 1, ti)
+	allocators, err := common.GetGlobalAutoIDAlloc(mockRequirement{kvStore}, 1, ti)
 	require.NoError(t, err)
 	require.Len(t, allocators, 2)
 	for _, alloc := range allocators {
@@ -186,7 +198,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	}
 	require.Equal(t, []autoid.AllocatorType{autoid.AutoIncrementType, autoid.RowIDAllocType}, allocatorTypes)
 	// this call does nothing
-	require.NoError(t, common.RebaseTableAllocators(ctx, nil, kvStore, 1, ti))
+	require.NoError(t, common.RebaseTableAllocators(ctx, nil, mockRequirement{kvStore}, 1, ti))
 	for _, alloc := range allocators {
 		nextID, err := alloc.NextGlobalAutoID()
 		require.NoError(t, err)
@@ -195,7 +207,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	// this call rebase AutoIncrementType allocator to 223
 	require.NoError(t, common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
 		autoid.AutoIncrementType: 223,
-	}, kvStore, 1, ti))
+	}, mockRequirement{kvStore}, 1, ti))
 	next, err := allocators[0].NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(224), next)
@@ -206,7 +218,7 @@ func TestRebaseTableAllocators(t *testing.T) {
 	require.NoError(t, common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
 		autoid.AutoIncrementType: 323,
 		autoid.RowIDAllocType:    423,
-	}, kvStore, 1, ti))
+	}, mockRequirement{kvStore}, 1, ti))
 	next, err = allocators[0].NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(324), next)

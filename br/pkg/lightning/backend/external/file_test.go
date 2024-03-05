@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"testing"
 	"time"
@@ -24,6 +25,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
+
+func getEncodedData(key, value []byte) []byte {
+	buf := make([]byte, 8*2+len(key)+len(value))
+	binary.BigEndian.PutUint64(buf, uint64(len(key)))
+	binary.BigEndian.PutUint64(buf[8:], uint64(len(value)))
+	copy(buf[8*2:], key)
+	copy(buf[8*2+len(key):], value)
+	return buf
+}
 
 func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	ctx := context.Background()
@@ -71,9 +81,9 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
 
+	kvStore.Close()
 	err = writer.Close(ctx)
 	require.NoError(t, err)
-	kvStore.Close()
 	expected = &rangeProperty{
 		firstKey: k3,
 		lastKey:  k3,
@@ -152,6 +162,7 @@ func TestKVReadWrite(t *testing.T) {
 		err = kvStore.addEncodedData(getEncodedData(keys[i], values[i]))
 		require.NoError(t, err)
 	}
+	kvStore.Close()
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 

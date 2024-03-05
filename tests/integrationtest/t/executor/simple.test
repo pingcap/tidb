@@ -365,3 +365,120 @@ drop user test_create_role;
 connection default;
 drop user testCreateRole;
 disconnect conn1;
+
+# TestSetResourceGroup
+SET GLOBAL tidb_enable_resource_control='on';
+drop RESOURCE GROUP if exists rg1;
+drop RESOURCE GROUP if exists rg2;
+drop user if exists user1;
+-- error 8249
+SET RESOURCE GROUP rg1;
+CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
+
+create user user1;
+ALTER USER `user1` RESOURCE GROUP `rg1`;
+SELECT CURRENT_RESOURCE_GROUP();
+
+connect(conn1, localhost, user1,,);
+SELECT CURRENT_RESOURCE_GROUP();
+
+connection default;
+SELECT CURRENT_RESOURCE_GROUP();
+CREATE RESOURCE GROUP rg2 ru_per_sec = 200;
+SET RESOURCE GROUP `rg2`;
+SELECT CURRENT_RESOURCE_GROUP();
+SET RESOURCE GROUP ``;
+SELECT CURRENT_RESOURCE_GROUP();
+SET RESOURCE GROUP default;
+SELECT CURRENT_RESOURCE_GROUP();
+SELECT /*+ RESOURCE_GROUP(rg1)*/ CURRENT_RESOURCE_GROUP();
+
+connection conn1;
+SELECT CURRENT_RESOURCE_GROUP();
+
+connection default;
+disconnect conn1;
+drop user user1;
+SET GLOBAL tidb_enable_resource_control=default;
+
+# TestUserAttributes
+drop user if exists testuser;
+drop user if exists testuser1;
+drop user if exists testuser2;
+
+## https://dev.mysql.com/doc/refman/8.0/en/create-user.html#create-user-comments-attributes
+CREATE USER testuser COMMENT '1234';
+CREATE USER testuser1 ATTRIBUTE '{"name": "Tom", "age": 19}';
+-- error 3140
+CREATE USER testuser2 ATTRIBUTE '{"name": "Tom", age: 19}';
+CREATE USER testuser2;
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser';
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser1';
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser2';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+SELECT attribute->>"$.age" AS age, attribute->>"$.name" AS name FROM information_schema.user_attributes WHERE user = 'testuser1';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser2';
+
+## https://dev.mysql.com/doc/refman/8.0/en/alter-user.html#alter-user-comments-attributes
+ALTER USER testuser1 ATTRIBUTE '{"age": 20, "sex": "male"}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 ATTRIBUTE '{"hobby": "soccer"}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 ATTRIBUTE '{"sex": null, "hobby": null}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 COMMENT '5678';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 COMMENT '';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 ATTRIBUTE '{"comment": null}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+
+## Non-root users could access COMMENT or ATTRIBUTE of all users via the view,
+## but not via the mysql.user table.
+connect (conn1, localhost, testuser1,,);
+SELECT user, host, attribute FROM information_schema.user_attributes where user in ('testuser', 'testuser1', 'testuser2') ORDER BY user;
+-- error 1142
+SELECT user, host, user_attributes FROM mysql.user ORDER BY user;
+
+## https://github.com/pingcap/tidb/issues/39207
+connection default;
+create user usr1@'%' identified by 'passord';
+alter user usr1 comment 'comment1';
+select user_attributes from mysql.user where user = 'usr1';
+set global tidb_enable_resource_control = 'on';
+drop RESOURCE group if exists rg1;
+CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
+alter user usr1 resource group rg1;
+select user_attributes from mysql.user where user = 'usr1';
+
+set global tidb_enable_resource_control = default;
+disconnect conn1;
+
+# TestStmtAutoNewTxn
+-- echo ## Some statements are like DDL, they commit the previous txn automically.
+-- echo ## Fix issue https://github.com/pingcap/tidb/issues/10705
+begin;
+create user 'xxx'@'%';
+grant all privileges on *.* to 'xxx'@'%';
+create table auto_new (id int);
+begin;
+insert into auto_new values (1);
+revoke all privileges on *.* from 'xxx'@'%';
+-- echo ## insert statement has already committed
+rollback;
+
+-- echo ## Test the behavior when autocommit is false.
+select * from auto_new;
+set autocommit = 0;
+insert into auto_new values (2);
+create user 'yyy'@'%';
+rollback;
+select * from auto_new;
+
+drop user 'yyy'@'%';
+insert into auto_new values (3);
+rollback;
+select * from auto_new;
+
+set autocommit = default;

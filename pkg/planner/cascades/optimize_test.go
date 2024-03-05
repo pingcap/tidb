@@ -134,7 +134,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	logic, ok := plan.(plannercore.LogicalPlan)
 	require.True(t, ok)
 
-	logic, err = optimizer.onPhasePreprocessing(ctx, logic)
+	logic, err = optimizer.onPhasePreprocessing(ctx.GetPlanCtx(), logic)
 	require.NoError(t, err)
 
 	// collect the target columns: f, a
@@ -156,7 +156,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.True(t, ok)
 
 	group := memo.Convert2Group(agg)
-	require.NoError(t, optimizer.onPhaseExploration(ctx, group))
+	require.NoError(t, optimizer.onPhaseExploration(ctx.GetPlanCtx(), group))
 
 	// The memo looks like this:
 	// Group#0 Schema:[Column#13,test.t.f]
@@ -175,7 +175,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	aggProp := preparePossibleProperties(group, propMap)
 	// We only have one prop for Group0 : f
 	require.Len(t, aggProp, 1)
-	require.True(t, aggProp[0][0].Equal(nil, columnF))
+	require.True(t, aggProp[0][0].EqualColumn(columnF))
 
 	gatherGroup := group.Equivalents.Front().Value.(*memo.GroupExpr).Children[0]
 	gatherProp, ok := propMap[gatherGroup]
@@ -184,7 +184,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.Len(t, gatherProp, 2)
 	for _, prop := range gatherProp {
 		require.Len(t, prop, 1)
-		require.True(t, prop[0].Equal(nil, columnA) || prop[0].Equal(nil, columnF))
+		require.True(t, prop[0].EqualColumn(columnA) || prop[0].EqualColumn(columnF))
 	}
 }
 
@@ -232,6 +232,6 @@ func TestAppliedRuleSet(t *testing.T) {
 	require.True(t, ok)
 
 	group := memo.Convert2Group(logic)
-	require.NoError(t, optimizer.onPhaseExploration(ctx, group))
+	require.NoError(t, optimizer.onPhaseExploration(ctx.GetPlanCtx(), group))
 	require.Equal(t, 1, rule.appliedTimes)
 }

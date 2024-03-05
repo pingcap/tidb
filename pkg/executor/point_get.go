@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -57,14 +58,15 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 
 	e := &PointGetExecutor{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
-		txnScope:         b.txnScope,
-		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
+		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		indexUsageReporter: b.buildIndexUsageReporter(p),
+		txnScope:           b.txnScope,
+		readReplicaScope:   b.readReplicaScope,
+		isStaleness:        b.isStaleness,
 	}
 
-	e.Base().SetInitCap(1)
-	e.Base().SetMaxChunkSize(1)
+	e.SetInitCap(1)
+	e.SetMaxChunkSize(1)
 	e.Init(p)
 
 	e.snapshot, err = b.getSnapshot()
@@ -116,11 +118,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 // PointGetExecutor executes point select query.
 type PointGetExecutor struct {
 	exec.BaseExecutor
+	indexUsageReporter *exec.IndexUsageReporter
 
 	tblInfo          *model.TableInfo
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
-	partInfo         *model.PartitionDefinition
+	partitionDef     *model.PartitionDefinition
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -162,7 +165,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	e.partInfo = p.PartitionInfo
+	e.partitionDef = p.PartitionDef
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 }
@@ -200,12 +203,14 @@ func (e *PointGetExecutor) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.idxInfo != nil && e.tblInfo != nil {
-		actRows := int64(0)
-		if e.RuntimeStats() != nil {
-			actRows = e.RuntimeStats().GetActRows()
+	if e.indexUsageReporter != nil && e.idxInfo != nil {
+		tableID := e.tblInfo.ID
+		physicalTableID := tableID
+		if e.partitionDef != nil {
+			physicalTableID = e.partitionDef.ID
 		}
-		e.Ctx().StoreIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
+		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
+		e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
 	}
 	e.done = false
 	return nil
@@ -221,8 +226,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	var tblID int64
 	var err error
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partitionDef != nil {
+		tblID = e.partitionDef.ID
 	} else {
 		tblID = e.tblInfo.ID
 	}
@@ -303,6 +308,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				// Wait `UPDATE` finished
 				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
 			})
+			if e.idxInfo.Global {
+				segs := tablecodec.SplitIndexValue(e.handleVal)
+				_, pid, err := codec.DecodeInt(segs.PartitionID)
+				if err != nil {
+					return err
+				}
+				tblID = pid
+			}
 		}
 	}
 
@@ -315,10 +328,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
 			!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
 			return (&consistency.Reporter{
-				HandleEncode: func(handle kv.Handle) kv.Key {
+				HandleEncode: func(kv.Handle) kv.Key {
 					return key
 				},
-				IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+				IndexEncode: func(*consistency.RecordData) kv.Key {
 					return e.idxKey
 				},
 				Tbl:  e.tblInfo,
@@ -333,13 +346,13 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	err = DecodeRowValToChunk(e.Base().Ctx(), e.Schema(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
 
 	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
-		e.Schema().Columns, e.columns, e.Ctx(), req)
+		e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
@@ -502,8 +515,8 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblName string
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partitionDef != nil {
+		tblID = e.partitionDef.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 		partName = partInfo.Name.String()
@@ -540,11 +553,13 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
 		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
 		// So we don't use CastValue for string value for now.
-		// TODO: merge two if branch.
+		// TODO: The first if branch should have been removed, because the functionality of set the collation of the datum
+		// have been moved to util/ranger (normal path) and getNameValuePairs/getPointGetValue (fast path). But this change
+		// will be cherry-picked to a hotfix, so we choose to be a bit conservative and keep this for now.
 		if colInfo.GetType() == mysql.TypeString || colInfo.GetType() == mysql.TypeVarString || colInfo.GetType() == mysql.TypeVarchar {
 			var str string
 			str, err = idxVals[i].ToString()
-			idxVals[i].SetString(str, colInfo.FieldType.GetCollate())
+			idxVals[i].SetString(str, idxVals[i].Collation())
 		} else if colInfo.GetType() == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
 			var str string
 			var e types.Enum
@@ -571,7 +586,8 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		}
 	}
 
-	encodedIdxVals, err := codec.EncodeKey(sc, nil, idxVals...)
+	encodedIdxVals, err := codec.EncodeKey(sc.TimeZone(), nil, idxVals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +637,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
 			colInfo := getColInfoByID(tblInfo, col.ID)
-			d, err1 := table.GetColOriginDefaultValue(sctx, colInfo)
+			d, err1 := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 			if err1 != nil {
 				return err1
 			}

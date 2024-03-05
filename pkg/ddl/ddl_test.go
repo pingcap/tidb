@@ -73,9 +73,6 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
 }
 
-// JobNeedGCForTest is only used for test.
-var JobNeedGCForTest = jobNeedGC
-
 func createMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -213,7 +210,7 @@ func TestBuildJobDependence(t *testing.T) {
 	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
 	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
 	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
-	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []interface{}{int64(111), "old db name"}}
+	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		require.NoError(t, m.EnQueueDDLJob(job1))
@@ -284,4 +281,26 @@ func TestError(t *testing.T) {
 		require.NotEqual(t, mysql.ErrUnknown, code)
 		require.Equal(t, uint16(err.Code()), code)
 	}
+}
+
+func TestCheckDuplicateConstraint(t *testing.T) {
+	constrNames := map[string]bool{}
+
+	// Foreign Key
+	err := checkDuplicateConstraint(constrNames, "f1", ast.ConstraintForeignKey)
+	require.NoError(t, err)
+	err = checkDuplicateConstraint(constrNames, "f1", ast.ConstraintForeignKey)
+	require.EqualError(t, err, "[ddl:1826]Duplicate foreign key constraint name 'f1'")
+
+	// Check constraint
+	err = checkDuplicateConstraint(constrNames, "c1", ast.ConstraintCheck)
+	require.NoError(t, err)
+	err = checkDuplicateConstraint(constrNames, "c1", ast.ConstraintCheck)
+	require.EqualError(t, err, "[ddl:3822]Duplicate check constraint name 'c1'.")
+
+	// Unique contraints etc
+	err = checkDuplicateConstraint(constrNames, "u1", ast.ConstraintUniq)
+	require.NoError(t, err)
+	err = checkDuplicateConstraint(constrNames, "u1", ast.ConstraintUniq)
+	require.EqualError(t, err, "[ddl:1061]Duplicate key name 'u1'")
 }

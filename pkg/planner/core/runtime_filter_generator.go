@@ -144,7 +144,7 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 	// supply selection if there is no predicates above target scan node
 	//if parent, ok := generator.parentPhysicalPlan.(*PhysicalSelection); !ok {
 	//	// StatsInfo: Just set a placeholder value here, and this value will not be used in subsequent optimizations
-	//	sel := PhysicalSelection{hasRFConditions: true}.Init(plan.SCtx(), plan.statsInfo(), plan.SelectBlockOffset())
+	//	sel := PhysicalSelection{hasRFConditions: true}.Init(plan.SCtx(), plan.statsInfo(), plan.SelectOffset())
 	//	sel.fromDataSource = true
 	//	sel.SetChildren(plan)
 	//	generator.parentPhysicalPlan.SetChild(generator.childIdxForParentPhysicalPlan, sel)

@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
@@ -220,17 +219,17 @@ func convertScientificNotation(str string) (string, error) {
 		}
 		// 123.456 >> 5 = 12345600
 		return f[:point] + f[point+1:] + strings.Repeat("0", point+int(exp)-len(f)+1), nil
-	} else { // move point left
-		exp = -exp
-		if int(exp) < point { // 123.456 << 2 = 1.23456
-			return f[:point-int(exp)] + "." + f[point-int(exp):point] + f[point+1:], nil
-		}
-		// 123.456 << 5 = 0.00123456
-		return "0." + strings.Repeat("0", int(exp)-point) + f[:point] + f[point+1:], nil
 	}
+	// move point left
+	exp = -exp
+	if int(exp) < point { // 123.456 << 2 = 1.23456
+		return f[:point-int(exp)] + "." + f[point-int(exp):point] + f[point+1:], nil
+	}
+	// 123.456 << 5 = 0.00123456
+	return "0." + strings.Repeat("0", int(exp)-point) + f[:point] + f[point+1:], nil
 }
 
-func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBound uint64, tp byte) (uint64, error) {
+func convertDecimalStrToUint(str string, upperBound uint64, tp byte) (uint64, error) {
 	str, err := convertScientificNotation(str)
 	if err != nil {
 		return 0, err
@@ -271,8 +270,8 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 }
 
 // ConvertDecimalToUint converts a decimal to a uint by converting it to a string first to avoid float overflow (#10181).
-func ConvertDecimalToUint(sc *stmtctx.StatementContext, d *MyDecimal, upperBound uint64, tp byte) (uint64, error) {
-	return convertDecimalStrToUint(sc, string(d.ToString()), upperBound, tp)
+func ConvertDecimalToUint(d *MyDecimal, upperBound uint64, tp byte) (uint64, error) {
+	return convertDecimalStrToUint(string(d.ToString()), upperBound, tp)
 }
 
 // StrToInt converts a string to an integer at the best-effort.
@@ -317,7 +316,7 @@ func StrToUint(ctx Context, str string, isFuncCast bool) (uint64, error) {
 
 // StrToDateTime converts str to MySQL DateTime.
 func StrToDateTime(ctx Context, str string, fsp int) (Time, error) {
-	return ParseTime(ctx, str, mysql.TypeDatetime, fsp, nil)
+	return ParseTime(ctx, str, mysql.TypeDatetime, fsp)
 }
 
 // StrToDuration converts str to Duration. It returns Duration in normal case,
@@ -575,21 +574,21 @@ func StrToFloat(ctx Context, str string, isFuncCast bool) (float64, error) {
 }
 
 // ConvertJSONToInt64 casts JSON into int64.
-func ConvertJSONToInt64(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool) (int64, error) {
-	return ConvertJSONToInt(sc, j, unsigned, mysql.TypeLonglong)
+func ConvertJSONToInt64(ctx Context, j BinaryJSON, unsigned bool) (int64, error) {
+	return ConvertJSONToInt(ctx, j, unsigned, mysql.TypeLonglong)
 }
 
 // ConvertJSONToInt casts JSON into int by type.
-func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool, tp byte) (int64, error) {
+func ConvertJSONToInt(ctx Context, j BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
 	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
-		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
+		return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
 		case JSONLiteralFalse:
 			return 0, nil
 		case JSONLiteralNil:
-			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
+			return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 		default:
 			return 1, nil
 		}
@@ -597,36 +596,34 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool,
 		i := j.GetInt64()
 		if unsigned {
 			uBound := IntergerUnsignedUpperBound(tp)
-			u, err := ConvertIntToUint(sc.TypeFlags(), i, uBound, tp)
-			return int64(u), sc.HandleOverflow(err, err)
+			u, err := ConvertIntToUint(ctx.Flags(), i, uBound, tp)
+			return int64(u), err
 		}
 
 		lBound := IntergerSignedLowerBound(tp)
 		uBound := IntergerSignedUpperBound(tp)
-		i, err := ConvertIntToInt(i, lBound, uBound, tp)
-		return i, sc.HandleOverflow(err, err)
+		return ConvertIntToInt(i, lBound, uBound, tp)
 	case JSONTypeCodeUint64:
 		u := j.GetUint64()
 		if unsigned {
 			uBound := IntergerUnsignedUpperBound(tp)
 			u, err := ConvertUintToUint(u, uBound, tp)
-			return int64(u), sc.HandleOverflow(err, err)
+			return int64(u), err
 		}
 
 		uBound := IntergerSignedUpperBound(tp)
-		i, err := ConvertUintToInt(u, uBound, tp)
-		return i, sc.HandleOverflow(err, err)
+		return ConvertUintToInt(u, uBound, tp)
 	case JSONTypeCodeFloat64:
 		f := j.GetFloat64()
 		if !unsigned {
 			lBound := IntergerSignedLowerBound(tp)
 			uBound := IntergerSignedUpperBound(tp)
 			u, e := ConvertFloatToInt(f, lBound, uBound, tp)
-			return u, sc.HandleOverflow(e, e)
+			return u, e
 		}
 		bound := IntergerUnsignedUpperBound(tp)
-		u, err := ConvertFloatToUint(sc.TypeFlags(), f, bound, tp)
-		return int64(u), sc.HandleOverflow(err, err)
+		u, err := ConvertFloatToUint(ctx.Flags(), f, bound, tp)
+		return int64(u), err
 	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))
 		// The behavior of casting json string as an integer is consistent with casting a string as an integer.
@@ -634,12 +631,11 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool,
 		// doesn't append any warning. This behavior is compatible with MySQL.
 		isNegative := len(str) > 1 && str[0] == '-'
 		if !isNegative {
-			r, err := StrToUint(sc.TypeCtxOrDefault(), str, false)
-			return int64(r), sc.HandleOverflow(err, err)
+			r, err := StrToUint(ctx, str, false)
+			return int64(r), err
 		}
 
-		r, err := StrToInt(sc.TypeCtxOrDefault(), str, false)
-		return r, sc.HandleOverflow(err, err)
+		return StrToInt(ctx, str, false)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
@@ -758,7 +754,7 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 }
 
 // ToString converts an interface to a string.
-func ToString(value interface{}) (string, error) {
+func ToString(value any) (string, error) {
 	switch v := value.(type) {
 	case bool:
 		if v {

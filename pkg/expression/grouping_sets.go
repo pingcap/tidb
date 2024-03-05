@@ -19,8 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -287,10 +285,10 @@ func (gs GroupingSet) MemoryUsage() int64 {
 }
 
 // ToPB is used to convert current grouping set to pb constructor.
-func (gs GroupingSet) ToPB(sc *stmtctx.StatementContext, client kv.Client) (*tipb.GroupingSet, error) {
+func (gs GroupingSet) ToPB(ctx EvalContext, client kv.Client) (*tipb.GroupingSet, error) {
 	res := &tipb.GroupingSet{}
 	for _, gExprs := range gs {
-		gExprsPB, err := ExpressionsToPBList(sc, gExprs, client)
+		gExprsPB, err := ExpressionsToPBList(ctx, gExprs, client)
 		if err != nil {
 			return nil, err
 		}
@@ -336,10 +334,10 @@ func (gss GroupingSets) String() string {
 }
 
 // ToPB is used to convert current grouping sets to pb constructor.
-func (gss GroupingSets) ToPB(sc *stmtctx.StatementContext, client kv.Client) ([]*tipb.GroupingSet, error) {
+func (gss GroupingSets) ToPB(ctx EvalContext, client kv.Client) ([]*tipb.GroupingSet, error) {
 	res := make([]*tipb.GroupingSet, 0, len(gss))
 	for _, gs := range gss {
-		one, err := gs.ToPB(sc, client)
+		one, err := gs.ToPB(ctx, client)
 		if err != nil {
 			return nil, err
 		}
@@ -515,23 +513,18 @@ func AdjustNullabilityFromGroupingSets(gss GroupingSets, schema *Schema) {
 // eg: group by a+b, b+a, b with rollup.
 // the 1st and 2nd expression is semantically equivalent, so we only need to keep the distinct expression: [a+b, b]
 // down, and output another position slice out, the [0, 0, 1] for the case above.
-func DeduplicateGbyExpression(ctx sessionctx.Context, exprs []Expression) ([]Expression, []int) {
+func DeduplicateGbyExpression(exprs []Expression) ([]Expression, []int) {
 	distinctExprs := make([]Expression, 0, len(exprs))
-	sc := ctx.GetSessionVars().StmtCtx
-	sc.CanonicalHashCode = true
-	defer func() {
-		sc.CanonicalHashCode = false
-	}()
 	distinctMap := make(map[string]int, len(exprs))
 	for _, expr := range exprs {
 		// -1 means pos is not assigned yet.
-		distinctMap[string(expr.HashCode(sc))] = -1
+		distinctMap[string(expr.CanonicalHashCode())] = -1
 	}
 	// pos is from 0 to len(distinctMap)-1
 	pos := 0
 	posSlice := make([]int, 0, len(exprs))
 	for _, one := range exprs {
-		key := string(one.HashCode(sc))
+		key := string(one.CanonicalHashCode())
 		if val, ok := distinctMap[key]; ok {
 			if val == -1 {
 				// means a new distinct expr.

@@ -10,6 +10,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/store/helper",
         "//pkg/util",
+        "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_failpoint//:failpoint",

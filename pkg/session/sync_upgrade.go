@@ -19,10 +19,14 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	dist_store "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -61,11 +65,11 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 		childCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		op, err = owner.GetOwnerOpValue(childCtx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
 		cancel()
-		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
+		if err == nil && op.IsSyncedUpgradingState() {
 			break
 		}
 		if i%10 == 0 {
-			logger.Warn("get owner op failed", zap.Stringer("state", op), zap.Error(err))
+			logger.Warn("get owner op failed", zap.Stringer("op", op), zap.Error(err))
 		}
 		time.Sleep(interval)
 	}
@@ -76,11 +80,12 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 
 // SyncNormalRunning syncs normal state to etcd.
 func SyncNormalRunning(s sessionctx.Context) error {
+	bgCtx := context.Background()
 	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			dom := domain.GetDomain(s)
 			//nolint: errcheck
-			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
+			dom.DDL().StateSyncer().UpdateGlobalState(bgCtx, syncer.NewStateInfo(syncer.StateNormalRunning))
 			failpoint.Return(nil)
 		}
 	})
@@ -94,7 +99,15 @@ func SyncNormalRunning(s sessionctx.Context) error {
 		logger.Warn("resume the job failed", zap.Error(e))
 	}
 
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
+	if mgr, _ := dist_store.GetTaskManager(); mgr != nil {
+		ctx := kv.WithInternalSourceType(bgCtx, kv.InternalDistTask)
+		err := mgr.AdjustTaskOverflowConcurrency(ctx, s)
+		if err != nil {
+			log.Warn("cannot adjust task overflow concurrency", zap.Error(err))
+		}
+	}
+
+	ctx, cancelFunc := context.WithTimeout(bgCtx, 3*time.Second)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
 	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
@@ -119,7 +132,7 @@ func IsUpgradingClusterState(s sessionctx.Context) (bool, error) {
 	return stateInfo.State == syncer.StateUpgrading, nil
 }
 
-func printClusterState(s Session, ver int64) {
+func printClusterState(s sessiontypes.Session, ver int64) {
 	// After SupportUpgradeHTTPOpVer version, the upgrade by paused user DDL can be notified through the HTTP API.
 	// We check the global state see if we are upgrading by paused the user DDL.
 	if ver >= SupportUpgradeHTTPOpVer {

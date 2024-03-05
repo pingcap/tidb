@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -109,7 +108,6 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 		numGroups = numRows/sameNum + 1
 	}
 
-	rand.Seed(time.Now().Unix())
 	nullPos := rand.Intn(numGroups)
 	cnt := 0
 	val := rand.Int63()

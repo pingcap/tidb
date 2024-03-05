@@ -20,15 +20,14 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCompare(t *testing.T) {
 	cmpTbl := []struct {
-		lhs interface{}
-		rhs interface{}
+		lhs any
+		rhs any
 		ret int // 0, 1, -1
 	}{
 		{float64(1), float64(1), 0},
@@ -145,12 +144,11 @@ func TestCompare(t *testing.T) {
 	}
 }
 
-func compareForTest(a, b interface{}) (int, error) {
-	sc := stmtctx.NewStmtCtx()
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
+func compareForTest(a, b any) (int, error) {
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)
-	return aDatum.Compare(sc, &bDatum, collate.GetBinaryCollator())
+	return aDatum.Compare(ctx, &bDatum, collate.GetBinaryCollator())
 }
 
 func TestCompareDatum(t *testing.T) {
@@ -168,14 +166,13 @@ func TestCompareDatum(t *testing.T) {
 		{Datum{}, MinNotNullDatum(), -1},
 		{MinNotNullDatum(), MaxValueDatum(), -1},
 	}
-	sc := stmtctx.NewStmtCtx()
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	for i, tt := range cmpTbl {
-		ret, err := tt.lhs.Compare(sc, &tt.rhs, collate.GetBinaryCollator())
+		ret, err := tt.lhs.Compare(ctx, &tt.rhs, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 
-		ret, err = tt.rhs.Compare(sc, &tt.lhs, collate.GetBinaryCollator())
+		ret, err = tt.rhs.Compare(ctx, &tt.lhs, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, -tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 	}

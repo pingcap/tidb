@@ -18,12 +18,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -38,7 +37,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		return plan, planChanged, nil
 	}
 	predicateNeeded := variable.EnableColumnTracking.Load()
-	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
+	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait
 	histNeeded := syncWait > 0
 	predicateColumns, histNeededColumns := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
 	if len(predicateColumns) > 0 {
@@ -49,7 +48,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	}
 
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below.
-	is := sessiontxn.GetTxnManager(plan.SCtx()).GetTxnInfoSchema()
+	is := plan.SCtx().GetInfoSchema().(infoschema.InfoSchema)
 	tblID2Tbl := make(map[int64]table.Table)
 	for _, neededCol := range histNeededColumns {
 		tbl, _ := infoschema.FindTableByTblOrPartID(is, neededCol.TableID)
@@ -96,21 +95,21 @@ func (syncWaitStatsLoadPoint) name() string {
 	return "sync_wait_stats_load_point"
 }
 
-const maxDuration = 1<<63 - 1
-
 // RequestLoadStats send load column/index stats requests to stats handle
-func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemID, syncWait int64) error {
+func RequestLoadStats(ctx PlanContext, neededHistItems []model.TableItemID, syncWait int64) error {
+	maxExecutionTime := ctx.GetSessionVars().GetMaxExecutionTime()
+	if maxExecutionTime > 0 && maxExecutionTime < uint64(syncWait) {
+		syncWait = int64(maxExecutionTime)
+	}
+	failpoint.Inject("assertSyncWaitFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			if syncWait != 1 {
+				panic("syncWait should be 1(ms)")
+			}
+		}
+	})
+	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
-	if hintMaxExecutionTime <= 0 {
-		hintMaxExecutionTime = maxDuration
-	}
-	sessMaxExecutionTime := int64(ctx.GetSessionVars().MaxExecutionTime)
-	if sessMaxExecutionTime <= 0 {
-		sessMaxExecutionTime = maxDuration
-	}
-	waitTime := min(syncWait, hintMaxExecutionTime, sessMaxExecutionTime)
-	var timeout = time.Duration(waitTime)
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
@@ -229,7 +228,7 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 // 1. the indices contained the any one of histNeededColumns, eg: histNeededColumns contained A,B columns, and idx_a is
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
-func collectSyncIndices(ctx sessionctx.Context,
+func collectSyncIndices(ctx PlanContext,
 	histNeededColumns []model.TableItemID,
 	tblID2Tbl map[int64]table.Table,
 ) map[model.TableItemID]struct{} {
@@ -276,10 +275,10 @@ func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededInd
 	return
 }
 
-func recordTableRuntimeStats(sctx sessionctx.Context, tbls map[int64]struct{}) {
+func recordTableRuntimeStats(sctx PlanContext, tbls map[int64]struct{}) {
 	tblStats := sctx.GetSessionVars().StmtCtx.TableStats
 	if tblStats == nil {
-		tblStats = map[int64]interface{}{}
+		tblStats = map[int64]any{}
 	}
 	for tblID := range tbls {
 		tblJSONStats, skip, err := recordSingleTableRuntimeStats(sctx, tblID)
@@ -294,7 +293,7 @@ func recordTableRuntimeStats(sctx sessionctx.Context, tbls map[int64]struct{}) {
 	sctx.GetSessionVars().StmtCtx.TableStats = tblStats
 }
 
-func recordSingleTableRuntimeStats(sctx sessionctx.Context, tblID int64) (stats *statistics.Table, skip bool, err error) {
+func recordSingleTableRuntimeStats(sctx PlanContext, tblID int64) (stats *statistics.Table, skip bool, err error) {
 	dom := domain.GetDomain(sctx)
 	statsHandle := dom.StatsHandle()
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)

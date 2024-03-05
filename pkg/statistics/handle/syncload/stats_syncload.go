@@ -16,6 +16,7 @@ package syncload
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -36,17 +38,17 @@ import (
 )
 
 type statsSyncLoad struct {
-	statsHandle utilstats.StatsHandle
-	StatsLoad   utilstats.StatsLoad
+	statsHandle statstypes.StatsHandle
+	StatsLoad   statstypes.StatsLoad
 }
 
 // NewStatsSyncLoad creates a new StatsSyncLoad.
-func NewStatsSyncLoad(statsHandle utilstats.StatsHandle) utilstats.StatsSyncLoad {
+func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
 	s := &statsSyncLoad{statsHandle: statsHandle}
 	cfg := config.GetGlobalConfig()
 	s.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
-	s.StatsLoad.NeededItemsCh = make(chan *utilstats.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	s.StatsLoad.TimeoutItemsCh = make(chan *utilstats.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	s.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
 	return s
 }
@@ -81,9 +83,9 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
 	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
-	tasks := make([]*utilstats.NeededItemTask, 0)
+	tasks := make([]*statstypes.NeededItemTask, 0)
 	for _, item := range remainedItems {
-		task := &utilstats.NeededItemTask{
+		task := &statstypes.NeededItemTask{
 			TableItemID: item,
 			ToTimeout:   time.Now().Local().Add(timeout),
 			ResultCh:    sc.StatsLoad.ResultCh,
@@ -166,7 +168,7 @@ func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.TableItemID)
 }
 
 // AppendNeededItem appends needed columns/indices to ch, it is only used for test
-func (s *statsSyncLoad) AppendNeededItem(task *utilstats.NeededItemTask, timeout time.Duration) error {
+func (s *statsSyncLoad) AppendNeededItem(task *statstypes.NeededItemTask, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
@@ -186,7 +188,7 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 		logutil.BgLogger().Info("SubLoadWorker exited.")
 	}()
 	// if the last task is not successfully handled in last round for error or panic, pass it to this round to retry
-	var lastTask *utilstats.NeededItemTask
+	var lastTask *statstypes.NeededItemTask
 	for {
 		task, err := s.HandleOneTask(sctx, lastTask, exit)
 		lastTask = task
@@ -195,7 +197,10 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 			case errExit:
 				return
 			default:
-				time.Sleep(s.statsHandle.Lease() / 10)
+				// To avoid the thundering herd effect
+				// thundering herd effect: Everyone tries to retry a large number of requests simultaneously when a problem occurs.
+				r := rand.Intn(500)
+				time.Sleep(s.statsHandle.Lease()/10 + time.Duration(r)*time.Microsecond)
 				continue
 			}
 		}
@@ -203,7 +208,7 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
-func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *utilstats.NeededItemTask, exit chan struct{}) (task *utilstats.NeededItemTask, err error) {
+func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -225,7 +230,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *utilsta
 	return s.handleOneItemTask(sctx, task)
 }
 
-func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *utilstats.NeededItemTask) (*utilstats.NeededItemTask, error) {
+func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (*statstypes.NeededItemTask, error) {
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
 	tbl, ok := s.statsHandle.Get(item.TableID)
@@ -367,7 +372,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
-func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*utilstats.NeededItemTask, error) {
+func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItemTask, error) {
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
@@ -407,7 +412,7 @@ func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*utilstats.NeededItemT
 }
 
 // writeToTimeoutChan writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
-func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *utilstats.NeededItemTask, task *utilstats.NeededItemTask) {
+func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *statstypes.NeededItemTask, task *statstypes.NeededItemTask) {
 	select {
 	case taskCh <- task:
 	default:
@@ -415,7 +420,7 @@ func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *utilstats.NeededItemTask, 
 }
 
 // writeToChanWithTimeout writes a task to a channel and blocks until timeout.
-func (*statsSyncLoad) writeToChanWithTimeout(taskCh chan *utilstats.NeededItemTask, task *utilstats.NeededItemTask, timeout time.Duration) error {
+func (*statsSyncLoad) writeToChanWithTimeout(taskCh chan *statstypes.NeededItemTask, task *statstypes.NeededItemTask, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {

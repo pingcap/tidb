@@ -25,11 +25,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/types"
@@ -53,7 +55,7 @@ type TestKit struct {
 	assert  *assert.Assertions
 	t       testing.TB
 	store   kv.Storage
-	session session.Session
+	session sessiontypes.Session
 	alloc   chunk.Allocator
 }
 
@@ -77,7 +79,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		if ok {
 			mockSm.mu.Lock()
 			if mockSm.Conn == nil {
-				mockSm.Conn = make(map[uint64]session.Session)
+				mockSm.Conn = make(map[uint64]sessiontypes.Session)
 			}
 			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
 			mockSm.mu.Unlock()
@@ -89,7 +91,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 }
 
 // NewTestKitWithSession returns a new *TestKit.
-func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *TestKit {
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Session) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -102,25 +104,25 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
-	tk.session = newSession(tk.t, tk.store)
+	tk.session = NewSession(tk.t, tk.store)
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // SetSession set the session of testkit
-func (tk *TestKit) SetSession(session session.Session) {
+func (tk *TestKit) SetSession(session sessiontypes.Session) {
 	tk.session = session
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
-func (tk *TestKit) Session() session.Session {
+func (tk *TestKit) Session() sessiontypes.Session {
 	return tk.session
 }
 
 // MustExec executes a sql statement and asserts nil error.
-func (tk *TestKit) MustExec(sql string, args ...interface{}) {
+func (tk *TestKit) MustExec(sql string, args ...any) {
 	defer func() {
 		if tk.alloc != nil {
 			tk.alloc.Reset()
@@ -131,7 +133,7 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 }
 
 // MustExecWithContext executes a sql statement and asserts nil error.
-func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...interface{}) {
+func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...any) {
 	res, err := tk.ExecWithContext(ctx, sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
 	tk.require.NoError(err, comment)
@@ -143,7 +145,7 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
-func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 	defer func() {
 		if tk.alloc != nil {
 			tk.alloc.Reset()
@@ -155,8 +157,8 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 // EventuallyMustQueryAndCheck query the statements and assert that
 // result rows.lt will equal the expected results in waitFor time, periodically checking equality each tick.
 // Note: retry can't ignore error of the statements. If statements returns error, it will break out.
-func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []interface{},
-	expected [][]interface{}, waitFor time.Duration, tick time.Duration) {
+func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []any,
+	expected [][]any, waitFor time.Duration, tick time.Duration) {
 	defer func() {
 		if tk.alloc != nil {
 			tk.alloc.Reset()
@@ -169,7 +171,7 @@ func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []interface{},
 }
 
 // MustQueryWithContext query the statements and returns result rows.
-func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...interface{}) *Result {
+func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...any) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
 	rs, err := tk.ExecWithContext(ctx, sql, args...)
 	tk.require.NoError(err, comment)
@@ -178,7 +180,7 @@ func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ..
 }
 
 // EventuallyMustIndexLookup checks whether the plan for the sql is IndexLookUp.
-func (tk *TestKit) EventuallyMustIndexLookup(sql string, args ...interface{}) *Result {
+func (tk *TestKit) EventuallyMustIndexLookup(sql string, args ...any) *Result {
 	require.Eventually(tk.t, func() bool {
 		ok, _ := tk.hasPlan(sql, "IndexLookUp", args...)
 		return ok
@@ -187,13 +189,13 @@ func (tk *TestKit) EventuallyMustIndexLookup(sql string, args ...interface{}) *R
 }
 
 // MustIndexLookup checks whether the plan for the sql is IndexLookUp.
-func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
+func (tk *TestKit) MustIndexLookup(sql string, args ...any) *Result {
 	tk.MustHavePlan(sql, "IndexLookUp", args...)
 	return tk.MustQuery(sql, args...)
 }
 
 // MustPartition checks if the result execution plan must read specific partitions.
-func (tk *TestKit) MustPartition(sql string, partitions string, args ...interface{}) *Result {
+func (tk *TestKit) MustPartition(sql string, partitions string, args ...any) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	ok := len(partitions) == 0
 	for i := range rs.rows {
@@ -210,7 +212,7 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 }
 
 // MustPartitionByList checks if the result execution plan must read specific partitions by list.
-func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...interface{}) *Result {
+func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...any) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	ok := len(partitions) == 0
 	for i := range rs.rows {
@@ -230,7 +232,7 @@ func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...
 }
 
 // QueryToErr executes a sql statement and discard results.
-func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
+func (tk *TestKit) QueryToErr(sql string, args ...any) error {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
 	res, err := tk.Exec(sql, args...)
 	tk.require.NoError(err, comment)
@@ -253,7 +255,7 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
 }
 
-func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) (bool, *Result) {
+func (tk *TestKit) hasPlan(sql string, plan string, args ...any) (bool, *Result) {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][0], plan) {
@@ -264,19 +266,19 @@ func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) (bool, 
 }
 
 // MustHavePlan checks if the result execution plan contains specific plan.
-func (tk *TestKit) MustHavePlan(sql string, plan string, args ...interface{}) {
+func (tk *TestKit) MustHavePlan(sql string, plan string, args ...any) {
 	has, rs := tk.hasPlan(sql, plan, args...)
 	tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s, full plan %v", sql, plan, rs.Rows()))
 }
 
 // MustNotHavePlan checks if the result execution plan contains specific plan.
-func (tk *TestKit) MustNotHavePlan(sql string, plan string, args ...interface{}) {
+func (tk *TestKit) MustNotHavePlan(sql string, plan string, args ...any) {
 	has, rs := tk.hasPlan(sql, plan, args...)
 	tk.require.False(has, fmt.Sprintf("%s shouldn't have plan %s, full plan %v", sql, plan, rs.Rows()))
 }
 
 // HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
-func (tk *TestKit) HasTiFlashPlan(sql string, args ...interface{}) bool {
+func (tk *TestKit) HasTiFlashPlan(sql string, args ...any) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][2], "tiflash") {
@@ -299,7 +301,7 @@ func (tk *TestKit) HasPlanForLastExecution(plan string) bool {
 }
 
 // HasKeywordInOperatorInfo checks if the result execution plan contains specific keyword in the operator info.
-func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
+func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...any) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][4], keyword) {
@@ -310,7 +312,7 @@ func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...
 }
 
 // NotHasKeywordInOperatorInfo checks if the result execution plan doesn't contain specific keyword in the operator info.
-func (tk *TestKit) NotHasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
+func (tk *TestKit) NotHasKeywordInOperatorInfo(sql string, keyword string, args ...any) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][4], keyword) {
@@ -331,13 +333,13 @@ func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 }
 
 // Exec executes a sql statement using the prepared stmt API
-func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	return tk.ExecWithContext(ctx, sql, args...)
 }
 
 // ExecWithContext executes a sql statement using the prepared stmt API
-func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
+func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
@@ -405,7 +407,7 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 }
 
 // ExecToErr executes a sql statement and discard results.
-func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
+func (tk *TestKit) ExecToErr(sql string, args ...any) error {
 	res, err := tk.Exec(sql, args...)
 	if res != nil {
 		tk.require.NoError(res.Close())
@@ -414,7 +416,7 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 }
 
 // MustExecToErr executes a sql statement and must return Error.
-func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
+func (tk *TestKit) MustExecToErr(sql string, args ...any) {
 	res, err := tk.Exec(sql, args...)
 	if res != nil {
 		tk.require.NoError(res.Close())
@@ -422,7 +424,8 @@ func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
 	tk.require.Error(err)
 }
 
-func newSession(t testing.TB, store kv.Storage) session.Session {
+// NewSession creates a new session environment for test.
+func NewSession(t testing.TB, store kv.Storage) sessiontypes.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
@@ -460,21 +463,21 @@ func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
 }
 
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
-func (tk *TestKit) MustContainErrMsg(sql string, errStr interface{}) {
+func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 	err := tk.ExecToErr(sql)
 	tk.require.Error(err)
 	tk.require.Contains(err.Error(), errStr)
 }
 
 // MustMatchErrMsg executes a sql statement and assert its error message matching errRx.
-func (tk *TestKit) MustMatchErrMsg(sql string, errRx interface{}) {
+func (tk *TestKit) MustMatchErrMsg(sql string, errRx any) {
 	err := tk.ExecToErr(sql)
 	tk.require.Error(err)
 	tk.require.Regexp(errRx, err.Error())
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
-func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...any) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][3], "index:"+index) {
@@ -505,7 +508,7 @@ func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 }
 
 // MustPointGet checks whether the plan for the sql is Point_Get.
-func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
+func (tk *TestKit) MustPointGet(sql string, args ...any) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	tk.require.Len(rs.rows, 1)
 	tk.require.Contains(rs.rows[0][0], "Point_Get", "plan %v", rs.rows[0][0])
@@ -513,7 +516,7 @@ func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 }
 
 // UsedPartitions returns the partition names that will be used or all/dual.
-func (tk *TestKit) UsedPartitions(sql string, args ...interface{}) *Result {
+func (tk *TestKit) UsedPartitions(sql string, args ...any) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	var usedPartitions [][]string
 	for i := range rs.rows {
@@ -565,17 +568,17 @@ func (tk *TestKit) CheckLastMessage(msg string) {
 }
 
 // RequireEqual checks if actual is equal to the expected
-func (tk *TestKit) RequireEqual(expected interface{}, actual interface{}, msgAndArgs ...interface{}) {
+func (tk *TestKit) RequireEqual(expected any, actual any, msgAndArgs ...any) {
 	tk.require.Equal(expected, actual, msgAndArgs...)
 }
 
 // RequireNotEqual checks if actual is not equal to the expected
-func (tk *TestKit) RequireNotEqual(expected interface{}, actual interface{}, msgAndArgs ...interface{}) {
+func (tk *TestKit) RequireNotEqual(expected any, actual any, msgAndArgs ...any) {
 	tk.require.NotEqual(expected, actual, msgAndArgs...)
 }
 
 // RequireNoError checks if error happens
-func (tk *TestKit) RequireNoError(err error, msgAndArgs ...interface{}) {
+func (tk *TestKit) RequireNoError(err error, msgAndArgs ...any) {
 	tk.require.NoError(err, msgAndArgs)
 }
 
@@ -682,4 +685,12 @@ func buildRowsRecordSet(ctx context.Context, rs sqlexec.RecordSet) sqlexec.Recor
 		rows:   rows,
 		idx:    0,
 	}
+}
+
+// EnableFailPoint enables fail-point, and disable it when test finished.
+func EnableFailPoint(t testing.TB, name, expr string) {
+	require.NoError(t, failpoint.Enable(name, expr))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(name))
+	})
 }

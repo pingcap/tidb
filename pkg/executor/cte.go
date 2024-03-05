@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cteutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 var _ exec.Executor = &CTEExec{}
@@ -91,6 +93,9 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 			return err
 		}
 	}
+	if e.producer.openErr != nil {
+		return e.producer.openErr
+	}
 	if !e.producer.opened {
 		if err = e.producer.openProducer(ctx, e); err != nil {
 			return err
@@ -111,21 +116,40 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	return e.producer.getChunk(e, req)
 }
 
+func setFirstErr(firstErr error, newErr error, msg string) error {
+	if newErr != nil {
+		logutil.BgLogger().Error("cte got error", zap.Any("err", newErr), zap.Any("extra msg", msg))
+		if firstErr == nil {
+			firstErr = newErr
+		}
+	}
+	return firstErr
+}
+
 // Close implements the Executor interface.
-func (e *CTEExec) Close() (err error) {
-	e.producer.resTbl.Lock()
-	if !e.producer.closed {
-		// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
-		// It means you can still read resTbl after call closeProducer().
-		// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
-		// Separating these three function calls is only to follow the abstraction of the volcano model.
-		err = e.producer.closeProducer()
-	}
-	e.producer.resTbl.Unlock()
-	if err != nil {
-		return err
-	}
-	return e.BaseExecutor.Close()
+func (e *CTEExec) Close() (firstErr error) {
+	func() {
+		e.producer.resTbl.Lock()
+		defer e.producer.resTbl.Unlock()
+		if !e.producer.closed {
+			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
+				ok := v.(bool)
+				if ok {
+					// mock an oom panic, returning ErrMemoryExceedForQuery for error identification in recovery work.
+					panic(exeerrors.ErrMemoryExceedForQuery)
+				}
+			})
+			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
+			// It means you can still read resTbl after call closeProducer().
+			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
+			// Separating these three function calls is only to follow the abstraction of the volcano model.
+			err := e.producer.closeProducer()
+			firstErr = setFirstErr(firstErr, err, "close cte producer error")
+		}
+	}()
+	err := e.BaseExecutor.Close()
+	firstErr = setFirstErr(firstErr, err, "close cte children error")
+	return
 }
 
 func (e *CTEExec) reset() {
@@ -135,9 +159,15 @@ func (e *CTEExec) reset() {
 }
 
 type cteProducer struct {
+	// opened should be false when not open or open fail(a.k.a. openErr != nil)
 	opened   bool
 	produced bool
 	closed   bool
+
+	// cteProducer is shared by multiple operators, so if the first operator tries to open
+	// and got error, the second should return open error directly instead of open again.
+	// Otherwise there may be resource leak because Close() only clean resource for the last Open().
+	openErr error
 
 	ctx sessionctx.Context
 
@@ -172,30 +202,35 @@ type cteProducer struct {
 }
 
 func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
+	defer func() {
+		p.openErr = err
+		if err == nil {
+			p.opened = true
+		} else {
+			p.opened = false
+		}
+	}()
 	if p.seedExec == nil {
 		return errors.New("seedExec for CTEExec is nil")
 	}
-	if err = p.seedExec.Open(ctx); err != nil {
+	if err = exec.Open(ctx, p.seedExec); err != nil {
 		return err
 	}
 
-	if p.memTracker != nil {
-		p.memTracker.Reset()
-	} else {
-		p.memTracker = memory.NewTracker(cteExec.ID(), -1)
-	}
+	p.resetTracker()
+	p.memTracker = memory.NewTracker(cteExec.ID(), -1)
 	p.diskTracker = disk.NewTracker(cteExec.ID(), -1)
 	p.memTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.MemTracker)
 	p.diskTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	if p.recursiveExec != nil {
-		if err = p.recursiveExec.Open(ctx); err != nil {
+		if err = exec.Open(ctx, p.recursiveExec); err != nil {
 			return err
 		}
 		// For non-recursive CTE, the result will be put into resTbl directly.
 		// So no need to build iterOutTbl.
 		// Construct iterOutTbl in Open() instead of buildCTE(), because its destruct is in Close().
-		recursiveTypes := p.recursiveExec.Base().RetFieldTypes()
+		recursiveTypes := p.recursiveExec.RetFieldTypes()
 		p.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, cteExec.MaxChunkSize())
 		if err = p.iterOutTbl.OpenAndRef(); err != nil {
 			return err
@@ -205,7 +240,7 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	if p.isDistinct {
 		p.hashTbl = newConcurrentMapHashTable()
 		p.hCtx = &hashContext{
-			allTypes: cteExec.Base().RetFieldTypes(),
+			allTypes: cteExec.RetFieldTypes(),
 		}
 		// We use all columns to compute hash.
 		p.hCtx.keyColIdx = make([]int, len(p.hCtx.allTypes))
@@ -213,28 +248,30 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 			p.hCtx.keyColIdx[i] = i
 		}
 	}
-	p.opened = true
 	return nil
 }
 
-func (p *cteProducer) closeProducer() (err error) {
-	if err = p.seedExec.Close(); err != nil {
-		return err
-	}
+func (p *cteProducer) closeProducer() (firstErr error) {
+	err := exec.Close(p.seedExec)
+	firstErr = setFirstErr(firstErr, err, "close seedExec err")
+
 	if p.recursiveExec != nil {
-		if err = p.recursiveExec.Close(); err != nil {
-			return err
-		}
+		err = exec.Close(p.recursiveExec)
+		firstErr = setFirstErr(firstErr, err, "close recursiveExec err")
+
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
 		if p.iterOutTbl != nil {
-			if err = p.iterOutTbl.DerefAndClose(); err != nil {
-				return err
-			}
+			err = p.iterOutTbl.DerefAndClose()
+			firstErr = setFirstErr(firstErr, err, "deref iterOutTbl err")
 		}
 	}
+	// Reset to nil instead of calling Detach(),
+	// because ExplainExec still needs tracker to get mem usage info.
+	p.memTracker = nil
+	p.diskTracker = nil
 	p.closed = true
-	return nil
+	return
 }
 
 func (p *cteProducer) getChunk(cteExec *CTEExec, req *chunk.Chunk) (err error) {
@@ -414,10 +451,10 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			}
 			// Make sure iterInTbl is setup before Close/Open,
 			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
-			if err = p.recursiveExec.Close(); err != nil {
+			if err = exec.Close(p.recursiveExec); err != nil {
 				return
 			}
-			if err = p.recursiveExec.Open(ctx); err != nil {
+			if err = exec.Open(ctx, p.recursiveExec); err != nil {
 				return
 			}
 		} else {
@@ -477,8 +514,20 @@ func (p *cteProducer) reset() {
 	p.hashTbl = nil
 
 	p.opened = false
+	p.openErr = nil
 	p.produced = false
 	p.closed = false
+}
+
+func (p *cteProducer) resetTracker() {
+	if p.memTracker != nil {
+		p.memTracker.Reset()
+		p.memTracker = nil
+	}
+	if p.diskTracker != nil {
+		p.diskTracker.Reset()
+		p.diskTracker = nil
+	}
 }
 
 func (p *cteProducer) reopenTbls() (err error) {
@@ -546,13 +595,23 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 			hashBitMap[val] = true
 		}
 	} else {
+		// Length of p.sel is init as MaxChunkSize, but the row num of chunk may still exceeds MaxChunkSize.
+		// So needs to handle here to make sure len(p.sel) == chk.NumRows().
+		if len(p.sel) < numRows {
+			tmpSel := make([]int, numRows-len(p.sel))
+			for i := 0; i < len(tmpSel); i++ {
+				tmpSel[i] = i + len(p.sel)
+			}
+			p.sel = append(p.sel, tmpSel...)
+		}
+
 		// All rows is selected, sel will be [0....numRows).
 		// e.sel is setup when building executor.
 		sel = p.sel
 	}
 
 	for i := 0; i < chk.NumCols(); i++ {
-		if err = codec.HashChunkSelected(p.ctx.GetSessionVars().StmtCtx, p.hCtx.hashVals,
+		if err = codec.HashChunkSelected(p.ctx.GetSessionVars().StmtCtx.TypeCtx(), p.hCtx.hashVals,
 			chk, p.hCtx.allTypes[i], i, p.hCtx.buf, p.hCtx.hasNull,
 			hashBitMap, false); err != nil {
 			return nil, err
@@ -647,7 +706,7 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 		if err != nil {
 			return false, err
 		}
-		isEqual, err := codec.EqualChunkRow(p.ctx.GetSessionVars().StmtCtx,
+		isEqual, err := codec.EqualChunkRow(p.ctx.GetSessionVars().StmtCtx.TypeCtx(),
 			row, p.hCtx.allTypes, p.hCtx.keyColIdx,
 			matchedRow, p.hCtx.allTypes, p.hCtx.keyColIdx)
 		if err != nil {

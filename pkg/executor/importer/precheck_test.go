@@ -50,9 +50,9 @@ func createMockETCD(t *testing.T) (string, *embed.Etcd) {
 	randPort := int(rand.Int31n(40000)) + 20000
 	clientAddr := fmt.Sprintf(addrFmt, randPort)
 	lcurl, _ := url.Parse(clientAddr)
-	cfg.LCUrls, cfg.ACUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
+	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
 	lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, randPort+1))
-	cfg.LPUrls, cfg.APUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
+	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
 	cfg.InitialCluster = "default=" + lpurl.String()
 	cfg.Logger = "zap"
 	embedEtcd, err := embed.StartEtcd(cfg)
@@ -81,7 +81,8 @@ func TestCheckRequirements(t *testing.T) {
 
 	c := &importer.LoadDataController{
 		Plan: &importer.Plan{
-			DBName: "test",
+			DBName:         "test",
+			DataSourceType: importer.DataSourceTypeFile,
 		},
 		Table: tableObj,
 	}
@@ -132,6 +133,10 @@ func TestCheckRequirements(t *testing.T) {
 	err = c.CheckRequirements(ctx, conn)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "found PiTR log streaming")
+	// disable precheck, should pass
+	c.DisablePrecheck = true
+	require.NoError(t, c.CheckRequirements(ctx, conn))
+	c.DisablePrecheck = false // revert back
 
 	// remove PiTR task, and mock a CDC task
 	_, err = etcdCli.Delete(ctx, pitrKey)

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,7 +75,7 @@ func (j job) String(redacted bool) string {
 }
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
-func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session) (sqlexec.RecordSet, error) {
+func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) (sqlexec.RecordSet, error) {
 	sessVars := se.GetSessionVars()
 	originalReadStaleness := se.GetSessionVars().ReadStaleness
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
@@ -129,7 +130,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 //
 // Note: this is not a comprehensive check.
 // We do this to help user prevent some easy mistakes, at an acceptable maintenance cost.
-func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStmt,
+func checkConstraintWithShardColumn(se sessiontypes.Session, stmt *ast.NonTransactionalDMLStmt,
 	tableName *ast.TableName, shardColumnInfo *model.ColumnInfo, tableSources []*ast.TableSource) error {
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.UpdateStmt:
@@ -148,7 +149,7 @@ func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStm
 }
 
 // shard column should not be updated.
-func checkUpdateShardColumn(se Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
+func checkUpdateShardColumn(se sessiontypes.Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
 	tableName *ast.TableName, tableSources []*ast.TableSource, isUpdate bool) error {
 	// if the table has alias, the alias is used in assignments, and we should use aliased name to compare
 	aliasedShardColumnTableName := tableName.Name.L
@@ -178,7 +179,7 @@ func checkUpdateShardColumn(se Session, assignments []*ast.Assignment, shardColu
 	return nil
 }
 
-func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
+func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) error {
 	sessVars := se.GetSessionVars()
 	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
 		return errors.Errorf("non-transactional DML can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
@@ -256,7 +257,7 @@ func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
 
 // single-threaded worker. work on the key range [start, end]
 func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
-	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) ([]string, error) {
+	tableName *ast.TableName, se sessiontypes.Session, originalCondition ast.ExprNode) ([]string, error) {
 	// prepare for the construction of statement
 	var shardColumnRefer *ast.ResultField
 	var shardColumnType types.FieldType
@@ -331,7 +332,7 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 	return splitStmts, nil
 }
 
-func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se Session, dryRun bool) string {
+func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se sessiontypes.Session, dryRun bool) string {
 	var whereCondition ast.ExprNode
 
 	if job.start.IsNull() {
@@ -441,7 +442,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	return ""
 }
 
-func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session,
+func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session,
 	selectSQL string, shardColumnInfo *model.ColumnInfo, memTracker *memory.Tracker) ([]job, error) {
 	var shardColumnCollate string
 	if shardColumnInfo != nil {
@@ -509,7 +510,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 			}
 			newEnd := row.GetDatum(0, &rs.Fields()[0].Column.FieldType)
 			if currentSize >= batchSize {
-				cmp, err := newEnd.Compare(se.GetSessionVars().StmtCtx, &currentEnd, collate.GetCollator(shardColumnCollate))
+				cmp, err := newEnd.Compare(se.GetSessionVars().StmtCtx.TypeCtx(), &currentEnd, collate.GetCollator(shardColumnCollate))
 				if err != nil {
 					return nil, err
 				}
@@ -536,7 +537,7 @@ func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size i
 	return jobs
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
+func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) (
 	*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
 	// only use the first table
 	join, ok := stmt.DMLStmt.TableRefsJoin()
@@ -582,7 +583,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
 	return tableName, selectSQL, shardColumnInfo, tableSources, nil
 }
 
-func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSources []*ast.TableSource,
+func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session, tableSources []*ast.TableSource,
 	leftMostTableName *ast.TableName, leftMostTableSource *ast.TableSource) (
 	*model.ColumnInfo, *ast.TableName, error) {
 	var indexed bool
@@ -790,9 +791,9 @@ func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (s
 		},
 		ColumnAsName: model.NewCIStr(fieldName),
 	}}
-	rows := make([][]interface{}, 0, len(results))
+	rows := make([][]any, 0, len(results))
 	for _, result := range results {
-		row := make([]interface{}, 1)
+		row := make([]any, 1)
 		row[0] = result
 		rows = append(rows, row)
 	}
@@ -825,8 +826,8 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 				ColumnAsName: model.NewCIStr("job status"),
 			},
 		}
-		rows := make([][]interface{}, 1)
-		row := make([]interface{}, 2)
+		rows := make([][]any, 1)
+		row := make([]any, 2)
 		row[0] = len(jobs)
 		row[1] = "all succeeded"
 		rows[0] = row

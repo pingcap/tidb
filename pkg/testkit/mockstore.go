@@ -18,7 +18,9 @@ package testkit
 
 import (
 	"flag"
+	"os"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -65,8 +67,64 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		view.Stop()
 	})
 	gctuner.GlobalMemoryLimitTuner.Stop()
+	tryMakeImage()
 	store, _ := CreateMockStoreAndDomain(t, opts...)
 	return store
+}
+
+// tryMakeImage tries to create a bootstraped storage, the store is used as image for testing later.
+func tryMakeImage(opts ...mockstore.MockTiKVStoreOption) {
+	if mockstore.ImageAvailable() {
+		return
+	}
+	retry, err := false, error(nil)
+	for err == nil {
+		retry, err = tryMakeImageOnce()
+		if !retry {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func tryMakeImageOnce() (retry bool, err error) {
+	const lockFile = "/tmp/tidb-unistore-bootstraped-image-lock-file"
+	lock, err := os.Create(lockFile)
+	if err != nil {
+		return true, nil
+	}
+	defer func() { err = os.Remove(lockFile) }()
+	defer lock.Close()
+
+	// Prevent other process from creating the image concurrently
+	err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		return true, nil
+	}
+	defer func() { err = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+
+	// Now this is the only instance to do the operation.
+	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+		mockstore.WithPath(mockstore.ImageFilePath))
+	if err != nil {
+		return false, err
+	}
+
+	session.SetSchemaLease(500 * time.Millisecond)
+	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		return false, err
+	}
+	dom.SetStatsUpdating(true)
+
+	dom.Close()
+	err = store.Close()
+
+	return false, err
 }
 
 // DistExecutionContext is the context
@@ -165,6 +223,11 @@ func (d *DistExecutionContext) Close() {
 // GetDomain get domain by index.
 func (d *DistExecutionContext) GetDomain(idx int) *domain.Domain {
 	return d.domains[idx]
+}
+
+// GetDomainCnt get domain count.
+func (d *DistExecutionContext) GetDomainCnt() int {
+	return len(d.domains)
 }
 
 // NewDistExecutionContext create DistExecutionContext for testing.

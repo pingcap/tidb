@@ -17,10 +17,7 @@ package importer
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,7 +31,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -60,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
@@ -68,8 +63,8 @@ import (
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/mock/gomock"
 )
 
@@ -210,7 +205,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableImporter structure
 	var err error
-	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
@@ -515,7 +510,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
@@ -766,7 +761,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
+		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -1096,52 +1091,71 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	rc.checkpointsWg.Wait()
 }
 
+type mockPDHTTPCli struct {
+	pdhttp.Client
+	storesInfo   *pdhttp.StoresInfo
+	replicaCfg   map[string]any
+	emptyRegions *pdhttp.RegionsInfo
+}
+
+func (c mockPDHTTPCli) GetStores(context.Context) (*pdhttp.StoresInfo, error) {
+	return c.storesInfo, nil
+}
+
+func (c mockPDHTTPCli) GetReplicateConfig(context.Context) (map[string]any, error) {
+	return c.replicaCfg, nil
+}
+
+func (c mockPDHTTPCli) GetEmptyRegions(context.Context) (*pdhttp.RegionsInfo, error) {
+	return c.emptyRegions, nil
+}
+
 func (s *tableRestoreSuite) TestCheckClusterResource() {
 	cases := []struct {
-		mockStoreResponse   []byte
-		mockReplicaResponse []byte
+		mockStoreResponse   *pdhttp.StoresInfo
+		mockReplicaResponse map[string]any
 		expectMsg           string
 		expectResult        bool
 		expectErrorCount    int
 	}{
 		{
-			[]byte(`{
-				"count": 1,
-				"stores": [
+			&pdhttp.StoresInfo{
+				Count: 1,
+				Stores: []pdhttp.StoreInfo{
 					{
-						"store": {
-							"id": 2
+						Store: pdhttp.MetaStore{
+							ID: 2,
 						},
-						"status": {
-							"available": "24"
-						}
-					}
-				]
-			}`),
-			[]byte(`{
-				"max-replicas": 1
-			}`),
+						Status: pdhttp.StoreStatus{
+							Available: "24",
+						},
+					},
+				},
+			},
+			map[string]any{
+				"max-replicas": 1.0,
+			},
 			"(.*)The storage space is rich(.*)",
 			true,
 			0,
 		},
 		{
-			[]byte(`{
-				"count": 1,
-				"stores": [
+			&pdhttp.StoresInfo{
+				Count: 1,
+				Stores: []pdhttp.StoreInfo{
 					{
-						"store": {
-							"id": 2
+						Store: pdhttp.MetaStore{
+							ID: 2,
 						},
-						"status": {
-							"available": "15"
-						}
-					}
-				]
-			}`),
-			[]byte(`{
-				"max-replicas": 1
-			}`),
+						Status: pdhttp.StoreStatus{
+							Available: "15",
+						},
+					},
+				},
+			},
+			map[string]any{
+				"max-replicas": 1.0,
+			},
 			"(.*)Please increase storage(.*)",
 			true,
 			0,
@@ -1163,29 +1177,17 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 	require.NoError(s.T(), err)
 	mockStore, err := storage.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
-	_, _, pdClient, err := testutils.NewMockTiKV("", nil)
-	require.NoError(s.T(), err)
 	for _, ca := range cases {
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			var err error
-			if strings.HasSuffix(req.URL.Path, "stores") {
-				_, err = w.Write(ca.mockStoreResponse)
-			} else {
-				_, err = w.Write(ca.mockReplicaResponse)
-			}
-			require.NoError(s.T(), err)
-		}))
-
-		tls := common.NewTLSFromMockServer(server)
 		template := NewSimpleTemplate()
 
-		url := strings.TrimPrefix(server.URL, "https://")
-		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
-		pdCli := &mockPDClient{Client: pdClient, leaderAddr: url}
+		cfg := &config.Config{}
+		cli := &mockPDHTTPCli{
+			storesInfo: ca.mockStoreResponse,
+			replicaCfg: ca.mockReplicaResponse,
+		}
 		targetInfoGetter := &TargetInfoGetterImpl{
-			cfg:   cfg,
-			tls:   tls,
-			pdCli: pdCli,
+			cfg:       cfg,
+			pdHTTPCli: cli,
 		}
 		preInfoGetter := &PreImportInfoGetterImpl{
 			cfg:              cfg,
@@ -1195,12 +1197,11 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
-			tls:                 tls,
 			store:               mockStore,
 			checkTemplate:       template,
 			preInfoGetter:       preInfoGetter,
 			precheckItemBuilder: theCheckBuilder,
-			pdCli:               pdCli,
+			pdHTTPCli:           cli,
 		}
 		var sourceSize int64
 		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
@@ -1218,8 +1219,6 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(precheck.Critical))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
-
-		server.Close()
 	}
 }
 
@@ -1248,41 +1247,39 @@ func (m *mockPDClient) GetLeaderAddr() string {
 
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
-		stores         pdtypes.StoresInfo
-		emptyRegions   pdtypes.RegionsInfo
+		stores         pdhttp.StoresInfo
+		emptyRegions   pdhttp.RegionsInfo
 		expectMsgs     []string
 		expectErrorCnt int
 	}
 
-	makeRegions := func(regionCnt int, storeID uint64) []pdtypes.RegionInfo {
-		var regions []pdtypes.RegionInfo
+	makeRegions := func(regionCnt int, storeID int64) []pdhttp.RegionInfo {
+		var regions []pdhttp.RegionInfo
 		for i := 0; i < regionCnt; i++ {
-			regions = append(regions, pdtypes.RegionInfo{Peers: []pdtypes.MetaPeer{{Peer: &metapb.Peer{StoreId: storeID}}}})
+			regions = append(regions, pdhttp.RegionInfo{Peers: []pdhttp.RegionPeer{{StoreID: storeID}}})
 		}
 		return regions
 	}
-	_, _, pdClient, err := testutils.NewMockTiKV("", nil)
-	require.NoError(s.T(), err)
 
 	testCases := []testCase{
 		{
-			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 200}},
+			stores: pdhttp.StoresInfo{Stores: []pdhttp.StoreInfo{
+				{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{RegionCount: 200}},
 			}},
-			emptyRegions: pdtypes.RegionsInfo{
-				Regions: append([]pdtypes.RegionInfo(nil), makeRegions(100, 1)...),
+			emptyRegions: pdhttp.RegionsInfo{
+				Regions: append([]pdhttp.RegionInfo(nil), makeRegions(100, 1)...),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
 			expectErrorCnt: 0,
 		},
 		{
-			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 2000}},
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 3100}},
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
+			stores: pdhttp.StoresInfo{Stores: []pdhttp.StoreInfo{
+				{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{RegionCount: 2000}},
+				{Store: pdhttp.MetaStore{ID: 2}, Status: pdhttp.StoreStatus{RegionCount: 3100}},
+				{Store: pdhttp.MetaStore{ID: 3}, Status: pdhttp.StoreStatus{RegionCount: 2500}},
 			}},
-			emptyRegions: pdtypes.RegionsInfo{
-				Regions: append(append(append([]pdtypes.RegionInfo(nil),
+			emptyRegions: pdhttp.RegionsInfo{
+				Regions: append(append(append([]pdhttp.RegionInfo(nil),
 					makeRegions(600, 1)...),
 					makeRegions(300, 2)...),
 					makeRegions(1200, 3)...),
@@ -1295,55 +1292,34 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			expectErrorCnt: 1, // empty region too large
 		},
 		{
-			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 1200}},
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 3000}},
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
+			stores: pdhttp.StoresInfo{Stores: []pdhttp.StoreInfo{
+				{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{RegionCount: 1200}},
+				{Store: pdhttp.MetaStore{ID: 2}, Status: pdhttp.StoreStatus{RegionCount: 3000}},
+				{Store: pdhttp.MetaStore{ID: 3}, Status: pdhttp.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectErrorCnt: 1,
 		},
 		{
-			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 0}},
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 2800}},
-				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
+			stores: pdhttp.StoresInfo{Stores: []pdhttp.StoreInfo{
+				{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{RegionCount: 0}},
+				{Store: pdhttp.MetaStore{ID: 2}, Status: pdhttp.StoreStatus{RegionCount: 2800}},
+				{Store: pdhttp.MetaStore{ID: 3}, Status: pdhttp.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectErrorCnt: 1,
 		},
 	}
 
-	mustMarshal := func(v interface{}) []byte {
-		data, err := json.Marshal(v)
-		require.NoError(s.T(), err)
-		return data
-	}
-
 	for i, ca := range testCases {
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			var err error
-			if req.URL.Path == pdStores {
-				_, err = w.Write(mustMarshal(ca.stores))
-			} else if req.URL.Path == pdEmptyRegions {
-				_, err = w.Write(mustMarshal(ca.emptyRegions))
-			} else {
-				w.WriteHeader(http.StatusNotFound)
-			}
-			require.NoError(s.T(), err)
-		}))
-
-		tls := common.NewTLSFromMockServer(server)
 		template := NewSimpleTemplate()
 
-		url := strings.TrimPrefix(server.URL, "https://")
-		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
-		pdCli := &mockPDClient{Client: pdClient, leaderAddr: url}
+		cfg := &config.Config{}
+		cli := &mockPDHTTPCli{storesInfo: &ca.stores, emptyRegions: &ca.emptyRegions}
 
 		targetInfoGetter := &TargetInfoGetterImpl{
-			cfg:   cfg,
-			tls:   tls,
-			pdCli: pdCli,
+			cfg:       cfg,
+			pdHTTPCli: cli,
 		}
 		dbMetas := []*mydump.MDDatabaseMeta{}
 		preInfoGetter := &PreImportInfoGetterImpl{
@@ -1354,13 +1330,12 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil)
 		rc := &Controller{
 			cfg:                 cfg,
-			tls:                 tls,
 			taskMgr:             mockTaskMetaMgr{},
 			checkTemplate:       template,
 			preInfoGetter:       preInfoGetter,
 			dbInfos:             make(map[string]*checkpoints.TidbDBInfo),
 			precheckItemBuilder: theCheckBuilder,
-			pdCli:               pdCli,
+			pdHTTPCli:           cli,
 		}
 
 		preInfoGetter.dbInfosCache = rc.dbInfos
@@ -1372,8 +1347,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 		for _, expectMsg := range ca.expectMsgs {
 			require.Regexp(s.T(), expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
 		}
-
-		server.Close()
 	}
 }
 
@@ -1387,14 +1360,14 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	}{
 		{
 			true,
-			"(.*)Skip the csv size check, because config.StrictFormat is true(.*)",
+			"(.*)Skip the data file size check, because config.StrictFormat is true(.*)",
 			true,
 			0,
 			nil,
 		},
 		{
 			false,
-			"(.*)Source csv files size is proper(.*)",
+			"(.*)Source data files size is proper(.*)",
 			true,
 			0,
 			[]*mydump.MDDatabaseMeta{
@@ -1415,7 +1388,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 		},
 		{
 			false,
-			"(.*)large csv: /testPath file exists(.*)",
+			"(.*)large data file: /testPath file exists(.*)",
 			true,
 			1,
 			[]*mydump.MDDatabaseMeta{
@@ -2419,4 +2392,40 @@ func TestGetDDLStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.JobStateRunning, status.state)
 	require.Equal(t, int64(123)+int64(456), status.rowCount)
+}
+
+func TestGetChunkCompressedSizeForParquet(t *testing.T) {
+	dir := "./testdata/"
+	fileName := "000000_0.parquet"
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	dataFiles := make([]mydump.FileInfo, 0)
+	dataFiles = append(dataFiles, mydump.FileInfo{
+		TableName: filter.Table{Schema: "db", Name: "table"},
+		FileMeta: mydump.SourceFileMeta{
+			Path:        fileName,
+			Type:        mydump.SourceTypeParquet,
+			Compression: mydump.CompressionNone,
+			SortKey:     "99",
+			FileSize:    192,
+		},
+	})
+
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: dataFiles[0].FileMeta.Path, Offset: 0},
+		FileMeta: dataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       0,
+			EndOffset:    192,
+			PrevRowIDMax: 0,
+			RowIDMax:     100,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	compressedSize, err := getChunkCompressedSizeForParquet(ctx, &chunk, store)
+	require.NoError(t, err)
+	require.Equal(t, compressedSize, int64(192))
 }

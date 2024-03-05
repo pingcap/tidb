@@ -138,7 +138,7 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 }
 
 var encoderPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &planEncoder{}
 	},
 }
@@ -253,7 +253,7 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 }
 
 var digesterPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &planDigester{
 			hasher: sha256.New(),
 		}

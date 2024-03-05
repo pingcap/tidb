@@ -24,7 +24,6 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util",

@@ -27,7 +27,7 @@ func (b *builtinValuesIntSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinValuesIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -35,7 +35,7 @@ func (b *builtinValuesDurationSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinValuesDurationSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -43,7 +43,7 @@ func (b *builtinRowSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRowSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRowSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	panic("builtinRowSig.vecEvalString() should never be called.")
 }
 
@@ -51,7 +51,7 @@ func (b *builtinValuesRealSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinValuesRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -59,7 +59,7 @@ func (b *builtinValuesStringSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinValuesStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -67,7 +67,7 @@ func (b *builtinValuesTimeSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinValuesTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -75,7 +75,7 @@ func (b *builtinValuesJSONSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinValuesJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -93,14 +93,14 @@ func bitCount(value int64) int64 {
 func (b *builtinBitCountSig) vectorized() bool {
 	return true
 }
-func (b *builtinBitCountSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinBitCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		if types.ErrOverflow.Equal(err) {
 			result.ResizeInt64(n, false)
 			i64s := result.Int64s()
 			for i := 0; i < n; i++ {
-				res, isNull, err := b.evalInt(input.GetRow(i))
+				res, isNull, err := b.evalInt(ctx, input.GetRow(i))
 				if err != nil {
 					return err
 				}
@@ -125,15 +125,15 @@ func (b *builtinGetParamStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGetParamStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	sessionVars := b.ctx.GetSessionVars()
+func (b *builtinGetParamStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	sessionVars := ctx.GetSessionVars()
 	n := input.NumRows()
 	idx, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(idx)
-	if err := b.args[0].VecEvalInt(b.ctx, input, idx); err != nil {
+	if err := b.args[0].VecEvalInt(ctx, input, idx); err != nil {
 		return err
 	}
 	idxIs := idx.Int64s()
@@ -159,14 +159,14 @@ func (b *builtinSetStringVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -174,11 +174,11 @@ func (b *builtinSetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalString(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	_, collation := sessionVars.GetCharsetInfo()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
@@ -197,14 +197,14 @@ func (b *builtinSetIntVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -212,12 +212,12 @@ func (b *builtinSetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -235,14 +235,14 @@ func (b *builtinSetRealVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -250,12 +250,12 @@ func (b *builtinSetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalReal(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -273,14 +273,14 @@ func (b *builtinSetDecimalVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -288,12 +288,12 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf1); err != nil {
+	if err := b.args[1].VecEvalDecimal(ctx, input, buf1); err != nil {
 		return err
 	}
 	result.ResizeDecimal(n, false)
 	decs := result.Decimals()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -311,7 +311,7 @@ func (b *builtinValuesDecimalSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinValuesDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinValuesDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("not implemented")
 }
 
@@ -319,18 +319,18 @@ func (b *builtinGetStringVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) {
 			result.AppendNull()
@@ -354,20 +354,20 @@ func (b *builtinGetIntVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0)
 	i64s := result.Int64s()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -386,27 +386,33 @@ func (b *builtinGetRealVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+// NOTE: get/set variable vectorized eval was disabled. See more in
+// https://github.com/pingcap/tidb/pull/8412
+func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(buf0)
 	f64s := result.Float64s()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			f64s[i] = v.GetFloat64()
+			d, err := v.ToFloat64(typeCtx(ctx))
+			if err != nil {
+				return err
+			}
+			f64s[i] = d
 			continue
 		}
 		result.SetNull(i, true)
@@ -418,27 +424,33 @@ func (b *builtinGetDecimalVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+// NOTE: get/set variable vectorized eval was disabled. See more in
+// https://github.com/pingcap/tidb/pull/8412
+func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalString(ctx, input, buf0); err != nil {
 		return err
 	}
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf0)
 	decs := result.Decimals()
-	sessionVars := b.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			decs[i] = *v.GetMysqlDecimal()
+			d, err := v.ToDecimal(typeCtx(ctx))
+			if err != nil {
+				return err
+			}
+			decs[i] = *d
 			continue
 		}
 		result.SetNull(i, true)

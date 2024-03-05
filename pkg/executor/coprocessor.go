@@ -76,13 +76,13 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		return h.buildErrorResponse(err)
 	}
 
-	err = e.Open(ctx)
+	err = exec.Open(ctx, e)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
 
 	chk := exec.TryNewCacheChunk(e)
-	tps := e.Base().RetFieldTypes()
+	tps := e.RetFieldTypes()
 	var totalChunks, partChunks []tipb.Chunk
 	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
 	for {
@@ -103,7 +103,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
-	if err := e.Close(); err != nil {
+	if err := exec.Close(e); err != nil {
 		return h.buildErrorResponse(err)
 	}
 	return h.buildUnaryResponse(totalChunks)
@@ -119,13 +119,13 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
-	err = e.Open(ctx)
+	err = exec.Open(ctx, e)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
 	chk := exec.TryNewCacheChunk(e)
-	tps := e.Base().RetFieldTypes()
+	tps := e.RetFieldTypes()
 	for {
 		chk.Reset()
 		if err = exec.Next(ctx, e, chk); err != nil {
@@ -193,14 +193,14 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 	h.dagReq = dagReq
 	is := h.sctx.GetInfoSchema().(infoschema.InfoSchema)
 	// Build physical plan.
-	bp := core.NewPBPlanBuilder(h.sctx, is, req.Ranges)
+	bp := core.NewPBPlanBuilder(h.sctx.GetPlanCtx(), is, req.Ranges)
 	plan, err := bp.Build(dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is, nil)
+	b := newExecutorBuilder(h.sctx, is)
 	return b.build(plan), nil
 }
 
@@ -277,11 +277,13 @@ func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
 	requestedRow := make([]byte, 0)
 	chunks := []tipb.Chunk{}
+	errCtx := stmtCtx.ErrCtx()
 	for i := 0; i < chk.NumRows(); i++ {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {
-			data, err := codec.EncodeValue(stmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
+			data, err := codec.EncodeValue(stmtCtx.TimeZone(), nil, row.GetDatum(int(ordinal), tps[ordinal]))
+			err = errCtx.HandleError(err)
 			if err != nil {
 				return nil, err
 			}

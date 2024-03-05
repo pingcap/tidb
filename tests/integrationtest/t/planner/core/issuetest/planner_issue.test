@@ -79,3 +79,110 @@ insert into tbl_39 values (1994),(1995),(1996),(1997);
 explain select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 
+# https://github.com/pingcap/tidb/issues/47881
+drop table if exists t, t1, t2;
+create table t (id int,name varchar(10));
+insert into t values(1,'tt');
+create table t1(id int,name varchar(10),name1 varchar(10),name2 varchar(10));
+insert into t1 values(1,'tt','ttt','tttt'),(2,'dd','ddd','dddd');
+create table t2(id int,name varchar(10),name1 varchar(10),name2 varchar(10),`date1` date);
+insert into t2 values(1,'tt','ttt','tttt','2099-12-31'),(2,'dd','ddd','dddd','2099-12-31');
+WITH bzzs AS (
+  SELECT 
+    count(1) AS bzn 
+  FROM 
+    t c
+), 
+tmp1 AS (
+  SELECT 
+    t1.* 
+  FROM 
+    t1 
+    LEFT JOIN bzzs ON 1 = 1 
+  WHERE 
+    name IN ('tt') 
+    AND bzn <> 1
+), 
+tmp2 AS (
+  SELECT 
+    tmp1.*, 
+    date('2099-12-31') AS endate 
+  FROM 
+    tmp1
+), 
+tmp3 AS (
+  SELECT 
+    * 
+  FROM 
+    tmp2 
+  WHERE 
+    endate > CURRENT_DATE 
+  UNION ALL 
+  SELECT 
+    '1' AS id, 
+    'ss' AS name, 
+    'sss' AS name1, 
+    'ssss' AS name2, 
+    date('2099-12-31') AS endate 
+  FROM 
+    bzzs t1 
+  WHERE 
+    bzn = 1
+) 
+SELECT 
+  c2.id, 
+  c3.id 
+FROM 
+  t2 db 
+  LEFT JOIN tmp3 c2 ON c2.id = '1' 
+  LEFT JOIN tmp3 c3 ON c3.id = '1';
+
+# https://github.com/pingcap/tidb/issues/48755
+drop table if exists t;
+create table t(a int, b int);
+set @@tidb_max_chunk_size = 32;
+# insert into more than 32 rows to the table.
+insert into t values(1, 1);
+insert into t select a+1, a+1 from t;
+insert into t select a+2, a+2 from t;
+insert into t select a+4, a+4 from t;
+insert into t select a+8, a+8 from t;
+insert into t select a+16, a+16 from t;
+insert into t select a+32, a+32 from t;
+select a from (select 100 as a, 100 as b union all select * from t) t where b != 0;
+set @@tidb_max_chunk_size = default;
+
+# https://github.com/pingcap/tidb/issues/48821
+# https://github.com/pingcap/tidb/issues/48983
+drop table if exists t1, t2;
+create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
+insert into t1 value('测试'),('测试  '),('xxx ');
+explain format = brief select *,length(a) from t1 where a like '测试 %';
+explain format = brief select *,length(a) from t1 where a like '测试';
+select *,length(a) from t1 where a like '测试 %';
+select *,length(a) from t1 where a like '测试';
+explain format = brief select * from t1 use index (ia) where a like 'xxx_';
+select * from t1 use index (ia) where a like 'xxx_';
+create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
+insert into t2 value('测试'),('测试  ');
+explain format = brief select *,length(a) from t2 where a like '测试 %';
+explain format = brief select *,length(a) from t2 where a like '测试';
+select *,length(a) from t2 where a like '测试 %';
+select *,length(a) from t2 where a like '测试';
+
+# https://github.com/pingcap/tidb/issues/48969
+drop view if exists v1;
+create view v1(id) as
+with recursive cte(a) as (select 1 union select a+1 from cte where a<3)
+select * from cte;
+
+create table test2(id int,value int);
+insert into test2 values(1,1),(2,2),(3,3),(4,4),(5,5);
+
+update test2
+set value=0
+where test2.id in
+(
+  select * from v1
+);
+select * from test2;

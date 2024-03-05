@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -44,7 +43,7 @@ func genColumn(tp byte, id int64) *Column {
 func TestConstant2Pb(t *testing.T) {
 	t.Skip("constant pb has changed")
 	var constExprs []Expression
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	// can be transformed
@@ -99,11 +98,11 @@ func TestConstant2Pb(t *testing.T) {
 	require.Equal(t, types.KindMysqlEnum, constValue.Value.Kind())
 	constExprs = append(constExprs, constValue)
 
-	pushed, remained := PushDownExprs(sc, constExprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(ctx, constExprs, client, kv.UnSpecified)
 	require.Len(t, pushed, len(constExprs)-3)
 	require.Len(t, remained, 3)
 
-	pbExprs, err := ExpressionsToPBList(sc, constExprs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, constExprs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":0,\"sig\":0}",
@@ -127,19 +126,19 @@ func TestConstant2Pb(t *testing.T) {
 
 func TestColumn2Pb(t *testing.T) {
 	var colExprs []Expression
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
 	colExprs = append(colExprs, genColumn(mysql.TypeGeometry, 2))
 	colExprs = append(colExprs, genColumn(mysql.TypeUnspecified, 3))
 
-	pushed, remained := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(ctx, colExprs, client, kv.UnSpecified)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(colExprs))
 
 	for _, col := range colExprs { // cannot be pushed down
-		_, err := ExpressionsToPBList(sc, []Expression{col}, client)
+		_, err := ExpressionsToPBList(ctx, []Expression{col}, client)
 		require.Error(t, err)
 	}
 
@@ -168,11 +167,11 @@ func TestColumn2Pb(t *testing.T) {
 	colExprs = append(colExprs, genColumn(mysql.TypeString, 23))
 	colExprs = append(colExprs, genColumn(mysql.TypeEnum, 24))
 	colExprs = append(colExprs, genColumn(mysql.TypeBit, 25))
-	pushed, remained = PushDownExprs(sc, colExprs, client, kv.UnSpecified)
+	pushed, remained = PushDownExprs(ctx, colExprs, client, kv.UnSpecified)
 	require.Len(t, pushed, len(colExprs))
 	require.Len(t, remained, 0)
 
-	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, colExprs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":4,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -212,14 +211,14 @@ func TestColumn2Pb(t *testing.T) {
 		expr.(*Column).Index = 0
 	}
 
-	pushed, remained = PushDownExprs(sc, colExprs, client, kv.UnSpecified)
+	pushed, remained = PushDownExprs(ctx, colExprs, client, kv.UnSpecified)
 	require.Len(t, pushed, len(colExprs))
 	require.Len(t, remained, 0)
 }
 
 func TestCompareFunc2Pb(t *testing.T) {
 	var compareExprs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE, ast.NullEQ}
@@ -229,11 +228,11 @@ func TestCompareFunc2Pb(t *testing.T) {
 		compareExprs = append(compareExprs, fc)
 	}
 
-	pushed, remained := PushDownExprs(sc, compareExprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(ctx, compareExprs, client, kv.UnSpecified)
 	require.Len(t, pushed, len(compareExprs))
 	require.Len(t, remained, 0)
 
-	pbExprs, err := ExpressionsToPBList(sc, compareExprs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, compareExprs, client)
 	require.NoError(t, err)
 	require.Len(t, pbExprs, len(compareExprs))
 	jsons := []string{
@@ -255,7 +254,7 @@ func TestCompareFunc2Pb(t *testing.T) {
 
 func TestLikeFunc2Pb(t *testing.T) {
 	var likeFuncs []Expression
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	retTp := types.NewFieldType(mysql.TypeString)
@@ -268,7 +267,6 @@ func TestLikeFunc2Pb(t *testing.T) {
 		&Constant{RetType: retTp, Value: types.NewDatum(`%abc%`)},
 		&Constant{RetType: retTp, Value: types.NewDatum("\\")},
 	}
-	ctx := mock.NewContext()
 	retTp = types.NewFieldType(mysql.TypeUnspecified)
 	fc, err := NewFunction(ctx, ast.Like, retTp, args[0], args[1], args[3])
 	require.NoError(t, err)
@@ -278,7 +276,7 @@ func TestLikeFunc2Pb(t *testing.T) {
 	require.NoError(t, err)
 	likeFuncs = append(likeFuncs, fc)
 
-	pbExprs, err := ExpressionsToPBList(sc, likeFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, likeFuncs, client)
 	require.NoError(t, err)
 	results := []string{
 		`{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8","array":false},"has_distinct":false},{"tp":5,"val":"cGF0dGVybg==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8","array":false},"has_distinct":false},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8","array":false},"has_distinct":false}],"sig":30,"field_type":{"tp":8,"flag":129,"flen":-1,"decimal":0,"collate":-83,"charset":"binary","array":false},"has_distinct":false}],"sig":4310,"field_type":{"tp":8,"flag":524416,"flen":1,"decimal":0,"collate":-83,"charset":"binary","array":false},"has_distinct":false}`,
@@ -293,7 +291,7 @@ func TestLikeFunc2Pb(t *testing.T) {
 
 func TestArithmeticalFunc2Pb(t *testing.T) {
 	var arithmeticalFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div}
@@ -315,7 +313,7 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}"
 	jsons[ast.Mod] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":215,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}"
 
-	pbExprs, err := ExpressionsToPBList(sc, arithmeticalFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, arithmeticalFuncs, client)
 	require.NoError(t, err)
 	for i, pbExpr := range pbExprs {
 		require.NotNil(t, pbExpr)
@@ -324,22 +322,24 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 		require.Equalf(t, jsons[funcNames[i]], string(js), "%v\n", funcNames[i])
 	}
 
-	funcNames = []string{ast.IntDiv} // cannot be pushed down
-	for _, funcName := range funcNames {
-		fc, err := NewFunction(
-			mock.NewContext(),
-			funcName,
-			types.NewFieldType(mysql.TypeUnspecified),
-			genColumn(mysql.TypeDouble, 1),
-			genColumn(mysql.TypeDouble, 2))
-		require.NoError(t, err)
-		_, err = ExpressionsToPBList(sc, []Expression{fc}, client)
-		require.Error(t, err)
-	}
+	// IntDiv
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.IntDiv,
+		types.NewFieldType(mysql.TypeUnspecified),
+		genColumn(mysql.TypeLonglong, 1),
+		genColumn(mysql.TypeLonglong, 2))
+	require.NoError(t, err)
+	pbExprs, err = ExpressionsToPBList(ctx, []Expression{fc}, client)
+	require.NoError(t, err)
+	js, err := json.Marshal(pbExprs[0])
+	require.NoError(t, err)
+	expectedJs := "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":213,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}"
+	require.Equalf(t, expectedJs, string(js), "%v\n", ast.IntDiv)
 }
 
 func TestDateFunc2Pb(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	fc, err := NewFunction(
@@ -350,7 +350,7 @@ func TestDateFunc2Pb(t *testing.T) {
 		genColumn(mysql.TypeString, 2))
 	require.NoError(t, err)
 	funcs := []Expression{fc}
-	pbExprs, err := ExpressionsToPBList(sc, funcs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, funcs, client)
 	require.NoError(t, err)
 	require.NotNil(t, pbExprs[0])
 	js, err := json.Marshal(pbExprs[0])
@@ -360,7 +360,7 @@ func TestDateFunc2Pb(t *testing.T) {
 
 func TestLogicalFunc2Pb(t *testing.T) {
 	var logicalFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot}
@@ -379,7 +379,7 @@ func TestLogicalFunc2Pb(t *testing.T) {
 		logicalFuncs = append(logicalFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(sc, logicalFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, logicalFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":4,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":4,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -396,7 +396,7 @@ func TestLogicalFunc2Pb(t *testing.T) {
 
 func TestBitwiseFunc2Pb(t *testing.T) {
 	var bitwiseFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.And, ast.Or, ast.Xor, ast.LeftShift, ast.RightShift, ast.BitNeg}
@@ -415,7 +415,7 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 		bitwiseFuncs = append(bitwiseFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(sc, bitwiseFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, bitwiseFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":3118,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -434,7 +434,7 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 
 func TestControlFunc2Pb(t *testing.T) {
 	var controlFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{
@@ -458,7 +458,7 @@ func TestControlFunc2Pb(t *testing.T) {
 		controlFuncs = append(controlFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(sc, controlFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, controlFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -475,7 +475,6 @@ func TestControlFunc2Pb(t *testing.T) {
 
 func TestOtherFunc2Pb(t *testing.T) {
 	var otherFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.Coalesce, ast.IsNull}
@@ -490,10 +489,10 @@ func TestOtherFunc2Pb(t *testing.T) {
 		otherFuncs = append(otherFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(sc, otherFuncs, client)
+	pbExprs, err := ExpressionsToPBList(mock.NewContext(), otherFuncs, client)
 	require.NoError(t, err)
 	jsons := map[string]string{
-		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
+		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
 		ast.IsNull:   "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":3116,\"field_type\":{\"tp\":8,\"flag\":524417,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
 	}
 	for i, pbExpr := range pbExprs {
@@ -504,7 +503,7 @@ func TestOtherFunc2Pb(t *testing.T) {
 }
 
 func TestExprPushDownToFlash(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
@@ -540,6 +539,50 @@ func TestExprPushDownToFlash(t *testing.T) {
 	subFunc, subErr := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
 	require.NoError(t, subErr)
 	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), subFunc)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_unquote's argument is not cast(json as string)
+	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_array
+	function, err = NewFunction(mock.NewContext(), ast.JSONArray, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_depth
+	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_contains_path
+	function, err = NewFunction(mock.NewContext(), ast.JSONContainsPath, types.NewFieldType(mysql.TypeLonglong), jsonColumn, stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_valid
+	/// json_valid_others
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// json_valid_json
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// json_valid_string
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_keys
+	/// 1 arg
+	function, err = NewFunction(mock.NewContext(), ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// 2 args
+	function, err = NewFunction(mock.NewContext(), ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -593,6 +636,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// CastDecimalAsInt
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsDouble
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -766,6 +814,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// ScalarFuncSig_Pow
 	function, err = NewFunction(mock.NewContext(), ast.Pow, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Pow, Power is a synonym for Pow
+	function, err = NewFunction(mock.NewContext(), ast.Power, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -973,15 +1026,10 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
+	canPush := CanExprsPushDown(mock.NewContext(), exprs, client, kv.TiFlash)
 	require.Equal(t, true, canPush)
 
 	exprs = exprs[:0]
-
-	// json_unquote's argument is not cast(json as string)
-	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
 
 	// Substring2Args: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn)
@@ -990,10 +1038,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// Substring3Args: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn, intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1032,11 +1076,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
+	pushed, remained := PushDownExprs(ctx, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
-	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
+	pushed, remained = PushDownExprsWithExtraInfo(ctx, exprs, client, kv.TiFlash, true)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
@@ -1289,18 +1333,55 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
+	// CastIntAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastRealAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), realColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastStringAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), binaryStringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastTimeAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDurationAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastJsonAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	pushed, remained = PushDownExprs(ctx, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 
-	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
+	pushed, remained = PushDownExprsWithExtraInfo(ctx, exprs, client, kv.TiFlash, true)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 }
 
 func TestExprOnlyPushDownToFlash(t *testing.T) {
 	t.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
-	sc := stmtctx.NewStmtCtx()
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
@@ -1338,33 +1419,32 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	pushed, remained := PushDownExprs(sc, exprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(mock.NewContext(), exprs, client, kv.UnSpecified)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 
-	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
+	canPush := CanExprsPushDown(mock.NewContext(), exprs, client, kv.TiFlash)
 	require.Equal(t, true, canPush)
-	canPush = CanExprsPushDown(sc, exprs, client, kv.TiKV)
+	canPush = CanExprsPushDown(mock.NewContext(), exprs, client, kv.TiKV)
 	require.Equal(t, false, canPush)
 
-	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
+	pushed, remained = PushDownExprs(mock.NewContext(), exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 
-	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
+	pushed, remained = PushDownExprs(mock.NewContext(), exprs, client, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 }
 
 func TestExprPushDownToTiKV(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
 
 	//jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
-	//realColumn := genColumn(mysql.TypeDouble, 3)
+	realColumn := genColumn(mysql.TypeDouble, 3)
 	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := genColumn(mysql.TypeString, 5)
 	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
@@ -1405,7 +1485,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiKV)
+	pushed, remained := PushDownExprs(mock.NewContext(), exprs, client, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
@@ -1531,97 +1611,118 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeInt24),
 			args:         []Expression{intColumn, intColumn},
 		},
+		{
+			functionName: ast.Upper,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Lower,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Pow,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{realColumn, realColumn},
+		},
+		{
+			functionName: ast.Power,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{realColumn, realColumn},
+		},
 	}
 
+	ctx := mock.NewContext()
 	for _, tc := range testcases {
-		function, err = NewFunction(mock.NewContext(), tc.functionName, tc.retType, tc.args...)
+		function, err = NewFunction(ctx, tc.functionName, tc.retType, tc.args...)
 		require.NoError(t, err)
 		exprs = append(exprs, function)
 	}
 
-	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
+	pushed, remained = PushDownExprs(ctx, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 }
 
 func TestExprOnlyPushDownToTiKV(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
-	function, err := NewFunction(mock.NewContext(), "uuid", types.NewFieldType(mysql.TypeLonglong))
+	function, err := NewFunction(ctx, "uuid", types.NewFieldType(mysql.TypeLonglong))
 	require.NoError(t, err)
 	var exprs = make([]Expression, 0)
 	exprs = append(exprs, function)
 
-	pushed, remained := PushDownExprs(sc, exprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(ctx, exprs, client, kv.UnSpecified)
 	require.Len(t, pushed, 1)
 	require.Len(t, remained, 0)
 
-	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
+	canPush := CanExprsPushDown(ctx, exprs, client, kv.TiFlash)
 	require.Equal(t, false, canPush)
-	canPush = CanExprsPushDown(sc, exprs, client, kv.TiKV)
+	canPush = CanExprsPushDown(ctx, exprs, client, kv.TiKV)
 	require.Equal(t, true, canPush)
 
-	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
+	pushed, remained = PushDownExprs(ctx, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, 1)
-	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
+	pushed, remained = PushDownExprs(ctx, exprs, client, kv.TiKV)
 	require.Len(t, pushed, 1)
 	require.Len(t, remained, 0)
 }
 
 func TestGroupByItem2Pb(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	item := genColumn(mysql.TypeDouble, 0)
-	pbByItem := GroupByItemToPB(sc, client, item)
+	pbByItem := GroupByItemToPB(ctx, client, item)
 	js, err := json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
-	pbByItem = GroupByItemToPB(sc, client, item)
+	pbByItem = GroupByItemToPB(ctx, client, item)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 }
 
 func TestSortByItem2Pb(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	item := genColumn(mysql.TypeDouble, 0)
-	pbByItem := SortByItemToPB(sc, client, item, false)
+	pbByItem := SortByItemToPB(ctx, client, item, false)
 	js, err := json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
-	pbByItem = SortByItemToPB(sc, client, item, false)
+	pbByItem = SortByItemToPB(ctx, client, item, false)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
-	pbByItem = SortByItemToPB(sc, client, item, true)
+	pbByItem = SortByItemToPB(ctx, client, item, true)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":true}", string(js))
 }
 
 func TestPushCollationDown(t *testing.T) {
-	fc, err := NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
+	ctx := mock.NewContext()
+	fc, err := NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
 	require.NoError(t, err)
 	client := new(mock.Client)
-	sc := stmtctx.NewStmtCtx()
 
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
 		fc.SetCharsetAndCollation("binary", coll) // only collation matters
-		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)
+		pbExpr, err := ExpressionsToPBList(ctx, []Expression{fc}, client)
 		require.NoError(t, err)
-		expr, err := PBToExpr(pbExpr[0], tps, sc)
+		expr, err := PBToExpr(ctx, pbExpr[0], tps)
 		require.NoError(t, err)
 		_, eColl := expr.CharsetAndCollation()
 		require.Equal(t, coll, eColl)
@@ -1636,7 +1737,7 @@ func columnCollation(c *Column, chs, coll string) *Column {
 
 func TestNewCollationsEnabled(t *testing.T) {
 	var colExprs []Expression
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	colExprs = colExprs[:0]
@@ -1647,9 +1748,9 @@ func TestNewCollationsEnabled(t *testing.T) {
 	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarchar, 5), "utf8", "utf8_bin"))
 	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarchar, 6), "utf8", "utf8_unicode_ci"))
 	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarchar, 7), "utf8mb4", "utf8mb4_zh_pinyin_tidb_as_cs"))
-	pushed, _ := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
+	pushed, _ := PushDownExprs(ctx, colExprs, client, kv.UnSpecified)
 	require.Equal(t, len(colExprs), len(pushed))
-	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, colExprs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false}",
@@ -1668,14 +1769,14 @@ func TestNewCollationsEnabled(t *testing.T) {
 	}
 
 	item := columnCollation(genColumn(mysql.TypeDouble, 0), "utf8mb4", "utf8mb4_0900_ai_ci")
-	pbByItem := GroupByItemToPB(sc, client, item)
+	pbByItem := GroupByItemToPB(ctx, client, item)
 	js, err := json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 }
 
 func TestMetadata(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
@@ -1683,7 +1784,7 @@ func TestMetadata(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
 	}()
 
-	pc := PbConverter{client: client, sc: sc}
+	pc := PbConverter{client: client, ctx: ctx}
 
 	metadata := new(tipb.InUnionMetadata)
 	var err error
@@ -1717,7 +1818,7 @@ func TestMetadata(t *testing.T) {
 
 func TestPushDownSwitcher(t *testing.T) {
 	var funcs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	cases := []struct {
@@ -1753,7 +1854,7 @@ func TestPushDownSwitcher(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
 	}()
 
-	pbExprs, err := ExpressionsToPBList(sc, funcs, client)
+	pbExprs, err := ExpressionsToPBList(ctx, funcs, client)
 	require.NoError(t, err)
 	require.Equal(t, len(cases), len(pbExprs))
 	for i, pbExpr := range pbExprs {
@@ -1762,7 +1863,7 @@ func TestPushDownSwitcher(t *testing.T) {
 
 	// All disabled
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("")`))
-	pc := PbConverter{client: client, sc: sc}
+	pc := PbConverter{client: client, ctx: ctx}
 	for i := range funcs {
 		pbExpr := pc.ExprToPB(funcs[i])
 		require.Nil(t, pbExpr)
@@ -1798,6 +1899,6 @@ func TestPanicIfPbCodeUnspecified(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PanicIfPbCodeUnspecified"))
 	}()
-	pc := PbConverter{client: new(mock.Client), sc: stmtctx.NewStmtCtx()}
+	pc := PbConverter{client: new(mock.Client), ctx: mock.NewContext()}
 	require.PanicsWithError(t, "unspecified PbCode: *expression.builtinBitAndSig", func() { pc.ExprToPB(fn) })
 }

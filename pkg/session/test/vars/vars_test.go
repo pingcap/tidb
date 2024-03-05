@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
@@ -301,6 +301,7 @@ func TestGlobalVarAccessor(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
+	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().GetMaxExecutionTime())
 	tk1.MustExec("set @@global.max_execution_time = 0")
 
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
@@ -345,41 +346,41 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 
 	type hintCheck struct {
 		hint  string
-		check func(*stmtctx.StmtHints)
+		check func(*hint.StmtHints)
 	}
 
 	hintChecks := []hintCheck{
 		{
 			hint: "MEMORY_QUOTA(1024 MB)",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasMemQuotaHint)
 				require.Equal(t, int64(1024*1024*1024), stmtHint.MemQuotaQuery)
 			},
 		},
 		{
 			hint: "READ_CONSISTENT_REPLICA()",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasReplicaReadHint)
 				require.Equal(t, byte(tikv.ReplicaReadFollower), stmtHint.ReplicaRead)
 			},
 		},
 		{
 			hint: "MAX_EXECUTION_TIME(1000)",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasMaxExecutionTime)
 				require.Equal(t, uint64(1000), stmtHint.MaxExecutionTime)
 			},
 		},
 		{
 			hint: "USE_TOJA(TRUE)",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasAllowInSubqToJoinAndAggHint)
 				require.True(t, stmtHint.AllowInSubqToJoinAndAgg)
 			},
 		},
 		{
 			hint: "RESOURCE_GROUP(rg1)",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasResourceGroup)
 				require.Equal(t, "rg1", stmtHint.ResourceGroup)
 			},

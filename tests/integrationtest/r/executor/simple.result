@@ -257,7 +257,7 @@ ALTER USER CURRENT_USER IDENTIFIED BY 'zzz';
 ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk';
 ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
 ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';" 
 drop table if exists t;
 do 1, @a:=1;
 select @a;
@@ -307,3 +307,146 @@ create user test_create_role;
 drop user test_create_role;
 Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
 drop user testCreateRole;
+SET GLOBAL tidb_enable_resource_control='on';
+drop RESOURCE GROUP if exists rg1;
+drop RESOURCE GROUP if exists rg2;
+drop user if exists user1;
+SET RESOURCE GROUP rg1;
+Error 8249 (HY000): Unknown resource group 'rg1'
+CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
+create user user1;
+ALTER USER `user1` RESOURCE GROUP `rg1`;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+rg1
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
+CREATE RESOURCE GROUP rg2 ru_per_sec = 200;
+SET RESOURCE GROUP `rg2`;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+rg2
+SET RESOURCE GROUP ``;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
+SET RESOURCE GROUP default;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
+SELECT /*+ RESOURCE_GROUP(rg1)*/ CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+rg1
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+rg1
+drop user user1;
+SET GLOBAL tidb_enable_resource_control=default;
+drop user if exists testuser;
+drop user if exists testuser1;
+drop user if exists testuser2;
+CREATE USER testuser COMMENT '1234';
+CREATE USER testuser1 ATTRIBUTE '{"name": "Tom", "age": 19}';
+CREATE USER testuser2 ATTRIBUTE '{"name": "Tom", age: 19}';
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+CREATE USER testuser2;
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser';
+user_attributes
+{"metadata": {"comment": "1234"}}
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser1';
+user_attributes
+{"metadata": {"age": 19, "name": "Tom"}}
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser2';
+user_attributes
+{}
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser';
+attribute
+{"comment": "1234"}
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 19, "name": "Tom"}
+SELECT attribute->>"$.age" AS age, attribute->>"$.name" AS name FROM information_schema.user_attributes WHERE user = 'testuser1';
+age	name
+19	Tom
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser2';
+attribute
+NULL
+ALTER USER testuser1 ATTRIBUTE '{"age": 20, "sex": "male"}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "name": "Tom", "sex": "male"}
+ALTER USER testuser1 ATTRIBUTE '{"hobby": "soccer"}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "hobby": "soccer", "name": "Tom", "sex": "male"}
+ALTER USER testuser1 ATTRIBUTE '{"sex": null, "hobby": null}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "name": "Tom"}
+ALTER USER testuser1 COMMENT '5678';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "comment": "5678", "name": "Tom"}
+ALTER USER testuser1 COMMENT '';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "comment": "", "name": "Tom"}
+ALTER USER testuser1 ATTRIBUTE '{"comment": null}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "name": "Tom"}
+SELECT user, host, attribute FROM information_schema.user_attributes where user in ('testuser', 'testuser1', 'testuser2') ORDER BY user;
+user	host	attribute
+testuser	%	{"comment": "1234"}
+testuser1	%	{"age": 20, "name": "Tom"}
+testuser2	%	NULL
+SELECT user, host, user_attributes FROM mysql.user ORDER BY user;
+Error 1142 (42000): SELECT command denied to user 'testuser1'@'%' for table 'user'
+create user usr1@'%' identified by 'passord';
+alter user usr1 comment 'comment1';
+select user_attributes from mysql.user where user = 'usr1';
+user_attributes
+{"metadata": {"comment": "comment1"}}
+set global tidb_enable_resource_control = 'on';
+drop RESOURCE group if exists rg1;
+CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
+alter user usr1 resource group rg1;
+select user_attributes from mysql.user where user = 'usr1';
+user_attributes
+{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}
+set global tidb_enable_resource_control = default;
+## Some statements are like DDL, they commit the previous txn automically.
+## Fix issue https://github.com/pingcap/tidb/issues/10705
+begin;
+create user 'xxx'@'%';
+grant all privileges on *.* to 'xxx'@'%';
+create table auto_new (id int);
+begin;
+insert into auto_new values (1);
+revoke all privileges on *.* from 'xxx'@'%';
+## insert statement has already committed
+rollback;
+## Test the behavior when autocommit is false.
+select * from auto_new;
+id
+1
+set autocommit = 0;
+insert into auto_new values (2);
+create user 'yyy'@'%';
+rollback;
+select * from auto_new;
+id
+1
+2
+drop user 'yyy'@'%';
+insert into auto_new values (3);
+rollback;
+select * from auto_new;
+id
+1
+2
+set autocommit = default;

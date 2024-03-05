@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -482,6 +483,24 @@ func TestWriteNoError(t *testing.T) {
 
 	err := s.storage.WriteFile(ctx, "file", []byte("test"))
 	require.NoError(t, err)
+}
+
+func TestMultiUploadErrorNotOverwritten(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	s.s3.EXPECT().
+		CreateMultipartUploadWithContext(ctx, gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("mock error"))
+
+	w, err := s.storage.Create(ctx, "file", &WriterOption{Concurrency: 2})
+	require.NoError(t, err)
+	// data should be larger than 5MB to trigger CreateMultipartUploadWithContext path
+	data := make([]byte, 5*1024*1024+6716)
+	n, err := w.Write(ctx, data)
+	require.NoError(t, err)
+	require.Equal(t, 5*1024*1024+6716, n)
+	require.ErrorContains(t, w.Close(ctx), "mock error")
 }
 
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
@@ -1364,4 +1383,41 @@ func TestRetryError(t *testing.T) {
 	err = s.WriteFile(ctx, "reset", []byte(errString))
 	require.NoError(t, err)
 	require.Equal(t, count, int32(2))
+}
+
+func TestS3ReadFileRetryable(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+	errMsg := "just some unrelated error"
+	expectedErr := errors.New(errMsg)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+			return &s3.GetObjectOutput{
+				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
+			}, nil
+		})
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+			return &s3.GetObjectOutput{
+				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
+			}, nil
+		})
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		Return(nil, expectedErr)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/read-s3-body-failed", "2*return(true)"))
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/read-s3-body-failed")
+	}()
+	_, err := s.storage.ReadFile(ctx, "file")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), errMsg))
 }

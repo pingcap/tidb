@@ -56,7 +56,7 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 }
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
-	newISBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	newISBuilder, err := infoschema.NewBuilder(nil, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +108,7 @@ select * from t;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
+	sctx.ResetSessionAndStmtTimeZone(loc)
 	sctx.GetSessionVars().TimeZone = loc
 	_, err = parseSlowLog(sctx, reader)
 	require.Error(t, err)
@@ -138,6 +139,10 @@ func TestParseSlowLogFile(t *testing.T) {
 # Plan_from_binding: true
 # Succ: false
 # IsExplicitTxn: true
+# Resource_group: default
+# Request_unit_read: 2.158
+# Request_unit_write: 2.123
+# Time_queued_by_rc: 0.05
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
 use test;
@@ -146,7 +151,7 @@ select * from t;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	rows, err := parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -164,7 +169,7 @@ select * from t;`
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -187,7 +192,7 @@ select * from t;`
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -246,7 +251,7 @@ func TestParseSlowLogFileSerial(t *testing.T) {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	// test for bufio.Scanner: token too long.
 	slowLog := bytes.NewBufferString(
 		`# Time: 2019-04-28T15:24:04.309074+08:00
@@ -314,7 +319,7 @@ select * from t;`)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	_, err = parseSlowLog(ctx, scanner)
 	require.NoError(t, err)
 
@@ -455,7 +460,7 @@ select 7;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone = loc
+	sctx.ResetSessionAndStmtTimeZone(loc)
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0}
@@ -629,7 +634,7 @@ select 9;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone = loc
+	sctx.ResetSessionAndStmtTimeZone(loc)
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0, Desc: true}

@@ -53,7 +53,7 @@ func (t *topNSorter) Less(i, j int) bool {
 		v1 := t.rows[i].key[index]
 		v2 := t.rows[j].key[index]
 
-		ret, err := v1.Compare(t.sc, &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
+		ret, err := v1.Compare(t.sc.TypeCtx(), &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
 		if err != nil {
 			t.err = errors.Trace(err)
 			return true
@@ -88,12 +88,12 @@ func (t *topNHeap) Len() int {
 	return t.heapSize
 }
 
-func (t *topNHeap) Push(x interface{}) {
+func (t *topNHeap) Push(x any) {
 	t.rows = append(t.rows, x.(*sortRow))
 	t.heapSize++
 }
 
-func (t *topNHeap) Pop() interface{} {
+func (t *topNHeap) Pop() any {
 	return nil
 }
 
@@ -107,7 +107,7 @@ func (t *topNHeap) Less(i, j int) bool {
 		if expression.FieldTypeFromPB(by.GetExpr().GetFieldType()).GetType() == mysql.TypeEnum {
 			ret = cmp.Compare(v1.GetUint64(), v2.GetUint64())
 		} else {
-			ret, err = v1.Compare(t.sc, &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
+			ret, err = v1.Compare(t.sc.TypeCtx(), &v2, collate.GetCollator(collate.ProtoToCollation(by.Expr.FieldType.Collate)))
 			if err != nil {
 				t.err = errors.Trace(err)
 				return true

@@ -51,45 +51,6 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
-func TestIssue45086(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-
-	tk.MustExec(`CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL)`)
-	tk.MustExec(`INSERT INTO t VALUES (1, current_date())`)
-
-	tk.MustExec(`PREPARE stmt FROM 'SELECT * FROM t WHERE b=current_date()'`)
-	require.Equal(t, len(tk.MustQuery(`EXECUTE stmt`).Rows()), 1)
-}
-
-func TestPlanCacheSizeSwitch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// default value = 100
-	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("100"))
-	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("100"))
-
-	// keep the same value when updating any one of them
-	tk.MustExec(`set @@tidb_prepared_plan_cache_size = 200`)
-	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("200"))
-	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("200"))
-	tk.MustExec(`set @@tidb_session_plan_cache_size = 300`)
-	tk.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("300"))
-	tk.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("300"))
-
-	tk.MustExec(`set global tidb_prepared_plan_cache_size = 400`)
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("400"))
-	tk1.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("400"))
-
-	tk.MustExec(`set global tidb_session_plan_cache_size = 500`)
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustQuery(`select @@tidb_prepared_plan_cache_size`).Check(testkit.Rows("500"))
-	tk2.MustQuery(`select @@tidb_session_plan_cache_size`).Check(testkit.Rows("500"))
-}
-
 func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -117,34 +78,6 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 	require.Equal(t, planString("select * from t where b < 1"), "TableReader(Table(t)->Sel([lt(test.t.b, 1)]))")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-}
-
-func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-	tk.MustExec("select * from t where a=1") // cache this plan
-
-	tk.MustQuery("explain select * from t where a=2").Check(testkit.Rows(
-		`TableReader_7 10.00 root  data:Selection_6`,
-		`└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 2)`,
-		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk.MustQuery("explain format=verbose select * from t where a=2").Check(testkit.Rows(
-		`TableReader_7 10.00 168975.57 root  data:Selection_6`,
-		`└─Selection_6 10.00 2534000.00 cop[tikv]  eq(test.t.a, 2)`,
-		`  └─TableFullScan_5 10000.00 2035000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk.MustQuery("explain analyze select * from t where a=2").CheckAt([]int{0, 1, 2, 3}, [][]interface{}{
-		{"TableReader_7", "10.00", "0", "root"},
-		{"└─Selection_6", "10.00", "0", "cop[tikv]"},
-		{"  └─TableFullScan_5", "10000.00", "0", "cop[tikv]"},
-	})
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
@@ -339,95 +272,6 @@ func TestIssue38533(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestPlanCacheGeneratedCols(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
-	tk.MustExec(`create table t1 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))))`)
-	tk.MustExec(`create table t2 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) virtual)`)
-	tk.MustExec(`create table t3 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) stored)`)
-	tk.MustExec(`create table t4 (a int, info json, index zips( (CAST(info->'$.zipcode' AS UNSIGNED ARRAY))))`)
-
-	tk.MustExec(`set @a=1`)
-	tk.MustExec(`set @b=2`)
-
-	tk.MustExec(`prepare s1 from 'select * from t1 where a=?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-	tk.MustQuery(`execute s1 using @a`).Check(testkit.Rows())
-	tk.MustQuery(`execute s1 using @b`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
-
-	tk.MustExec(`prepare s1 from 'select * from t2 where a=?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-	tk.MustQuery(`execute s1 using @a`).Check(testkit.Rows())
-	tk.MustQuery(`execute s1 using @b`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
-
-	tk.MustExec(`prepare s1 from 'select * from t3 where a=?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-	tk.MustQuery(`execute s1 using @a`).Check(testkit.Rows())
-	tk.MustQuery(`execute s1 using @b`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
-
-	tk.MustExec(`prepare s1 from 'select * from t4 where a=?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-	tk.MustQuery(`execute s1 using @a`).Check(testkit.Rows())
-	tk.MustQuery(`execute s1 using @b`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
-}
-
-func TestPlanCacheGeneratedCols2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
-	tk.MustExec(`CREATE TABLE t1 (
-  ipk varbinary(255) NOT NULL,
-  i_id varchar(45) DEFAULT NULL,
-  i_set_id varchar(45) DEFAULT NULL,
-  p_id varchar(45) DEFAULT NULL,
-  p_set_id varchar(45) DEFAULT NULL,
-  m_id bigint(20) DEFAULT NULL,
-  m_i_id varchar(127) DEFAULT NULL,
-  m_i_set_id varchar(127) DEFAULT NULL,
-  d json DEFAULT NULL,
-  p_sources json DEFAULT NULL,
-  nslc json DEFAULT NULL,
-  cl json DEFAULT NULL,
-  fii json DEFAULT NULL,
-  fpi json DEFAULT NULL,
-  PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */,
-  UNIQUE KEY i_id (i_id),
-  KEY d ((cast(d as char(253) array))),
-  KEY m_i_id (m_i_id),
-  KEY m_i_set_id (m_i_set_id),
-  KEY fpi ((cast(fpi as unsigned array))),
-  KEY nslc ((cast(nslc as char(1000) array))),
-  KEY cl ((cast(cl as char(3000) array))),
-  KEY fii ((cast(fii as unsigned array))),
-  KEY m_id (m_id),
-  KEY i_set_id (i_set_id),
-  KEY m_i_and_m_id (m_i_id,m_id))`)
-
-	tk.MustExec(`CREATE TABLE t2 (
-  ipk varbinary(255) NOT NULL,
-  created_time bigint(20) DEFAULT NULL,
-  arrival_time bigint(20) DEFAULT NULL,
-  updated_time bigint(20) DEFAULT NULL,
-  timestamp_data json DEFAULT NULL,
-  PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */)`)
-
-	tk.MustExec(`prepare stmt from 'select *
-    from ( t1 left outer join t2 on ( t1 . ipk = t2 . ipk ) )
-    where ( t1 . i_id = ? )'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-	tk.MustExec(`set @a='a', @b='b'`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
-	tk.MustQuery(`execute stmt using @b`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`1`)) // hit cache
-}
-
 func TestInvalidRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -442,11 +286,22 @@ func TestInvalidRange(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
+		[][]any{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
 
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue49344(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`prepare s from "select * from t"`)
+	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=0`)
+	tk.MustExec(`execute s`) // no error
 }
 
 func TestIssue40093(t *testing.T) {
@@ -464,7 +319,7 @@ func TestIssue40093(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"Projection_9"},
 			{"└─HashJoin_21"},
 			{"  ├─IndexReader_26(Build)"},
@@ -496,7 +351,7 @@ func TestIssue38205(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexJoin_10"},
 			{"├─TableReader_19(Build)"},
 			{"│ └─Selection_18"},
@@ -511,23 +366,42 @@ func TestIssue38205(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestPlanCacheExprBlacklistCompatibility(t *testing.T) {
+func TestIssue49736(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec(`prepare st from 'select * from t limit ?'`)
+	tk.MustExec(`set @a=100000`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip prepared plan-cache: limit count is too large`))
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
-	tk.MustExec("prepare st from 'select * from t where mod(a, 2)=1'")
-	tk.MustExec("execute st")
-	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec(`set @@tidb_opt_fix_control = "49736:ON"`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 force plan-cache: may use risky cached plan: limit count is too large`))
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
 
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('mod')")
-	tk.MustExec(`admin reload expr_pushdown_blacklist`)
-	tk.MustExec("execute st")                                              // no `mod can not be pushed-down` error
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // expr blacklist is updated
-	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+func TestIssue49736Partition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`prepare st from 'select * from t where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "49736:ON"`)
+	tk.MustExec(`prepare st from 'select * from t where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 force plan-cache: may use risky cached plan: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestIssue40224(t *testing.T) {
@@ -544,7 +418,7 @@ func TestIssue40224(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexReader_6"},
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})
@@ -556,7 +430,7 @@ func TestIssue40224(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexReader_6"},
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})
@@ -755,9 +629,8 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 			return fmt.Sprintf("%v %v (%v, %v, %v)", col, op, v(), v(), v())
 		} else if op == "is null" {
 			return fmt.Sprintf("%v %v", col, op)
-		} else {
-			return fmt.Sprintf("%v %v %v", col, op, v())
 		}
+		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
 	var queries []string
 	for i := 0; i < 50; i++ {
@@ -1051,41 +924,6 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 	}
 }
 
-func TestNonPreparedPlanCacheFieldNames(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec("create table t(a int, index(a))")
-	tk.MustExec("create table tt(a varchar(10))")
-	tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-
-	checkFieldName := func(sql, hit string, fields ...string) {
-		rs, err := tk.Exec(sql)
-		require.NoError(t, err)
-		for i, f := range rs.Fields() {
-			require.Equal(t, f.Column.Name.L, fields[i])
-		}
-		require.NoError(t, rs.Close())
-		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(hit))
-	}
-
-	checkFieldName(`select a+1 from t where a<10`, `0`, `a+1`)
-	checkFieldName(`select a+1 from t where a<20`, `1`, `a+1`)
-	checkFieldName(`select a+2 from t where a<30`, `0`, `a+2`) // can not hit since field names changed
-	checkFieldName(`select a+2 from t where a<40`, `1`, `a+2`)
-	checkFieldName(`select a,a+1 from t where a<30`, `0`, `a`, `a+1`) // can not hit since field names changed
-	checkFieldName(`select a,a+1 from t where a<40`, `1`, `a`, `a+1`)
-	checkFieldName(`select a+'123' from tt where a='1'`, `0`, `a+'123'`)
-	checkFieldName(`select a+'123' from tt where a='2'`, `1`, `a+'123'`)
-
-	checkFieldName(`select 1 from t where a<10`, `0`, `1`)
-	checkFieldName(`select 1 from t where a<20`, `1`, `1`)
-	checkFieldName(`select 2 from t where a<10`, `0`, `2`)
-	checkFieldName(`select 2 from t where a<20`, `1`, `2`)
-	checkFieldName(`select 1,2 from t where a<10`, `0`, `1`, `2`)
-	checkFieldName(`select 1,2 from t where a<20`, `1`, `1`, `2`)
-}
-
 func TestIssue42125(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1376,6 +1214,38 @@ func TestIssue47133(t *testing.T) {
 	require.Equal(t, cnt, 2)
 }
 
+func TestPlanCacheBindingIgnore(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create database test1`)
+	tk.MustExec(`use test1`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`create table t (a int)`)
+
+	tk.MustExec(`prepare st1 from 'select * from test1.t'`)
+	tk.MustExec(`execute st1`)
+	tk.MustExec(`execute st1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`prepare st2 from 'select * from test2.t'`)
+	tk.MustExec(`execute st2`)
+	tk.MustExec(`execute st2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`create global binding using select /*+ ignore_plan_cache() */ * from test1.t`)
+	tk.MustExec(`execute st1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`create global binding using select /*+ ignore_plan_cache() */ * from test2.t`)
+	tk.MustExec(`execute st2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
 func TestBuiltinFuncFlen(t *testing.T) {
 	// same as TestIssue45378 and TestIssue45253
 	store := testkit.CreateMockStore(t)
@@ -1403,38 +1273,221 @@ func TestBuiltinFuncFlen(t *testing.T) {
 	}
 }
 
-func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
+func TestWarningWithDisablePlanCacheStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
-	tk.MustExec(`create table t (a int, b varchar(32), c datetime, key(a))`)
+	tk.MustExec("create table t (a int) partition by hash(a) partitions 4;")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("prepare st from 'select * from t';")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec("execute st;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec("execute st;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
 
-	// normal builtin functions can be supported
-	supportedCases := []string{
-		`select * from t where mod(a, 5) < 2`,
-		`select * from t where c < now()`,
-		`select date_format(c, '%Y-%m-%d') from t where a < 10`,
-		`select str_to_date(b, '%Y-%m-%d') from t where a < 10`,
-		`select * from t where a-2 < 20`,
-		`select * from t where a+b > 100`,
+func randValueForMVIndex(colType string) string {
+	randSize := 50
+	colType = strings.ToLower(colType)
+	switch colType {
+	case "int":
+		return fmt.Sprintf("%v", randSize-rand.Intn(randSize))
+	case "string":
+		return fmt.Sprintf("\"%v\"", rand.Intn(randSize))
+	case "json-string":
+		var array []string
+		arraySize := 1 + rand.Intn(5)
+		for i := 0; i < arraySize; i++ {
+			array = append(array, randValueForMVIndex("string"))
+		}
+		return "'[" + strings.Join(array, ", ") + "]'"
+	case "json-signed":
+		var array []string
+		arraySize := 1 + rand.Intn(5)
+		for i := 0; i < arraySize; i++ {
+			array = append(array, randValueForMVIndex("int"))
+		}
+		return "'[" + strings.Join(array, ", ") + "]'"
+	default:
+		return "unknown type " + colType
 	}
-	for _, sql := range supportedCases {
-		tk.MustExec(sql)
-		tk.MustExec(sql)
-		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	}
+}
 
-	// unsupported cases
-	unsupportedCases := []string{
-		`select * from t where -a > 10`,                  // '-' cannot support
-		`select * from t where a < 1 and b like '%abc%'`, // LIKE
-		`select database() from t`,
+func insertValuesForMVIndex(nRows int, colTypes ...string) string {
+	var stmtVals []string
+	for i := 0; i < nRows; i++ {
+		var vals []string
+		for _, colType := range colTypes {
+			vals = append(vals, randValueForMVIndex(colType))
+		}
+		stmtVals = append(stmtVals, "("+strings.Join(vals, ", ")+")")
 	}
-	for _, sql := range unsupportedCases {
-		tk.MustExec(sql)
-		tk.MustExec(sql)
-		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	return strings.Join(stmtVals, ", ")
+}
+
+func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge bool, queryTemplate string, colTypes ...string) {
+	for i := 0; i < 5; i++ {
+		var vals []string
+		for _, colType := range colTypes {
+			vals = append(vals, randValueForMVIndex(colType))
+		}
+
+		query := queryTemplate
+		var setStmt, usingStmt string
+		for i, p := range vals {
+			query = strings.Replace(query, "?", p, 1)
+			if i > 0 {
+				setStmt += ", "
+				usingStmt += ", "
+			}
+			setStmt += fmt.Sprintf("@a%v=%v", i, p)
+			usingStmt += fmt.Sprintf("@a%v", i)
+		}
+		result := tk.MustQuery(query).Sort()
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		tk.MustExec(fmt.Sprintf("set %v", setStmt))
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%v'", queryTemplate))
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result1 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result1.Rows())
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result2 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result2.Rows())
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result3 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result3.Rows())
+		if isIndexMerge {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // hit the cache
+		}
+
+		if isIndexMerge {
+			result4 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+			result.Check(result4.Rows())
+			tkProcess := tk.Session().ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+			rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+			haveIndexMerge := false
+			for _, r := range rows {
+				if strings.Contains(r[0].(string), "IndexMerge") {
+					haveIndexMerge = true
+				}
+			}
+			require.True(t, haveIndexMerge) // IndexMerge has to be used.
+		}
+	}
+}
+
+func TestPlanCacheMVIndexRandomly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
+
+	// cases from TestIndexMergeFromComposedDNFCondition
+	tk.MustExec(`drop table if exists t2`)
+	tk.MustExec(`create table t2(a json, b json, c int, d int, e int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d))`)
+	tk.MustExec(fmt.Sprintf("insert into t2 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=?) or (? member of (b) and c=?)`,
+		`int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, ?) and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?)`,
+		`int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, false,
+		`select * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?) or e=?`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?) or d=?`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+
+	// cases from TestIndexMergeFromComposedCNFCondition
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1(a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))))`)
+	tk.MustExec(fmt.Sprintf("insert into t1 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int")))
+	tk.MustExec(`create table t2(a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d))`)
+	tk.MustExec(fmt.Sprintf("insert into t2 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t1, idx, idx2) */ * from t1 where ? member of (a) and ? member of (b)`,
+		`int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx, idx2) */ * from t2 where ? member of (a) and ? member of (b) and c=?`,
+		`int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx, idx2, idx4) */ * from t2 where ? member of (a) and ? member of (b) and c=? and d=?`,
+		`int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, ?) and c=? and ? member of (b) and d=?`,
+		`json-signed`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, ?) and c=? and ? member of (b) and d=?`,
+		`json-signed`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, false,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ? member of (a) and c=? and c=?`,
+		`int`, `int`, `int`)
+
+	// case from TestIndexMergeIssue50265
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as signed array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "string", "json-string", "json-string", "json-string", "json-signed")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`SELECT /*+ use_index_merge(t, domains, image_signatures, canonical_links, fpi) */ pk FROM t WHERE ? member of (domains) OR ? member of (image_signatures) OR ? member of (canonical_links) OR json_contains(fpi, "[69236881]") LIMIT 100`,
+		`string`, `string`, `string`)
+
+	// case from TestIndexMergeEliminateRedundantAndPaths
+	tk.MustExec(`DROP table if exists t`)
+	tk.MustExec("CREATE TABLE `t` (`pk` varbinary(255) NOT NULL,`nslc` json DEFAULT NULL,`fpi` json DEFAULT NULL,`point_of_sale_country` varchar(2) DEFAULT NULL,KEY `fpi` ((cast(`fpi` as signed array))),KEY `nslc` ((cast(`nslc` as char(1000) array)),`point_of_sale_country`),KEY `nslc_old` ((cast(`nslc` as char(1000) array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "string", "json-string", "json-signed", "string")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		"SELECT /*+ use_index_merge(t, fpi, nslc_old, nslc) */ * FROM   t WHERE   ? member of (fpi)   AND ? member of (nslc) LIMIT   100",
+		"int", "string")
+
+	// case from TestIndexMergeSingleCaseCouldFeelIndexMergeHint
+	tk.MustExec(`DROP table if exists t`)
+	tk.MustExec("CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as signed array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "json-string", "json-signed", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		"SELECT  /*+ use_index_merge(t, nslc) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
+		"int", "string")
+	verifyPlanCacheForMVIndex(t, tk, true,
+		"SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
+		"int", "string")
+}
+
+func BenchmarkPlanCacheBindingMatch(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec(`create global binding using select * from t where a=1`)
+
+	tk.MustExec(`prepare st from 'select * from t where a=?'`)
+	tk.MustExec(`set @a=1`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustExec("execute st using @a")
 	}
 }
 

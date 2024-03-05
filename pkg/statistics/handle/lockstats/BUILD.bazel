@@ -12,8 +12,9 @@ go_library(
     deps = [
         "//pkg/sessionctx",
         "//pkg/statistics/handle/cache",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
-        "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
@@ -36,6 +37,7 @@ go_test(
         "//pkg/kv",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
+        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/testkit/testsetup",
         "//pkg/types",

@@ -594,6 +594,21 @@ func TestAdminRepairTableRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
+func TestAdminOptimizeTableRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"OPTIMIZE TABLE t", "OPTIMIZE TABLE `t`"},
+		{"OPTIMIZE LOCAL TABLE t", "OPTIMIZE NO_WRITE_TO_BINLOG TABLE `t`"},
+		{"OPTIMIZE NO_WRITE_TO_BINLOG TABLE t", "OPTIMIZE NO_WRITE_TO_BINLOG TABLE `t`"},
+		{"OPTIMIZE TABLE t1, t2", "OPTIMIZE TABLE `t1`, `t2`"},
+		{"optimize table t1,t2", "OPTIMIZE TABLE `t1`, `t2`"},
+		{"optimize tables t1, t2", "OPTIMIZE TABLE `t1`, `t2`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
 func TestSequenceRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"create sequence seq", "CREATE SEQUENCE `seq`"},
