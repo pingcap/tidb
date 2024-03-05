@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -494,21 +495,27 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 	return minCheckpoint
 }
 
-func (f *fakeCluster) advanceCheckpointBy(checkPoint uint64) uint64 {
-	minCheckpoint := uint64(math.MaxUint64)
-	for _, r := range f.regions {
-		f.updateRegion(r.id, func(r *region) {
-			// The current implementation assumes that the server never returns checkpoint with value 0.
-			// This assumption is true for the TiKV implementation, simulating it here.
-			cp := r.checkpoint.Add(checkPoint)
-			if cp < minCheckpoint {
-				minCheckpoint = cp
-			}
-			r.fsim.flushedEpoch.Store(0)
-		})
-	}
-	log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
-	return minCheckpoint
+func (f *fakeCluster) advanceCheckpointBy(duration time.Duration) uint64 {
+    minCheckpoint := uint64(math.MaxUint64)
+    for _, r := range f.regions {
+        f.updateRegion(r.id, func(r *region) {
+            newCheckpointTime := oracle.GetTimeFromTS(r.checkpoint.Load()).Add(duration)
+            newCheckpoint := oracle.GoTimeToTS(newCheckpointTime)
+			r.checkpoint.Store(newCheckpoint)
+            if newCheckpoint < minCheckpoint {
+                minCheckpoint = newCheckpoint
+            }
+            r.fsim.flushedEpoch.Store(0)
+        })
+    }
+    log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
+    return minCheckpoint
+}
+
+func (f *fakeCluster) advanceClusterTimeBy(duration time.Duration) uint64 {
+	newTime := oracle.GoTimeToTS(oracle.GetTimeFromTS(f.currentTS).Add(duration))
+	f.currentTS = newTime
+	return newTime
 }
 
 func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {

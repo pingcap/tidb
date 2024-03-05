@@ -83,7 +83,7 @@ func (c constantRegions) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 }
 
 func (c constantRegions) FetchCurrentTS(ctx context.Context) (uint64, error) {
-	return uint64(time.Now().UnixNano()), nil
+	return uint64(time.Now().Unix()), nil
 }
 
 func makeSubrangeRegions(keys ...string) constantRegions {
