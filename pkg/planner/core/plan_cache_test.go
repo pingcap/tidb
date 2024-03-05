@@ -1614,7 +1614,7 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk.MustQuery(`select * from t where a IN (2,1,4,1,1,5,5)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
 	tk.MustQuery(`select * from t where a IN (1,3,4)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
 	tk.MustQuery(`select * from t where a IN (1,3,4)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`select * from t where a IN (2,5,4,2,5,5,1)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
 	tk.MustQuery(`select count(*) from t partition (p0)`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select count(*) from t partition (p1)`).Check(testkit.Rows("5"))
