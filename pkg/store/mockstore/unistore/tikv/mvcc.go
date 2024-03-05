@@ -1026,7 +1026,6 @@ func (store *MVCCStore) Flush(reqCtx *requestCtx, req *kvrpcpb.FlushRequest) err
 			}
 			continue
 		}
-		// TODO add memory lock for async commit protocol.
 	}
 
 	dummyPrewriteReq := &kvrpcpb.PrewriteRequest{
