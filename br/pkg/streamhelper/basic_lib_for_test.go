@@ -101,6 +101,7 @@ type fakeCluster struct {
 
 	onGetClient        func(uint64) error
 	serviceGCSafePoint uint64
+	currentTS uint64
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -270,6 +271,10 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 	}
 	f.serviceGCSafePoint = at
 	return at, nil
+}
+
+func (f *fakeCluster) FetchCurrentTS(ctx context.Context) (uint64, error) {
+	return f.currentTS, nil
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
@@ -479,6 +484,23 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 			// The current implementation assumes that the server never returns checkpoint with value 0.
 			// This assumption is true for the TiKV implementation, simulating it here.
 			cp := r.checkpoint.Add(rand.Uint64()%256 + 1)
+			if cp < minCheckpoint {
+				minCheckpoint = cp
+			}
+			r.fsim.flushedEpoch.Store(0)
+		})
+	}
+	log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
+	return minCheckpoint
+}
+
+func (f *fakeCluster) advanceCheckpointBy(checkPoint uint64) uint64 {
+	minCheckpoint := uint64(math.MaxUint64)
+	for _, r := range f.regions {
+		f.updateRegion(r.id, func(r *region) {
+			// The current implementation assumes that the server never returns checkpoint with value 0.
+			// This assumption is true for the TiKV implementation, simulating it here.
+			cp := r.checkpoint.Add(checkPoint)
 			if cp < minCheckpoint {
 				minCheckpoint = cp
 			}
