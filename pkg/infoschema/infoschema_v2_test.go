@@ -12,10 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infoschema_test
+package infoschema
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/infoschema/internal"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/stretchr/testify/require"
+)
 
 func TestV2Basic(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+	is := NewInfoSchemaV2(r, NewData())
 
+	dbInfo := internal.MockDBInfo(t, r.Store(), "testDB")
+	is.Data.addDB(1, dbInfo)
+	internal.AddDB(t, r.Store(), dbInfo)
+	tblInfo := internal.MockTableInfo(t, r.Store(), "test")
+	is.Data.add(tableItem{"testDB", dbInfo.ID, "test", tblInfo.ID, 2}, internal.MockTable(t, r.Store(), tblInfo))
+	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	require.Equal(t, 1, len(is.AllSchemas()))
+	require.Equal(t, 0, len(is.SchemaTables(is.AllSchemas()[0].Name)))
+	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	is.schemaVersion = 2
+	is.ts = ver.Ver
+	require.Equal(t, 1, len(is.SchemaTables(is.AllSchemas()[0].Name)))
 }

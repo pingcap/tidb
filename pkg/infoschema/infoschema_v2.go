@@ -212,7 +212,7 @@ type infoschemaV2 struct {
 	*Data
 }
 
-func newInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
+func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
 	return infoschemaV2{
 		infoSchema: &infoSchema{
 			infoSchemaMisc: infoSchemaMisc{

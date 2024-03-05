@@ -1245,7 +1245,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 	return &Builder{
 		enableV2:     variable.SchemaCacheSize.Load() > 0,
 		Requirement:  r,
-		infoschemaV2: newInfoSchemaV2(r, infoData),
+		infoschemaV2: NewInfoSchemaV2(r, infoData),
 		dirtyDB:      make(map[string]bool),
 		factory:      factory,
 		infoData:     infoData,
