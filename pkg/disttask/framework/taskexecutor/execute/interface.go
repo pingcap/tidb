@@ -20,18 +20,32 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
-// SubtaskExecutor defines the executor of a subtask.
-type SubtaskExecutor interface {
-	// Init is used to initialize the environment for the subtask executor.
+// StepExecutor defines the executor for subtasks of a task step.
+// the calling sequence is:
+//
+//	Init
+//	for every subtask of this step:
+//		if RunSubtask failed then break
+//		else OnFinished
+//	Cleanup
+type StepExecutor interface {
+	// Init is used to initialize the environment.
+	// if failed, task executor will retry later.
 	Init(context.Context) error
 	// RunSubtask is used to run the subtask.
 	RunSubtask(ctx context.Context, subtask *proto.Subtask) error
-	// Cleanup is used to clean up the environment for the subtask executor.
-	Cleanup(context.Context) error
+
+	// RealtimeSummary returns the realtime summary of the running subtask by this executor.
+	RealtimeSummary() *SubtaskSummary
+
 	// OnFinished is used to handle the subtask when it is finished.
 	// The subtask meta can be updated in place.
 	OnFinished(ctx context.Context, subtask *proto.Subtask) error
-	// Rollback is used to roll back all subtasks.
-	// TODO: right now all impl of Rollback is empty, maybe we can remove it.
-	Rollback(context.Context) error
+	// Cleanup is used to clean up the environment.
+	Cleanup(context.Context) error
+}
+
+// SubtaskSummary contains the summary of a subtask.
+type SubtaskSummary struct {
+	RowCount int64
 }

@@ -37,39 +37,38 @@ func TestTaskIsDone(t *testing.T) {
 		{TaskStateSucceed, true},
 		{TaskStateReverting, false},
 		{TaskStateFailed, true},
-		{TaskStateRevertFailed, false},
 		{TaskStateCancelling, false},
 		{TaskStatePausing, false},
 		{TaskStatePaused, false},
 		{TaskStateReverted, true},
 	}
 	for _, c := range cases {
-		require.Equal(t, c.done, (&Task{State: c.state}).IsDone())
+		require.Equal(t, c.done, (&Task{TaskBase: TaskBase{State: c.state}}).IsDone())
 	}
 }
 
 func TestTaskCompare(t *testing.T) {
-	taskA := Task{
+	taskA := Task{TaskBase: TaskBase{
 		ID:         100,
 		Priority:   NormalPriority,
 		CreateTime: time.Date(2023, time.December, 5, 15, 53, 30, 0, time.UTC),
-	}
+	}}
 	taskB := taskA
-	require.Equal(t, 0, taskA.Compare(&taskB))
+	require.Equal(t, 0, taskA.CompareTask(&taskB))
 	taskB.Priority = 100
-	require.Greater(t, taskA.Compare(&taskB), 0)
+	require.Greater(t, taskA.CompareTask(&taskB), 0)
 	taskB.Priority = taskA.Priority + 100
-	require.Less(t, taskA.Compare(&taskB), 0)
+	require.Less(t, taskA.CompareTask(&taskB), 0)
 
 	taskB.Priority = taskA.Priority
 	taskB.CreateTime = time.Date(2023, time.December, 5, 15, 53, 10, 0, time.UTC)
-	require.Greater(t, taskA.Compare(&taskB), 0)
+	require.Greater(t, taskA.CompareTask(&taskB), 0)
 	taskB.CreateTime = time.Date(2023, time.December, 5, 15, 53, 40, 0, time.UTC)
-	require.Less(t, taskA.Compare(&taskB), 0)
+	require.Less(t, taskA.CompareTask(&taskB), 0)
 
 	taskB.CreateTime = taskA.CreateTime
 	taskB.ID = taskA.ID - 10
-	require.Greater(t, taskA.Compare(&taskB), 0)
+	require.Greater(t, taskA.CompareTask(&taskB), 0)
 	taskB.ID = taskA.ID + 10
-	require.Less(t, taskA.Compare(&taskB), 0)
+	require.Less(t, taskA.CompareTask(&taskB), 0)
 }

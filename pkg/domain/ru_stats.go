@@ -190,7 +190,7 @@ func (r *RUStatsWriter) loadLatestRUStats() (*meta.RUStats, error) {
 
 func (r *RUStatsWriter) persistLatestRUStats(stats *meta.RUStats) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	return kv.RunInNewTxn(ctx, r.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(ctx, r.store, true, func(_ context.Context, txn kv.Transaction) error {
 		return meta.NewMeta(txn).SetRUStats(stats)
 	})
 }
@@ -198,7 +198,7 @@ func (r *RUStatsWriter) persistLatestRUStats(stats *meta.RUStats) error {
 func (r *RUStatsWriter) isLatestDataInserted(lastEndTime time.Time) (bool, error) {
 	end := lastEndTime.Format(time.DateTime)
 	start := lastEndTime.Add(-ruStatsInterval).Format(time.DateTime)
-	rows, sqlErr := execRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []interface{}{start, end})
+	rows, sqlErr := execRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []any{start, end})
 	if sqlErr != nil {
 		return false, errors.Trace(sqlErr)
 	}

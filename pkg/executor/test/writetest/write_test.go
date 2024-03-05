@@ -325,11 +325,6 @@ func TestLatch(t *testing.T) {
 	tk1.MustExec("update t set id = id + 1")
 	tk2.MustExec("update t set id = id + 1")
 	tk1.MustGetDBError("commit", kv.ErrWriteConflictInTiDB)
-
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("update t set id = id + 1")
-	tk2.MustExec("update t set id = id + 1")
-	tk1.MustExec("commit")
 }
 
 func TestReplaceLog(t *testing.T) {
@@ -352,7 +347,7 @@ func TestReplaceLog(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(1), kv.IntHandle(1), nil)
+	_, err = indexOpr.Create(ctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1), nil)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -380,7 +375,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
-	_, err = tbl.AddRecord(ctx, types.MakeDatums(30001, 2))
+	_, err = tbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(30001, 2))
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)

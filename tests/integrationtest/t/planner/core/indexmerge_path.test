@@ -253,3 +253,13 @@ insert into t value (1, '{"a":[1,2,3], "b": [2,3,4]}');
 analyze table t;
 alter table t add index ibb( (cast(b->'$.b' as signed array)) );
 explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
+
+# TestIssue50420
+drop table if exists t, t1;
+create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
+insert into t values ('[1,2,3]', 1);
+explain format=brief select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
+select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
+create table t1 (j json, a bigint(20), b int, primary key(a,b), key mvi((cast(j as unsigned array))));
+explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where a = 1 or json_contains(j, '1');
+explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where (a = 1 and b = 2) or json_contains(j, '1');

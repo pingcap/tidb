@@ -251,21 +251,6 @@ func (mr *MockTaskManagerMockRecorder) CancelTask(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelTask", reflect.TypeOf((*MockTaskManager)(nil).CancelTask), arg0, arg1)
 }
 
-// CollectSubTaskError mocks base method.
-func (m *MockTaskManager) CollectSubTaskError(arg0 context.Context, arg1 int64) ([]error, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CollectSubTaskError", arg0, arg1)
-	ret0, _ := ret[0].([]error)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CollectSubTaskError indicates an expected call of CollectSubTaskError.
-func (mr *MockTaskManagerMockRecorder) CollectSubTaskError(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectSubTaskError", reflect.TypeOf((*MockTaskManager)(nil).CollectSubTaskError), arg0, arg1)
-}
-
 // DeleteDeadNodes mocks base method.
 func (m *MockTaskManager) DeleteDeadNodes(arg0 context.Context, arg1 []string) error {
 	m.ctrl.T.Helper()
@@ -309,10 +294,10 @@ func (mr *MockTaskManagerMockRecorder) GCSubtasks(arg0 any) *gomock.Call {
 }
 
 // GetActiveSubtasks mocks base method.
-func (m *MockTaskManager) GetActiveSubtasks(arg0 context.Context, arg1 int64) ([]*proto.Subtask, error) {
+func (m *MockTaskManager) GetActiveSubtasks(arg0 context.Context, arg1 int64) ([]*proto.SubtaskBase, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetActiveSubtasks", arg0, arg1)
-	ret0, _ := ret[0].([]*proto.Subtask)
+	ret0, _ := ret[0].([]*proto.SubtaskBase)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -336,6 +321,36 @@ func (m *MockTaskManager) GetAllNodes(arg0 context.Context) ([]proto.ManagedNode
 func (mr *MockTaskManagerMockRecorder) GetAllNodes(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllNodes", reflect.TypeOf((*MockTaskManager)(nil).GetAllNodes), arg0)
+}
+
+// GetAllSubtasks mocks base method.
+func (m *MockTaskManager) GetAllSubtasks(arg0 context.Context) ([]*proto.SubtaskBase, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllSubtasks", arg0)
+	ret0, _ := ret[0].([]*proto.SubtaskBase)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllSubtasks indicates an expected call of GetAllSubtasks.
+func (mr *MockTaskManagerMockRecorder) GetAllSubtasks(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllSubtasks", reflect.TypeOf((*MockTaskManager)(nil).GetAllSubtasks), arg0)
+}
+
+// GetAllSubtasksByStepAndState mocks base method.
+func (m *MockTaskManager) GetAllSubtasksByStepAndState(arg0 context.Context, arg1 int64, arg2 proto.Step, arg3 proto.SubtaskState) ([]*proto.Subtask, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllSubtasksByStepAndState", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].([]*proto.Subtask)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllSubtasksByStepAndState indicates an expected call of GetAllSubtasksByStepAndState.
+func (mr *MockTaskManagerMockRecorder) GetAllSubtasksByStepAndState(arg0, arg1, arg2, arg3 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllSubtasksByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetAllSubtasksByStepAndState), arg0, arg1, arg2, arg3)
 }
 
 // GetManagedNodes mocks base method.
@@ -368,34 +383,34 @@ func (mr *MockTaskManagerMockRecorder) GetSubtaskCntGroupByStates(arg0, arg1, ar
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskCntGroupByStates", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskCntGroupByStates), arg0, arg1, arg2)
 }
 
-// GetSubtasksByExecIdsAndStepAndState mocks base method.
-func (m *MockTaskManager) GetSubtasksByExecIdsAndStepAndState(arg0 context.Context, arg1 []string, arg2 int64, arg3 proto.Step, arg4 proto.SubtaskState) ([]*proto.Subtask, error) {
+// GetSubtaskErrors mocks base method.
+func (m *MockTaskManager) GetSubtaskErrors(arg0 context.Context, arg1 int64) ([]error, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSubtasksByExecIdsAndStepAndState", arg0, arg1, arg2, arg3, arg4)
-	ret0, _ := ret[0].([]*proto.Subtask)
+	ret := m.ctrl.Call(m, "GetSubtaskErrors", arg0, arg1)
+	ret0, _ := ret[0].([]error)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetSubtasksByExecIdsAndStepAndState indicates an expected call of GetSubtasksByExecIdsAndStepAndState.
-func (mr *MockTaskManagerMockRecorder) GetSubtasksByExecIdsAndStepAndState(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+// GetSubtaskErrors indicates an expected call of GetSubtaskErrors.
+func (mr *MockTaskManagerMockRecorder) GetSubtaskErrors(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByExecIdsAndStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetSubtasksByExecIdsAndStepAndState), arg0, arg1, arg2, arg3, arg4)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskErrors", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskErrors), arg0, arg1)
 }
 
-// GetSubtasksByStepAndState mocks base method.
-func (m *MockTaskManager) GetSubtasksByStepAndState(arg0 context.Context, arg1 int64, arg2 proto.Step, arg3 proto.TaskState) ([]*proto.Subtask, error) {
+// GetTaskBaseByID mocks base method.
+func (m *MockTaskManager) GetTaskBaseByID(arg0 context.Context, arg1 int64) (*proto.TaskBase, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSubtasksByStepAndState", arg0, arg1, arg2, arg3)
-	ret0, _ := ret[0].([]*proto.Subtask)
+	ret := m.ctrl.Call(m, "GetTaskBaseByID", arg0, arg1)
+	ret0, _ := ret[0].(*proto.TaskBase)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetSubtasksByStepAndState indicates an expected call of GetSubtasksByStepAndState.
-func (mr *MockTaskManagerMockRecorder) GetSubtasksByStepAndState(arg0, arg1, arg2, arg3 any) *gomock.Call {
+// GetTaskBaseByID indicates an expected call of GetTaskBaseByID.
+func (mr *MockTaskManagerMockRecorder) GetTaskBaseByID(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByStepAndState", reflect.TypeOf((*MockTaskManager)(nil).GetSubtasksByStepAndState), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskBaseByID", reflect.TypeOf((*MockTaskManager)(nil).GetTaskBaseByID), arg0, arg1)
 }
 
 // GetTaskByID mocks base method.
@@ -411,36 +426,6 @@ func (m *MockTaskManager) GetTaskByID(arg0 context.Context, arg1 int64) (*proto.
 func (mr *MockTaskManagerMockRecorder) GetTaskByID(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskByID", reflect.TypeOf((*MockTaskManager)(nil).GetTaskByID), arg0, arg1)
-}
-
-// GetTaskExecutorIDsByTaskID mocks base method.
-func (m *MockTaskManager) GetTaskExecutorIDsByTaskID(arg0 context.Context, arg1 int64) ([]string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTaskExecutorIDsByTaskID", arg0, arg1)
-	ret0, _ := ret[0].([]string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetTaskExecutorIDsByTaskID indicates an expected call of GetTaskExecutorIDsByTaskID.
-func (mr *MockTaskManagerMockRecorder) GetTaskExecutorIDsByTaskID(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskExecutorIDsByTaskID", reflect.TypeOf((*MockTaskManager)(nil).GetTaskExecutorIDsByTaskID), arg0, arg1)
-}
-
-// GetTaskExecutorIDsByTaskIDAndStep mocks base method.
-func (m *MockTaskManager) GetTaskExecutorIDsByTaskIDAndStep(arg0 context.Context, arg1 int64, arg2 proto.Step) ([]string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTaskExecutorIDsByTaskIDAndStep", arg0, arg1, arg2)
-	ret0, _ := ret[0].([]string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetTaskExecutorIDsByTaskIDAndStep indicates an expected call of GetTaskExecutorIDsByTaskIDAndStep.
-func (mr *MockTaskManagerMockRecorder) GetTaskExecutorIDsByTaskIDAndStep(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskExecutorIDsByTaskIDAndStep", reflect.TypeOf((*MockTaskManager)(nil).GetTaskExecutorIDsByTaskIDAndStep), arg0, arg1, arg2)
 }
 
 // GetTasksInStates mocks base method.
@@ -464,10 +449,10 @@ func (mr *MockTaskManagerMockRecorder) GetTasksInStates(arg0 any, arg1 ...any) *
 }
 
 // GetTopUnfinishedTasks mocks base method.
-func (m *MockTaskManager) GetTopUnfinishedTasks(arg0 context.Context) ([]*proto.Task, error) {
+func (m *MockTaskManager) GetTopUnfinishedTasks(arg0 context.Context) ([]*proto.TaskBase, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTopUnfinishedTasks", arg0)
-	ret0, _ := ret[0].([]*proto.Task)
+	ret0, _ := ret[0].([]*proto.TaskBase)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -536,6 +521,34 @@ func (mr *MockTaskManagerMockRecorder) ResumeSubtasks(arg0, arg1 any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResumeSubtasks", reflect.TypeOf((*MockTaskManager)(nil).ResumeSubtasks), arg0, arg1)
 }
 
+// ResumedTask mocks base method.
+func (m *MockTaskManager) ResumedTask(arg0 context.Context, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResumedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResumedTask indicates an expected call of ResumedTask.
+func (mr *MockTaskManagerMockRecorder) ResumedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResumedTask", reflect.TypeOf((*MockTaskManager)(nil).ResumedTask), arg0, arg1)
+}
+
+// RevertTask mocks base method.
+func (m *MockTaskManager) RevertTask(arg0 context.Context, arg1 int64, arg2 proto.TaskState, arg3 error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevertTask", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RevertTask indicates an expected call of RevertTask.
+func (mr *MockTaskManagerMockRecorder) RevertTask(arg0, arg1, arg2, arg3 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevertTask", reflect.TypeOf((*MockTaskManager)(nil).RevertTask), arg0, arg1, arg2, arg3)
+}
+
 // RevertedTask mocks base method.
 func (m *MockTaskManager) RevertedTask(arg0 context.Context, arg1 int64) error {
 	m.ctrl.T.Helper()
@@ -592,20 +605,6 @@ func (mr *MockTaskManagerMockRecorder) SwitchTaskStepInBatch(arg0, arg1, arg2, a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStepInBatch", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStepInBatch), arg0, arg1, arg2, arg3, arg4)
 }
 
-// TransferSubTasks2History mocks base method.
-func (m *MockTaskManager) TransferSubTasks2History(arg0 context.Context, arg1 int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TransferSubTasks2History", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// TransferSubTasks2History indicates an expected call of TransferSubTasks2History.
-func (mr *MockTaskManagerMockRecorder) TransferSubTasks2History(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransferSubTasks2History", reflect.TypeOf((*MockTaskManager)(nil).TransferSubTasks2History), arg0, arg1)
-}
-
 // TransferTasks2History mocks base method.
 func (m *MockTaskManager) TransferTasks2History(arg0 context.Context, arg1 []*proto.Task) error {
 	m.ctrl.T.Helper()
@@ -621,7 +620,7 @@ func (mr *MockTaskManagerMockRecorder) TransferTasks2History(arg0, arg1 any) *go
 }
 
 // UpdateSubtasksExecIDs mocks base method.
-func (m *MockTaskManager) UpdateSubtasksExecIDs(arg0 context.Context, arg1 []*proto.Subtask) error {
+func (m *MockTaskManager) UpdateSubtasksExecIDs(arg0 context.Context, arg1 []*proto.SubtaskBase) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateSubtasksExecIDs", arg0, arg1)
 	ret0, _ := ret[0].(error)
@@ -632,21 +631,6 @@ func (m *MockTaskManager) UpdateSubtasksExecIDs(arg0 context.Context, arg1 []*pr
 func (mr *MockTaskManagerMockRecorder) UpdateSubtasksExecIDs(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtasksExecIDs", reflect.TypeOf((*MockTaskManager)(nil).UpdateSubtasksExecIDs), arg0, arg1)
-}
-
-// UpdateTaskAndAddSubTasks mocks base method.
-func (m *MockTaskManager) UpdateTaskAndAddSubTasks(arg0 context.Context, arg1 *proto.Task, arg2 []*proto.Subtask, arg3 proto.TaskState) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateTaskAndAddSubTasks", arg0, arg1, arg2, arg3)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// UpdateTaskAndAddSubTasks indicates an expected call of UpdateTaskAndAddSubTasks.
-func (mr *MockTaskManagerMockRecorder) UpdateTaskAndAddSubTasks(arg0, arg1, arg2, arg3 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTaskAndAddSubTasks", reflect.TypeOf((*MockTaskManager)(nil).UpdateTaskAndAddSubTasks), arg0, arg1, arg2, arg3)
 }
 
 // WithNewSession mocks base method.

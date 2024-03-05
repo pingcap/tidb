@@ -43,7 +43,7 @@ func TestJoinExec(t *testing.T) {
 		opt1 := testutil.MockDataSourceParameters{
 			Rows: casTest.rows,
 			Ctx:  casTest.ctx,
-			GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+			GenDataFunc: func(row int, typ *types.FieldType) any {
 				switch typ.GetType() {
 				case mysql.TypeLong, mysql.TypeLonglong:
 					return int64(row)

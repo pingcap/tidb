@@ -18,13 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 )
 
 type taskTypeOptions struct {
-	// Summary is the summary of all tasks of the task type.
-	// TODO: better have a summary per task/subtask.
-	Summary *execute.Summary
 }
 
 // TaskTypeOption is the option of TaskType.
@@ -57,9 +53,4 @@ func GetTaskExecutorFactory(taskType proto.TaskType) taskExecutorFactoryFn {
 func ClearTaskExecutors() {
 	taskTypes = make(map[proto.TaskType]taskTypeOptions)
 	taskExecutorFactories = make(map[proto.TaskType]taskExecutorFactoryFn)
-}
-
-// WithSummary is the option of TaskExecutor to set the summary.
-var WithSummary TaskTypeOption = func(opts *taskTypeOptions) {
-	opts.Summary = execute.NewSummary()
 }

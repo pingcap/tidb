@@ -16,258 +16,25 @@ package external
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
-	"math"
-	"math/rand"
-	"os"
-	"runtime"
-	"runtime/pprof"
-	"slices"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/felixge/fgprof"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
-
-func openTestingStorage(t *testing.T) storage.ExternalStorage {
-	if *testingStorageURI == "" {
-		t.Skip("testingStorageURI is not set")
-	}
-	s, err := storage.NewFromURL(context.Background(), *testingStorageURI)
-	require.NoError(t, err)
-	return s
-}
-
-type kvSource interface {
-	next() (key, value []byte, handle kv.Handle)
-	outputSize() int
-}
-
-type ascendingKeyGenerator struct {
-	keySize         int
-	keyCommonPrefix []byte
-	count           int
-	curKey          []byte
-	keyOutCh        chan []byte
-}
-
-func generateAscendingKey(
-	count int,
-	keySize int,
-	keyCommonPrefix []byte,
-) chan []byte {
-	c := &ascendingKeyGenerator{
-		keySize:         keySize,
-		count:           count,
-		keyCommonPrefix: keyCommonPrefix,
-		keyOutCh:        make(chan []byte, 100),
-	}
-	c.curKey = make([]byte, keySize)
-	copy(c.curKey, keyCommonPrefix)
-	c.run()
-	return c.keyOutCh
-}
-
-func (c *ascendingKeyGenerator) run() {
-	keyCommonPrefixSize := len(c.keyCommonPrefix)
-	incSuffixLen := int(math.Ceil(math.Log2(float64(c.count)) / 8))
-	if c.keySize-keyCommonPrefixSize < incSuffixLen {
-		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
-			c.keySize, keyCommonPrefixSize, incSuffixLen))
-	}
-
-	go func() {
-		defer close(c.keyOutCh)
-		for i := 0; i < c.count; i++ {
-			// ret to use most left bytes to alternate the key
-			for j := keyCommonPrefixSize + incSuffixLen - 1; j >= keyCommonPrefixSize; j-- {
-				c.curKey[j]++
-				if c.curKey[j] != 0 {
-					break
-				}
-			}
-			c.keyOutCh <- slices.Clone(c.curKey)
-		}
-	}()
-}
-
-type ascendingKeySource struct {
-	valueSize int
-	keys      [][]byte
-	keysIdx   int
-	totalSize int
-}
-
-func newAscendingKeySource(
-	count int,
-	keySize int,
-	valueSize int,
-	keyCommonPrefix []byte,
-) *ascendingKeySource {
-	keyCh := generateAscendingKey(count, keySize, keyCommonPrefix)
-	s := &ascendingKeySource{
-		valueSize: valueSize,
-		keys:      make([][]byte, count),
-	}
-	for i := 0; i < count; i++ {
-		key := <-keyCh
-		s.keys[i] = key
-		s.totalSize += len(key) + valueSize
-	}
-	return s
-}
-
-func (s *ascendingKeySource) next() (key, value []byte, handle kv.Handle) {
-	if s.keysIdx >= len(s.keys) {
-		return nil, nil, nil
-	}
-	key = s.keys[s.keysIdx]
-	s.keysIdx++
-	return key, make([]byte, s.valueSize), nil
-}
-
-func (s *ascendingKeySource) outputSize() int {
-	return s.totalSize
-}
-
-type ascendingKeyAsyncSource struct {
-	valueSize int
-	keyOutCh  chan []byte
-	totalSize int
-}
-
-func newAscendingKeyAsyncSource(
-	count int,
-	keySize int,
-	valueSize int,
-	keyCommonPrefix []byte,
-) *ascendingKeyAsyncSource {
-	s := &ascendingKeyAsyncSource{
-		valueSize: valueSize,
-		keyOutCh:  generateAscendingKey(count, keySize, keyCommonPrefix),
-	}
-	return s
-}
-
-func (s *ascendingKeyAsyncSource) next() (key, value []byte, handle kv.Handle) {
-	key, ok := <-s.keyOutCh
-	if !ok {
-		return nil, nil, nil
-	}
-	s.totalSize += len(key) + s.valueSize
-	return key, make([]byte, s.valueSize), nil
-}
-
-func (s *ascendingKeyAsyncSource) outputSize() int {
-	return s.totalSize
-}
-
-type randomKeyGenerator struct {
-	keySize         int
-	keyCommonPrefix []byte
-	rnd             *rand.Rand
-	count           int
-	curKey          []byte
-	keyOutCh        chan []byte
-}
-
-func generateRandomKey(
-	count int,
-	keySize int,
-	keyCommonPrefix []byte,
-	seed int,
-) chan []byte {
-	c := &randomKeyGenerator{
-		keySize:         keySize,
-		count:           count,
-		keyCommonPrefix: keyCommonPrefix,
-		rnd:             rand.New(rand.NewSource(int64(seed))),
-		keyOutCh:        make(chan []byte, 100),
-	}
-	c.curKey = make([]byte, keySize)
-	copy(c.curKey, keyCommonPrefix)
-	c.run()
-	return c.keyOutCh
-}
-
-func (c *randomKeyGenerator) run() {
-	keyCommonPrefixSize := len(c.keyCommonPrefix)
-	incSuffixLen := int(math.Ceil(math.Log2(float64(c.count)) / 8))
-	randomLen := c.keySize - keyCommonPrefixSize - incSuffixLen
-	if randomLen < 0 {
-		panic(fmt.Sprintf("key size %d is too small, keyCommonPrefixSize: %d, incSuffixLen: %d",
-			c.keySize, keyCommonPrefixSize, incSuffixLen))
-	}
-
-	go func() {
-		defer close(c.keyOutCh)
-		for i := 0; i < c.count; i++ {
-			c.rnd.Read(c.curKey[keyCommonPrefixSize : keyCommonPrefixSize+randomLen])
-			for j := len(c.curKey) - 1; j >= keyCommonPrefixSize+randomLen; j-- {
-				c.curKey[j]++
-				if c.curKey[j] != 0 {
-					break
-				}
-			}
-			c.keyOutCh <- slices.Clone(c.curKey)
-		}
-	}()
-}
-
-type randomKeySource struct {
-	valueSize int
-	keys      [][]byte
-	keysIdx   int
-	totalSize int
-}
-
-func newRandomKeySource(
-	count int,
-	keySize int,
-	valueSize int,
-	keyCommonPrefix []byte,
-	seed int,
-) *randomKeySource {
-	keyCh := generateRandomKey(count, keySize, keyCommonPrefix, seed)
-	s := &randomKeySource{
-		valueSize: valueSize,
-		keys:      make([][]byte, count),
-	}
-	for i := 0; i < count; i++ {
-		key := <-keyCh
-		s.keys[i] = key
-		s.totalSize += len(key) + valueSize
-	}
-	return s
-}
-
-func (s *randomKeySource) next() (key, value []byte, handle kv.Handle) {
-	if s.keysIdx >= len(s.keys) {
-		return nil, nil, nil
-	}
-	key = s.keys[s.keysIdx]
-	s.keysIdx++
-	return key, make([]byte, s.valueSize), nil
-}
-
-func (s *randomKeySource) outputSize() int {
-	return s.totalSize
-}
 
 type writeTestSuite struct {
 	store              storage.ExternalStorage
@@ -275,11 +42,17 @@ type writeTestSuite struct {
 	memoryLimit        int
 	beforeCreateWriter func()
 	afterWriterClose   func()
+
+	optionalFilePath string
+	onClose          OnCloseFunc
 }
 
 func writePlainFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	_ = s.store.DeleteFile(ctx, filePath)
 	buf := make([]byte, s.memoryLimit)
 	offset := 0
@@ -324,9 +97,13 @@ func cleanOldFiles(ctx context.Context, store storage.ExternalStorage, subDir st
 func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
-		SetMemorySizeLimit(uint64(s.memoryLimit))
+		SetMemorySizeLimit(uint64(s.memoryLimit)).
+		SetOnCloseFunc(s.onClose)
 
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
@@ -348,6 +125,9 @@ func writeExternalFile(s *writeTestSuite) {
 func writeExternalOneFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
@@ -358,50 +138,24 @@ func writeExternalOneFile(s *writeTestSuite) {
 	writer := builder.BuildOneFile(
 		s.store, filePath, "writerID")
 	intest.AssertNoError(writer.Init(ctx, 20*1024*1024))
+	var minKey, maxKey []byte
+
 	key, val, _ := s.source.next()
+	minKey = key
 	for key != nil {
+		maxKey = key
 		err := writer.WriteRow(ctx, key, val)
 		intest.AssertNoError(err)
 		key, val, _ = s.source.next()
 	}
 	intest.AssertNoError(writer.Close(ctx))
+	s.onClose(&WriterSummary{
+		Min: minKey,
+		Max: maxKey,
+	})
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
-}
-
-func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
-	doneCh := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	maxInUse := uint64(0)
-	go func() {
-		defer wg.Done()
-
-		var m runtime.MemStats
-		ticker := time.NewTicker(300 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-doneCh:
-				return
-			case <-ticker.C:
-				runtime.ReadMemStats(&m)
-				if m.HeapInuse <= maxInUse {
-					continue
-				}
-				maxInUse = m.HeapInuse
-				file, err := os.Create(filename)
-				intest.AssertNoError(err)
-				err = pprof.WriteHeapProfile(file)
-				intest.AssertNoError(err)
-				err = file.Close()
-				intest.AssertNoError(err)
-			}
-		}
-	}()
-	return doneCh, &wg
 }
 
 // TestCompareWriter should be run like
@@ -414,34 +168,20 @@ func TestCompareWriter(t *testing.T) {
 	seed := time.Now().Nanosecond()
 	t.Logf("random seed: %d", seed)
 	var (
-		err     error
 		now     time.Time
 		elapsed time.Duration
 
-		fileCPU       *os.File
-		cpuProfCloser func() error
-
-		filenameHeap   string
-		heapProfDoneCh chan struct{}
-		heapWg         *sync.WaitGroup
+		p = newProfiler(true, true)
 	)
 	beforeTest := func() {
 		testIdx++
-		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", testIdx))
-		intest.AssertNoError(err)
-		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
-
-		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", testIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+		p.beforeTest()
 
 		now = time.Now()
 	}
 	afterClose := func() {
 		elapsed = time.Since(now)
-		err = cpuProfCloser()
-		intest.AssertNoError(err)
-		close(heapProfDoneCh)
-		heapWg.Wait()
+		p.afterTest()
 	}
 
 	suite := &writeTestSuite{
@@ -592,51 +332,6 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 	)
 }
 
-func createEvenlyDistributedFiles(
-	store storage.ExternalStorage,
-	fileSize, fileCount int,
-	subDir string,
-) (int, kv.Key, kv.Key) {
-	ctx := context.Background()
-
-	cleanOldFiles(ctx, store, "/"+subDir)
-
-	value := make([]byte, 100)
-	kvCnt := 0
-	var minKey, maxKey kv.Key
-	for i := 0; i < fileCount; i++ {
-		builder := NewWriterBuilder().
-			SetBlockSize(10 * 1024 * 1024).
-			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
-		writer := builder.Build(
-			store,
-			"/"+subDir,
-			fmt.Sprintf("%d", i),
-		)
-
-		keyIdx := i
-		totalSize := 0
-		for totalSize < fileSize {
-			key := fmt.Sprintf("key_%09d", keyIdx)
-			if len(minKey) == 0 && len(maxKey) == 0 {
-				minKey = []byte(key)
-				maxKey = []byte(key)
-			} else {
-				minKey = BytesMin(minKey, []byte(key))
-				maxKey = BytesMax(maxKey, []byte(key))
-			}
-			err := writer.WriteRow(ctx, []byte(key), value, nil)
-			intest.AssertNoError(err)
-			keyIdx += fileCount
-			totalSize += len(key) + len(value)
-			kvCnt++
-		}
-		err := writer.Close(ctx)
-		intest.AssertNoError(err)
-	}
-	return kvCnt, minKey, maxKey
-}
-
 func readMergeIter(t *testing.T, s *readTestSuite) {
 	ctx := context.Background()
 	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
@@ -680,46 +375,20 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 
 	kvCnt, _, _ := createEvenlyDistributedFiles(store, fileSize, fileCnt, subDir)
 	memoryLimit := 64 * 1024 * 1024
-	fileIdx := 0
 
 	var (
-		err     error
-		now     time.Time
 		elapsed time.Duration
 
-		fileCPU       *os.File
-		cpuProfCloser func() error
-
-		filenameHeap   string
-		heapProfDoneCh chan struct{}
-		heapWg         *sync.WaitGroup
+		p = newProfiler(true, true)
 	)
-	beforeTest := func() {
-		fileIdx++
-		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
-		intest.AssertNoError(err)
-		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
-
-		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
-
-		now = time.Now()
-	}
-	afterClose := func() {
-		elapsed = time.Since(now)
-		err = cpuProfCloser()
-		intest.AssertNoError(err)
-		close(heapProfDoneCh)
-		heapWg.Wait()
-	}
 
 	suite := &readTestSuite{
 		store:              store,
 		totalKVCnt:         kvCnt,
 		concurrency:        100,
 		memoryLimit:        memoryLimit,
-		beforeCreateReader: beforeTest,
-		afterReaderClose:   afterClose,
+		beforeCreateReader: p.beforeTest,
+		afterReaderClose:   p.afterTest,
 		subDir:             subDir,
 	}
 
@@ -745,50 +414,6 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 	)
 }
 
-func createAscendingFiles(
-	store storage.ExternalStorage,
-	fileSize, fileCount int,
-	subDir string,
-) (int, kv.Key, kv.Key) {
-	ctx := context.Background()
-
-	cleanOldFiles(ctx, store, "/"+subDir)
-
-	keyIdx := 0
-	value := make([]byte, 100)
-	kvCnt := 0
-	var minKey, maxKey kv.Key
-	for i := 0; i < fileCount; i++ {
-		builder := NewWriterBuilder().
-			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
-		writer := builder.Build(
-			store,
-			"/"+subDir,
-			fmt.Sprintf("%d", i),
-		)
-
-		totalSize := 0
-		var key string
-		for totalSize < fileSize {
-			key = fmt.Sprintf("key_%09d", keyIdx)
-			if i == 0 && totalSize == 0 {
-				minKey = []byte(key)
-			}
-			err := writer.WriteRow(ctx, []byte(key), value, nil)
-			intest.AssertNoError(err)
-			keyIdx++
-			totalSize += len(key) + len(value)
-			kvCnt++
-		}
-		if i == fileCount-1 {
-			maxKey = []byte(key)
-		}
-		err := writer.Close(ctx)
-		intest.AssertNoError(err)
-	}
-	return kvCnt, minKey, maxKey
-}
-
 var (
 	objectPrefix = flag.String("object-prefix", "ascending", "object prefix")
 	fileSize     = flag.Int("file-size", 50*units.MiB, "file size")
@@ -796,7 +421,6 @@ var (
 	concurrency  = flag.Int("concurrency", 100, "concurrency")
 	memoryLimit  = flag.Int("memory-limit", 64*units.MiB, "memory limit")
 	skipCreate   = flag.Bool("skip-create", false, "skip create files")
-	fileName     = flag.String("file-name", "test", "file name for tests")
 )
 
 func TestReadFileConcurrently(t *testing.T) {
@@ -828,118 +452,19 @@ func testCompareReaderWithContent(
 	if !*skipCreate {
 		kvCnt, _, _ = createFn(store, *fileSize, *fileCount, *objectPrefix)
 	}
-	fileIdx := 0
-
-	var (
-		err error
-
-		fileCPU       *os.File
-		cpuProfCloser func() error
-
-		filenameHeap   string
-		heapProfDoneCh chan struct{}
-		heapWg         *sync.WaitGroup
-	)
-	beforeTest := func() {
-		fileIdx++
-		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
-		intest.AssertNoError(err)
-		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
-
-		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
-	}
-	afterClose := func() {
-		err = cpuProfCloser()
-		intest.AssertNoError(err)
-		close(heapProfDoneCh)
-		heapWg.Wait()
-	}
+	p := newProfiler(true, true)
 
 	suite := &readTestSuite{
 		store:              store,
 		totalKVCnt:         kvCnt,
 		concurrency:        *concurrency,
 		memoryLimit:        *memoryLimit,
-		beforeCreateReader: beforeTest,
-		afterReaderClose:   afterClose,
+		beforeCreateReader: p.beforeTest,
+		afterReaderClose:   p.afterTest,
 		subDir:             *objectPrefix,
 	}
 
 	fn(t, suite)
-}
-
-const largeAscendingDataPath = "large_ascending_data"
-
-// TestPrepareLargeData will write 1000 * 256MB data to the storage.
-func TestPrepareLargeData(t *testing.T) {
-	store := openTestingStorage(t)
-	ctx := context.Background()
-
-	cleanOldFiles(ctx, store, largeAscendingDataPath)
-
-	fileSize := 256 * 1024 * 1024
-	fileCnt := 1000
-	keySize := 20
-	valueSize := 100
-	concurrency := runtime.NumCPU() / 2
-	filePerConcUpperBound := (fileCnt + concurrency - 1) / concurrency
-
-	size := atomic.NewInt64(0)
-	now := time.Now()
-	wg := sync.WaitGroup{}
-	wg.Add(concurrency)
-
-	for i := 0; i < concurrency; i++ {
-		i := i
-		go func() {
-			defer wg.Done()
-			writer := NewWriterBuilder().
-				SetMemorySizeLimit(uint64(fileSize)).
-				Build(store, largeAscendingDataPath, fmt.Sprintf("%02d", i))
-			endFile := min((i+1)*filePerConcUpperBound, fileCnt)
-			startFile := min(i*filePerConcUpperBound, endFile)
-			if startFile == endFile {
-				return
-			}
-
-			// slightly reduce total size to avoid generate a small file at the end
-			totalSize := fileSize*(endFile-startFile) - 20*1024*1024
-			kvCnt := totalSize / (keySize + valueSize + 16)
-			source := newAscendingKeyAsyncSource(kvCnt, keySize, valueSize, []byte{byte(i)})
-			key, val, _ := source.next()
-			for key != nil {
-				err := writer.WriteRow(ctx, key, val, nil)
-				intest.AssertNoError(err)
-				size.Add(int64(len(key) + len(val)))
-				key, val, _ = source.next()
-			}
-			err := writer.Close(ctx)
-			intest.AssertNoError(err)
-		}()
-	}
-	wg.Wait()
-	elapsed := time.Since(now)
-	t.Logf("write %d bytes in %s, speed: %.2f MB/s",
-		size.Load(), elapsed, float64(size.Load())/elapsed.Seconds()/1024/1024)
-	dataFiles, _, err := GetAllFileNames(ctx, store, largeAscendingDataPath)
-	intest.AssertNoError(err)
-
-	r, err := store.Open(ctx, dataFiles[0], nil)
-	intest.AssertNoError(err)
-	firstFileSize, err := r.GetFileSize()
-	intest.AssertNoError(err)
-	err = r.Close()
-	intest.AssertNoError(err)
-
-	r, err = store.Open(ctx, dataFiles[len(dataFiles)-1], nil)
-	intest.AssertNoError(err)
-	lastFileSize, err := r.GetFileSize()
-	intest.AssertNoError(err)
-	err = r.Close()
-	intest.AssertNoError(err)
-	t.Logf("total %d data files, first file size: %.2f MB, last file size: %.2f MB",
-		len(dataFiles), float64(firstFileSize)/1024/1024, float64(lastFileSize)/1024/1024)
 }
 
 type mergeTestSuite struct {
@@ -1051,7 +576,9 @@ func testCompareMergeWithContent(
 	t *testing.T,
 	concurrency int,
 	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
-	fn func(t *testing.T, suite *mergeTestSuite)) {
+	fn func(t *testing.T, suite *mergeTestSuite),
+	p *profiler,
+) {
 	store := openTestingStorage(t)
 	kvCnt := 0
 	var minKey, maxKey kv.Key
@@ -1059,29 +586,13 @@ func testCompareMergeWithContent(
 		kvCnt, minKey, maxKey = createFn(store, *fileSize, *fileCount, *objectPrefix)
 	}
 
-	fileIdx := 0
-	var (
-		file *os.File
-		err  error
-	)
-	beforeTest := func() {
-		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
-		intest.AssertNoError(err)
-		err = pprof.StartCPUProfile(file)
-		intest.AssertNoError(err)
-	}
-
-	afterTest := func() {
-		pprof.StopCPUProfile()
-	}
-
 	suite := &mergeTestSuite{
 		store:            store,
 		totalKVCnt:       kvCnt,
 		concurrency:      concurrency,
 		memoryLimit:      *memoryLimit,
-		beforeMerge:      beforeTest,
-		afterMerge:       afterTest,
+		beforeMerge:      p.beforeTest,
+		afterMerge:       p.afterTest,
 		subDir:           *objectPrefix,
 		minKey:           minKey,
 		maxKey:           maxKey,
@@ -1092,31 +603,228 @@ func testCompareMergeWithContent(
 }
 
 func TestMergeBench(t *testing.T) {
-	testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
-	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
+	p := newProfiler(true, true)
+	testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep, p)
+	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep, p)
+	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep, p)
 }
 
-func TestReadStatFile(t *testing.T) {
+func TestReadAllDataLargeFiles(t *testing.T) {
 	ctx := context.Background()
 	store := openTestingStorage(t)
-	rd, _ := newStatsReader(ctx, store, *fileName, 4096)
-	for {
-		prop, err := rd.nextProp()
-		if err == io.EOF {
-			break
-		}
-		logutil.BgLogger().Info("read one prop",
-			zap.Int("prop len", prop.len()),
-			zap.Int("prop offset", int(prop.offset)),
-			zap.Int("prop size", int(prop.size)),
-			zap.Int("prop keys", int(prop.keys)))
+
+	// ~ 100B * 20M = 2GB
+	source := newAscendingKeyAsyncSource(20*1024*1024, 10, 90, nil)
+	// ~ 1KB * 2M = 2GB
+	source2 := newAscendingKeyAsyncSource(2*1024*1024, 10, 990, nil)
+	var minKey, maxKey kv.Key
+	recordMinMax := func(s *WriterSummary) {
+		minKey = s.Min
+		maxKey = s.Max
 	}
+	suite := &writeTestSuite{
+		store:            store,
+		source:           source,
+		memoryLimit:      256 * 1024 * 1024,
+		optionalFilePath: "/test/file",
+		onClose:          recordMinMax,
+	}
+	suite2 := &writeTestSuite{
+		store:            store,
+		source:           source2,
+		memoryLimit:      256 * 1024 * 1024,
+		optionalFilePath: "/test/file2",
+		onClose:          recordMinMax,
+	}
+	writeExternalOneFile(suite)
+	t.Logf("minKey: %s, maxKey: %s", minKey, maxKey)
+	writeExternalOneFile(suite2)
+	t.Logf("minKey: %s, maxKey: %s", minKey, maxKey)
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "")
+	intest.AssertNoError(err)
+	intest.Assert(len(dataFiles) == 2)
+
+	// choose the two keys so that expected concurrency is 579 and 19
+	startKey, err := hex.DecodeString("00000001000000000000")
+	intest.AssertNoError(err)
+	endKey, err := hex.DecodeString("00a00000000000000000")
+	intest.AssertNoError(err)
+	smallBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(smallBlockSize),
+	)
+	largeBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+	)
+	output := &memKVsAndBuffers{}
+	now := time.Now()
+
+	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
+	t.Logf("read all data cost: %s", time.Since(now))
+	intest.AssertNoError(err)
+}
+
+func TestReadAllData(t *testing.T) {
+	// test the case that thread=16, where we will load ~3.2GB data once and this
+	// step will at most have 4000 files to read, test the case that we have
+	//
+	// 1000 files read one KV (~100B), 1000 files read ~900KB, 90 files read 10MB,
+	// 1 file read 1G. total read size = 1000*100B + 1000*900KB + 90*10MB + 1*1G = 2.8G
+
+	ctx := context.Background()
+	store := openTestingStorage(t)
+	readRangeStart := []byte("key00")
+	readRangeEnd := []byte("key88888888")
+	keyAfterRange := []byte("key9")
+	keyAfterRange2 := []byte("key9")
+	eg := errgroup.Group{}
+
+	fileIdx := 0
+	val := make([]byte, 90)
+	if *skipCreate {
+		goto finishCreateFiles
+	}
+
+	cleanOldFiles(ctx, store, "/")
+
+	for ; fileIdx < 1000; fileIdx++ {
+		fileIdx := fileIdx
+		eg.Go(func() error {
+			fileName := fmt.Sprintf("/test%d", fileIdx)
+			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			err := writer.Init(ctx, 5*1024*1024)
+			require.NoError(t, err)
+			key := []byte(fmt.Sprintf("key0%d", fileIdx))
+			err = writer.WriteRow(ctx, key, val)
+			require.NoError(t, err)
+
+			// write some extra data that is greater than readRangeEnd
+			err = writer.WriteRow(ctx, keyAfterRange, val)
+			require.NoError(t, err)
+			err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 100*1024))
+			require.NoError(t, err)
+
+			return writer.Close(ctx)
+		})
+	}
+	require.NoError(t, eg.Wait())
+	t.Log("finish writing 1000 files of 100B")
+
+	for ; fileIdx < 2000; fileIdx++ {
+		fileIdx := fileIdx
+		eg.Go(func() error {
+			fileName := fmt.Sprintf("/test%d", fileIdx)
+			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			err := writer.Init(ctx, 5*1024*1024)
+			require.NoError(t, err)
+
+			kvSize := 0
+			keyIdx := 0
+			for kvSize < 900*1024 {
+				key := []byte(fmt.Sprintf("key%06d_%d", keyIdx, fileIdx))
+				keyIdx++
+				kvSize += len(key) + len(val)
+				err = writer.WriteRow(ctx, key, val)
+				require.NoError(t, err)
+			}
+
+			// write some extra data that is greater than readRangeEnd
+			err = writer.WriteRow(ctx, keyAfterRange, val)
+			require.NoError(t, err)
+			err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 300*1024))
+			require.NoError(t, err)
+			return writer.Close(ctx)
+		})
+	}
+	require.NoError(t, eg.Wait())
+	t.Log("finish writing 1000 files of 900KB")
+
+	for ; fileIdx < 2090; fileIdx++ {
+		fileIdx := fileIdx
+		eg.Go(func() error {
+			fileName := fmt.Sprintf("/test%d", fileIdx)
+			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			err := writer.Init(ctx, 5*1024*1024)
+			require.NoError(t, err)
+
+			kvSize := 0
+			keyIdx := 0
+			for kvSize < 10*1024*1024 {
+				key := []byte(fmt.Sprintf("key%09d_%d", keyIdx, fileIdx))
+				keyIdx++
+				kvSize += len(key) + len(val)
+				err = writer.WriteRow(ctx, key, val)
+				require.NoError(t, err)
+			}
+
+			// write some extra data that is greater than readRangeEnd
+			err = writer.WriteRow(ctx, keyAfterRange, val)
+			require.NoError(t, err)
+			err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 900*1024))
+			require.NoError(t, err)
+			return writer.Close(ctx)
+		})
+	}
+	require.NoError(t, eg.Wait())
+	t.Log("finish writing 90 files of 10MB")
+
+	for ; fileIdx < 2091; fileIdx++ {
+		fileName := fmt.Sprintf("/test%d", fileIdx)
+		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+		err := writer.Init(ctx, 5*1024*1024)
+		require.NoError(t, err)
+
+		kvSize := 0
+		keyIdx := 0
+		for kvSize < 1024*1024*1024 {
+			key := []byte(fmt.Sprintf("key%010d_%d", keyIdx, fileIdx))
+			keyIdx++
+			kvSize += len(key) + len(val)
+			err = writer.WriteRow(ctx, key, val)
+			require.NoError(t, err)
+		}
+
+		// write some extra data that is greater than readRangeEnd
+		err = writer.WriteRow(ctx, keyAfterRange, val)
+		require.NoError(t, err)
+		err = writer.WriteRow(ctx, keyAfterRange2, make([]byte, 900*1024))
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+	t.Log("finish writing 1 file of 1G")
+
+finishCreateFiles:
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/")
+	require.NoError(t, err)
+	require.Equal(t, 2091, len(dataFiles))
+
+	p := newProfiler(true, true)
+	smallBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(smallBlockSize),
+	)
+	largeBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+	)
+	output := &memKVsAndBuffers{}
+	p.beforeTest()
+	now := time.Now()
+	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, smallBlockBufPool, largeBlockBufPool, output)
+	require.NoError(t, err)
+	output.build(ctx)
+	elapsed := time.Since(now)
+	p.afterTest()
+	t.Logf("readAllData time cost: %s, size: %d", elapsed.String(), output.size)
 }

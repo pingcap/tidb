@@ -59,7 +59,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 
 	tbInfo.State = model.StateNone
 	var err error
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+	if variable.EnableFastCreateTable.Load() {
 		err = checkTableNotExistsByName(d, t, schemaID, job.SchemaName, tbInfo.Name.L)
 	} else {
 		err = checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
@@ -237,7 +237,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	//
 	// &*job clones a stub job from the ActionCreateTables job
 	stubJob := &*job
-	stubJob.Args = make([]interface{}, 1)
+	stubJob.Args = make([]any, 1)
 	for i := range args {
 		stubJob.TableID = args[i].ID
 		stubJob.Args[0] = args[i]
@@ -376,7 +376,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		tblInfo.State = model.StateNone
 		oldIDs := getPartitionIDs(tblInfo)
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
-		job.CtxVars = []interface{}{oldIDs}
+		job.CtxVars = []any{oldIDs}
 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
@@ -573,7 +573,7 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
-	job.CtxVars = []interface{}{tids}
+	job.CtxVars = []any{tids}
 	return ver, nil
 }
 
@@ -779,7 +779,7 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 				newIDs = append(newIDs, newID)
 			}
 		}
-		job.CtxVars = []interface{}{oldIDs, newIDs}
+		job.CtxVars = []any{oldIDs, newIDs}
 	}
 
 	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
@@ -858,7 +858,7 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	)
 	asyncNotifyEvent(d, truncateTableEvent)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
-	job.Args = []interface{}{startKey, oldPartitionIDs}
+	job.Args = []any{startKey, oldPartitionIDs}
 	return ver, nil
 }
 
@@ -1007,7 +1007,7 @@ func verifyNoOverflowShardBits(s *sess.Pool, tbl table.Table, shardRowIDBits uin
 	}
 	defer s.Put(ctx)
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID()
+	autoIncID, err := tbl.Allocators(ctx.GetTableCtx()).Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	if err != nil {
 		return errors.Trace(err)
 	}

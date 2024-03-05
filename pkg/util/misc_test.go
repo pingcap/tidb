@@ -93,10 +93,10 @@ func TestX509NameParseMatch(t *testing.T) {
 }
 
 func TestBasicFuncWithRecovery(t *testing.T) {
-	var recovery interface{}
+	var recovery any
 	WithRecovery(func() {
 		panic("test")
-	}, func(r interface{}) {
+	}, func(r any) {
 		recovery = r
 	})
 	assert.Equal(t, "test", recovery)

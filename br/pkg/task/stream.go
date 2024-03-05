@@ -317,8 +317,9 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		}
 
 		opts := storage.ExternalStorageOptions{
-			NoCredentials:   cfg.NoCreds,
-			SendCredentials: cfg.SendCreds,
+			NoCredentials:            cfg.NoCreds,
+			SendCredentials:          cfg.SendCreds,
+			CheckS3ObjectLockOptions: true,
 		}
 		if err = client.SetStorage(ctx, backend, &opts); err != nil {
 			return nil, errors.Trace(err)
@@ -1087,7 +1088,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 			return err
 		}
 		if !nameSet.Empty() {
-			return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
+			return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
 		}
 	}
 	return nil

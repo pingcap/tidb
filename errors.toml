@@ -1971,6 +1971,11 @@ error = '''
 Division by 0
 '''
 
+["expression:1426"]
+error = '''
+Too big precision %d specified for column '%-.192s'. Maximum is %d.
+'''
+
 ["expression:1582"]
 error = '''
 Incorrect parameter count in the call to native function '%-.192s'

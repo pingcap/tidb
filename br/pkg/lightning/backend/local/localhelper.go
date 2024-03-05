@@ -17,7 +17,6 @@ package local
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"math"
 	"slices"
 	"sort"
@@ -61,51 +60,6 @@ var (
 	// the max retry times to split regions.
 	splitRetryTimes = 8
 )
-
-// TableRegionSizeGetter get table region size.
-type TableRegionSizeGetter interface {
-	GetTableRegionSize(ctx context.Context, tableID int64) (map[uint64]int64, error)
-}
-
-// TableRegionSizeGetterImpl implements TableRegionSizeGetter.
-type TableRegionSizeGetterImpl struct {
-	DB *sql.DB
-}
-
-var _ TableRegionSizeGetter = &TableRegionSizeGetterImpl{}
-
-// GetTableRegionSize implements TableRegionSizeGetter.
-func (g *TableRegionSizeGetterImpl) GetTableRegionSize(ctx context.Context, tableID int64) (map[uint64]int64, error) {
-	if g.DB == nil {
-		return nil, errors.Errorf("db is nil")
-	}
-	exec := &common.SQLWithRetry{
-		DB:     g.DB,
-		Logger: log.FromContext(ctx),
-	}
-
-	stats := make(map[uint64]int64)
-	err := exec.Transact(ctx, "fetch region approximate sizes", func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT REGION_ID, APPROXIMATE_SIZE FROM information_schema.TIKV_REGION_STATUS WHERE TABLE_ID = ?", tableID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		//nolint: errcheck
-		defer rows.Close()
-		var (
-			regionID uint64
-			size     int64
-		)
-		for rows.Next() {
-			if err = rows.Scan(&regionID, &size); err != nil {
-				return errors.Trace(err)
-			}
-			stats[regionID] = size * units.MiB
-		}
-		return rows.Err()
-	})
-	return stats, errors.Trace(err)
-}
 
 // SplitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
@@ -410,10 +364,8 @@ func (local *Backend) BatchSplitRegions(
 			// Wait for a while until the regions successfully splits.
 			ok, err2 := local.hasRegion(ctx, region.Region.Id)
 			if !ok || err2 != nil {
-				if err2 == nil {
-					log.FromContext(ctx).Warn("split region failed", zap.Uint64("regionID", region.Region.Id))
-				} else {
-					log.FromContext(ctx).Warn("split region failed", zap.Uint64("regionID", region.Region.Id), zap.Error(err2))
+				if err2 != nil {
+					log.FromContext(ctx).Warn("split region failed with error", zap.Uint64("regionID", region.Region.Id), zap.Error(err2))
 				}
 				retryRegions = append(retryRegions, region)
 				continue

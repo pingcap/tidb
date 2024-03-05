@@ -24,9 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
 )
 
 var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
@@ -110,7 +108,7 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 	return retVal
 }
 
-func (s *sortPartition) close() error {
+func (s *sortPartition) close() {
 	s.syncLock.Lock()
 	defer s.syncLock.Unlock()
 	s.closed = true
@@ -118,7 +116,6 @@ func (s *sortPartition) close() error {
 		s.inDisk.Close()
 	}
 	s.getMemTracker().ReplaceBytesUsed(0)
-	return nil
 }
 
 func (s *sortPartition) reloadCursor() (bool, error) {
@@ -215,6 +212,7 @@ func (s *sortPartition) spillToDiskImpl() (err error) {
 				return err
 			}
 			tmpChk.Reset()
+			s.getMemTracker().HandleKillSignal()
 		}
 	}
 
@@ -235,7 +233,7 @@ func (s *sortPartition) spillToDiskImpl() (err error) {
 }
 
 // We can only call this function under the protection of `syncLock`.
-func (s *sortPartition) spillToDisk(tracker *memory.Tracker) error {
+func (s *sortPartition) spillToDisk() error {
 	s.syncLock.Lock()
 	defer s.syncLock.Unlock()
 	if s.isSpillTriggered() {
@@ -250,9 +248,6 @@ func (s *sortPartition) spillToDisk(tracker *memory.Tracker) error {
 	s.setIsSpilling()
 	defer s.cond.Broadcast()
 	defer s.setSpillTriggered()
-
-	logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-		zap.Int64("consumed", tracker.BytesConsumed()), zap.Int64("quota", tracker.GetBytesLimit()))
 
 	err = s.spillToDiskImpl()
 	return err
@@ -329,7 +324,7 @@ func (s *sortPartition) lessRow(rowI, rowJ chunk.Row) bool {
 func (s *sortPartition) keyColumnsLess(i, j int) bool {
 	if s.timesOfRowCompare >= signalCheckpointForSort {
 		// Trigger Consume for checking the NeedKill signal
-		s.memTracker.Consume(1)
+		s.memTracker.HandleKillSignal()
 		s.timesOfRowCompare = 0
 	}
 

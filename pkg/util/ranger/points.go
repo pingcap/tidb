@@ -21,22 +21,16 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
-)
-
-// Error instances.
-var (
-	ErrUnsupportedType = dbterror.ClassOptimizer.NewStd(errno.ErrUnsupportedType)
 )
 
 // RangeType is alias for int.
@@ -136,7 +130,7 @@ func rangePointEqualValueLess(a, b *point) bool {
 	return a.excl && !b.excl
 }
 
-func pointsConvertToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+func pointsConvertToSortKey(sctx planctx.PlanContext, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
 	// Only handle normal string type here.
 	// Currently, set won't be pushed down and it shouldn't reach here in theory.
 	// For enum, we have separate logic for it, like handleEnumFromBinOp(). For now, it only supports point range,
@@ -158,7 +152,7 @@ func pointsConvertToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *ty
 }
 
 func pointConvertToSortKey(
-	sctx sessionctx.Context,
+	sctx planctx.PlanContext,
 	inputP *point,
 	newTp *types.FieldType,
 	trimTrailingSpace bool,
@@ -229,7 +223,7 @@ func NullRange() Ranges {
 // builder is the range builder struct.
 type builder struct {
 	err  error
-	sctx sessionctx.Context
+	sctx planctx.PlanContext
 }
 
 // build converts Expression on one column into point, which can be further built into Range.
@@ -258,7 +252,7 @@ func (r *builder) build(
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
-	dt, err := expr.Eval(r.sctx, chunk.Row{})
+	dt, err := expr.Eval(r.sctx.GetExprCtx(), chunk.Row{})
 	if err != nil {
 		r.err = err
 		return nil
@@ -348,7 +342,7 @@ func (r *builder) buildFromBinOp(
 	var ok bool
 	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
-		value, err = expr.GetArgs()[1].Eval(r.sctx, chunk.Row{})
+		value, err = expr.GetArgs()[1].Eval(r.sctx.GetExprCtx(), chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -359,7 +353,7 @@ func (r *builder) buildFromBinOp(
 			return nil
 		}
 		ft = col.RetType
-		value, err = expr.GetArgs()[0].Eval(r.sctx, chunk.Row{})
+		value, err = expr.GetArgs()[0].Eval(r.sctx.GetExprCtx(), chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -643,12 +637,12 @@ func (r *builder) buildFromIn(
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return getFullRange(), hasNull
 		}
-		dt, err := v.Eval(r.sctx, chunk.Row{})
+		dt, err := v.Eval(r.sctx.GetExprCtx(), chunk.Row{})
 		if err != nil {
-			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return getFullRange(), hasNull
 		}
 		if dt.IsNull() {
@@ -734,7 +728,7 @@ func (r *builder) newBuildFromPatternLike(
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
 	}
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx, chunk.Row{})
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx.GetExprCtx(), chunk.Row{})
 	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
@@ -760,7 +754,7 @@ func (r *builder) newBuildFromPatternLike(
 		return res
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.sctx, chunk.Row{})
+	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.sctx.GetExprCtx(), chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
@@ -942,7 +936,7 @@ func (r *builder) buildFromNot(
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
-		r.err = ErrUnsupportedType.GenWithStack("NOT LIKE is not supported.")
+		r.err = plannererrors.ErrUnsupportedType.GenWithStack("NOT LIKE is not supported.")
 		return getFullRange()
 	case ast.IsNull:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}

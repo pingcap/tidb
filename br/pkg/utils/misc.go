@@ -20,10 +20,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -149,5 +151,9 @@ func WithCleanUp(errOut *error, timeout time.Duration, fn func(context.Context) 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	err := fn(ctx)
-	*errOut = multierr.Combine(err, *errOut)
+	if errOut != nil {
+		*errOut = multierr.Combine(err, *errOut)
+	} else if err != nil {
+		log.Warn("Encountered but ignored error while cleaning up.", zap.Error(err))
+	}
 }

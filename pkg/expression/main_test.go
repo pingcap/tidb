@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -58,7 +59,14 @@ func TestMain(m *testing.M) {
 
 func createContext(t *testing.T) *mock.Context {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+	sqlMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+	require.True(t, sqlMode.HasStrictMode())
+	ctx.GetSessionVars().SQLMode = sqlMode
+	// sets default time zone to UTC+11 value to make it different with most CI and development environments and forbid
+	// some tests are success in some environments but failed in some others.
+	tz := time.FixedZone("UTC+11", 11*3600)
+	ctx.ResetSessionAndStmtTimeZone(tz)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))

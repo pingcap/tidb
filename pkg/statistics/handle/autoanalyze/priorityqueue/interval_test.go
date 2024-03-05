@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package priorityqueue
+package priorityqueue_test
 
 import (
 	"testing"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -32,26 +33,26 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	// Empty table.
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	avgDuration, err := getAverageAnalysisDuration(
+	avgDuration, err := priorityqueue.GetAverageAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition",
 	)
 	require.NoError(t, err)
-	require.Equal(t, time.Duration(0), avgDuration)
+	require.Equal(t, time.Duration(priorityqueue.NoRecord), avgDuration)
 
 	initJobs(tk)
 
 	// Partitioned table.
 	insertMultipleFinishedJobs(tk, "example_table", "example_partition")
 	// Only one partition.
-	avgDuration, err = getAverageAnalysisDuration(
+	avgDuration, err = priorityqueue.GetAverageAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition",
 	)
 	require.NoError(t, err)
 	require.Equal(t, time.Duration(3600)*time.Second, avgDuration)
 	// Multiple partitions.
-	avgDuration, err = getAverageAnalysisDuration(
+	avgDuration, err = priorityqueue.GetAverageAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition", "example_partition1",
 	)
@@ -59,7 +60,7 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	require.Equal(t, time.Duration(3600)*time.Second, avgDuration)
 	// Non-partitioned table.
 	insertMultipleFinishedJobs(tk, "example_table1", "")
-	avgDuration, err = getAverageAnalysisDuration(sctx, "example_schema", "example_table1")
+	avgDuration, err = priorityqueue.GetAverageAnalysisDuration(sctx, "example_schema", "example_table1")
 	require.NoError(t, err)
 	require.Equal(t, time.Duration(3600)*time.Second, avgDuration)
 }
@@ -97,26 +98,26 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	// Empty table.
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	lastFailedDuration, err := getLastFailedAnalysisDuration(
+	lastFailedDuration, err := priorityqueue.GetLastFailedAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition",
 	)
 	require.NoError(t, err)
-	require.Equal(t, time.Duration(0), lastFailedDuration)
+	require.Equal(t, time.Duration(priorityqueue.NoRecord), lastFailedDuration)
 	initJobs(tk)
 
 	// Partitioned table.
 	insertFailedJob(tk, "example_schema", "example_table", "example_partition")
 	insertFailedJob(tk, "example_schema", "example_table", "example_partition1")
 	// Only one partition.
-	lastFailedDuration, err = getLastFailedAnalysisDuration(
+	lastFailedDuration, err = priorityqueue.GetLastFailedAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition",
 	)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, lastFailedDuration, time.Duration(24)*time.Hour)
 	// Multiple partitions.
-	lastFailedDuration, err = getLastFailedAnalysisDuration(
+	lastFailedDuration, err = priorityqueue.GetLastFailedAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition", "example_partition1",
 	)
@@ -124,7 +125,7 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	require.GreaterOrEqual(t, lastFailedDuration, time.Duration(24)*time.Hour)
 	// Non-partitioned table.
 	insertFailedJob(tk, "example_schema", "example_table1", "")
-	lastFailedDuration, err = getLastFailedAnalysisDuration(sctx, "example_schema", "example_table1")
+	lastFailedDuration, err = priorityqueue.GetLastFailedAnalysisDuration(sctx, "example_schema", "example_table1")
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, lastFailedDuration, time.Duration(24)*time.Hour)
 }
@@ -317,6 +318,71 @@ func insertFailedJob(
 			dbName,
 			tableName,
 			partitionName,
+		)
+	}
+}
+
+func insertFailedJobWithStartTime(
+	tk *testkit.TestKit,
+	dbName string,
+	tableName string,
+	partitionName string,
+	startTime string,
+) {
+	if partitionName == "" {
+		tk.MustExec(`
+	INSERT INTO mysql.analyze_jobs (
+		table_schema,
+		table_name,
+		job_info,
+		start_time,
+		end_time,
+		state,
+		fail_reason,
+		instance
+	) VALUES (
+		?,
+		?,
+		'Job information for failed job',
+		?,
+		'2024-01-01 10:00:00',
+		'failed',
+		'Some reason for failure',
+		'example_instance'
+	);
+		`,
+			dbName,
+			tableName,
+			startTime,
+		)
+	} else {
+		tk.MustExec(`
+	INSERT INTO mysql.analyze_jobs (
+		table_schema,
+		table_name,
+		partition_name,
+		job_info,
+		start_time,
+		end_time,
+		state,
+		fail_reason,
+		instance
+	) VALUES (
+		?,
+		?,
+		?,
+		'Job information for failed job',
+		?,
+		'2024-01-01 10:00:00',
+		'failed',
+		'Some reason for failure',
+		'example_instance'
+	);
+		`,
+			dbName,
+			tableName,
+			partitionName,
+			startTime,
 		)
 	}
 }

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -93,7 +92,7 @@ type databaseFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *databaseFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -119,7 +118,7 @@ func (b *builtinDatabaseSig) Clone() builtinFunc {
 // evalString evals a builtinDatabaseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	currentDB := ctx.GetSessionVars().CurrentDB
+	currentDB := ctx.CurrentDB()
 	return currentDB, currentDB == "", nil
 }
 
@@ -127,7 +126,7 @@ type foundRowsFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *foundRowsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *foundRowsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -165,7 +164,7 @@ type currentUserFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *currentUserFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -202,7 +201,7 @@ type currentRoleFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *currentRoleFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -253,7 +252,7 @@ type currentResourceGroupFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *currentResourceGroupFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *currentResourceGroupFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -301,7 +300,7 @@ type userFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *userFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -338,7 +337,7 @@ type connectionIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *connectionIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *connectionIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -373,7 +372,7 @@ type lastInsertIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *lastInsertIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -441,7 +440,7 @@ type versionFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *versionFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -474,7 +473,7 @@ type tidbVersionFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbVersionFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -507,7 +506,7 @@ type tidbIsDDLOwnerFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -542,7 +541,7 @@ type benchmarkFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *benchmarkFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -667,7 +666,7 @@ type charsetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *charsetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *charsetFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -705,7 +704,7 @@ type coercibilityFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coercibilityFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *coercibilityFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -736,7 +735,7 @@ type collationFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *collationFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -774,7 +773,7 @@ type rowCountFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *rowCountFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -808,7 +807,7 @@ type tidbDecodeKeyFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbDecodeKeyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -858,7 +857,7 @@ type tidbDecodeSQLDigestsFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -913,14 +912,15 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 		}
 	}
 
-	var digests []interface{}
+	var digests []any
 	err = json.Unmarshal([]byte(digestsStr), &digests)
 	if err != nil {
 		const errMsgMaxLength = 32
 		if len(digestsStr) > errMsgMaxLength {
 			digestsStr = digestsStr[:errMsgMaxLength] + "..."
 		}
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.FastGen("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
+		tc := typeCtx(ctx)
+		tc.AppendWarning(errIncorrectArgs.FastGen("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
 		return "", true, nil
 	}
 
@@ -937,7 +937,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 
 	// Querying may take some time and it takes a context.Context as argument, which is not available here.
 	// We simply create a context with a timeout here.
-	timeout := time.Duration(ctx.GetSessionVars().MaxExecutionTime) * time.Millisecond
+	timeout := time.Duration(ctx.GetSessionVars().GetMaxExecutionTime()) * time.Millisecond
 	if timeout == 0 || timeout > 20*time.Second {
 		timeout = 20 * time.Second
 	}
@@ -949,12 +949,13 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 			return "", true, errUnknown.GenWithStack("Retrieving cancelled internally with error: %v", err)
 		}
 
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.FastGen("Retrieving statements information failed with error: %v", err))
+		tc := typeCtx(ctx)
+		tc.AppendWarning(errUnknown.FastGen("Retrieving statements information failed with error: %v", err))
 		return "", true, nil
 	}
 
 	// Collect the result.
-	result := make([]interface{}, len(digests))
+	result := make([]any, len(digests))
 	for i, item := range digests {
 		if item == nil {
 			continue
@@ -972,7 +973,8 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 
 	resultStr, err := json.Marshal(result)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.FastGen("Marshalling result as JSON failed with error: %v", err))
+		tc := typeCtx(ctx)
+		tc.AppendWarning(errUnknown.FastGen("Marshalling result as JSON failed with error: %v", err))
 		return "", true, nil
 	}
 
@@ -983,7 +985,7 @@ type tidbEncodeSQLDigestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbEncodeSQLDigestFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbEncodeSQLDigestFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1022,7 +1024,7 @@ type tidbDecodePlanFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbDecodePlanFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbDecodePlanFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1077,7 +1079,8 @@ func (b *builtinTiDBDecodeBinaryPlanSig) evalString(ctx EvalContext, row chunk.R
 	}
 	planTree, err := plancodec.DecodeBinaryPlan(planString)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		tc := typeCtx(ctx)
+		tc.AppendWarning(err)
 		return "", false, nil
 	}
 	return planTree, false, nil
@@ -1087,7 +1090,7 @@ type nextValFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *nextValFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *nextValFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1117,7 +1120,7 @@ func (b *builtinNextValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1143,7 +1146,7 @@ type lastValFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lastValFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *lastValFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1173,7 +1176,7 @@ func (b *builtinLastValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1193,7 +1196,7 @@ type setValFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *setValFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *setValFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1223,7 +1226,7 @@ func (b *builtinSetValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1255,7 +1258,7 @@ type formatBytesFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *formatBytesFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1294,7 +1297,7 @@ type formatNanoTimeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *formatNanoTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}

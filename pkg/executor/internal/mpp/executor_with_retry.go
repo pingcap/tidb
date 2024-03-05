@@ -131,8 +131,10 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 func (r *ExecutorWithRetry) Close() error {
 	r.mppErrRecovery.ResetHolder()
 	r.memTracker.Detach()
+	// Need to close coordinator before unregister to avoid coord.Close() takes too long.
+	err := r.coord.Close()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
-	return r.coord.Close()
+	return err
 }
 
 func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying bool) ([]kv.KeyRange, error) {
@@ -240,7 +242,7 @@ func allocMPPGatherID(ctx sessionctx.Context) uint64 {
 
 func (r *ExecutorWithRetry) buildCoordinator() kv.MppCoordinator {
 	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
-	return NewLocalMPPCoordinator(r.sctx, r.is, r.plan, r.planIDs, r.startTS, r.queryID,
+	return NewLocalMPPCoordinator(r.ctx, r.sctx, r.is, r.plan, r.planIDs, r.startTS, r.queryID,
 		r.gatherID, serverAddr, r.memTracker)
 }
 

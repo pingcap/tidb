@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -174,7 +175,7 @@ func TestValidator(t *testing.T) {
 		{"CREATE TABLE `t` (`a` varchar(10) DEFAULT now());", false, types.ErrInvalidDefault},
 		{"CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );", false, nil},
 
-		{`explain format = "xx" select 100;`, false, core.ErrUnknownExplainFormat.GenWithStackByArgs("xx")},
+		{`explain format = "xx" select 100;`, false, plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs("xx")},
 
 		// issue 4472
 		{`select sum(distinct(if('a', (select adddate(elt(999, count(*)), interval 1 day)), .1))) as foo;`, true, nil},
@@ -208,16 +209,16 @@ func TestValidator(t *testing.T) {
 		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 
 		// issue 24309
-		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
 
 		// Error caused by "Table 'test.u' doesn't exist".
-		// {"(SELECT * FROM t INTO OUTFILE 'ttt') UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+		// {"(SELECT * FROM t INTO OUTFILE 'ttt') UNION SELECT * FROM u", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
 
-		{"select * from ( select 1 ) a, (select 2) a;", false, core.ErrNonUniqTable},
-		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, core.ErrNonUniqTable},
-		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, core.ErrNonUniqTable},
-		{"select * from ( select 1 ) a join (select 2) b join (select 3) a;", false, core.ErrNonUniqTable},
-		{"select person.id from person inner join person on person.id = person.id;", false, core.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) a;", false, plannererrors.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, plannererrors.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, plannererrors.ErrNonUniqTable},
+		{"select * from ( select 1 ) a join (select 2) b join (select 3) a;", false, plannererrors.ErrNonUniqTable},
+		{"select person.id from person inner join person on person.id = person.id;", false, plannererrors.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b;", true, nil},
 		{"select * from (select * from ( select 1 ) a join (select 2) b) b join (select 3) a;", false, nil},
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
@@ -228,8 +229,8 @@ func TestValidator(t *testing.T) {
 		{"CREATE VIEW V AS SELECT 5 LOCK IN SHARE MODE", false, nil},
 
 		// issue 9464
-		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
-		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, plannererrors.ErrUnsupportedOnGeneratedColumn},
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, plannererrors.ErrUnsupportedOnGeneratedColumn},
 		{"create table t (a DOUBLE NULL, b_sto DOUBLE GENERATED ALWAYS AS (a + 2) STORED UNIQUE KEY NOT NULL PRIMARY KEY);", false, nil},
 
 		// ~~issue 13032~~
@@ -316,15 +317,15 @@ func TestDropGlobalTempTable(t *testing.T) {
 	tk.MustExec("create global temporary table test2.temp2(id int) on commit delete rows;")
 
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	runSQL(t, tk.Session(), is, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table tb;", false, plannererrors.ErrDropTableOnTemporaryTable)
 	runSQL(t, tk.Session(), is, "drop global temporary table temp", false, nil)
-	runSQL(t, tk.Session(), is, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.tb;", false, plannererrors.ErrDropTableOnTemporaryTable)
 	runSQL(t, tk.Session(), is, "drop global temporary table test.temp1", false, nil)
-	runSQL(t, tk.Session(), is, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	runSQL(t, tk.Session(), is, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table ltemp1", false, plannererrors.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.ltemp1", false, plannererrors.ErrDropTableOnTemporaryTable)
 	runSQL(t, tk.Session(), is, "drop global temporary table temp, temp1", false, nil)
-	runSQL(t, tk.Session(), is, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
-	runSQL(t, tk.Session(), is, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, tb", false, plannererrors.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, ltemp1", false, plannererrors.ErrDropTableOnTemporaryTable)
 	runSQL(t, tk.Session(), is, "drop global temporary table test2.temp2, temp1", false, nil)
 }
 

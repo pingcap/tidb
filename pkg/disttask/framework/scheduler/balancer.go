@@ -19,15 +19,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/log"
+	llog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
 var (
 	// balanceCheckInterval is the interval to check whether we need to balance the subtasks.
-	balanceCheckInterval = 3 * checkTaskFinishedInterval
+	balanceCheckInterval = 3 * CheckTaskFinishedInterval
 )
 
 // balancer is used to balance subtasks on managed nodes
@@ -40,15 +41,20 @@ var (
 // the task and try next one.
 type balancer struct {
 	Param
-
+	logger *zap.Logger
 	// a helper temporary map to record the used slots of each node during balance
 	// to avoid passing it around.
 	currUsedSlots map[string]int
 }
 
 func newBalancer(param Param) *balancer {
+	logger := log.L()
+	if intest.InTest {
+		logger = log.L().With(zap.String("server-id", param.serverID))
+	}
 	return &balancer{
 		Param:         param,
+		logger:        logger,
 		currUsedSlots: make(map[string]int),
 	}
 }
@@ -77,8 +83,8 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
 		if err := b.balanceSubtasks(ctx, sch, managedNodes); err != nil {
-			logutil.Logger(ctx).Warn("failed to balance subtasks",
-				zap.Int64("task-id", sch.GetTask().ID), log.ShortError(err))
+			b.logger.Warn("failed to balance subtasks",
+				zap.Int64("task-id", sch.GetTask().ID), llog.ShortError(err))
 			return
 		}
 	}
@@ -127,28 +133,33 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 
 	averageSubtaskCnt := len(subtasks) / len(adjustedNodes)
 	averageSubtaskRemainder := len(subtasks) - averageSubtaskCnt*len(adjustedNodes)
-	executorSubtasks := make(map[string][]*proto.Subtask, len(adjustedNodes))
+	executorSubtasks := make(map[string][]*proto.SubtaskBase, len(adjustedNodes))
 	executorPendingCnts := make(map[string]int, len(adjustedNodes))
 	for _, node := range adjustedNodes {
-		executorSubtasks[node] = make([]*proto.Subtask, 0, averageSubtaskCnt+1)
+		executorSubtasks[node] = make([]*proto.SubtaskBase, 0, averageSubtaskCnt+1)
 	}
 	for _, subtask := range subtasks {
 		// put running subtask in the front of slice.
 		// if subtask fail-over, it's possible that there are multiple running
 		// subtasks for one task executor.
 		if subtask.State == proto.SubtaskStateRunning {
-			executorSubtasks[subtask.ExecID] = append([]*proto.Subtask{subtask}, executorSubtasks[subtask.ExecID]...)
+			executorSubtasks[subtask.ExecID] = append([]*proto.SubtaskBase{subtask}, executorSubtasks[subtask.ExecID]...)
 		} else {
 			executorSubtasks[subtask.ExecID] = append(executorSubtasks[subtask.ExecID], subtask)
 			executorPendingCnts[subtask.ExecID]++
 		}
 	}
 
-	subtasksNeedSchedule := make([]*proto.Subtask, 0)
+	subtasksNeedSchedule := make([]*proto.SubtaskBase, 0)
 	remainder := averageSubtaskRemainder
 	executorWithOneMoreSubtask := make(map[string]struct{}, remainder)
 	for node, sts := range executorSubtasks {
 		if _, ok := adjustedNodeMap[node]; !ok {
+			b.logger.Info("dead node or not have enough slots, schedule subtasks away",
+				zap.Int64("task-id", taskID),
+				zap.String("node", node),
+				zap.Int("slot-capacity", b.slotMgr.getCapacity()),
+				zap.Int("used-slots", b.currUsedSlots[node]))
 			// dead node or not have enough slots
 			subtasksNeedSchedule = append(subtasksNeedSchedule, sts...)
 			delete(executorSubtasks, node)
@@ -200,11 +211,11 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	if err = b.taskMgr.UpdateSubtasksExecIDs(ctx, subtasksNeedSchedule); err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("balance subtasks", zap.Stringers("subtasks", subtasksNeedSchedule))
+	b.logger.Info("balance subtasks", zap.Stringers("subtasks", subtasksNeedSchedule))
 	return nil
 }
 
-func (b *balancer) updateUsedNodes(subtasks []*proto.Subtask) {
+func (b *balancer) updateUsedNodes(subtasks []*proto.SubtaskBase) {
 	used := make(map[string]int, len(b.currUsedSlots))
 	// see slotManager.alloc in task executor.
 	for _, st := range subtasks {

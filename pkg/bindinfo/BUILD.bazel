@@ -3,8 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "bindinfo",
     srcs = [
-        "bind_cache.go",
-        "bind_record.go",
+        "binding.go",
+        "binding_cache.go",
         "binding_match.go",
         "capture.go",
         "global_handle.go",
@@ -14,6 +14,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/bindinfo",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/bindinfo/norm",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser",
@@ -48,7 +49,7 @@ go_test(
     name = "bindinfo_test",
     timeout = "moderate",
     srcs = [
-        "bind_cache_test.go",
+        "binding_cache_test.go",
         "binding_match_test.go",
         "capture_test.go",
         "fuzzy_binding_test.go",
@@ -63,6 +64,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/bindinfo/internal",
+        "//pkg/bindinfo/norm",
         "//pkg/config",
         "//pkg/domain",
         "//pkg/metrics",

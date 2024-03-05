@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -364,9 +364,10 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 }
 
 // CheckRowConstraint verify row check constraints.
-func (t *TableCommon) CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error {
+func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
+	ectx := ctx.GetExprCtx()
 	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(sctx, chunk.MutRowFromDatums(rowToCheck).ToRow())
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ectx, chunk.MutRowFromDatums(rowToCheck).ToRow())
 		if err != nil {
 			return err
 		}
@@ -409,11 +410,11 @@ func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 
 // shouldAssert checks if the partition should be in consistent
 // state and can have assertion.
-func (t *TableCommon) shouldAssert(sctx sessionctx.Context) bool {
+func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
 	p := t.Meta().Partition
 	if p != nil {
 		// This disables asserting during Reorganize Partition.
-		switch sctx.GetSessionVars().AssertionLevel {
+		switch level {
 		case variable.AssertionLevelFast:
 			// Fast option, just skip assertion for all partitions.
 			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
@@ -435,7 +436,7 @@ func (t *TableCommon) shouldAssert(sctx sessionctx.Context) bool {
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
@@ -460,7 +461,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 	colIDs = make([]int64, 0, numColsCap)
 	row = make([]types.Datum, 0, numColsCap)
-	if shouldWriteBinlog(sctx, t.meta) {
+	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
@@ -474,7 +475,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
-				value, err = table.CastValue(sctx, oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+				value, err = table.CastColumnValue(sctx.GetSessionVars(), oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
 					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
@@ -486,13 +487,13 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			if needChecksum {
 				if col.ChangeStateInfo != nil {
 					// TODO: Check overflow or ignoreTruncate.
-					v, err := table.CastValue(sctx, newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+					v, err := table.CastColumnValue(sctx.GetSessionVars(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 					if err != nil {
 						return err
 					}
 					checksumData = t.appendInChangeColForChecksum(sctx, h, checksumData, col.ToInfo(), &newData[col.DependencyColumnOffset], &v)
 				} else {
-					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
+					v, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), col.ToInfo())
 					if err != nil {
 						return err
 					}
@@ -508,7 +509,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			value = oldData[col.Offset]
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
-				value, err = table.CastValue(sctx, newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+				value, err = table.CastColumnValue(sctx.GetSessionVars(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
 					return err
 				}
@@ -527,7 +528,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			row = append(row, value)
 		}
 		rowToCheck = append(rowToCheck, value)
-		if shouldWriteBinlog(sctx, t.meta) && !t.canSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -583,7 +584,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		}
 	})
 
-	if t.shouldAssert(sctx) {
+	if t.shouldAssert(sessVars.AssertionLevel) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 	} else {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
@@ -602,7 +603,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	memBuffer.Release(sh)
-	if shouldWriteBinlog(sctx, t.meta) {
+	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h.IntValue()))
@@ -631,7 +632,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
+func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
 	for _, idx := range t.deletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
@@ -644,7 +645,7 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 			if err != nil {
 				return err
 			}
-			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, h, oldVs, idx, txn); err != nil {
+			if err = t.removeRowIndex(ctx, h, oldVs, idx, txn); err != nil {
 				return err
 			}
 			break
@@ -751,11 +752,11 @@ func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
 		return nil
 	}
 	pkIdx := FindPrimaryIndex(tbl)
-	pkColIds := make([]int64, 0, len(pkIdx.Columns))
+	pkColIDs := make([]int64, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
-		pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+		pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
 	}
-	return pkColIds
+	return pkColIDs
 }
 
 // PrimaryPrefixColumnIDs get prefix column ids in primary key.
@@ -787,8 +788,8 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) tableutil.TempTable {
-	tempTable := sctx.GetSessionVars().GetTemporaryTable(tblInfo)
+func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) tableutil.TempTable {
+	tempTable := sctx.TxnRecordTempTable(tblInfo)
 	tempTable.SetModified(true)
 	return tempTable
 }
@@ -803,7 +804,7 @@ func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transa
 	t.SetSize(newSize)
 }
 
-func checkTempTableSize(ctx sessionctx.Context, tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error {
+func checkTempTableSize(ctx table.MutateContext, tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error {
 	tmpTableSize := tmpTable.GetSize()
 	if tempTableData := ctx.GetSessionVars().TemporaryTableData; tempTableData != nil {
 		tmpTableSize += tempTableData.GetTableSize(tblInfo.ID)
@@ -817,7 +818,7 @@ func checkTempTableSize(ctx sessionctx.Context, tmpTable tableutil.TempTable, tb
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return nil, err
@@ -887,7 +888,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			// The reserved ID could be used in the future within this statement, by the
 			// following AddRecord() operation.
 			// Make the IDs continuous benefit for the performance of TiKV.
-			stmtCtx := sctx.GetSessionVars().StmtCtx
+			sessVars := sctx.GetSessionVars()
+			stmtCtx := sessVars.StmtCtx
 			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
 				return nil, err
@@ -924,13 +926,13 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			if needChecksum {
 				if col.ChangeStateInfo != nil {
 					// TODO: Check overflow or ignoreTruncate.
-					v, err := table.CastValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+					v, err := table.CastColumnValue(sctx.GetSessionVars(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 					if err != nil {
 						return nil, err
 					}
 					checksumData = t.appendInChangeColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &r[col.DependencyColumnOffset], &v)
 				} else {
-					v, err := table.GetColOriginDefaultValue(sctx, col.ToInfo())
+					v, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), col.ToInfo())
 					if err != nil {
 						return nil, err
 					}
@@ -943,7 +945,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		// for the new insert statement, we should use the casted value of relative column to insert.
 		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
 			// TODO: Check overflow or ignoreTruncate.
-			value, err = table.CastValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+			value, err = table.CastColumnValue(sctx.GetSessionVars(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 			if err != nil {
 				return nil, err
 			}
@@ -971,7 +973,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			} else {
 				// If `AddRecord` is called by an insert and the col is in write only or write reorganization state, we must
 				// add it with its default value.
-				value, err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
+				value, err = table.GetColOriginDefaultValue(sctx.GetExprCtx(), col.ToInfo())
 				if err != nil {
 					return nil, err
 				}
@@ -1094,7 +1096,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	memBuffer.Release(sh)
 
-	if shouldWriteBinlog(sctx, t.meta) {
+	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		// For insert, TiDB and Binlog can use same row and schema.
 		binlogRow = row
 		binlogColIDs = colIDs
@@ -1143,7 +1145,7 @@ func genIndexKeyStr(colVals []types.Datum) (string, error) {
 }
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
-func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opts []table.CreateIdxOptFunc) (kv.Handle, error) {
+func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r []types.Datum, txn kv.Transaction, opts []table.CreateIdxOptFunc) (kv.Handle, error) {
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
@@ -1309,7 +1311,7 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
+func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -1340,7 +1342,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		// The changing column datum derived from related column should be casted here.
 		// Otherwise, the existed changing indexes will not be deleted.
 		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
-		value, err := table.CastValue(ctx, relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
+		value, err := table.CastColumnValue(ctx.GetSessionVars(), relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
 		if err != nil {
 			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
 				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
@@ -1365,7 +1367,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	memBuffer.Release(sh)
 
-	if shouldWriteBinlog(ctx, t.meta) {
+	if shouldWriteBinlog(ctx.GetSessionVars(), t.meta) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
 		for _, col := range cols {
@@ -1401,7 +1403,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	return err
 }
 
-func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h kv.Handle, row []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
 	handleData, err := h.Data()
 	if err != nil {
@@ -1423,7 +1425,7 @@ func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h kv.Handle, row [
 	return nil
 }
 
-func (t *TableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, oldRow, newRow []types.Datum, colIDs []int64) error {
 	old, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), oldRow, colIDs, nil, nil)
 	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
@@ -1441,7 +1443,7 @@ func (t *TableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []t
 	return nil
 }
 
-func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, r []types.Datum, colIDs []int64) error {
 	data, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), r, colIDs, nil, nil)
 	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
@@ -1477,7 +1479,7 @@ func writeSequenceUpdateValueBinlog(sctx sessionctx.Context, db, sequence string
 	return err
 }
 
-func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
+func (t *TableCommon) removeRowData(ctx table.MutateContext, h kv.Handle) error {
 	// Remove row data.
 	txn, err := ctx.Txn(true)
 	if err != nil {
@@ -1496,7 +1498,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 			}
 		}
 	})
-	if t.shouldAssert(ctx) {
+	if t.shouldAssert(ctx.GetSessionVars().AssertionLevel) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 	} else {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
@@ -1508,7 +1510,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 }
 
 // removeRowIndices removes all the indices of a row.
-func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec []types.Datum) error {
+func (t *TableCommon) removeRowIndices(ctx table.MutateContext, h kv.Handle, rec []types.Datum) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -1522,7 +1524,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
+		if err = v.Delete(ctx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -1536,12 +1538,12 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 }
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(sc, txn, vals, h)
+func (t *TableCommon) removeRowIndex(ctx table.MutateContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+	return idx.Delete(ctx, txn, vals, h)
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals []types.Datum, newData []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
+func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
 	var opts []table.CreateIdxOptFunc
 	opts = append(opts, popts...)
 	if untouched {
@@ -1670,7 +1672,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 		return colVal, errors.New("Miss column")
 	}
 	if defaultVals[col.Offset].IsNull() {
-		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
+		colVal, err = table.GetColOriginDefaultValue(ctx.GetExprCtx(), col.ToInfo())
 		if err != nil {
 			return colVal, err
 		}
@@ -1684,9 +1686,9 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle allocate a new handle.
 // A statement could reserve some ID in the statement context, try those ones first.
-func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (kv.Handle, error) {
-	if sctx != nil {
-		if stmtCtx := sctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (kv.Handle, error) {
+	if mctx != nil {
+		if stmtCtx := mctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 			// First try to alloc if the statement has reserved auto ID.
 			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
 				stmtCtx.BaseRowID++
@@ -1695,13 +1697,13 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 		}
 	}
 
-	_, rowID, err := allocHandleIDs(ctx, sctx, t, 1)
+	_, rowID, err := allocHandleIDs(ctx, mctx, t, 1)
 	return kv.IntHandle(rowID), err
 }
 
-func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
+func allocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
-	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
+	base, maxID, err := t.Allocators(mctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1718,7 +1720,7 @@ func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table,
 			// shard = 0010000000000000000000000000000000000000000000000000000000000000
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
-		shard := sctx.GetSessionVars().GetCurrentShard(int(n))
+		shard := mctx.GetSessionVars().GetCurrentShard(int(n))
 		base = shardFmt.Compose(shard, base)
 		maxID = shardFmt.Compose(shard, maxID)
 	}
@@ -1736,39 +1738,22 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 }
 
 // Allocators implements table.Table Allocators interface.
-func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
+func (t *TableCommon) Allocators(ctx table.AllocatorContext) autoid.Allocators {
 	if ctx == nil {
 		return t.allocs
-	} else if ctx.GetSessionVars().IDAllocator == nil {
-		// Use an independent allocator for global temporary tables.
-		if t.meta.TempTableType == model.TempTableGlobal {
-			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
+	}
+
+	// Use an independent allocator for global temporary tables.
+	if t.meta.TempTableType == model.TempTableGlobal {
+		if tbl := ctx.TxnRecordTempTable(t.meta); tbl != nil {
+			if alloc := tbl.GetAutoIDAllocator(); alloc != nil {
 				return autoid.NewAllocators(false, alloc)
 			}
-			// If the session is not in a txn, for example, in "show create table", use the original allocator.
-			// Otherwise the would be a nil pointer dereference.
 		}
-		return t.allocs
+		// If the session is not in a txn, for example, in "show create table", use the original allocator.
+		// Otherwise the would be a nil pointer dereference.
 	}
-
-	// Replace the row id allocator with the one in session variables.
-	sessAlloc := ctx.GetSessionVars().IDAllocator
-	allocs := t.allocs.Allocs
-	retAllocs := make([]autoid.Allocator, 0, len(allocs))
-	copy(retAllocs, allocs)
-
-	overwritten := false
-	for i, a := range retAllocs {
-		if a.GetType() == autoid.RowIDAllocType {
-			retAllocs[i] = sessAlloc
-			overwritten = true
-			break
-		}
-	}
-	if !overwritten {
-		retAllocs = append(retAllocs, sessAlloc)
-	}
-	return autoid.NewAllocators(t.allocs.SepAutoInc, retAllocs...)
+	return t.allocs
 }
 
 // Type implements table.Table Type interface.
@@ -1776,38 +1761,38 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
+func shouldWriteBinlog(vars *variable.SessionVars, tblInfo *model.TableInfo) bool {
 	failpoint.Inject("forceWriteBinlog", func() {
 		// Just to cover binlog related code in this package, since the `BinlogClient` is
 		// still nil, mutations won't be written to pump on commit.
 		failpoint.Return(true)
 	})
-	if ctx.GetSessionVars().BinlogClient == nil {
+	if vars.BinlogClient == nil {
 		return false
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
 		return false
 	}
-	return !ctx.GetSessionVars().InRestrictedSQL
+	return !vars.InRestrictedSQL
 }
 
 func shouldIncreaseTTLMetricCount(tblInfo *model.TableInfo) bool {
 	return tblInfo.TTLInfo != nil
 }
 
-func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
+func (t *TableCommon) getMutation(ctx table.MutateContext) *binlog.TableMutation {
 	return ctx.StmtGetMutation(t.tableID)
 }
 
 // initChecksumData allocates data for checksum calculation, returns nil if checksum is disabled or unavailable. The
 // length of returned data can be considered as the number of checksums we need to write.
-func (t *TableCommon) initChecksumData(sctx sessionctx.Context, h kv.Handle) [][]rowcodec.ColData {
+func (t *TableCommon) initChecksumData(sctx table.MutateContext, h kv.Handle) [][]rowcodec.ColData {
 	if !sctx.GetSessionVars().IsRowLevelChecksumEnabled() {
 		return nil
 	}
 	numNonPubCols := len(t.Columns) - len(t.Cols())
 	if numNonPubCols > 1 {
-		logWithContext(sctx, logutil.BgLogger().Warn,
+		logWithContext(sctx.GetSessionVars(), logutil.BgLogger().Warn,
 			"skip checksum since the number of non-public columns is greater than 1",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("cols", t.meta.Columns))
 		return nil
@@ -1819,20 +1804,23 @@ func (t *TableCommon) initChecksumData(sctx sessionctx.Context, h kv.Handle) [][
 // and it will be reset for each col, so do NOT pass a buf that contains data you may use later. If the capacity of
 // `buf` is enough, it gets returned directly, otherwise a new bytes with larger capacity will be returned, and you can
 // hold the returned buf for later use (to avoid memory allocation).
-func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
+func (t *TableCommon) calcChecksums(sctx table.MutateContext, h kv.Handle, data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
 	if len(data) == 0 {
 		return nil, buf
 	}
 	checksums := make([]uint32, len(data))
 	for i, cols := range data {
-		row := rowcodec.RowData{Cols: cols, Data: buf}
+		row := rowcodec.RowData{
+			Cols: cols,
+			Data: buf,
+		}
 		if !sort.IsSorted(row) {
 			sort.Sort(row)
 		}
-		checksum, err := row.Checksum()
+		checksum, err := row.Checksum(sctx.GetSessionVars().StmtCtx.TimeZone())
 		buf = row.Data
 		if err != nil {
-			logWithContext(sctx, logutil.BgLogger().Error,
+			logWithContext(sctx.GetSessionVars(), logutil.BgLogger().Error,
 				"skip checksum due to encode error",
 				zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Error(err))
 			return nil, buf
@@ -1845,13 +1833,13 @@ func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [
 // appendPublicColForChecksum appends a public column data for checksum. If the column is in changing, that is, it's the
 // old column of an on-going modify-column ddl, then skip it since it will be handle by `appendInChangeColForChecksum`.
 func (t *TableCommon) appendPublicColForChecksum(
-	sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, d *types.Datum,
+	sctx table.MutateContext, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, d *types.Datum,
 ) [][]rowcodec.ColData {
 	if len(data) == 0 { // no need for checksum
 		return nil
 	}
 	if c.State != model.StatePublic { // assert col is public
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx.GetSessionVars(), logutil.BgLogger().Error,
 			"skip checksum due to inconsistent column state",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil
@@ -1876,18 +1864,18 @@ func (t *TableCommon) appendPublicColForChecksum(
 // value of this column. The extra checksum shall be calculated without this non-public column, thus nothing to do with
 // data[1].
 func (t *TableCommon) appendNonPublicColForChecksum(
-	sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, d *types.Datum,
+	sctx table.MutateContext, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, d *types.Datum,
 ) [][]rowcodec.ColData {
 	if size := len(data); size == 0 { // no need for checksum
 		return nil
 	} else if size == 1 { // assert that 2 checksums are required
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx.GetSessionVars(), logutil.BgLogger().Error,
 			"skip checksum due to inconsistent length of column data",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID))
 		return nil
 	}
 	if c.State == model.StatePublic || c.ChangeStateInfo != nil { // assert col is not public and is not in changing
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx.GetSessionVars(), logutil.BgLogger().Error,
 			"skip checksum due to inconsistent column state",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil
@@ -1901,18 +1889,18 @@ func (t *TableCommon) appendNonPublicColForChecksum(
 // there is a non-public column. The first checksum should be calculate with the old version of this column and the extra
 // checksum should be calculated with the new version of column.
 func (t *TableCommon) appendInChangeColForChecksum(
-	sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, oldVal *types.Datum, newVal *types.Datum,
+	sctx table.MutateContext, h kv.Handle, data [][]rowcodec.ColData, c *model.ColumnInfo, oldVal *types.Datum, newVal *types.Datum,
 ) [][]rowcodec.ColData {
 	if size := len(data); size == 0 { // no need for checksum
 		return nil
 	} else if size == 1 { // assert that 2 checksums are required
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx.GetSessionVars(), logutil.BgLogger().Error,
 			"skip checksum due to inconsistent length of column data",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID))
 		return nil
 	}
 	if c.State == model.StatePublic || c.ChangeStateInfo == nil { // assert col is not public and is in changing
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx.GetSessionVars(), logutil.BgLogger().Error,
 			"skip checksum due to inconsistent column state",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil
@@ -1935,8 +1923,7 @@ func appendColForChecksum(dst []rowcodec.ColData, t *TableCommon, c *model.Colum
 	return append(dst, rowcodec.ColData{ColumnInfo: c, Datum: d})
 }
 
-func logWithContext(sctx sessionctx.Context, log func(msg string, fields ...zap.Field), msg string, fields ...zap.Field) {
-	sessVars := sctx.GetSessionVars()
+func logWithContext(sessVars *variable.SessionVars, log func(msg string, fields ...zap.Field), msg string, fields ...zap.Field) {
 	ctxFields := make([]zap.Field, 0, len(fields)+2)
 	ctxFields = append(ctxFields, zap.Uint64("conn", sessVars.ConnectionID))
 	if sessVars.TxnCtx != nil {
@@ -2049,7 +2036,7 @@ func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
 // Caching the sequence value in table, we can easily be notified with the cache empty,
 // and write the binlogInfo in table level rather than in allocator.
-func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string) (nextVal int64, err error) {
+func (t *TableCommon) GetSequenceNextVal(ctx any, dbName, seqName string) (nextVal int64, err error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -2132,7 +2119,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 
 // SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
 // The returned bool indicates the newVal is already under the base.
-func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error) {
+func (t *TableCommon) SetSequenceVal(ctx any, newVal int64, dbName, seqName string) (int64, bool, error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -2286,11 +2273,11 @@ func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
 
 // BuildTableScanFromInfos build tipb.TableScan with *model.TableInfo and *model.ColumnInfo.
 func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo) *tipb.TableScan {
-	pkColIds := TryGetCommonPkColumnIds(tableInfo)
+	pkColIDs := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.TableScan{
 		TableId:          tableInfo.ID,
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false),
-		PrimaryColumnIds: pkColIds,
+		PrimaryColumnIds: pkColIDs,
 	}
 	if tableInfo.IsCommonHandle {
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
@@ -2300,11 +2287,11 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 
 // BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
 func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo, fastScan bool) *tipb.PartitionTableScan {
-	pkColIds := TryGetCommonPkColumnIds(tableInfo)
+	pkColIDs := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
 		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false),
-		PrimaryColumnIds: pkColIds,
+		PrimaryColumnIds: pkColIDs,
 		IsFastScan:       &fastScan,
 	}
 	if tableInfo.IsCommonHandle {
@@ -2314,7 +2301,7 @@ func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []
 }
 
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfo.
-func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
+func SetPBColumnsDefaultValue(ctx expression.BuildContext, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
 		// For virtual columns, we set their default values to NULL so that TiKV will return NULL properly,
 		// They real values will be computed later.
@@ -2326,10 +2313,7 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 		}
 
 		sessVars := ctx.GetSessionVars()
-		originStrict := sessVars.StrictSQLMode
-		sessVars.StrictSQLMode = false
-		d, err := table.GetColOriginDefaultValue(ctx, c)
-		sessVars.StrictSQLMode = originStrict
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -2384,7 +2368,7 @@ func (t *TemporaryTable) GetModified() bool {
 }
 
 // GetStats is implemented from TempTable.GetStats.
-func (t *TemporaryTable) GetStats() interface{} {
+func (t *TemporaryTable) GetStats() any {
 	return t.stats
 }
 

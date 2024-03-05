@@ -171,8 +171,8 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	var (
 		in  []string
 		out []struct {
-			ResultForV1 interface{}
-			ResultForV2 interface{}
+			ResultForV1 any
+			ResultForV2 any
 		}
 	)
 	traceSuiteData := cardinality.GetCardinalitySuiteData()
@@ -223,12 +223,12 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
 		require.NoError(t, encoder.Encode(traceInfo), sql, "For ver2")
-		var res interface{}
+		var res any
 		require.NoError(t, json.Unmarshal(buf.Bytes(), &res), sql, "For ver2")
 		testdata.OnRecord(func() {
 			out[i].ResultForV2 = res
@@ -247,12 +247,12 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
 		require.NoError(t, encoder.Encode(traceInfo), sql, "For ver1")
-		var res interface{}
+		var res any
 		require.NoError(t, json.Unmarshal(buf.Bytes(), &res), sql, "For ver1")
 		testdata.OnRecord(func() {
 			out[i].ResultForV1 = res

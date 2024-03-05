@@ -96,6 +96,7 @@ type mockOptions struct {
 	storeType        StoreType
 	ddlCheckerHijack bool
 	tikvOptions      []tikv.Option
+	pdAddrs          []string
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -107,6 +108,13 @@ func WithMultipleOptions(opts ...MockTiKVStoreOption) MockTiKVStoreOption {
 		for _, opt := range opts {
 			opt(args)
 		}
+	}
+}
+
+// WithPDAddr set pd address for pd service discovery in mock PD client.
+func WithPDAddr(addr []string) MockTiKVStoreOption {
+	return func(args *mockOptions) {
+		args.pdAddrs = addr
 	}
 }
 

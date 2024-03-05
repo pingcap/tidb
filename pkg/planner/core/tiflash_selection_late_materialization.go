@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -48,7 +47,7 @@ type expressionGroup struct {
 // predicatePushDownToTableScan is used find the selection just above the table scan
 // and try to push down the predicates to the table scan.
 // Used for TiFlash late materialization.
-func predicatePushDownToTableScan(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+func predicatePushDownToTableScan(sctx PlanContext, plan PhysicalPlan) PhysicalPlan {
 	switch p := plan.(type) {
 	case *PhysicalSelection:
 		if physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan); ok && physicalTableScan.StoreType == kv.TiFlash {
@@ -104,7 +103,7 @@ func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) str
 // @example: conds = [a > 1, b > 1, a > 2, c > 1, a > 3, b > 2], return = [[a > 3, a > 2, a > 1], [b > 2, b > 1], [c > 1]]
 // @note: when the selectivity of one group is larger than the threshold, we will remove it from the returned result.
 // @note: when the number of columns of one group is larger than the threshold, we will remove it from the returned result.
-func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression.Expression, physicalTableScan *PhysicalTableScan) []expressionGroup {
+func groupByColumnsSortBySelectivity(sctx PlanContext, conds []expression.Expression, physicalTableScan *PhysicalTableScan) []expressionGroup {
 	// Create a map to store the groupMap of conditions keyed by the columns
 	groupMap := make(map[string][]expression.Expression)
 
@@ -205,7 +204,7 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: sctx: the session context
 // @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
-func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
+func predicatePushDownToTableScanImpl(sctx PlanContext, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
 	// When the table is small, there is no need to push down the conditions.
 	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
 		return
@@ -251,11 +250,17 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	if len(selectedConds) == 0 {
 		return
 	}
-	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx, selectedConds))))
+	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx.GetExprCtx(), selectedConds))))
+	PushedDown(physicalSelection, physicalTableScan, selectedConds, selectedSelectivity)
+}
+
+// PushedDown is used to push down the selected conditions from PhysicalSelection to PhysicalTableScan.
+// Used in unit test, so it is exported.
+func PushedDown(sel *PhysicalSelection, ts *PhysicalTableScan, selectedConds []expression.Expression, selectedSelectivity float64) {
 	// remove the pushed down conditions from selection
-	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
+	removeSpecificExprsFromSelection(sel, selectedConds)
 	// add the pushed down conditions to table scan
-	physicalTableScan.LateMaterializationFilterCondition = selectedConds
+	ts.LateMaterializationFilterCondition = selectedConds
 	// Update the row count of table scan after pushing down the conditions.
-	physicalTableScan.StatsInfo().RowCount *= selectedSelectivity
+	ts.StatsInfo().RowCount *= selectedSelectivity
 }

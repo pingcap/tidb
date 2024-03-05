@@ -23,6 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -84,7 +85,7 @@ func newMockRows(t *testing.T, fieldTypes ...*types.FieldType) *mockRows {
 	}
 }
 
-func (r *mockRows) Append(row ...interface{}) *mockRows {
+func (r *mockRows) Append(row ...any) *mockRows {
 	require.Equal(r.t, len(r.fieldTypes), len(row))
 	for i, ft := range r.fieldTypes {
 		tp := ft.GetType()
@@ -137,7 +138,7 @@ type mockSession struct {
 	sessionctx.Context
 	sessionVars        *variable.SessionVars
 	sessionInfoSchema  infoschema.InfoSchema
-	executeSQL         func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error)
+	executeSQL         func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
 	rows               []chunk.Row
 	execErr            error
 	evalExpire         time.Time
@@ -161,7 +162,7 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 	}
 }
 
-func (s *mockSession) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (s *mockSession) GetDomainInfoSchema() infoschemactx.InfoSchemaMetaVersion {
 	return s.sessionInfoSchema
 }
 
@@ -175,7 +176,7 @@ func (s *mockSession) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
 }
 
-func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
 	require.False(s.t, s.closed)
 	if strings.HasPrefix(strings.ToUpper(sql), "SELECT FROM_UNIXTIME") {
 		return newMockRows(s.t, types.NewFieldType(mysql.TypeTimestamp)).Append(s.evalExpire.In(s.GetSessionVars().TimeZone)).Rows(), nil

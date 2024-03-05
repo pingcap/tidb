@@ -274,7 +274,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		ToTimeout:   time.Now().Local().Add(timeout),
 	}
 	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
-	sql := "select * from t where c>1"
+	sql := "select /*+ MAX_EXECUTION_TIME(1000) */ * from t where c>1"
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
@@ -285,6 +285,11 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/executor/assertSyncStatsFailed", `return(true)`))
 	tk.MustExec(sql) // not fail sql for timeout when pseudo=true
 	failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed")
+
+	// Test Issue #50872.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed", `return(true)`))
+	tk.MustExec(sql)
+	failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed")
 
 	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
@@ -315,7 +320,7 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 	// drop stats in order to change status
 	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
 	tk.MustQuery("select * from t where b >= 1")
-	for _, usedStatsForTbl := range tk.Session().GetSessionVars().StmtCtx.GetUsedStatsInfo(false) {
+	for _, usedStatsForTbl := range tk.Session().GetSessionVars().StmtCtx.GetUsedStatsInfo(false).Values() {
 		if usedStatsForTbl == nil {
 			continue
 		}

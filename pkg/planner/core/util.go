@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -138,7 +137,7 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 // inlineProjection prunes unneeded columns inline a executor.
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(s.SCtx(), parentUsedCols, s.Schema())
+	used := expression.GetUsedList(s.SCtx().GetExprCtx(), parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
@@ -310,7 +309,7 @@ func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
 // Deprecated: FlattenPhysicalPlan() + GetStatsInfoFromFlatPlan() is preferred.
-func GetStatsInfo(i interface{}) map[string]uint64 {
+func GetStatsInfo(i any) map[string]uint64 {
 	if i == nil {
 		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
 		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
@@ -386,7 +385,7 @@ func extractStringFromBoolSlice(slice []bool) string {
 	return strings.Join(l, ",")
 }
 
-func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {
+func tableHasDirtyContent(ctx PlanContext, tableInfo *model.TableInfo) bool {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ctx.HasDirtyContent(tableInfo.ID)
@@ -414,7 +413,7 @@ func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
 }
 
 // GetPhysID returns the physical table ID.
-func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, colPos int, d types.Datum) (int64, error) {
+func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID, nil
@@ -434,12 +433,11 @@ func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, co
 			len(pi.Columns) > 1 {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		newKeyPartExpr := tables.ForKeyPruning{
-			KeyPartCols: []*expression.Column{{
-				Index:    colPos,
-				UniqueID: partitionExpr.KeyPartCols[0].UniqueID,
-			}},
-		}
+		// We need to change the partition column index!
+		col := &expression.Column{}
+		*col = *partitionExpr.KeyPartCols[0]
+		col.Index = 0
+		newKeyPartExpr := tables.ForKeyPruning{KeyPartCols: []*expression.Column{col}}
 		partIdx, err := newKeyPartExpr.LocateKeyPartition(pi.Num, []types.Datum{d})
 		if err != nil {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")

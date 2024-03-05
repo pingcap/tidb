@@ -1260,7 +1260,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
 		var r tracing.Region
-		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		r, ctx = tracing.StartRegionWithNewRootSpan(ctx, "server.dispatch")
 		defer r.End()
 	}
 
@@ -1907,7 +1907,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}
-		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
+		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), stmt)
 		pointPlans[i] = p
 		if p == nil {
 			continue
@@ -2676,8 +2676,8 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 type compressionStats struct{}
 
 // Stats returns the connection statistics.
-func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, 3)
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any, 3)
 
 	switch vars.CompressionAlgorithm {
 	case mysql.CompressionNone:

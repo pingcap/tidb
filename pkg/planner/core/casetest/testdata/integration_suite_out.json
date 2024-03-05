@@ -169,7 +169,7 @@
           "│   └─TableReader_42 3.00 30949.65 root  MppVersion: 2, data:ExchangeSender_41",
           "│     └─ExchangeSender_41 3.00 464139.20 mpp[tiflash]  ExchangeType: PassThrough",
           "│       └─TableFullScan_40 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
-          "└─Projection_18(Probe) 3.00 53.67 root  1->Column#24",
+          "└─Projection_18(Probe) 3.00 53.67 root  1->Column#23",
           "  └─IndexReader_22 3.00 53.37 root  index:IndexFullScan_21",
           "    └─IndexFullScan_21 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false"
         ]

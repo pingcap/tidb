@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -183,33 +182,6 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	}
 }
 
-func TestStatementCountLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table stmt_count_limit (id int)")
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.StmtCountLimit = 3
-	})
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	_, err := tk.Exec("insert into stmt_count_limit values (3)")
-	require.Error(t, err)
-
-	// begin is counted into history but this one is not.
-	tk.MustExec("SET SESSION autocommit = false")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	tk.MustExec("insert into stmt_count_limit values (3)")
-	_, err = tk.Exec("insert into stmt_count_limit values (4)")
-	require.Error(t, err)
-}
-
 func TestCorrectScopeError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -323,6 +295,7 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(500)")
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.HasMaxExecutionTime)
 	require.Equal(t, uint64(500), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	require.Equal(t, uint64(500), tk.Session().GetSessionVars().GetMaxExecutionTime())
 
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
@@ -333,6 +306,9 @@ func TestMaxExecutionTime(t *testing.T) {
 
 	tk.MustExec("set @@MAX_EXECUTION_TIME = 150;")
 	tk.MustQuery("select * FROM MaxExecTime;")
+	require.Equal(t, uint64(150), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(1000) */ * FROM MaxExecTime;")
+	require.Equal(t, uint64(1000), tk.Session().GetSessionVars().GetMaxExecutionTime())
 
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
@@ -380,7 +356,7 @@ func TestLastQueryInfo(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec(`prepare stmt1 from 'select * from t'`)
 	tk.MustExec("execute stmt1")
-	checkMatch := func(actual []string, expected []interface{}) bool {
+	checkMatch := func(actual []string, expected []any) bool {
 		return strings.Contains(actual[0], expected[0].(string))
 	}
 	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":15`), checkMatch)

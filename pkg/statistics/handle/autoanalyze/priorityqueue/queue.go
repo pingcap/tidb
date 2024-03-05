@@ -14,28 +14,60 @@
 
 package priorityqueue
 
-// An AnalysisQueue implements heap.Interface and holds TableAnalysisJobs.
-type AnalysisQueue []*TableAnalysisJob
+import "container/heap"
+
+// AnalysisPriorityQueue is a priority queue for TableAnalysisJobs.
+type AnalysisPriorityQueue struct {
+	inner *AnalysisInnerQueue
+}
+
+// NewAnalysisPriorityQueue creates a new AnalysisPriorityQueue.
+func NewAnalysisPriorityQueue() *AnalysisPriorityQueue {
+	q := &AnalysisPriorityQueue{
+		inner: &AnalysisInnerQueue{},
+	}
+	heap.Init(q.inner)
+	return q
+}
+
+// Push adds a job to the priority queue with the given weight.
+func (apq *AnalysisPriorityQueue) Push(job *TableAnalysisJob) {
+	heap.Push(apq.inner, job)
+}
+
+// Pop removes the highest priority job from the queue.
+func (apq *AnalysisPriorityQueue) Pop() *TableAnalysisJob {
+	return heap.Pop(apq.inner).(*TableAnalysisJob)
+}
+
+// Len returns the number of jobs in the queue.
+func (apq *AnalysisPriorityQueue) Len() int {
+	return apq.inner.Len()
+}
+
+// An AnalysisInnerQueue implements heap.Interface and holds TableAnalysisJobs.
+// Exported for testing purposes. You should not use this directly.
+type AnalysisInnerQueue []*TableAnalysisJob
 
 // Implement the sort.Interface methods for the priority queue.
 
-func (aq AnalysisQueue) Len() int { return len(aq) }
-func (aq AnalysisQueue) Less(i, j int) bool {
+func (aq AnalysisInnerQueue) Len() int { return len(aq) }
+func (aq AnalysisInnerQueue) Less(i, j int) bool {
 	// We want Pop to give us the highest, not lowest, priority, so we use greater than here.
 	return aq[i].Weight > aq[j].Weight
 }
-func (aq AnalysisQueue) Swap(i, j int) {
+func (aq AnalysisInnerQueue) Swap(i, j int) {
 	aq[i], aq[j] = aq[j], aq[i]
 }
 
 // Push adds an item to the priority queue.
-func (aq *AnalysisQueue) Push(x any) {
+func (aq *AnalysisInnerQueue) Push(x any) {
 	item := x.(*TableAnalysisJob)
 	*aq = append(*aq, item)
 }
 
 // Pop removes the highest priority item from the queue.
-func (aq *AnalysisQueue) Pop() any {
+func (aq *AnalysisInnerQueue) Pop() any {
 	old := *aq
 	n := len(old)
 	item := old[n-1]

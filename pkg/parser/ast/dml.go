@@ -1865,6 +1865,7 @@ const (
 type LoadDataStmt struct {
 	dmlNode
 
+	LowPriority       bool
 	FileLocRef        FileLocRefTp
 	Path              string
 	Format            *string
@@ -1884,6 +1885,9 @@ type LoadDataStmt struct {
 // Restore implements Node interface.
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
+	if n.LowPriority {
+		ctx.WriteKeyWord("LOW_PRIORITY ")
+	}
 	switch n.FileLocRef {
 	case FileLocServerOrRemote:
 	case FileLocClient:
@@ -3024,6 +3028,7 @@ const (
 	ShowImportJobs
 	ShowCreateProcedure
 	ShowBinlogStatus
+	ShowReplicaStatus
 )
 
 const (
@@ -3405,6 +3410,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT LABELS")
 		case ShowSessionStates:
 			ctx.WriteKeyWord("SESSION_STATES")
+		case ShowReplicaStatus:
+			ctx.WriteKeyWord("REPLICA STATUS")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}

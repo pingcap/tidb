@@ -22,6 +22,7 @@ import (
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // ImplementationRule defines the interface for implementation rules.
@@ -276,7 +277,7 @@ func (*ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 	case memo.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVSelectionImpl(physicalSel)}, nil
 	default:
-		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
+		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
 	}
 }
 
@@ -337,7 +338,7 @@ func (*ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 	case memo.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVHashAggImpl(hashAgg)}, nil
 	default:
-		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
+		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
 	}
 }
 
@@ -392,7 +393,7 @@ func (*ImplTopN) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty)
 	case memo.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVTopNImpl(topN)}, nil
 	default:
-		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
+		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())
 	}
 }
 

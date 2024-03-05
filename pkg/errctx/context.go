@@ -80,8 +80,8 @@ func (ctx *Context) WithErrGroupLevels(levels LevelMap) Context {
 	}
 }
 
-// appendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
-func (ctx *Context) appendWarning(err error) {
+// AppendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
+func (ctx *Context) AppendWarning(err error) {
 	intest.Assert(ctx.warnHandler != nil)
 	if w := ctx.warnHandler; w != nil {
 		// warnHandler should always not be nil, check fn != nil here to just make code safe.
@@ -148,7 +148,7 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 	case LevelError:
 		return err
 	case LevelWarn:
-		ctx.appendWarning(warnErr)
+		ctx.AppendWarning(warnErr)
 	case LevelIgnore:
 	}
 
@@ -211,6 +211,7 @@ func init() {
 		ErrGroupBadNull: {
 			errno.ErrBadNull,
 			errno.ErrWarnNullToNotnull,
+			errno.ErrNoDefaultForField,
 		},
 		ErrGroupDividedByZero: {
 			errno.ErrDivisionByZero,

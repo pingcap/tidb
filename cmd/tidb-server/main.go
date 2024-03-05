@@ -317,10 +317,8 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL()
-	if config.GetGlobalConfig().Performance.ForceInitStats {
-		<-dom.StatsHandle().InitStatsDone
-	}
-	terror.MustNil(svr.Run())
+
+	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
 }
@@ -724,7 +722,7 @@ func setGlobalVars() {
 	}
 
 	// Disable automaxprocs log
-	nopLog := func(string, ...interface{}) {}
+	nopLog := func(string, ...any) {}
 	_, err := maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
 	// We should respect to user's settings in config file.
@@ -738,8 +736,6 @@ func setGlobalVars() {
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
-	indexUsageSyncLeaseDuration := parseDuration(cfg.Performance.IndexUsageSyncLease)
-	session.SetIndexUsageSyncLease(indexUsageSyncLeaseDuration)
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)

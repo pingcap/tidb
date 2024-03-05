@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"go.uber.org/zap"
 )
 
@@ -423,6 +424,7 @@ func (rs *KS3Storage) URI() string {
 func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	start := int64(0)
 	end := int64(0)
+	prefetchSize := 0
 	if o != nil {
 		if o.StartOffset != nil {
 			start = *o.StartOffset
@@ -430,17 +432,22 @@ func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (E
 		if o.EndOffset != nil {
 			end = *o.EndOffset
 		}
+		prefetchSize = o.PrefetchSize
 	}
 	reader, r, err := rs.open(ctx, path, start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if prefetchSize > 0 {
+		reader = prefetch.NewReader(reader, prefetchSize)
+	}
 	return &ks3ObjectReader{
-		ctx:       ctx,
-		storage:   rs,
-		name:      path,
-		reader:    reader,
-		rangeInfo: r,
+		ctx:          ctx,
+		storage:      rs,
+		name:         path,
+		reader:       reader,
+		rangeInfo:    r,
+		prefetchSize: prefetchSize,
 	}, nil
 }
 
@@ -510,13 +517,14 @@ func (rs *KS3Storage) open(
 
 // ks3ObjectReader wrap GetObjectOutput.Body and add the `Seek` method.
 type ks3ObjectReader struct {
-	ctx       context.Context
-	storage   *KS3Storage
-	name      string
-	reader    io.ReadCloser
-	pos       int64
-	rangeInfo RangeInfo
-	retryCnt  int
+	ctx          context.Context
+	storage      *KS3Storage
+	name         string
+	reader       io.ReadCloser
+	pos          int64
+	rangeInfo    RangeInfo
+	retryCnt     int
+	prefetchSize int
 }
 
 // Read implement the io.Reader interface.
@@ -542,6 +550,9 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 			return
 		}
 		r.reader = newReader
+		if r.prefetchSize > 0 {
+			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		}
 		r.retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
@@ -611,6 +622,9 @@ func (r *ks3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 	r.reader = newReader
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
 	r.rangeInfo = info
 	r.pos = realOffset
 	return realOffset, nil
@@ -708,3 +722,6 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 	}
 	return nil
 }
+
+// Close implements ExternalStorage interface.
+func (*KS3Storage) Close() {}

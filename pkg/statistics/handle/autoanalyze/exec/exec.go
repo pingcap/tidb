@@ -15,11 +15,14 @@
 package exec
 
 import (
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -29,6 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
+
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
+// Exported for testing.
+var AutoAnalyzeMinCnt int64 = 1000
 
 var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
@@ -43,7 +50,7 @@ func AutoAnalyze(
 	sysProcTracker sessionctx.SysProcTracker,
 	statsVer int,
 	sql string,
-	params ...interface{},
+	params ...any,
 ) {
 	startTime := time.Now()
 	_, _, err := execAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
@@ -72,7 +79,7 @@ func execAnalyzeStmt(
 	sysProcTracker sessionctx.SysProcTracker,
 	statsVer int,
 	sql string,
-	params ...interface{},
+	params ...any,
 ) ([]chunk.Row, []*ast.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
@@ -84,4 +91,42 @@ func execAnalyzeStmt(
 		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), sysProcTracker.Track, sysProcTracker.UnTrack),
 	}
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
+}
+
+// TableAnalyzed checks if any column or index of the table has been analyzed.
+func TableAnalyzed(tbl *statistics.Table) bool {
+	for _, col := range tbl.Columns {
+		if col.IsAnalyzed() {
+			return true
+		}
+	}
+	for _, idx := range tbl.Indices {
+		if idx.IsAnalyzed() {
+			return true
+		}
+	}
+	return false
+}
+
+// GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
+func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
+	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
+	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
+	if err != nil {
+		return map[string]string{}
+	}
+	parameters := make(map[string]string, len(rows))
+	for _, row := range rows {
+		parameters[row.GetString(0)] = row.GetString(1)
+	}
+	return parameters
+}
+
+// ParseAutoAnalyzeRatio parses the auto analyze ratio from the string.
+func ParseAutoAnalyzeRatio(ratio string) float64 {
+	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
+	if err != nil {
+		return variable.DefAutoAnalyzeRatio
+	}
+	return math.Max(autoAnalyzeRatio, 0)
 }

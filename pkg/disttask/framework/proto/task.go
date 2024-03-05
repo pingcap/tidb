@@ -20,40 +20,37 @@ import (
 
 // task state machine
 //
-//		                            ┌────────┐
-//		                ┌───────────│resuming│◄────────┐
-//		                │           └────────┘         │
-//		┌──────┐        │           ┌───────┐       ┌──┴───┐
-//		│failed│        │ ┌────────►│pausing├──────►│paused│
-//		└──────┘        │ │         └───────┘       └──────┘
-//		   ▲            ▼ │
-//		┌──┴────┐     ┌───┴───┐     ┌────────┐
-//		│pending├────►│running├────►│succeed │
-//		└──┬────┘     └──┬┬───┘     └────────┘
-//		   │             ││         ┌─────────┐     ┌────────┐
-//		   │             │└────────►│reverting├────►│reverted│
-//		   │             ▼          └────┬────┘     └────────┘
-//		   │          ┌──────────┐    ▲  │          ┌─────────────┐
-//		   └─────────►│cancelling├────┘  └─────────►│revert_failed│
-//		              └──────────┘                  └─────────────┘
-//	 1. succeed:		pending -> running -> succeed
-//	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
-//	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
-//	 3. pause/resume:	pending -> running -> pausing -> paused -> running
+// Note: if a task fails during running, it will end with `reverted` state.
+// The `failed` state is used to mean the framework cannot run the task, such as
+// invalid task type, scheduler init error(fatal), etc.
 //
-// TODO: we don't have revert_failed task for now.
+//	                            ┌────────┐
+//	                ┌───────────│resuming│◄────────┐
+//	                │           └────────┘         │
+//	┌──────┐        │           ┌───────┐       ┌──┴───┐
+//	│failed│        │ ┌────────►│pausing├──────►│paused│
+//	└──────┘        │ │         └───────┘       └──────┘
+//	   ▲            ▼ │
+//	┌──┴────┐     ┌───┴───┐     ┌────────┐
+//	│pending├────►│running├────►│succeed │
+//	└──┬────┘     └──┬┬───┘     └────────┘
+//	   │             ││         ┌─────────┐     ┌────────┐
+//	   │             │└────────►│reverting├────►│reverted│
+//	   │             ▼          └─────────┘     └────────┘
+//	   │          ┌──────────┐    ▲
+//	   └─────────►│cancelling├────┘
+//	              └──────────┘
 const (
-	TaskStatePending      TaskState = "pending"
-	TaskStateRunning      TaskState = "running"
-	TaskStateSucceed      TaskState = "succeed"
-	TaskStateFailed       TaskState = "failed"
-	TaskStateReverting    TaskState = "reverting"
-	TaskStateReverted     TaskState = "reverted"
-	TaskStateRevertFailed TaskState = "revert_failed"
-	TaskStateCancelling   TaskState = "cancelling"
-	TaskStatePausing      TaskState = "pausing"
-	TaskStatePaused       TaskState = "paused"
-	TaskStateResuming     TaskState = "resuming"
+	TaskStatePending    TaskState = "pending"
+	TaskStateRunning    TaskState = "running"
+	TaskStateSucceed    TaskState = "succeed"
+	TaskStateFailed     TaskState = "failed"
+	TaskStateReverting  TaskState = "reverting"
+	TaskStateReverted   TaskState = "reverted"
+	TaskStateCancelling TaskState = "cancelling"
+	TaskStatePausing    TaskState = "pausing"
+	TaskStatePaused     TaskState = "paused"
+	TaskStateResuming   TaskState = "resuming"
 )
 
 type (
@@ -61,8 +58,6 @@ type (
 	TaskState string
 	// TaskType is the type of task.
 	TaskType string
-	// Step is the step of task.
-	Step int64
 )
 
 func (t TaskType) String() string {
@@ -73,17 +68,6 @@ func (s TaskState) String() string {
 	return string(s)
 }
 
-// TaskStep is the step of task.
-// DO NOT change the value of the constants, will break backward compatibility.
-// successfully task MUST go from StepInit to business steps, then StepDone.
-const (
-	StepInit  Step = -1
-	StepDone  Step = -2
-	StepOne   Step = 1
-	StepTwo   Step = 2
-	StepThree Step = 3
-)
-
 const (
 	// TaskIDLabelName is the label name of task id.
 	TaskIDLabelName = "task_id"
@@ -93,11 +77,11 @@ const (
 
 // MaxConcurrentTask is the max concurrency of task.
 // TODO: remove this limit later.
-var MaxConcurrentTask = 4
+var MaxConcurrentTask = 16
 
-// Task represents the task of distributed framework.
-// tasks are run in the order of: priority asc, create_time asc, id asc.
-type Task struct {
+// TaskBase contains the basic information of a task.
+// we define this to avoid load task meta which might be very large into memory.
+type TaskBase struct {
 	ID    int64
 	Key   string
 	Type  TaskType
@@ -110,31 +94,22 @@ type Task struct {
 	// of slots the task can use on each node.
 	Concurrency int
 	CreateTime  time.Time
-
-	// depends on query, below fields might not be filled.
-
-	// SchedulerID is not used now.
-	SchedulerID     string
-	StartTime       time.Time
-	StateUpdateTime time.Time
-	Meta            []byte
-	Error           error
 }
 
 // IsDone checks if the task is done.
-func (t *Task) IsDone() bool {
+func (t *TaskBase) IsDone() bool {
 	return t.State == TaskStateSucceed || t.State == TaskStateReverted ||
 		t.State == TaskStateFailed
 }
 
-var (
-	// EmptyMeta is the empty meta of task/subtask.
-	EmptyMeta = []byte("{}")
-)
+// CompareTask a wrapper of Compare.
+func (t *TaskBase) CompareTask(other *Task) int {
+	return t.Compare(&other.TaskBase)
+}
 
-// Compare compares two tasks by task order.
-// returns < 0 represents priority of t is higher than other.
-func (t *Task) Compare(other *Task) int {
+// Compare compares two tasks by task rank.
+// returns < 0 represents rank of t is higher than 'other'.
+func (t *TaskBase) Compare(other *TaskBase) int {
 	if t.Priority != other.Priority {
 		return t.Priority - other.Priority
 	}
@@ -146,3 +121,39 @@ func (t *Task) Compare(other *Task) int {
 	}
 	return int(t.ID - other.ID)
 }
+
+// Task represents the task of distributed framework.
+// A task is abstracted as multiple steps that runs in sequence, each step contains
+// multiple sub-tasks that runs in parallel, such as:
+//
+//	task
+//	├── step1
+//	│   ├── subtask1
+//	│   ├── subtask2
+//	│   └── subtask3
+//	└── step2
+//	    ├── subtask1
+//	    ├── subtask2
+//	    └── subtask3
+//
+// tasks are run in the order of rank, and the rank is defined by:
+//
+//	priority asc, create_time asc, id asc.
+type Task struct {
+	TaskBase
+	// SchedulerID is not used now.
+	SchedulerID     string
+	StartTime       time.Time
+	StateUpdateTime time.Time
+	// Meta is the metadata of task, it's read-only in most cases, but it can be
+	// changed in below case, and framework will update the task meta in the storage.
+	// 	- task switches to next step in Scheduler.OnNextSubtasksBatch
+	// 	- on task cleanup, we might do some redaction on the meta.
+	Meta  []byte
+	Error error
+}
+
+var (
+	// EmptyMeta is the empty meta of task/subtask.
+	EmptyMeta = []byte("{}")
+)

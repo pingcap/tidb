@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -73,9 +74,9 @@ func TestCleanUpRoutine(t *testing.T) {
 		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
-	sch.DoCleanUpRoutine()
+	sch.DoCleanupRoutine()
 	require.Eventually(t, func() bool {
-		tasks, err := mgr.GetTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
+		tasks, err := testutil.GetTasksFromHistoryInStates(ctx, mgr, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		return len(tasks) != 0
 	}, 5*time.Second*10, time.Millisecond*300)

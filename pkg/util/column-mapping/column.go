@@ -53,7 +53,7 @@ const (
 // Exprs is some built-in expression for column mapping
 // only supports some poor expressions now,
 // we would unify tableInfo later and support more
-var Exprs = map[Expr]func(*mappingInfo, []interface{}) ([]interface{}, error){
+var Exprs = map[Expr]func(*mappingInfo, []any) ([]any, error){
 	AddPrefix: addPrefix, // arguments contains prefix
 	AddSuffix: addSuffix, // arguments contains suffix
 	// arguments contains [instance_id, prefix of schema, prefix of table]
@@ -241,7 +241,7 @@ func (m *Mapping) RemoveRule(rule *Rule) error {
 }
 
 // HandleRowValue handles row value
-func (m *Mapping) HandleRowValue(schema, table string, columns []string, vals []interface{}) ([]interface{}, []int, error) {
+func (m *Mapping) HandleRowValue(schema, table string, columns []string, vals []any) ([]any, []int, error) {
 	if m == nil {
 		return vals, nil, nil
 	}
@@ -409,7 +409,7 @@ func tableName(schema, table string) string {
 	return fmt.Sprintf("`%s`.`%s`", schema, table)
 }
 
-func addPrefix(info *mappingInfo, vals []interface{}) ([]interface{}, error) {
+func addPrefix(info *mappingInfo, vals []any) ([]any, error) {
 	prefix := info.rule.Arguments[0]
 	originStr, ok := vals[info.targetPosition].(string)
 	if !ok {
@@ -425,7 +425,7 @@ func addPrefix(info *mappingInfo, vals []interface{}) ([]interface{}, error) {
 	return vals, nil
 }
 
-func addSuffix(info *mappingInfo, vals []interface{}) ([]interface{}, error) {
+func addSuffix(info *mappingInfo, vals []any) ([]any, error) {
 	suffix := info.rule.Arguments[0]
 	originStr, ok := vals[info.targetPosition].(string)
 	if !ok {
@@ -440,7 +440,7 @@ func addSuffix(info *mappingInfo, vals []interface{}) ([]interface{}, error) {
 	return vals, nil
 }
 
-func partitionID(info *mappingInfo, vals []interface{}) ([]interface{}, error) {
+func partitionID(info *mappingInfo, vals []any) ([]any, error) {
 	// only int64 now
 	var (
 		originID int64

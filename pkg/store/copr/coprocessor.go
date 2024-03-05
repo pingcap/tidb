@@ -80,7 +80,7 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, option *kv.ClientSendOption) kv.Response {
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
@@ -1245,6 +1245,17 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
 		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
+	if worker.req.RunawayChecker != nil {
+		failpoint.Inject("sleepCoprAfterReq", func(v failpoint.Value) {
+			//nolint:durationcheck
+			value := v.(int)
+			time.Sleep(time.Millisecond * time.Duration(value))
+			if value > 50 {
+				err = errors.Errorf("Coprocessor task terminated due to exceeding the deadline")
+			}
+		})
+		err = worker.req.RunawayChecker.CheckCopRespError(err)
+	}
 	if err != nil {
 		if task.storeType == kv.TiDB {
 			err = worker.handleTiDBSendReqErr(err, task, ch)
@@ -1261,9 +1272,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, copResp)
-	}
-	if worker.req.RunawayChecker != nil {
-		worker.req.RunawayChecker.AfterCopRequest()
 	}
 
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)

@@ -45,9 +45,9 @@ var (
 
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
-	MergeSortOverlapThreshold int64 = 1000
+	MergeSortOverlapThreshold int64 = 4000
 	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
-	MergeSortFileCountStep = 1000
+	MergeSortFileCountStep = 4000
 )
 
 const (
@@ -80,14 +80,16 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID string
-	Seq      int
+	WriterID    string
+	GroupOffset int
+	Seq         int
 	// Min and Max are the min and max key written by this writer, both are
 	// inclusive, i.e. [Min, Max].
 	// will be empty if no key is written.
 	Min                tidbkv.Key
 	Max                tidbkv.Key
 	TotalSize          uint64
+	TotalCnt           uint64
 	MultipleFilesStats []MultipleFilesStat
 }
 
@@ -99,6 +101,7 @@ func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
+	groupOffset     int
 	memSizeLimit    uint64
 	blockSize       int
 	writeBatchCount uint64
@@ -168,6 +171,15 @@ func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 	return b
 }
 
+// SetGroupOffset set the group offset of a writer.
+// This can be used to group the summaries from different writers.
+// For example, for adding multiple indexes with multi-schema-change,
+// we use to distinguish the summaries from different indexes.
+func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
+	b.groupOffset = offset
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -198,6 +210,7 @@ func (b *WriterBuilder) Build(
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
 		writerID:       writerID,
+		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 1),
@@ -209,8 +222,8 @@ func (b *WriterBuilder) Build(
 	return ret
 }
 
-// BuildOneFile builds a new one file Writer. The writer will create only one file under the prefix
-// of "{prefix}/{writerID}".
+// BuildOneFile builds a new one file Writer. The writer will create only one
+// file under the prefix of "{prefix}/{writerID}".
 func (b *WriterBuilder) BuildOneFile(
 	store storage.ExternalStorage,
 	prefix string,
@@ -231,6 +244,7 @@ func (b *WriterBuilder) BuildOneFile(
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
 		kvStore:        nil,
+		onClose:        b.onClose,
 		closed:         false,
 	}
 	return ret
@@ -312,6 +326,7 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 type Writer struct {
 	store          storage.ExternalStorage
 	writerID       string
+	groupOffset    int
 	currentSeq     int
 	filenamePrefix string
 	keyAdapter     common.KeyAdapter
@@ -339,6 +354,7 @@ type Writer struct {
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
+	totalCnt  uint64
 }
 
 // WriteRow implements ingest.Writer.
@@ -370,6 +386,7 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	w.kvLocations = append(w.kvLocations, loc)
 	w.kvSize += int64(encodedKeyLen + len(idxVal))
 	w.batchSize += uint64(length)
+	w.totalCnt += 1
 	return nil
 }
 
@@ -403,10 +420,12 @@ func (w *Writer) Close(ctx context.Context) error {
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
+		GroupOffset:        w.groupOffset,
 		Seq:                w.currentSeq,
 		Min:                w.minKey,
 		Max:                w.maxKey,
 		TotalSize:          w.totalSize,
+		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: w.multiFileStats,
 	})
 	return nil

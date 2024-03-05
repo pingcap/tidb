@@ -1089,3 +1089,18 @@ create table t1(c1 int, c2 int);
 insert into t values(1,1),(2,2);
 insert into t1 values(2,3),(4,4);
 select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
+
+# TestIssue30244
+drop table if exists t1,t2,t3,t4;
+create table t1 (c int, b int);
+create table t2 (a int, b int);
+create table t3 (b int, c int);
+create table t4 (y int, c int);
+--error 1052
+select * from t1 natural join (t3 cross join t4);
+--error 1052
+select * from (t3 cross join t4) natural join t1;
+--error 1052
+select * from (t1 join t2 on t1.b=t2.b) natural join (t3 natural join t4);
+--error 1052
+select * from (t3 natural join t4) natural join (t1 join t2 on t1.b=t2.b);

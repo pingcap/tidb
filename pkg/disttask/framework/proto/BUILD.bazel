@@ -4,24 +4,27 @@ go_library(
     name = "proto",
     srcs = [
         "node.go",
+        "step.go",
         "subtask.go",
         "task.go",
         "type.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/proto",
     visibility = ["//visibility:public"],
+    deps = ["@com_github_docker_go_units//:go-units"],
 )
 
 go_test(
     name = "proto_test",
     timeout = "short",
     srcs = [
+        "step_test.go",
         "subtask_test.go",
         "task_test.go",
         "type_test.go",
     ],
     embed = [":proto"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
     deps = ["@com_github_stretchr_testify//require"],
 )

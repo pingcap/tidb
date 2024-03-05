@@ -29,7 +29,6 @@ explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member o
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or e=1; -- 8: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path.;
 explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or d=1; -- 9: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path, specify the index in index merge hint;
 
-
 # TestIndexMergeFromComposedCNFCondition
 drop table if exists t1, t2;
 create table t1(pk int primary key, a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))));
@@ -273,3 +272,26 @@ explain format='brief' select /*+ use_index_merge(t1 primary, c) */ * from t1 wh
 --sorted_result
 select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3;
 set tidb_enable_clustered_index=default;
+
+# TestIndexMergeIssue50265
+drop table if exists t;
+create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as unsigned array))));
+explain format='brief' SELECT pk FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(fpi, '[69236881]') LIMIT   10;
+
+# TestIndexMergeIssue50382
+drop table if exists t1, t2;
+CREATE TABLE `t1` (`a` varchar(488) COLLATE utf8_general_ci DEFAULT NULL, `b` binary(206) DEFAULT '0', `c` json DEFAULT NULL, UNIQUE KEY `idx_29` (`a`,(cast(`c` as signed array)),`b`), UNIQUE KEY `idx_30` ((cast(`c` as signed array)),`a`(5))) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+CREATE TABLE `t2` (`a` float NOT NULL DEFAULT '5217.6055',`b` json NOT NULL,`c` json NOT NULL,`d` varchar(181) COLLATE gbk_bin NOT NULL DEFAULT 'FbVkA~^', KEY `idx_26` (`a`),PRIMARY KEY (`a`,`d`) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY `idx_28` (`a`,(cast(`b` as binary(64) array)),`d`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;
+EXPLAIN format='brief' SELECT /*+ inl_join(t1)*/ `t2`.`c` AS `r0` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`d` WHERE `t2`.`d`='' AND NOT (6252179388429456273 MEMBER OF (`t1`.`c`));
+SHOW WARNINGS
+
+# TestIndexMergeEliminateRedundantAndPaths
+DROP table if exists t;
+CREATE TABLE `t` (`pk` varbinary(255) NOT NULL,`nslc` json DEFAULT NULL,`fpi` json DEFAULT NULL,`point_of_sale_country` varchar(2) DEFAULT NULL,PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */,KEY `fpi` ((cast(`fpi` as unsigned array))),KEY `nslc` ((cast(`nslc` as char(1000) array)),`point_of_sale_country`),KEY `nslc_old` ((cast(`nslc` as char(1000) array))));
+EXPLAIN format='brief' SELECT /*+ use_index_merge(t, fpi, nslc_old, nslc) */ * FROM   t WHERE   15975127 member of (fpi)   AND "OC8p0106XTkt.org/s/link" member of (nslc) LIMIT   10;
+
+# TestIndexMergeSingleCaseCouldFeelIndexMergeHint
+drop table if exists t;
+CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as unsigned array))));
+explain format='brief' SELECT  /*+ use_index_merge(t, nslc) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
+explain format='brief' SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;

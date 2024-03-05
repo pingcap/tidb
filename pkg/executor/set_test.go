@@ -101,9 +101,9 @@ func TestSetVar(t *testing.T) {
 	require.False(t, vars.IsAutocommit())
 
 	tk.MustExec("set @@sql_mode = 'strict_trans_tables'")
-	require.True(t, vars.StrictSQLMode)
+	require.True(t, vars.SQLMode.HasStrictMode())
 	tk.MustExec("set @@sql_mode = ''")
-	require.False(t, vars.StrictSQLMode)
+	require.False(t, vars.SQLMode.HasStrictMode())
 
 	tk.MustExec("set names utf8")
 	charset, collation := vars.GetCharsetInfo()

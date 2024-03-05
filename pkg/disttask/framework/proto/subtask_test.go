@@ -15,7 +15,10 @@
 package proto
 
 import (
+	"math/rand"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -28,15 +31,44 @@ func TestSubtaskIsDone(t *testing.T) {
 		{SubtaskStatePending, false},
 		{SubtaskStateRunning, false},
 		{SubtaskStateSucceed, true},
-		{SubtaskStateReverting, false},
-		{SubtaskStateRevertPending, false},
 		{SubtaskStateFailed, true},
-		{SubtaskStateRevertFailed, true},
 		{SubtaskStatePaused, false},
-		{SubtaskStateReverted, true},
 		{SubtaskStateCanceled, true},
 	}
 	for _, c := range cases {
-		require.Equal(t, c.done, (&Subtask{State: c.state}).IsDone())
+		require.Equal(t, c.done, (&Subtask{SubtaskBase: SubtaskBase{State: c.state}}).IsDone())
 	}
+}
+
+func TestAllocatable(t *testing.T) {
+	allocatable := NewAllocatable(123456)
+	require.Equal(t, int64(123456), allocatable.Capacity())
+	require.Equal(t, int64(0), allocatable.Used())
+
+	require.False(t, allocatable.Alloc(123457))
+	require.Equal(t, int64(0), allocatable.Used())
+	require.True(t, allocatable.Alloc(123))
+	require.Equal(t, int64(123), allocatable.Used())
+	allocatable.Free(123)
+	require.Equal(t, int64(0), allocatable.Used())
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			seed := time.Now().UnixNano()
+			t.Logf("routine: %d, seed: %d", i, seed)
+			rand.New(rand.NewSource(seed))
+			for i := 0; i < 10000; i++ {
+				n := rand.Int63n(1000)
+				if allocatable.Alloc(n) {
+					allocatable.Free(n)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	require.Equal(t, int64(0), allocatable.Used())
 }

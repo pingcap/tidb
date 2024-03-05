@@ -401,6 +401,12 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 	return
 }
 
+// LoadTableStats preloads the stats data for the physical table
+func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
+	is := p.IndexPlans[0].(*PhysicalIndexScan)
+	loadTableStats(ctx, is.Table, is.physicalTableID)
+}
+
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
 type PushedDownLimit struct {
 	Offset uint64
@@ -477,6 +483,12 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	if p.PushedLimit != nil {
 		cloned.PushedLimit = p.PushedLimit.Clone()
 	}
+	if len(p.CommonHandleCols) != 0 {
+		cloned.CommonHandleCols = make([]*expression.Column, 0, len(p.CommonHandleCols))
+		for _, col := range p.CommonHandleCols {
+			cloned.CommonHandleCols = append(cloned.CommonHandleCols, col.Clone().(*expression.Column))
+		}
+	}
 	return cloned, nil
 }
 
@@ -549,6 +561,12 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 		sum += col.MemoryUsage()
 	}
 	return
+}
+
+// LoadTableStats preloads the stats data for the physical table
+func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	loadTableStats(ctx, ts.Table, ts.physicalTableID)
 }
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
@@ -649,6 +667,12 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 		sum += plan.MemoryUsage()
 	}
 	return
+}
+
+// LoadTableStats preloads the stats data for the physical table
+func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	loadTableStats(ctx, ts.Table, ts.physicalTableID)
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -786,7 +810,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 // For keepOrder with partition table,
 // we need use partitionHandle to distinct two handles,
 // the `_tidb_rowid` in different partitions can have the same value.
-func AddExtraPhysTblIDColumn(sctx sessionctx.Context, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+func AddExtraPhysTblIDColumn(sctx PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
 	// Not adding the ExtraPhysTblID if already exists
 	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
 		return columns, schema, false
@@ -900,6 +924,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	clonedScan.physicalSchemaProducer = *prod
 	clonedScan.AccessCondition = util.CloneExprs(ts.AccessCondition)
 	clonedScan.filterCondition = util.CloneExprs(ts.filterCondition)
+	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(ts.LateMaterializationFilterCondition)
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
@@ -917,11 +942,11 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.filterCondition))
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.LateMaterializationFilterCondition))
 	for _, expr := range ts.AccessCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
-	for _, expr := range ts.filterCondition {
+	for _, expr := range ts.LateMaterializationFilterCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
@@ -942,7 +967,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 		pkIdx := tables.FindPrimaryIndex(ts.Table)
 		idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
 		for _, cond := range access {
-			newCond, err := expression.SubstituteCorCol2Constant(ctx, cond)
+			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 			if err != nil {
 				return nil, err
 			}
@@ -1029,6 +1054,9 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 		sum += cond.MemoryUsage()
 	}
 	for _, cond := range ts.filterCondition {
+		sum += cond.MemoryUsage()
+	}
+	for _, cond := range ts.LateMaterializationFilterCondition {
 		sum += cond.MemoryUsage()
 	}
 	for _, rang := range ts.Ranges {
@@ -1602,7 +1630,7 @@ type PhysicalExpand struct {
 }
 
 // Init only assigns type and context.
-func (p PhysicalExpand) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
+func (p PhysicalExpand) Init(ctx PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
@@ -2124,11 +2152,11 @@ func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool {
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPointNonNullable(sctx)
+		p.Ranges[0].IsPointNonNullable(tc)
 }
 
 // PhysicalSelection represents a filter.
@@ -2466,7 +2494,7 @@ func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
-func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
+func BuildMergeJoinPlan(ctx PlanContext, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
 	baseJoin := basePhysicalJoin{
 		JoinType:      joinType,
 		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},

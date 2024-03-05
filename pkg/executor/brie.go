@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -224,7 +225,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 	bq.lastClearTime = time.Now()
 	currTime := types.CurrentTime(mysql.TypeDatetime)
 
-	bq.tasks.Range(func(key, value interface{}) bool {
+	bq.tasks.Range(func(key, value any) bool {
 		item := value.(*brieQueueItem)
 		if d := currTime.Sub(sc.TypeCtx(), &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
 			bq.tasks.Delete(key)
@@ -300,13 +301,13 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case "hdfs":
 		if sem.IsEnabled() {
 			// Storage is not permitted to be hdfs when SEM is enabled.
-			b.err = exeerrors.ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
+			b.err = plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
 			return nil
 		}
 	case "local", "file", "":
 		if sem.IsEnabled() {
 			// Storage is not permitted to be local when SEM is enabled.
-			b.err = exeerrors.ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
+			b.err = plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
 			return nil
 		}
 	default:
@@ -605,7 +606,7 @@ func handleBRIEError(err error, terror *terror.Error) error {
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
-	globalBRIEQueue.tasks.Range(func(key, value interface{}) bool {
+	globalBRIEQueue.tasks.Range(func(_, value any) bool {
 		item := value.(*brieQueueItem)
 		if item.info.kind == kind {
 			item.progress.lock.Lock()
@@ -719,7 +720,7 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	return err
 }
 
-func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...any) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	exec := gs.se.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, sql, args...)

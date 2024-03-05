@@ -14,19 +14,3 @@ commit;
 Error 9007 (HY000): Write conflict, <details> reason=Optimistic [try again later]
 set session tidb_txn_mode=pessimistic;
 set @@tidb_retry_limit = default;
-drop table if exists history;
-set session tidb_txn_mode='';
-create table history (a int);
-insert history values (1);
-## Firstly, enable retry.
-set tidb_disable_txn_auto_retry = 0;
-begin;
-update history set a = 2;
-## Disable retry.
-set tidb_disable_txn_auto_retry = 1;
-update history set a = 3;
-commit;
-select * from history;
-a
-2
-set tidb_disable_txn_auto_retry = default;

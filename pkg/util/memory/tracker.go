@@ -469,6 +469,23 @@ func (t *Tracker) Consume(bs int64) {
 	}
 }
 
+// HandleKillSignal checks if a kill signal has been sent to the session root tracker.
+// If a kill signal is detected, it panics with the error returned by the signal handler.
+func (t *Tracker) HandleKillSignal() {
+	var sessionRootTracker *Tracker
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.IsRootTrackerOfSess {
+			sessionRootTracker = tracker
+		}
+	}
+	if sessionRootTracker != nil {
+		err := sessionRootTracker.Killer.HandleSignal()
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
 // BufferedConsume is used to buffer memory usage and do late consume
 // not thread-safe, should be called in one goroutine
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
@@ -492,7 +509,7 @@ func (t *Tracker) Release(bytes int64) {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
 			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
-				return func(ref *finalizerRef) {
+				return func(*finalizerRef) {
 					tracker.release(bytes) // finalizer func is called async
 				}
 			}

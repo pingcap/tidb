@@ -343,6 +343,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	require.Equal(t, expected.Filenames, resSummary.MultipleFilesStats[0].Filenames)
 	require.Equal(t, expected.MaxOverlappingNum, resSummary.MultipleFilesStats[0].MaxOverlappingNum)
 	require.EqualValues(t, expectedTotalSize, resSummary.TotalSize)
+	require.EqualValues(t, kvCnt, resSummary.TotalCnt)
 }
 
 func TestOnefilePropOffset(t *testing.T) {

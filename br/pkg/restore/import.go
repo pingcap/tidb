@@ -55,8 +55,7 @@ const (
 )
 
 const (
-	importScanRegionTime = 20 * time.Second
-	gRPCBackOffMaxDelay  = 3 * time.Second
+	gRPCBackOffMaxDelay = 3 * time.Second
 	// Todo: make it configable
 	gRPCTimeOut = 25 * time.Minute
 )
@@ -114,15 +113,22 @@ type ImporterClient interface {
 		storeID uint64,
 	) (import_sstpb.ImportSSTClient, error)
 
+	CloseGrpcClient() error
+
 	SupportMultiIngest(ctx context.Context, stores []uint64) (bool, error)
 }
 
 type importClient struct {
-	mu         sync.Mutex
 	metaClient split.SplitClient
-	clients    map[uint64]import_sstpb.ImportSSTClient
-	tlsConf    *tls.Config
+	mu         sync.Mutex
+	// Notice: In order to avoid leak for BRIE via SQL, it needs to close grpc client connection before br task exits.
+	// So it caches the grpc connection instead of import_sstpb.ImportSSTClient.
+	// used for any request except the ingest reqeust
+	conns map[uint64]*grpc.ClientConn
+	// used for ingest request
+	ingestConns map[uint64]*grpc.ClientConn
 
+	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 }
 
@@ -130,7 +136,8 @@ type importClient struct {
 func NewImportClient(metaClient split.SplitClient, tlsConf *tls.Config, keepaliveConf keepalive.ClientParameters) ImporterClient {
 	return &importClient{
 		metaClient:    metaClient,
-		clients:       make(map[uint64]import_sstpb.ImportSSTClient),
+		conns:         make(map[uint64]*grpc.ClientConn),
+		ingestConns:   make(map[uint64]*grpc.ClientConn),
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 	}
@@ -189,7 +196,7 @@ func (ic *importClient) IngestSST(
 	storeID uint64,
 	req *import_sstpb.IngestRequest,
 ) (*import_sstpb.IngestResponse, error) {
-	client, err := ic.GetImportClient(ctx, storeID)
+	client, err := ic.GetIngestClient(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -201,23 +208,17 @@ func (ic *importClient) MultiIngest(
 	storeID uint64,
 	req *import_sstpb.MultiIngestRequest,
 ) (*import_sstpb.IngestResponse, error) {
-	client, err := ic.GetImportClient(ctx, storeID)
+	client, err := ic.GetIngestClient(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return client.MultiIngest(ctx, req)
 }
 
-func (ic *importClient) GetImportClient(
+func (ic *importClient) createGrpcConn(
 	ctx context.Context,
 	storeID uint64,
-) (import_sstpb.ImportSSTClient, error) {
-	ic.mu.Lock()
-	defer ic.mu.Unlock()
-	client, ok := ic.clients[storeID]
-	if ok {
-		return client, nil
-	}
+) (*grpc.ClientConn, error) {
 	store, err := ic.metaClient.GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -241,12 +242,58 @@ func (ic *importClient) GetImportClient(
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(ic.keepaliveConf),
 	)
+	return conn, errors.Trace(err)
+}
+
+func (ic *importClient) cachedConnectionFrom(
+	ctx context.Context,
+	storeID uint64,
+	caches map[uint64]*grpc.ClientConn,
+) (import_sstpb.ImportSSTClient, error) {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+	conn, ok := caches[storeID]
+	if ok {
+		return import_sstpb.NewImportSSTClient(conn), nil
+	}
+	conn, err := ic.createGrpcConn(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	client = import_sstpb.NewImportSSTClient(conn)
-	ic.clients[storeID] = client
-	return client, errors.Trace(err)
+	caches[storeID] = conn
+	return import_sstpb.NewImportSSTClient(conn), nil
+}
+
+func (ic *importClient) GetImportClient(
+	ctx context.Context,
+	storeID uint64,
+) (import_sstpb.ImportSSTClient, error) {
+	return ic.cachedConnectionFrom(ctx, storeID, ic.conns)
+}
+
+func (ic *importClient) GetIngestClient(
+	ctx context.Context,
+	storeID uint64,
+) (import_sstpb.ImportSSTClient, error) {
+	return ic.cachedConnectionFrom(ctx, storeID, ic.ingestConns)
+}
+
+func (ic *importClient) CloseGrpcClient() error {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+	for id, conn := range ic.conns {
+		if err := conn.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		delete(ic.conns, id)
+	}
+	for id, conn := range ic.ingestConns {
+		if err := conn.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		delete(ic.ingestConns, id)
+	}
+	return nil
 }
 
 func (ic *importClient) SupportMultiIngest(ctx context.Context, stores []uint64) (bool, error) {
@@ -314,6 +361,13 @@ func NewFileImporter(
 		concurrencyPerStore: concurrencyPerStore,
 		useTokenBucket:      useTokenBucket,
 	}
+}
+
+func (importer *FileImporter) Close() error {
+	if importer != nil && importer.importClient != nil {
+		return importer.importClient.CloseGrpcClient()
+	}
+	return nil
 }
 
 // CheckMultiIngestSupport checks whether all stores support multi-ingest
@@ -545,11 +599,9 @@ func (importer *FileImporter) ImportSSTFiles(
 	}
 
 	err = utils.WithRetry(ctx, func() error {
-		tctx, cancel := context.WithTimeout(ctx, importScanRegionTime)
-		defer cancel()
 		// Scan regions covered by the file range
 		regionInfos, errScanRegion := split.PaginateScanRegion(
-			tctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
 		if errScanRegion != nil {
 			return errors.Trace(errScanRegion)
 		}
@@ -970,6 +1022,7 @@ func (importer *FileImporter) downloadSSTV2(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		sstMeta.ApiVersion = apiVersion
 		downloadMetasMap[file.Name] = sstMeta
 		downloadReqsMap[file.Name] = req
 	}
@@ -993,14 +1046,14 @@ func (importer *FileImporter) downloadSSTV2(
 			} else {
 				importer.storeWorkerPoolRWLock.RUnlock()
 			}
-			defer func() {
-				workerCh <- struct{}{}
-			}()
 			select {
 			case <-ectx.Done():
 				return ectx.Err()
 			case <-workerCh:
 			}
+			defer func() {
+				workerCh <- struct{}{}
+			}()
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]
 				if !ok {

@@ -16,6 +16,7 @@ package sessionstates_test
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"strconv"
@@ -336,6 +337,18 @@ func TestInvisibleVars(t *testing.T) {
 	}
 }
 
+func TestIssue47665(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
+	originSEM := config.GetGlobalConfig().Security.EnableSEM
+	config.GetGlobalConfig().Security.EnableSEM = true
+	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
+	config.GetGlobalConfig().Security.EnableSEM = originSEM
+	tk.MustExec("set @@global.require_secure_transport = on")
+	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
+}
+
 func TestSessionCtx(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -364,7 +377,7 @@ func TestSessionCtx(t *testing.T) {
 		{
 			// check Status
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, mysql.ServerStatusAutocommit, tk.Session().GetSessionVars().Status&mysql.ServerStatusAutocommit)
+				require.True(t, tk.Session().GetSessionVars().IsAutocommit())
 			},
 		},
 		{
@@ -374,7 +387,7 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, uint16(0), tk.Session().GetSessionVars().Status&mysql.ServerStatusAutocommit)
+				require.False(t, tk.Session().GetSessionVars().IsAutocommit())
 			},
 		},
 		{
@@ -422,7 +435,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_txn_info").Check(param.([][]interface{}))
+				tk.MustQuery("select @@tidb_last_txn_info").Check(param.([][]any))
 			},
 		},
 		{
@@ -433,7 +446,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_query_info").Check(param.([][]interface{}))
+				tk.MustQuery("select @@tidb_last_query_info").Check(param.([][]any))
 			},
 		},
 		{
@@ -457,7 +470,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]interface{}))
+				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]any))
 			},
 		},
 		{
@@ -469,7 +482,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]interface{}))
+				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]any))
 			},
 		},
 		{

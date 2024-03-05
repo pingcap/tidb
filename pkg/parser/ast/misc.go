@@ -2328,8 +2328,6 @@ const (
 	AdminCaptureBindings
 	AdminEvolveBindings
 	AdminReloadBindings
-	AdminShowTelemetry
-	AdminResetTelemetryID
 	AdminReloadStatistics
 	AdminFlushPlanCache
 	AdminSetBDRRole
@@ -2614,10 +2612,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
-	case AdminShowTelemetry:
-		ctx.WriteKeyWord("SHOW TELEMETRY")
-	case AdminResetTelemetryID:
-		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -3813,7 +3807,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		hintData := n.HintData.(HintSetVar)
 		ctx.WritePlain(hintData.VarName)
 		ctx.WritePlain(" = ")
-		ctx.WritePlain(hintData.Value)
+		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil

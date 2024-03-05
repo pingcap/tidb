@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -40,9 +41,11 @@ func TestDispatcherOnNextStage(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 	task := proto.Task{
-		ID:    1,
-		State: proto.TaskStatePending,
-		Step:  proto.StepInit,
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			State: proto.TaskStatePending,
+			Step:  proto.StepInit,
+		},
 	}
 	cloneTask := task
 	nodeMgr := NewNodeManager()
@@ -140,19 +143,18 @@ func TestDispatcherOnNextStage(t *testing.T) {
 func TestManagerSchedulersOrdered(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mgr, err := NewManager(context.Background(), nil, "1")
-	require.NoError(t, err)
+	mgr := NewManager(context.Background(), nil, "1")
 	for i := 1; i <= 5; i++ {
-		task := &proto.Task{
+		task := &proto.Task{TaskBase: proto.TaskBase{
 			ID: int64(i * 10),
-		}
+		}}
 		mockScheduler := mock.NewMockScheduler(ctrl)
 		mockScheduler.EXPECT().GetTask().Return(task).AnyTimes()
 		mgr.addScheduler(task.ID, mockScheduler)
 	}
 	ordered := func(schedulers []Scheduler) bool {
 		for i := 1; i < len(schedulers); i++ {
-			if schedulers[i-1].GetTask().Compare(schedulers[i].GetTask()) >= 0 {
+			if schedulers[i-1].GetTask().CompareTask(schedulers[i].GetTask()) >= 0 {
 				return false
 			}
 		}
@@ -161,9 +163,9 @@ func TestManagerSchedulersOrdered(t *testing.T) {
 	require.Len(t, mgr.getSchedulers(), 5)
 	require.True(t, ordered(mgr.getSchedulers()))
 
-	task35 := &proto.Task{
+	task35 := &proto.Task{TaskBase: proto.TaskBase{
 		ID: int64(35),
-	}
+	}}
 	mockScheduler35 := mock.NewMockScheduler(ctrl)
 	mockScheduler35.EXPECT().GetTask().Return(task35).AnyTimes()
 
@@ -180,7 +182,7 @@ func TestGetEligibleNodes(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	mockSch := mock.NewMockScheduler(ctrl)
-	mockSch.EXPECT().GetTask().Return(&proto.Task{ID: 1}).AnyTimes()
+	mockSch.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).AnyTimes()
 
 	mockSch.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock err"))
 	_, err := getEligibleNodes(ctx, mockSch, []string{":4000"})
@@ -210,10 +212,58 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 	for _, state := range []proto.SubtaskState{
 		proto.SubtaskStateCanceled,
 		proto.SubtaskStateFailed,
-		proto.SubtaskStateReverting,
 	} {
 		require.False(t, s.isStepSucceed(map[proto.SubtaskState]int64{
 			state: 1,
 		}))
 	}
+}
+
+func TestSchedulerCleanupTask(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
+	}()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	ctx := context.Background()
+	mgr := NewManager(ctx, taskMgr, "1")
+
+	// normal
+	tasks := []*proto.Task{
+		{TaskBase: proto.TaskBase{ID: 1}},
+	}
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(tasks, nil)
+
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
+	mgr.doCleanupTask()
+	require.True(t, ctrl.Satisfied())
+
+	// fail in transfer
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "1*return()"))
+	mockErr := errors.New("transfer err")
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(mockErr)
+	mgr.doCleanupTask()
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
+	mgr.doCleanupTask()
+	require.True(t, ctrl.Satisfied())
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 }

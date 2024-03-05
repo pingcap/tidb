@@ -100,6 +100,7 @@ type fakeCluster struct {
 	testCtx   *testing.T
 
 	onGetClient        func(uint64) error
+	onClearCache       func(uint64) error
 	serviceGCSafePoint uint64
 }
 
@@ -163,12 +164,16 @@ func (t trivialFlushStream) Context() context.Context {
 	return t.cx
 }
 
-func (t trivialFlushStream) SendMsg(m interface{}) error {
+func (t trivialFlushStream) SendMsg(m any) error {
 	return nil
 }
 
-func (t trivialFlushStream) RecvMsg(m interface{}) error {
+func (t trivialFlushStream) RecvMsg(m any) error {
 	return nil
+}
+
+func (f *fakeStore) GetID() uint64 {
+	return f.id
 }
 
 func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.SubscribeFlushEventRequest, opts ...grpc.CallOption) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
@@ -313,6 +318,17 @@ func (f *fakeCluster) GetLogBackupClient(ctx context.Context, storeID uint64) (l
 		f.testCtx.Fatalf("the store %d doesn't exist", storeID)
 	}
 	return cli, nil
+}
+
+func (f *fakeCluster) ClearCache(ctx context.Context, storeID uint64) error {
+	if f.onClearCache != nil {
+		err := f.onClearCache(storeID)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
 }
 
 // Stores returns the store metadata from the cluster.

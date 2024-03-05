@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -376,7 +377,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs := restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -387,7 +388,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err = infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -399,7 +400,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 1, len(dbs))
 
-	builder, err = infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("d1")},
@@ -424,8 +425,5 @@ func TestGetExistedUserDBs(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	s := createRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.mock.Storage)
-	ret := tk.MustQuery("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'mysql'")
-	ret.Equal([][]interface{}{{55}})
+	require.Equal(t, int64(185), session.CurrentBootstrapVersion)
 }

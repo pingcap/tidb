@@ -50,7 +50,6 @@ func TestAddAndDropColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 
 	// ==========
 	// ADD COLUMN
@@ -109,12 +108,12 @@ AddLoop:
 	require.NoError(t, err)
 	require.Greater(t, count, int64(0))
 
-	tk.MustQuery("select count(c4) from t2 where c4 = -1").Check([][]interface{}{
+	tk.MustQuery("select count(c4) from t2 where c4 = -1").Check([][]any{
 		{fmt.Sprintf("%v", count-int64(step))},
 	})
 
 	for i := num; i < num+step; i++ {
-		tk.MustQuery("select c4 from t2 where c4 = ?", i).Check([][]interface{}{
+		tk.MustQuery("select c4 from t2 where c4 = ?", i).Check([][]any{
 			{fmt.Sprintf("%v", i)},
 		})
 	}
@@ -152,7 +151,7 @@ AddLoop:
 	for i := num + step; i < num+step+10; i++ {
 		tk.MustExec("insert into t2 values (?, ?, ?, ?)", i, i, i, i)
 	}
-	tk.MustQuery("select count(c4) from t2 where c4 = -1").Check([][]interface{}{
+	tk.MustQuery("select count(c4) from t2 where c4 = -1").Check([][]any{
 		{fmt.Sprintf("%v", count-int64(step))},
 	})
 

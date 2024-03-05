@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -83,7 +82,7 @@ type inFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *inFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	args, err = c.verifyArgs(ctx, args)
 	if err != nil {
 		return nil, err
@@ -156,7 +155,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
-func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) ([]Expression, error) {
+func (c *inFunctionClass) verifyArgs(ctx BuildContext, args []Expression) ([]Expression, error) {
 	columnType := args[0].GetType()
 	validatedArgs := make([]Expression, 0, len(args))
 	for _, arg := range args {
@@ -165,7 +164,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("Bit Column in (%v)", constant.Value.GetInt64()))
+						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackErrorf("Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
@@ -193,7 +192,7 @@ type builtinInIntSig struct {
 	hashSet map[int64]bool
 }
 
-func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
@@ -285,7 +284,7 @@ type builtinInStringSig struct {
 	hashSet set.StringSet
 }
 
-func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	collator := collate.GetCollator(b.collation)
@@ -359,7 +358,7 @@ type builtinInRealSig struct {
 	hashSet set.Float64Set
 }
 
-func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
@@ -430,7 +429,7 @@ type builtinInDecimalSig struct {
 	hashSet set.StringSet
 }
 
-func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
@@ -510,7 +509,7 @@ type builtinInTimeSig struct {
 	hashSet map[types.CoreTime]struct{}
 }
 
-func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
@@ -581,7 +580,7 @@ type builtinInDurationSig struct {
 	hashSet map[time.Duration]struct{}
 }
 
-func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
@@ -684,7 +683,7 @@ type rowFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *rowFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -719,7 +718,7 @@ type setVarFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *setVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -888,7 +887,7 @@ func (b *builtinSetTimeVarSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 }
 
 // BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
-func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
+func BuildGetVarFunction(ctx BuildContext, expr Expression, retType *types.FieldType) (Expression, error) {
 	var fc functionClass
 	switch retType.EvalType() {
 	case types.ETInt:
@@ -926,7 +925,7 @@ type getStringVarFunctionClass struct {
 	getVarFunctionClass
 }
 
-func (c *getStringVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *getStringVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -981,7 +980,7 @@ type getIntVarFunctionClass struct {
 	getVarFunctionClass
 }
 
-func (c *getIntVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *getIntVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1022,7 +1021,7 @@ type getRealVarFunctionClass struct {
 	getVarFunctionClass
 }
 
-func (c *getRealVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *getRealVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1053,7 +1052,11 @@ func (b *builtinGetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
-		return v.GetFloat64(), false, nil
+		d, err := v.ToFloat64(typeCtx(ctx))
+		if err != nil {
+			return 0, false, err
+		}
+		return d, false, nil
 	}
 	return 0, true, nil
 }
@@ -1062,7 +1065,7 @@ type getDecimalVarFunctionClass struct {
 	getVarFunctionClass
 }
 
-func (c *getDecimalVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *getDecimalVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1093,7 +1096,11 @@ func (b *builtinGetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
-		return v.GetMysqlDecimal(), false, nil
+		d, err := v.ToDecimal(typeCtx(ctx))
+		if err != nil {
+			return nil, false, err
+		}
+		return d, false, nil
 	}
 	return nil, true, nil
 }
@@ -1102,7 +1109,7 @@ type getTimeVarFunctionClass struct {
 	getVarFunctionClass
 }
 
-func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *getTimeVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1153,7 +1160,7 @@ type valuesFunctionClass struct {
 	tp     *types.FieldType
 }
 
-func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *valuesFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1210,7 +1217,7 @@ func (b *builtinValuesIntSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 		}
 		if len(val) < 8 {
 			var binary types.BinaryLiteral = val
-			v, err := binary.ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+			v, err := binary.ToInt(typeCtx(ctx))
 			if err != nil {
 				return 0, true, errors.Trace(err)
 			}
@@ -1406,7 +1413,7 @@ type bitCountFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *bitCountFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1449,7 +1456,7 @@ type getParamFunctionClass struct {
 
 // getFunction gets function
 // TODO: more typed functions will be added when typed parameters are supported.
-func (c *getParamFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *getParamFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}

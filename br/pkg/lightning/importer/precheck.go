@@ -9,7 +9,7 @@ import (
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
-	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 type precheckContextKey string
@@ -23,19 +23,19 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 
 // PrecheckItemBuilder is used to build precheck items
 type PrecheckItemBuilder struct {
-	cfg                *config.Config
-	dbMetas            []*mydump.MDDatabaseMeta
-	preInfoGetter      PreImportInfoGetter
-	checkpointsDB      checkpoints.DB
-	pdLeaderAddrGetter func() string
+	cfg           *config.Config
+	dbMetas       []*mydump.MDDatabaseMeta
+	preInfoGetter PreImportInfoGetter
+	checkpointsDB checkpoints.DB
+	pdAddrsGetter func(context.Context) []string
 }
 
 // NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
-// pdCli **must not** be nil for local backend
+// pdHTTPCli **must not** be nil for local backend
 func NewPrecheckItemBuilderFromConfig(
 	ctx context.Context,
 	cfg *config.Config,
-	pdCli pd.Client,
+	pdHTTPCli pdhttp.Client,
 	opts ...ropts.PrecheckItemBuilderOption,
 ) (*PrecheckItemBuilder, error) {
 	var gerr error
@@ -47,7 +47,7 @@ func NewPrecheckItemBuilderFromConfig(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdCli)
+	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdHTTPCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -77,7 +77,7 @@ func NewPrecheckItemBuilderFromConfig(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb, pdCli), gerr
+	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb, pdHTTPCli), gerr
 }
 
 // NewPrecheckItemBuilder creates a new PrecheckItemBuilder
@@ -86,21 +86,31 @@ func NewPrecheckItemBuilder(
 	dbMetas []*mydump.MDDatabaseMeta,
 	preInfoGetter PreImportInfoGetter,
 	checkpointsDB checkpoints.DB,
-	pdCli pd.Client,
+	pdHTTPCli pdhttp.Client,
 ) *PrecheckItemBuilder {
-	leaderAddrGetter := func() string {
-		return cfg.TiDB.PdAddr
+	pdAddrsGetter := func(context.Context) []string {
+		return []string{cfg.TiDB.PdAddr}
 	}
 	// in tests we may not have a pdCli
-	if pdCli != nil {
-		leaderAddrGetter = pdCli.GetLeaderAddr
+	if pdHTTPCli != nil {
+		pdAddrsGetter = func(ctx context.Context) []string {
+			leaderInfo, err := pdHTTPCli.GetLeader(ctx)
+			if err != nil {
+				return []string{cfg.TiDB.PdAddr}
+			}
+			addrs := leaderInfo.GetClientUrls()
+			if len(addrs) == 0 {
+				return []string{cfg.TiDB.PdAddr}
+			}
+			return addrs
+		}
 	}
 	return &PrecheckItemBuilder{
-		cfg:                cfg,
-		dbMetas:            dbMetas,
-		preInfoGetter:      preInfoGetter,
-		checkpointsDB:      checkpointsDB,
-		pdLeaderAddrGetter: leaderAddrGetter,
+		cfg:           cfg,
+		dbMetas:       dbMetas,
+		preInfoGetter: preInfoGetter,
+		checkpointsDB: checkpointsDB,
+		pdAddrsGetter: pdAddrsGetter,
 	}
 }
 
@@ -132,7 +142,7 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (p
 	case precheck.CheckLocalTempKVDir:
 		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
 	case precheck.CheckTargetUsingCDCPITR:
-		return NewCDCPITRCheckItem(b.cfg, b.pdLeaderAddrGetter), nil
+		return NewCDCPITRCheckItem(b.cfg, b.pdAddrsGetter), nil
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}

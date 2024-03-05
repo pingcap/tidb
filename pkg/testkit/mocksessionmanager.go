@@ -40,7 +40,7 @@ type MockSessionManager struct {
 	mu       sync.Mutex
 	ConAttrs map[uint64]map[string]string
 
-	internalSessions map[interface{}]struct{}
+	internalSessions map[any]struct{}
 }
 
 // ShowTxnList is to show txn list.
@@ -134,17 +134,17 @@ func (msm *MockSessionManager) GetAutoAnalyzeProcID() uint64 {
 }
 
 // StoreInternalSession is to store internal session.
-func (msm *MockSessionManager) StoreInternalSession(s interface{}) {
+func (msm *MockSessionManager) StoreInternalSession(s any) {
 	msm.mu.Lock()
 	if msm.internalSessions == nil {
-		msm.internalSessions = make(map[interface{}]struct{})
+		msm.internalSessions = make(map[any]struct{})
 	}
 	msm.internalSessions[s] = struct{}{}
 	msm.mu.Unlock()
 }
 
 // DeleteInternalSession is to delete the internal session pointer from the map in the SessionManager
-func (msm *MockSessionManager) DeleteInternalSession(s interface{}) {
+func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()
 	delete(msm.internalSessions, s)
 	msm.mu.Unlock()

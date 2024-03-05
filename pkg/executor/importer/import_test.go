@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -48,7 +49,15 @@ import (
 )
 
 func TestInitDefaultOptions(t *testing.T) {
-	plan := &Plan{}
+	plan := &Plan{
+		DataSourceType: DataSourceTypeQuery,
+	}
+	plan.initDefaultOptions(10)
+	require.Equal(t, 2, plan.ThreadCnt)
+
+	plan = &Plan{
+		DataSourceType: DataSourceTypeFile,
+	}
 	variable.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
 		variable.CloudStorageURI.Store("")
@@ -82,7 +91,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		for _, opt := range inOptions {
 			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = expression.RewriteSimpleExprWithNames(sctx, opt.Value, nil, nil)
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
 				require.NoError(t, err)
 			}
 			options = append(options, &loadDataOpt)
@@ -107,7 +116,8 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		recordErrorsOption+"=123, "+
 		detachedOption+", "+
 		disableTiKVImportModeOption+", "+
-		maxEngineSizeOption+"='100gib'",
+		maxEngineSizeOption+"='100gib', "+
+		disablePrecheckOption,
 	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
@@ -131,6 +141,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.True(t, plan.DisableTiKVImportMode, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
 	require.Empty(t, plan.CloudStorageURI, sql)
+	require.True(t, plan.DisablePrecheck, sql)
 
 	// set cloud storage uri
 	variable.CloudStorageURI.Store("s3://bucket/path")
@@ -170,13 +181,19 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 
 func TestAdjustOptions(t *testing.T) {
 	plan := &Plan{
-		DiskQuota:     1,
-		ThreadCnt:     100000000,
-		MaxWriteSpeed: 10,
+		DiskQuota:      1,
+		ThreadCnt:      100000000,
+		MaxWriteSpeed:  10,
+		DataSourceType: DataSourceTypeFile,
 	}
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+
+	plan.ThreadCnt = 100000000
+	plan.DataSourceType = DataSourceTypeQuery
+	plan.adjustOptions(16)
+	require.Equal(t, 32, plan.ThreadCnt)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -397,4 +414,11 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
 	c.Path = path.Join(tempDir, "server-*.csv")
 	require.NoError(t, c.InitDataFiles(ctx))
+}
+
+func TestGetDataSourceType(t *testing.T) {
+	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
+		SelectPlan: &plannercore.PhysicalSelection{},
+	}))
+	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
 }

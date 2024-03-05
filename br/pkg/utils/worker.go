@@ -131,6 +131,41 @@ func PanicToErr(err *error) {
 	}
 }
 
+// CatchAndLogPanic recovers when the execution get panicked, and log the panic.
+// generally, this would be used with `defer`, like:
+//
+//	func foo() {
+//	  defer utils.CatchAndLogPanic()
+//	  maybePanic()
+//	}
+func CatchAndLogPanic() {
+	item := recover()
+	if item != nil {
+		log.Warn("CatchAndLogPanic: panicked, but ignored.", zap.StackSkip("stack", 1), zap.Any("panic", item))
+	}
+}
+
+type Result[T any] struct {
+	Err  error
+	Item T
+}
+
+func AsyncStreamBy[T any](generator func() (T, error)) <-chan Result[T] {
+	out := make(chan Result[T])
+	go func() {
+		defer close(out)
+		for {
+			item, err := generator()
+			if err != nil {
+				out <- Result[T]{Err: err}
+				return
+			}
+			out <- Result[T]{Item: item}
+		}
+	}()
+	return out
+}
+
 func BuildWorkerTokenChannel(size uint) chan struct{} {
 	ch := make(chan struct{}, size)
 	for i := 0; i < int(size); i += 1 {

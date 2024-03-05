@@ -41,8 +41,7 @@ func VerifyTaskStateTransform(from, to proto.TaskState) bool {
 			// no revert_failed now
 			// proto.TaskStateRevertFailed,
 		},
-		proto.TaskStateFailed:       {},
-		proto.TaskStateRevertFailed: {},
+		proto.TaskStateFailed: {},
 		proto.TaskStateCancelling: {
 			proto.TaskStateReverting,
 		},

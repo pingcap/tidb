@@ -639,6 +639,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// CastDecimalAsDouble
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// CastStringAsInt
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
@@ -809,6 +814,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// ScalarFuncSig_Pow
 	function, err = NewFunction(mock.NewContext(), ast.Pow, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Pow, Power is a synonym for Pow
+	function, err = NewFunction(mock.NewContext(), ast.Power, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1434,7 +1444,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 
 	//jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
-	//realColumn := genColumn(mysql.TypeDouble, 3)
+	realColumn := genColumn(mysql.TypeDouble, 3)
 	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := genColumn(mysql.TypeString, 5)
 	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
@@ -1610,6 +1620,16 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.Lower,
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Pow,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{realColumn, realColumn},
+		},
+		{
+			functionName: ast.Power,
+			retType:      types.NewFieldType(mysql.TypeDouble),
+			args:         []Expression{realColumn, realColumn},
 		},
 	}
 

@@ -62,6 +62,7 @@ go_test(
         "engine_test.go",
         "file_test.go",
         "iter_test.go",
+        "misc_bench_test.go",
         "onefile_writer_test.go",
         "reader_test.go",
         "sort_test.go",
@@ -75,6 +76,7 @@ go_test(
     deps = [
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/membuf",
         "//br/pkg/storage",

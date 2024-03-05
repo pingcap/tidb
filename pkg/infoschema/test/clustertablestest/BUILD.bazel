@@ -9,7 +9,7 @@ go_test(
         "tables_test.go",
     ],
     flaky = True,
-    shard_count = 47,
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -40,6 +40,7 @@ go_test(
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/gctuner",
+        "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/resourcegrouptag",
         "//pkg/util/set",
@@ -56,5 +57,6 @@ go_test(
         "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
     ],
 )

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // enforce implement Processor interface
@@ -157,7 +158,7 @@ func NewStaleReadProcessor(ctx context.Context, sctx sessionctx.Context) Process
 func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	if p.sctx.GetSessionVars().InTxn() {
 		if tn.AsOf != nil {
-			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return plannererrors.ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 		}
 
 		if !p.evaluated {
@@ -178,7 +179,7 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	if p.evaluated {
 		// If the select statement is related to multi tables, we should guarantee that all tables use the same timestamp
 		if p.stmtTS != stmtAsOfTS {
-			return errAsOf.GenWithStack("can not set different time in the as of")
+			return plannererrors.ErrAsOf.GenWithStack("can not set different time in the as of")
 		}
 		return nil
 	}
@@ -192,7 +193,7 @@ func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator Staleness
 
 	if p.sctx.GetSessionVars().InTxn() {
 		if preparedTSEvaluator != nil {
-			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return plannererrors.ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 		}
 		return p.evaluateFromTxn()
 	}
@@ -236,7 +237,7 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, eval
 	txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 	if txnReadTS > 0 && stmtTS > 0 {
 		// `as of` and `@@tx_read_ts` cannot be set in the same time
-		return errAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+		return plannererrors.ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 	}
 
 	if stmtTS > 0 {
@@ -265,7 +266,7 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, eval
 
 	ts, err := getTSFromExternalTS(p.ctx, p.sctx)
 	if err != nil {
-		return errAsOf.FastGenWithCause(err.Error())
+		return plannererrors.ErrAsOf.FastGenWithCause(err.Error())
 	}
 	if ts > 0 {
 		return p.setEvaluatedTSWithoutEvaluator(ts)
@@ -280,12 +281,12 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 		return 0, nil
 	}
 
-	ts, err := CalculateAsOfTsExpr(ctx, sctx, asOf.TsExpr)
+	ts, err := CalculateAsOfTsExpr(ctx, sctx.GetPlanCtx(), asOf.TsExpr)
 	if err != nil {
 		return 0, err
 	}
 
-	if err = sessionctx.ValidateStaleReadTS(ctx, sctx, ts); err != nil {
+	if err = sessionctx.ValidateStaleReadTS(ctx, sctx.GetSessionVars().StmtCtx, sctx.GetStore(), ts); err != nil {
 		return 0, err
 	}
 
@@ -305,7 +306,7 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 
 func getTSFromExternalTS(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 	if sctx.GetSessionVars().EnableExternalTSRead && !sctx.GetSessionVars().InRestrictedSQL {
-		externalTimestamp, err := GetExternalTimestamp(ctx, sctx)
+		externalTimestamp, err := GetExternalTimestamp(ctx, sctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return 0, err
 		}

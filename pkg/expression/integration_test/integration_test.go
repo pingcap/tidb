@@ -411,9 +411,9 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
+			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 		}
-		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
+		afterFunc := expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
 			return bytes.Compare(afterFunc[i].HashCode(), afterFunc[j].HashCode()) < 0
 		})
@@ -892,44 +892,44 @@ func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tests := []struct {
-		input    [2]interface{}
-		expected interface{}
+		input    [2]any
+		expected any
 		success  bool
 		errCode  int
 	}{
 		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
 		// RFC 7396 Example Test Cases
-		{[2]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
-		{[2]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b", "b": "c"}`, true, 0},
-		{[2]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
-		{[2]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
-		{[2]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
-		{[2]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
-		{[2]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
-		{[2]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
-		{[2]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
-		{[2]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `null`}, `null`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
-		{[2]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null, "a": 1}`, true, 0},
-		{[2]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a": "b"}`, true, 0},
-		{[2]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a": {"bb": {}}}`, true, 0},
+		{[2]any{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[2]any{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b", "b": "c"}`, true, 0},
+		{[2]any{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
+		{[2]any{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
+		{[2]any{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[2]any{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
+		{[2]any{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
+		{[2]any{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
+		{[2]any{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
+		{[2]any{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
+		{[2]any{`{"a":"foo"}`, `null`}, `null`, true, 0},
+		{[2]any{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
+		{[2]any{`{"e":null}`, `{"a":1}`}, `{"e": null, "a": 1}`, true, 0},
+		{[2]any{`[1,2]`, `{"a":"b","c":null}`}, `{"a": "b"}`, true, 0},
+		{[2]any{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a": {"bb": {}}}`, true, 0},
 		// RFC 7396 Example Document
-		{[2]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
+		{[2]any{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
 
 		// From mysql Example Test Cases
-		{[2]interface{}{nil, `{"a":1}`}, nil, true, 0},
-		{[2]interface{}{`{"a":1}`, nil}, nil, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `true`}, `true`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `false`}, `false`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `123`}, `123`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
-		{[2]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[2]interface{}{"null", `{"a":1}`}, `{"a":1}`, true, 0},
-		{[2]interface{}{`{"a":1}`, "null"}, `null`, true, 0},
+		{[2]any{nil, `{"a":1}`}, nil, true, 0},
+		{[2]any{`{"a":1}`, nil}, nil, true, 0},
+		{[2]any{`{"a":"foo"}`, `true`}, `true`, true, 0},
+		{[2]any{`{"a":"foo"}`, `false`}, `false`, true, 0},
+		{[2]any{`{"a":"foo"}`, `123`}, `123`, true, 0},
+		{[2]any{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
+		{[2]any{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[2]any{"null", `{"a":1}`}, `{"a":1}`, true, 0},
+		{[2]any{`{"a":1}`, "null"}, `null`, true, 0},
 
 		// Invalid json text
-		{[2]interface{}{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
+		{[2]any{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
 	}
 
 	tk.MustExec(`use test;`)
@@ -962,93 +962,93 @@ func TestBuiltinFuncJSONMergePatch_InExpression(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tests := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 		errCode  int
 	}{
 		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
 		// RFC 7396 Example Test Cases
-		{[]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
-		{[]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true, 0},
-		{[]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
-		{[]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
-		{[]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
-		{[]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
-		{[]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
-		{[]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
-		{[]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
-		{[]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `null`}, `null`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
-		{[]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true, 0},
-		{[]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true, 0},
-		{[]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true, 0},
+		{[]any{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[]any{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true, 0},
+		{[]any{`{"a":"b"}`, `{"a":null}`}, `{}`, true, 0},
+		{[]any{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true, 0},
+		{[]any{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true, 0},
+		{[]any{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true, 0},
+		{[]any{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true, 0},
+		{[]any{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true, 0},
+		{[]any{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true, 0},
+		{[]any{`{"a":"b"}`, `["c"]`}, `["c"]`, true, 0},
+		{[]any{`{"a":"foo"}`, `null`}, `null`, true, 0},
+		{[]any{`{"a":"foo"}`, `"bar"`}, `"bar"`, true, 0},
+		{[]any{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true, 0},
+		{[]any{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true, 0},
+		{[]any{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true, 0},
 		// RFC 7396 Example Document
-		{[]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
+		{[]any{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true, 0},
 
 		// test cases
-		{[]interface{}{nil, `1`}, `1`, true, 0},
-		{[]interface{}{`1`, nil}, nil, true, 0},
-		{[]interface{}{nil, `null`}, `null`, true, 0},
-		{[]interface{}{`null`, nil}, nil, true, 0},
-		{[]interface{}{nil, `true`}, `true`, true, 0},
-		{[]interface{}{`true`, nil}, nil, true, 0},
-		{[]interface{}{nil, `false`}, `false`, true, 0},
-		{[]interface{}{`false`, nil}, nil, true, 0},
-		{[]interface{}{nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`[1,2,3]`, nil}, nil, true, 0},
-		{[]interface{}{nil, `{"a":"foo"}`}, nil, true, 0},
-		{[]interface{}{`{"a":"foo"}`, nil}, nil, true, 0},
+		{[]any{nil, `1`}, `1`, true, 0},
+		{[]any{`1`, nil}, nil, true, 0},
+		{[]any{nil, `null`}, `null`, true, 0},
+		{[]any{`null`, nil}, nil, true, 0},
+		{[]any{nil, `true`}, `true`, true, 0},
+		{[]any{`true`, nil}, nil, true, 0},
+		{[]any{nil, `false`}, `false`, true, 0},
+		{[]any{`false`, nil}, nil, true, 0},
+		{[]any{nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`[1,2,3]`, nil}, nil, true, 0},
+		{[]any{nil, `{"a":"foo"}`}, nil, true, 0},
+		{[]any{`{"a":"foo"}`, nil}, nil, true, 0},
 
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
-		{[]interface{}{`null`, `true`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
+		{[]any{`null`, `true`, `[1,2,3]`}, `[1,2,3]`, true, 0},
 
 		// From mysql Example Test Cases
-		{[]interface{}{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
-		{[]interface{}{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
-		{[]interface{}{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true, 0},
-		{[]interface{}{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true, 0},
+		{[]any{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
+		{[]any{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true, 0},
+		{[]any{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true, 0},
+		{[]any{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true, 0},
 
-		{[]interface{}{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true, 0},
+		{[]any{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true, 0},
 
-		{[]interface{}{nil, `null`, `{"a":1}`, `true`}, `true`, true, 0},
-		{[]interface{}{`null`, nil, `{"a":1}`, `true`}, `true`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`, nil, `true`}, `true`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`, `true`, nil}, nil, true, 0},
+		{[]any{nil, `null`, `{"a":1}`, `true`}, `true`, true, 0},
+		{[]any{`null`, nil, `{"a":1}`, `true`}, `true`, true, 0},
+		{[]any{`null`, `{"a":1}`, nil, `true`}, `true`, true, 0},
+		{[]any{`null`, `{"a":1}`, `true`, nil}, nil, true, 0},
 
 		// non-object last item
-		{[]interface{}{"true", "false", "[]", "{}", "null"}, "null", true, 0},
-		{[]interface{}{"false", "[]", "{}", "null", "true"}, "true", true, 0},
-		{[]interface{}{"true", "[]", "{}", "null", "false"}, "false", true, 0},
-		{[]interface{}{"true", "false", "{}", "null", "[]"}, "[]", true, 0},
-		{[]interface{}{"true", "false", "{}", "null", "1"}, "1", true, 0},
-		{[]interface{}{"true", "false", "{}", "null", "1.8"}, "1.8", true, 0},
-		{[]interface{}{"true", "false", "{}", "null", `"112"`}, `"112"`, true, 0},
+		{[]any{"true", "false", "[]", "{}", "null"}, "null", true, 0},
+		{[]any{"false", "[]", "{}", "null", "true"}, "true", true, 0},
+		{[]any{"true", "[]", "{}", "null", "false"}, "false", true, 0},
+		{[]any{"true", "false", "{}", "null", "[]"}, "[]", true, 0},
+		{[]any{"true", "false", "{}", "null", "1"}, "1", true, 0},
+		{[]any{"true", "false", "{}", "null", "1.8"}, "1.8", true, 0},
+		{[]any{"true", "false", "{}", "null", `"112"`}, `"112"`, true, 0},
 
-		{[]interface{}{`{"a":"foo"}`, nil}, nil, true, 0},
-		{[]interface{}{nil, `{"a":"foo"}`}, nil, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `false`}, `false`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `123`}, `123`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
-		{[]interface{}{`null`, `{"a":1}`}, `{"a":1}`, true, 0},
-		{[]interface{}{`{"a":1}`, `null`}, `null`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
-		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, nil}, nil, true, 0},
+		{[]any{nil, `{"a":"foo"}`}, nil, true, 0},
+		{[]any{`{"a":"foo"}`, `false`}, `false`, true, 0},
+		{[]any{`{"a":"foo"}`, `123`}, `123`, true, 0},
+		{[]any{`{"a":"foo"}`, `123.1`}, `123.1`, true, 0},
+		{[]any{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true, 0},
+		{[]any{`null`, `{"a":1}`}, `{"a":1}`, true, 0},
+		{[]any{`{"a":1}`, `null`}, `null`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true, 0},
+		{[]any{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
 
 		// Invalid json text
-		{[]interface{}{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
-		{[]interface{}{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
-		{[]interface{}{`{"a":1}`, `jjj`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]any{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]any{`{"a":1}`, `jjj`, `null`}, nil, false, mysql.ErrInvalidJSONText},
 	}
 
 	for _, tt := range tests {
@@ -1413,11 +1413,6 @@ func TestTimeBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	originSQLMode := tk.Session().GetSessionVars().StrictSQLMode
-	tk.Session().GetSessionVars().StrictSQLMode = true
-	defer func() {
-		tk.Session().GetSessionVars().StrictSQLMode = originSQLMode
-	}()
 	tk.MustExec("use test")
 
 	// for makeDate
@@ -2358,7 +2353,7 @@ func TestTimeBuiltin(t *testing.T) {
 	// Customized check for the cases of adddate(time, ...) - it returns datetime with current date padded.
 	// 1. Check if the result contains space, that is, it must contain YMD part.
 	// 2. Check if the result's suffix matches expected, that is, the HMS part is an exact match.
-	checkHmsMatch := func(actual []string, expected []interface{}) bool {
+	checkHmsMatch := func(actual []string, expected []any) bool {
 		return strings.Contains(actual[0], " ") && strings.HasSuffix(actual[0], expected[0].(string))
 	}
 
@@ -2931,7 +2926,7 @@ PARTITION BY RANGE (c) (
 func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	checksum := func(cols ...interface{}) uint32 {
+	checksum := func(cols ...any) uint32 {
 		buf := make([]byte, 0, 64)
 		for _, col := range cols {
 			switch x := col.(type) {
@@ -2980,4 +2975,28 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	// other plans
 	tk.MustGetDBError("select tidb_row_checksum() from t", expression.ErrNotSupportedYet)
 	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
+}
+
+func TestIssue43527(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (a datetime, b bigint, c decimal(10, 2), d float)")
+	tk.MustExec("insert into test values('2010-10-10 10:10:10', 100, 100.01, 100)")
+	// Decimal.
+	tk.MustQuery(
+		"SELECT @total := @total + c FROM (SELECT c FROM test) AS temp, (SELECT @total := 200) AS T1",
+	).Check(testkit.Rows("300.01"))
+	// Float.
+	tk.MustQuery(
+		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := 200) AS T1",
+	).Check(testkit.Rows("300"))
+	tk.MustExec("insert into test values('2010-10-10 10:10:10', 100, 100.01, 100)")
+	// Vectorized.
+	// NOTE: Because https://github.com/pingcap/tidb/pull/8412 disabled the vectorized execution of get or set variable,
+	// the following test case will not be executed in vectorized mode.
+	// It will be executed in the normal mode.
+	tk.MustQuery(
+		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := b FROM test) AS T1 where @total >= 100",
+	).Check(testkit.Rows("200", "300", "400", "500"))
 }

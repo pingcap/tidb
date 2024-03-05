@@ -369,7 +369,7 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 		l1, r1 := lr()
 		l2, r2 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v and t2.b>=%v and t2.b<=%v", l1, r1, l2, r2)
-		var res [][]interface{}
+		var res [][]any
 		for _, mode := range []string{"static", "dynamic"} {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
@@ -434,7 +434,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 			l, r = r, l
 		}
 		cond := fmt.Sprintf("a>=%v and a<=%v", l, r)
-		var res [][]interface{}
+		var res [][]any
 		for _, mode := range []string{"static", "dynamic"} {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{"thash", "trange", "tlist", "tnormal"} {
@@ -984,7 +984,7 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		l1, r1 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v", l1, r1)
-		var res [][]interface{}
+		var res [][]any
 		for _, mode := range []string{"static", "dynamic"} {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
@@ -1054,7 +1054,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 		l1, r1 := lr()
 		l2, r2 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v and t2.b>=%v and t2.b<=%v", l1, r1, l2, r2)
-		var res [][]interface{}
+		var res [][]any
 		for _, mode := range []string{"static", "dynamic"} {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
@@ -1445,19 +1445,19 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustQuery("explain select * from t1 where c1 < 2").Check(testkit.Rows(
-		"PartitionUnion_10 9970.00 root  ",
-		"├─TableReader_15 3323.33 root  MppVersion: 2, data:ExchangeSender_14",
-		"│ └─ExchangeSender_14 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"│   └─Selection_13 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
-		"├─TableReader_19 3323.33 root  MppVersion: 2, data:ExchangeSender_18",
-		"│ └─ExchangeSender_18 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"│   └─Selection_17 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
-		"└─TableReader_23 3323.33 root  MppVersion: 2, data:ExchangeSender_22",
-		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
-		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
+		"PartitionUnion_11 9970.00 root  ",
+		"├─TableReader_16 3323.33 root  MppVersion: 2, data:ExchangeSender_15",
+		"│ └─ExchangeSender_15 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"│   └─Selection_14 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"│     └─TableFullScan_13 10000.00 mpp[tiflash] table:t1, partition:p0 pushed down filter:empty, keep order:false, stats:pseudo",
+		"├─TableReader_20 3323.33 root  MppVersion: 2, data:ExchangeSender_19",
+		"│ └─ExchangeSender_19 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"│   └─Selection_18 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"│     └─TableFullScan_17 10000.00 mpp[tiflash] table:t1, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo",
+		"└─TableReader_24 3323.33 root  MppVersion: 2, data:ExchangeSender_23",
+		"  └─ExchangeSender_23 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"    └─Selection_22 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"      └─TableFullScan_21 10000.00 mpp[tiflash] table:t1, partition:p2 pushed down filter:empty, keep order:false, stats:pseudo"))
 }
 
 func TestMPPMemoryTracker(t *testing.T) {
@@ -1958,4 +1958,33 @@ func TestMPPRecovery(t *testing.T) {
 	}
 
 	tk.MustExec("set @@tidb_max_chunk_size = default")
+}
+
+func TestIssue50358(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c int not null primary key)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t1")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t1 values(3)")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	for i := 0; i < 20; i++ {
+		// test if it is stable.
+		tk.MustQuery("select 8 from t join t1").Check(testkit.Rows("8", "8"))
+	}
 }

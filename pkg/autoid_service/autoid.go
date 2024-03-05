@@ -80,7 +80,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 		// Although it may skip a segment here, we still treat it as consumed.
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
@@ -141,7 +141,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		nextStep := int64(batch)
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
@@ -193,7 +193,7 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 	var oldValue int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -235,7 +235,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	var oldValue, newBase, newEnd int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -453,6 +453,8 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	})
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
+	val.Lock()
+	defer val.Unlock()
 
 	if req.N == 0 {
 		if val.base != 0 {
@@ -464,7 +466,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		// This item is not initialized, get the data from remote.
 		var currentEnd int64
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, s.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(req.DbID, req.TblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			currentEnd, err1 = idAcc.Get()
@@ -482,9 +484,6 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			Max: currentEnd,
 		}, nil
 	}
-
-	val.Lock()
-	defer val.Unlock()
 
 	var min, max int64
 	var err error
@@ -506,7 +505,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbID, tblID, requiredBase int64, isUnsigned bool) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	var oldValue int64
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -546,6 +545,9 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 	}
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
+	val.Lock()
+	defer val.Unlock()
+
 	if req.Force {
 		err := val.forceRebase(ctx, s.store, req.DbID, req.TblID, req.Base, req.IsUnsigned)
 		if err != nil {

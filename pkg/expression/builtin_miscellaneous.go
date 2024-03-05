@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -109,7 +108,7 @@ type sleepFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sleepFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *sleepFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -140,8 +139,7 @@ func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		return 0, isNull, err
 	}
 
-	sessVars := ctx.GetSessionVars()
-	ec := sessVars.StmtCtx.ErrCtx()
+	ec := errCtx(ctx)
 	if isNull || val < 0 {
 		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
 		return 0, false, ec.HandleErrorWithAlias(
@@ -155,7 +153,7 @@ func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
 
-	if isKilled := doSleep(val, sessVars); isKilled {
+	if isKilled := doSleep(val, ctx.GetSessionVars()); isKilled {
 		return 1, false, nil
 	}
 
@@ -166,7 +164,7 @@ type lockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *lockFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -217,7 +215,8 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 	// So users are aware, we also attach a warning.
 	if timeout < 0 || timeout > maxTimeout {
 		err := errTruncatedWrongValue.FastGenByArgs("get_lock", strconv.FormatInt(timeout, 10))
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		tc := typeCtx(ctx)
+		tc.AppendWarning(err)
 		timeout = maxTimeout
 	}
 
@@ -249,7 +248,7 @@ type releaseLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *releaseLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *releaseLockFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -303,7 +302,7 @@ type anyValueFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -465,7 +464,7 @@ type defaultFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *defaultFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *defaultFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "DEFAULT")
 }
 
@@ -473,7 +472,7 @@ type inetAtonFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *inetAtonFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -550,7 +549,7 @@ type inetNtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *inetNtoaFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -605,7 +604,7 @@ type inet6AtonFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *inet6AtonFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -678,7 +677,7 @@ type inet6NtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *inet6NtoaFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -729,7 +728,7 @@ type isFreeLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isFreeLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isFreeLockFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -783,7 +782,7 @@ type isIPv4FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isIPv4FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -851,7 +850,7 @@ type isIPv4CompatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isIPv4CompatFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -900,7 +899,7 @@ type isIPv4MappedFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isIPv4MappedFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -949,7 +948,7 @@ type isIPv6FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isIPv6FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -991,7 +990,7 @@ type isUsedLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isUsedLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isUsedLockFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1042,7 +1041,7 @@ type isUUIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1083,7 +1082,7 @@ type masterPosWaitFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *masterPosWaitFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *masterPosWaitFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "MASTER_POS_WAIT")
 }
 
@@ -1091,7 +1090,7 @@ type nameConstFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *nameConstFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *nameConstFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1230,7 +1229,7 @@ type releaseAllLocksFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *releaseAllLocksFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *releaseAllLocksFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1264,7 +1263,7 @@ type uuidFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *uuidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1307,7 +1306,7 @@ type uuidShortFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *uuidShortFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
 }
 
@@ -1315,7 +1314,7 @@ type vitessHashFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *vitessHashFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *vitessHashFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1360,7 +1359,7 @@ type uuidToBinFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidToBinFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *uuidToBinFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1427,7 +1426,7 @@ type binToUUIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *binToUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1515,7 +1514,7 @@ type tidbShardFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbShardFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbShardFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1561,6 +1560,6 @@ type tidbRowChecksumFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbRowChecksumFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbRowChecksumFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrNotSupportedYet.GenWithStack("FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan")
 }

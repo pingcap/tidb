@@ -149,7 +149,7 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
 }
 
-// GetTableStatsForAutoAnalyze is to get table stats but it will
+// GetTableStatsForAutoAnalyze is to get table stats but it will not return pseudo stats.
 func (h *Handle) GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table {
 	return h.getPartitionStats(tblInfo, tblInfo.ID, false)
 }
@@ -158,6 +158,11 @@ func (h *Handle) GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statisti
 // TODO: remove GetTableStats later on.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	return h.getPartitionStats(tblInfo, pid, true)
+}
+
+// GetPartitionStatsForAutoAnalyze is to get partition stats but it will not return pseudo stats.
+func (h *Handle) GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	return h.getPartitionStats(tblInfo, pid, false)
 }
 
 func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
@@ -195,8 +200,14 @@ func (h *Handle) FlushStats() {
 	}
 }
 
+// StartWorker starts the background collector worker inside
+func (h *Handle) StartWorker() {
+	h.StatsUsage.StartWorker()
+}
+
 // Close stops the background
 func (h *Handle) Close() {
 	h.Pool.Close()
 	h.StatsCache.Close()
+	h.StatsUsage.Close()
 }

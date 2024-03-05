@@ -131,7 +131,7 @@ func BindPrivilegeManager(ctx sessionctx.Context, pc Manager) {
 
 type privilegeManagerKeyProvider interface {
 	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) interface{}
+	Value(key fmt.Stringer) any
 }
 
 // GetPrivilegeManager gets Checker from context.

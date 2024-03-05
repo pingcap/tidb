@@ -40,12 +40,12 @@ import (
 )
 
 type showPlacementLabelsResultBuilder struct {
-	labelKey2values map[string]interface{}
+	labelKey2values map[string]any
 }
 
 func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj types.BinaryJSON) error {
 	if b.labelKey2values == nil {
-		b.labelKey2values = make(map[string]interface{})
+		b.labelKey2values = make(map[string]any)
 	}
 
 	data, err := bj.MarshalJSON()
@@ -69,19 +69,19 @@ func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj types.BinaryJSON
 
 	for _, label := range labels {
 		if values, ok := b.labelKey2values[label.Key]; ok {
-			values.(map[string]interface{})[label.Value] = true
+			values.(map[string]any)[label.Value] = true
 		} else {
-			b.labelKey2values[label.Key] = map[string]interface{}{label.Value: true}
+			b.labelKey2values[label.Key] = map[string]any{label.Value: true}
 		}
 	}
 
 	return nil
 }
 
-func (b *showPlacementLabelsResultBuilder) BuildRows() ([][]interface{}, error) {
-	rows := make([][]interface{}, 0, len(b.labelKey2values))
+func (b *showPlacementLabelsResultBuilder) BuildRows() ([][]any, error) {
+	rows := make([][]any, 0, len(b.labelKey2values))
 	for _, key := range b.sortMapKeys(b.labelKey2values) {
-		values := b.sortMapKeys(b.labelKey2values[key].(map[string]interface{}))
+		values := b.sortMapKeys(b.labelKey2values[key].(map[string]any))
 		d, err := gjson.Marshal(values)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -93,13 +93,13 @@ func (b *showPlacementLabelsResultBuilder) BuildRows() ([][]interface{}, error) 
 			return nil, errors.Trace(err)
 		}
 
-		rows = append(rows, []interface{}{key, valuesJSON})
+		rows = append(rows, []any{key, valuesJSON})
 	}
 
 	return rows, nil
 }
 
-func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{}) []string {
+func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]any) []string {
 	sorted := make([]string, 0, len(m))
 	for key := range m {
 		sorted = append(sorted, key)
@@ -159,7 +159,7 @@ func (e *ShowExec) fetchShowPlacementForDB(ctx context.Context) (err error) {
 		if err != nil {
 			return err
 		}
-		e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String(), state.String()})
+		e.appendRow([]any{"DATABASE " + dbInfo.Name.String(), placement.String(), state.String()})
 	}
 
 	return nil
@@ -183,7 +183,7 @@ func (e *ShowExec) fetchShowPlacementForTable(ctx context.Context) (err error) {
 			return err
 		}
 		ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
-		e.appendRow([]interface{}{"TABLE " + ident.String(), placement.String(), state.String()})
+		e.appendRow([]any{"TABLE " + ident.String(), placement.String(), state.String()})
 	}
 
 	return nil
@@ -229,7 +229,7 @@ func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err erro
 			return err
 		}
 		tableIndent := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
-		e.appendRow([]interface{}{
+		e.appendRow([]any{
 			fmt.Sprintf("TABLE %s PARTITION %s", tableIndent.String(), partition.Name.String()),
 			placement.String(),
 			state.String(),
@@ -262,7 +262,7 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 	for _, policy := range policies {
 		name := policy.Name
 		settings := policy.PlacementSettings
-		e.appendRow([]interface{}{"POLICY " + name.String(), settings.String(), "NULL"})
+		e.appendRow([]any{"POLICY " + name.String(), settings.String(), "NULL"})
 	}
 
 	return nil
@@ -301,7 +301,7 @@ func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
 		if !ok {
 			return errors.Errorf("Policy with name '%s' not found", policyName)
 		}
-		e.appendRow([]interface{}{"RANGE " + rangeName, policy.PlacementSettings.String(), state.String()})
+		e.appendRow([]any{"RANGE " + rangeName, policy.PlacementSettings.String(), state.String()})
 		return nil
 	}
 	// try fetch ranges placement policy
@@ -333,7 +333,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 			if err != nil {
 				return err
 			}
-			e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String(), state.String()})
+			e.appendRow([]any{"DATABASE " + dbInfo.Name.String(), placement.String(), state.String()})
 		}
 	}
 
@@ -342,7 +342,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 
 type tableRowSet struct {
 	name string
-	rows [][]interface{}
+	rows [][]any
 }
 
 func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {
@@ -361,7 +361,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 				continue
 			}
 
-			var rows [][]interface{}
+			var rows [][]any
 			ident := ast.Ident{Schema: dbInfo.Name, Name: tblInfo.Name}
 			tblPlacement, err := e.getTablePlacement(tblInfo)
 			if err != nil {
@@ -373,7 +373,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 				if err != nil {
 					return err
 				}
-				rows = append(rows, []interface{}{"TABLE " + ident.String(), tblPlacement.String(), state.String()})
+				rows = append(rows, []any{"TABLE " + ident.String(), tblPlacement.String(), state.String()})
 			}
 
 			if tblInfo.Partition != nil {
@@ -389,7 +389,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 						if err != nil {
 							return err
 						}
-						rows = append(rows, []interface{}{
+						rows = append(rows, []any{
 							fmt.Sprintf("TABLE %s PARTITION %s", ident.String(), partition.Name.String()),
 							partitionPlacement.String(),
 							state.String(),
@@ -401,7 +401,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 			if len(rows) > 0 {
 				tableRowSets = append(tableRowSets, struct {
 					name string
-					rows [][]interface{}
+					rows [][]any
 				}{
 					name: tblInfo.Name.String(),
 					rows: rows,

@@ -29,9 +29,9 @@ import (
 )
 
 // for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Type, Sql_digest
-func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
+func showBinding(tk *testkit.TestKit, showStmt string) [][]any {
 	rows := tk.MustQuery(showStmt).Sort().Rows()
-	result := make([][]interface{}, len(rows))
+	result := make([][]any, len(rows))
 	for i, r := range rows {
 		result[i] = append(result[i], r[:4]...)
 		result[i] = append(result[i], r[8:10]...)
@@ -97,17 +97,17 @@ func TestFuzzyDuplicatedBinding(t *testing.T) {
 
 	tk.MustExec(`create global binding using select * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+		[][]any{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 
 	// if duplicated, the old one will be replaced
 	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `a`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+		[][]any{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `a`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 
 	// if duplicated, the old one will be replaced
 	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+		[][]any{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 }
 
 func TestFuzzyBindingPriority(t *testing.T) {
@@ -163,26 +163,26 @@ func TestCreateUpdateFuzzyBinding(t *testing.T) {
 	// drop/show/update binding for sql digest can work for global universal bindings
 	tk.MustExec(`create global binding using select * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
-	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{
+		[][]any{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+	require.Equal(t, showBinding(tk, "show global bindings"), [][]any{
 		{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 	tk.MustExec(`set binding disabled for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
-	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{
+	require.Equal(t, showBinding(tk, "show global bindings"), [][]any{
 		{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "disabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 	tk.MustExec(`set binding enabled for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
-	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{
+	require.Equal(t, showBinding(tk, "show global bindings"), [][]any{
 		{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 	tk.MustExec(`drop global binding for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
-	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{})
+	require.Equal(t, showBinding(tk, "show global bindings"), [][]any{})
 
 	// drop/show/update binding for sql digest can work for session universal bindings
 	tk.MustExec(`create session binding using select * from *.t`)
 	require.Equal(t, showBinding(tk, "show session bindings"),
-		[][]interface{}{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
-	require.Equal(t, showBinding(tk, "show session bindings"), [][]interface{}{
+		[][]any{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+	require.Equal(t, showBinding(tk, "show session bindings"), [][]any{
 		{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 	tk.MustExec(`drop session binding for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
-	require.Equal(t, showBinding(tk, "show session bindings"), [][]interface{}{})
+	require.Equal(t, showBinding(tk, "show session bindings"), [][]any{})
 }
 
 func TestFuzzyBindingSwitch(t *testing.T) {
@@ -258,9 +258,9 @@ func TestFuzzyBindingGC(t *testing.T) {
 
 	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+		[][]any{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 	tk.MustExec(`drop global binding for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
-	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{}) // empty
+	require.Equal(t, showBinding(tk, "show global bindings"), [][]any{}) // empty
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(
 		testkit.Rows("SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t` deleted")) // status=deleted
 
