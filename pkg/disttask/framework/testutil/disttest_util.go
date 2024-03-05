@@ -119,13 +119,24 @@ func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, concur
 
 // WaitTaskDoneOrPaused wait task done or paused.
 func WaitTaskDoneOrPaused(ctx context.Context, t testing.TB, taskKey string) *proto.TaskBase {
+	return waitTaskUntil(ctx, t, taskKey, func(task *proto.TaskBase) bool {
+		return task.IsDone() || task.State == proto.TaskStatePaused
+	})
+}
+
+// WaitTaskDone wait task done.
+func WaitTaskDone(ctx context.Context, t testing.TB, taskKey string) *proto.TaskBase {
+	return waitTaskUntil(ctx, t, taskKey, func(task *proto.TaskBase) bool {
+		return task.IsDone()
+	})
+}
+
+func waitTaskUntil(ctx context.Context, t testing.TB, taskKey string, fn func(task *proto.TaskBase) bool) *proto.TaskBase {
 	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	gotTask, err := taskMgr.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	require.NoError(t, err)
-	task, err := handle.WaitTask(ctx, gotTask.ID, func(task *proto.TaskBase) bool {
-		return task.IsDone() || task.State == proto.TaskStatePaused
-	})
+	task, err := handle.WaitTask(ctx, gotTask.ID, fn)
 	require.NoError(t, err)
 	return task
 }
