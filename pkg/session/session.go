@@ -1652,6 +1652,13 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
+
+	// Load the session variables to the context.
+	// This is necessary for the parser to get the current sql_mode.
+	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
+		return nil, err
+	}
+
 	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
