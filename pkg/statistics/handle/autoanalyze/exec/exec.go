@@ -93,21 +93,6 @@ func execAnalyzeStmt(
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }
 
-// TableAnalyzed checks if any column or index of the table has been analyzed.
-func TableAnalyzed(tbl *statistics.Table) bool {
-	for _, col := range tbl.Columns {
-		if col.IsAnalyzed() {
-			return true
-		}
-	}
-	for _, idx := range tbl.Indices {
-		if idx.IsAnalyzed() {
-			return true
-		}
-	}
-	return false
-}
-
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
 func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"

@@ -533,7 +533,7 @@ func tryAutoAnalyzeTable(
 //
 // Exposed for test.
 func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
-	analyzed := exec.TableAnalyzed(tbl)
+	analyzed := tbl.LastAnalyzeVersion > 0
 	if !analyzed {
 		return true, "table unanalyzed"
 	}

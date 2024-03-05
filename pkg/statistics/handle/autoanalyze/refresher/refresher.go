@@ -293,7 +293,7 @@ func CalculateChangePercentage(
 		return 0
 	}
 
-	if !exec.TableAnalyzed(tblStats) {
+	if tblStats.LastAnalyzeVersion == 0 {
 		return unanalyzedTableDefaultChangePercentage
 	}
 
@@ -362,7 +362,7 @@ func CheckIndexesNeedAnalyze(
 ) []string {
 	// If table is not analyzed, we need to analyze whole table.
 	// So we don't need to check indexes.
-	if !exec.TableAnalyzed(tblStats) {
+	if tblStats.LastAnalyzeVersion == 0 {
 		return nil
 	}
 

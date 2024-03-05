@@ -313,6 +313,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 				HistColl: statistics.HistColl{
 					RealtimeCount: exec.AutoAnalyzeMinCnt - 1,
 				},
+				LastAnalyzeVersion: 1,
 			},
 			autoAnalyzeRatio: 0.5,
 			want:             0,
@@ -340,6 +341,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 					Indices:       analyzedIndices,
 					ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
 				},
+				LastAnalyzeVersion: 1,
 			},
 			autoAnalyzeRatio: 0.5,
 			want:             2,
@@ -436,6 +438,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 						},
 					},
 				},
+				LastAnalyzeVersion: 1,
 			},
 			want: []string{"index1"},
 		},
