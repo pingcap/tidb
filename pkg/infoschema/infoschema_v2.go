@@ -286,8 +286,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 
 	// Maybe the table is evicted? need to reload.
 	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.schemaVersion)
-
-	if ret == nil {
+	if err != nil || ret == nil {
 		return nil, false
 	}
 	if err == nil {

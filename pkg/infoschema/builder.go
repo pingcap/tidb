@@ -536,17 +536,9 @@ func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model
 				)
 			}
 			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
-			if b.enableV2 {
-				tmpIDs = b.applyDropTableV2(diff, oldDBInfo, oldTableID, tmpIDs)
-			} else {
-				tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
-			}
+			tmpIDs = b.applyDropTable(diff, oldDBInfo, oldTableID, tmpIDs)
 		} else {
-			if b.enableV2 {
-				tmpIDs = b.applyDropTableV2(diff, dbInfo, oldTableID, tmpIDs)
-			} else {
-				tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
-			}
+			tmpIDs = b.applyDropTable(diff, dbInfo, oldTableID, tmpIDs)
 		}
 
 		if oldTableID != newTableID {
@@ -804,7 +796,7 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 	di = di.Clone()
 	for _, id := range tableIDs {
 		b.deleteBundle(b.infoSchema, id)
-		b.applyDropTable(di, id, nil)
+		b.applyDropTable(diff, di, id, nil)
 	}
 	return tableIDs
 }
@@ -1022,7 +1014,10 @@ func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 	}
 }
 
-func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+	if b.enableV2 {
+		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
+	}
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.infoSchema.sortedTablesBuckets[bucketIdx]
 	idx := sortedTbls.searchTable(tableID)
@@ -1060,12 +1055,6 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 	}
 }
 
-// TODO: get rid of this and use infoschemaV2 directly.
-type infoschemaProxy struct {
-	infoschemaV2
-	v1 InfoSchema
-}
-
 // Build builds and returns the built infoschema.
 func (b *Builder) Build() InfoSchema {
 	b.updateInfoSchemaBundles(b.infoSchema)
@@ -1086,8 +1075,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 	}
 
 	var oldIS *infoSchema
-	if proxy, ok := oldSchema.(*infoschemaV2); ok {
-		oldIS = proxy.infoSchema
+	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
+		oldIS = schemaV2.infoSchema
 	} else {
 		oldIS = oldSchema.(*infoSchema)
 	}
@@ -1279,8 +1268,8 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			b.addTemporaryTable(tblInfo.ID)
 		}
 	}
-
 	b.addDB(schemaVersion, di, schTbls)
+
 	return nil
 }
 
