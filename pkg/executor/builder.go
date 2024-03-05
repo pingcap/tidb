@@ -1531,10 +1531,6 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			OtherCondition: v.OtherConditions,
 		},
 	}
-	err := e.Init()
-	if err != nil {
-		return nil
-	}
 	e.PartitionedHashJoinCtx.RightAsBuildSide = true
 	if v.InnerChildIdx == 1 && v.UseOuterToBuild {
 		e.PartitionedHashJoinCtx.RightAsBuildSide = false
@@ -1614,25 +1610,25 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		b.err = errors.New("children used should never be nil")
 		return nil
 	}
-	lUsed := make([]int, 0, len(childrenUsedSchema[0]))
-	lUsed = append(lUsed, childrenUsedSchema[0]...)
-	rUsed := make([]int, 0, len(childrenUsedSchema[1]))
-	rUsed = append(rUsed, childrenUsedSchema[1]...)
-	var lUsedInOtherCondition, rUsedInOtherCondition []int
+	e.LUsed = make([]int, 0, len(childrenUsedSchema[0]))
+	e.LUsed = append(e.LUsed, childrenUsedSchema[0]...)
+	e.RUsed = make([]int, 0, len(childrenUsedSchema[1]))
+	e.RUsed = append(e.RUsed, childrenUsedSchema[1]...)
 	if v.OtherConditions != nil {
 		leftColumnSize := v.Children()[0].Schema().Len()
-		lUsedInOtherCondition, rUsedInOtherCondition = extractUsedColumnsInJoinOtherCondition(v.OtherConditions, leftColumnSize)
+		e.LUsedInOtherCondition, e.RUsedInOtherCondition = extractUsedColumnsInJoinOtherCondition(v.OtherConditions, leftColumnSize)
 	}
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i] = &partitionedhashjoin.ProbeWorker{
 			HashJoinCtx: e.PartitionedHashJoinCtx,
 			WorkerID:    i,
-			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes, lUsed, rUsed, lUsedInOtherCondition, rUsedInOtherCondition),
+			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes),
 		}
 
 		e.BuildWorkers[i] = &partitionedhashjoin.BuildWorker{
 			HashJoinCtx:    e.PartitionedHashJoinCtx,
 			BuildSideExec:  buildSideExec,
+			BuildTypes:     exec.RetTypes(buildSideExec),
 			BuildKeyColIdx: buildKeyColIdx,
 			WorkerID:       i,
 		}
@@ -1678,9 +1674,9 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		rightTypes[i+offset].SetCollate(coll)
 	}
 	if e.RightAsBuildSide {
-		e.BuildTypes, e.ProbeTypes = rightTypes, leftTypes
+		e.BuildKeyTypes, e.ProbeKeyTypes = rightTypes, leftTypes
 	} else {
-		e.BuildTypes, e.ProbeTypes = leftTypes, rightTypes
+		e.BuildKeyTypes, e.ProbeKeyTypes = leftTypes, rightTypes
 	}
 	return e
 }
