@@ -1481,7 +1481,7 @@ func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, 
 			leftColumnIndex = append(leftColumnIndex, colIndex)
 		}
 		return leftColumnIndex, rightColumnIndex
-	case *expression.Constant, *expression.CorrelatedColumn:
+	case *expression.Constant:
 		return leftColumnIndex, rightColumnIndex
 	case *expression.ScalarFunction:
 		for _, arg := range x.GetArgs() {
@@ -1517,7 +1517,7 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		ProbeSideTupleFetcher: &partitionedhashjoin.ProbeSideTupleFetcher{},
 		ProbeWorkers:          make([]*partitionedhashjoin.ProbeWorker, v.Concurrency),
-		BuildWorker:           &partitionedhashjoin.BuildWorker{},
+		BuildWorkers:          make([]*partitionedhashjoin.BuildWorker, v.Concurrency),
 		PartitionedHashJoinCtx: &partitionedhashjoin.PartitionedHashJoinCtx{
 			SessCtx:        b.ctx,
 			JoinType:       v.JoinType,
@@ -1536,7 +1536,6 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		e.PartitionedHashJoinCtx.RightAsBuildSide = false
 	}
 
-	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	joinedTypes := make([]*types.FieldType, 0, len(lhsTypes)+len(rhsTypes))
 	for _, t := range lhsTypes {
@@ -1572,9 +1571,6 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			e.PartitionedHashJoinCtx.Filter = v.RightConditions
 			leftIsBuildSide = false
 		}
-		if defaultValues == nil {
-			defaultValues = make([]types.Datum, e.ProbeSideTupleFetcher.ProbeSideExec.Schema().Len())
-		}
 	} else {
 		if v.InnerChildIdx == 0 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
@@ -1585,9 +1581,6 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
 			e.PartitionedHashJoinCtx.Filter = v.LeftConditions
 			leftIsBuildSide = false
-		}
-		if defaultValues == nil {
-			defaultValues = make([]types.Datum, buildSideExec.Schema().Len())
 		}
 	}
 	var probeColumnTypes []*types.FieldType
@@ -1630,6 +1623,58 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			WorkerID:    i,
 			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes, lUsed, rUsed, lUsedInOtherCondition, rUsedInOtherCondition),
 		}
+
+		e.BuildWorkers[i] = &partitionedhashjoin.BuildWorker{
+			HashJoinCtx:    e.PartitionedHashJoinCtx,
+			BuildSideExec:  buildSideExec,
+			BuildKeyColIdx: buildKeyColIdx,
+			WorkerID:       i,
+		}
+	}
+	// todo add partition hash join exec
+	executor_metrics.ExecutorCountHashJoinExec.Inc()
+
+	leftExecTypes, rightExecTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
+	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)+len(v.LeftNAJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys)+len(v.RightNAJoinKeys))
+	for i, col := range v.LeftJoinKeys {
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes[i].SetFlag(col.RetType.GetFlag())
+	}
+	offset := len(v.LeftJoinKeys)
+	for i, col := range v.LeftNAJoinKeys {
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes[i+offset].SetFlag(col.RetType.GetFlag())
+	}
+	for i, col := range v.RightJoinKeys {
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes[i].SetFlag(col.RetType.GetFlag())
+	}
+	offset = len(v.RightJoinKeys)
+	for i, col := range v.RightNAJoinKeys {
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes[i+offset].SetFlag(col.RetType.GetFlag())
+	}
+
+	// consider collations
+	for i := range v.EqualConditions {
+		chs, coll := v.EqualConditions[i].CharsetAndCollation()
+		leftTypes[i].SetCharset(chs)
+		leftTypes[i].SetCollate(coll)
+		rightTypes[i].SetCharset(chs)
+		rightTypes[i].SetCollate(coll)
+	}
+	offset = len(v.EqualConditions)
+	for i := range v.NAEqualConditions {
+		chs, coll := v.NAEqualConditions[i].CharsetAndCollation()
+		leftTypes[i+offset].SetCharset(chs)
+		leftTypes[i+offset].SetCollate(coll)
+		rightTypes[i+offset].SetCharset(chs)
+		rightTypes[i+offset].SetCollate(coll)
+	}
+	if e.RightAsBuildSide {
+		e.BuildTypes, e.ProbeTypes = rightTypes, leftTypes
+	} else {
+		e.BuildTypes, e.ProbeTypes = leftTypes, rightTypes
 	}
 	return e
 }
