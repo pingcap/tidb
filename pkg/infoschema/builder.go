@@ -588,7 +588,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return tblIDs, nil
 }
 
-// TODO: more UT to check the correctness, refine the code.
+// TODO: more UT to check the correctness.
 func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -850,17 +850,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	})
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	for i, tblInfo := range dbInfo.Tables {
-		if tblInfo.ID == tableID {
-			if i == len(dbInfo.Tables)-1 {
-				dbInfo.Tables = dbInfo.Tables[:i]
-			} else {
-				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
-			}
-			// TODO: deleteReferredForeignKeys
-			break
-		}
-	}
+	b.deleteReferredForeignKeys(dbInfo, tableID)
 	return affected
 }
 
@@ -1051,8 +1041,12 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	if b.infoSchema.temporaryTableIDs != nil {
 		delete(b.infoSchema.temporaryTableIDs, tableID)
 	}
-
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	b.deleteReferredForeignKeys(dbInfo, tableID)
+	return affected
+}
+
+func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64) {
 	for i, tblInfo := range dbInfo.Tables {
 		if tblInfo.ID == tableID {
 			if i == len(dbInfo.Tables)-1 {
@@ -1064,7 +1058,6 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 			break
 		}
 	}
-	return affected
 }
 
 // TODO: get rid of this and use infoschemaV2 directly.
