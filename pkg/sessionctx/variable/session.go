@@ -3165,7 +3165,7 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	CopTasks          *stmtctx.CopTasksDetails
+	CopTasks          *execdetails.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
 	DiskMax           int64
