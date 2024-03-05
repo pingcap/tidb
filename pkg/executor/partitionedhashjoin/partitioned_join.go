@@ -80,8 +80,8 @@ type PartitionedHashJoinCtx struct {
 	buildFinished   chan error
 	JoinType        plannercore.JoinType
 	stats           *hashJoinRuntimeStats
-	ProbeTypes      []*types.FieldType
-	BuildTypes      []*types.FieldType
+	ProbeKeyTypes   []*types.FieldType
+	BuildKeyTypes   []*types.FieldType
 	memTracker      *memory.Tracker // track memory usage.
 	diskTracker     *disk.Tracker   // track disk usage.
 
@@ -91,6 +91,9 @@ type PartitionedHashJoinCtx struct {
 	joinHashTable    *JoinHashTable
 	hashTableMeta    *JoinTableMeta
 	keyMode          keyMode
+
+	LUsed, RUsed                                 []int
+	LUsedInOtherCondition, RUsedInOtherCondition []int
 }
 
 // ProbeSideTupleFetcher reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -119,6 +122,7 @@ type ProbeWorker struct {
 type BuildWorker struct {
 	HashJoinCtx    *PartitionedHashJoinCtx
 	BuildSideExec  exec.Executor
+	BuildTypes     []*types.FieldType
 	BuildKeyColIdx []int
 	WorkerID       uint
 }
@@ -144,11 +148,6 @@ type PartitionedHashJoinExec struct {
 type probeChkResource struct {
 	chk  *chunk.Chunk
 	dest chan<- *chunk.Chunk
-}
-
-func (e *PartitionedHashJoinExec) Init() error {
-	e.PartitionedHashJoinCtx.allocPool = e.AllocPool
-	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -197,6 +196,14 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
+	if e.RightAsBuildSide {
+		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, false)
+	} else {
+		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, false)
+	}
+	e.PartitionedHashJoinCtx.allocPool = e.AllocPool
 	if e.PartitionedHashJoinCtx.memTracker != nil {
 		e.PartitionedHashJoinCtx.memTracker.Reset()
 	} else {
