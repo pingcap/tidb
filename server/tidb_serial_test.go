@@ -26,11 +26,22 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:server/tidb_serial_test.go
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	tidbserver "github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
+	"github.com/pingcap/tidb/pkg/server/internal/testutil"
+	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/server/tests/servertestkit"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,6 +111,7 @@ func TestInvalidTLS(t *testing.T) {
 		SSLCert: "bogus-server-cert.pem",
 		SSLKey:  "bogus-server-key.pem",
 	}
+<<<<<<< HEAD:server/tidb_serial_test.go
 	_, err := NewServer(cfg, ts.tidbdrv)
 	require.Error(t, err)
 }
@@ -122,12 +134,57 @@ func TestTLSAuto(t *testing.T) {
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
+=======
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	defer server.Close()
+
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+<<<<<<< HEAD:server/tidb_serial_test.go
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
+=======
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	// The client does not provide a certificate, the connection should succeed.
+	err = cli.RunTestTLSConnection(t, nil)
+	require.NoError(t, err)
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+	}
+	cli.RunTestRegression(t, connOverrider, "TLSRegression")
+	// The client provides a valid certificate.
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+	}
+	err = cli.RunTestTLSConnection(t, connOverrider)
+	require.NoError(t, err)
+	cli.RunTestRegression(t, connOverrider, "TLSRegression")
+
+	require.False(t, isTLSExpiredError(errors.New("unknown test")))
+	require.False(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
+	require.True(t, isTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
+
+	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
+	require.Error(t, err)
+	_, _, err = util.LoadTLSCertificates("wrong ca", fileName("server-key.pem"), fileName("server-cert.pem"), true, 528)
+	require.Error(t, err)
+
+	// Test connecting with a client that does not have TLS configured.
+	// It can still connect, but it should not be able to change "require_secure_transport" to "ON"
+	// because that is a lock-out risk.
+	err = cli.RunTestEnableSecureTransport(t, nil)
+	require.ErrorContains(t, err, "require_secure_transport can only be set to ON if the connection issuing the change is secure")
+
+	// Success: when using a secure connection, the value of "require_secure_transport" can change to "ON"
+	err = cli.RunTestEnableSecureTransport(t, connOverrider)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	require.NoError(t, err)
 
 	server.Close()
@@ -164,15 +221,28 @@ func TestTLSBasic(t *testing.T) {
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
+<<<<<<< HEAD:server/tidb_serial_test.go
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
+=======
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+<<<<<<< HEAD:server/tidb_serial_test.go
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(t, connOverrider) // We should establish connection successfully.
+=======
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	err = cli.RunTestTLSConnection(t, connOverrider) // We should establish connection successfully.
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	require.NoError(t, err)
 	cli.runTestRegression(t, connOverrider, "TLSRegression")
 	// Perform server verification.
@@ -322,7 +392,11 @@ func TestErrorNoRollback(t *testing.T) {
 		SSLCert: "wrong path",
 		SSLKey:  "wrong path",
 	}
+<<<<<<< HEAD:server/tidb_serial_test.go
 	_, err = NewServer(cfg, ts.tidbdrv)
+=======
+	_, err = tidbserver.NewServer(cfg, ts.Tidbdrv)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	require.Error(t, err)
 
 	// test reload tls fail with/without "error no rollback option"
@@ -331,15 +405,23 @@ func TestErrorNoRollback(t *testing.T) {
 		SSLCert: "/tmp/server-cert-rollback.pem",
 		SSLKey:  "/tmp/server-key-rollback.pem",
 	}
+<<<<<<< HEAD:server/tidb_serial_test.go
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
+=======
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
-	time.Sleep(time.Millisecond * 100)
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
 	}
@@ -475,14 +557,22 @@ func TestReloadTLS(t *testing.T) {
 		SSLCert: "/tmp/server-cert-reload.pem",
 		SSLKey:  "/tmp/server-key-reload.pem",
 	}
+<<<<<<< HEAD:server/tidb_serial_test.go
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
+=======
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	// The client provides a valid certificate.
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
@@ -541,6 +631,167 @@ func TestReloadTLS(t *testing.T) {
 	}
 	err = cli.runTestTLSConnection(t, connOverrider)
 	require.NotNil(t, err)
+<<<<<<< HEAD:server/tidb_serial_test.go
 	require.Truef(t, util.IsTLSExpiredError(err), "real error is %+v", err)
+=======
+	require.Truef(t, isTLSExpiredError(err), "real error is %+v", err)
+	server.Close()
+}
+
+func TestStatusAPIWithTLS(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	dir := t.TempDir()
+
+	fileName := func(file string) string {
+		return filepath.Join(dir, file)
+	}
+
+	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, fileName("ca-key-2.pem"), fileName("ca-cert-2.pem"))
+	require.NoError(t, err)
+	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, fileName("server-key-2.pem"), fileName("server-cert-2.pem"))
+	require.NoError(t, err)
+
+	cli := testserverclient.NewTestServerClient()
+	cli.StatusScheme = "https"
+	cfg := util2.NewTestConfig()
+	cfg.Port = cli.Port
+	cfg.Status.StatusPort = cli.StatusPort
+	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
+	cfg.Security.ClusterSSLCert = fileName("server-cert-2.pem")
+	cfg.Security.ClusterSSLKey = fileName("server-key-2.pem")
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	// https connection should work.
+	ts.RunTestStatusAPI(t)
+
+	// but plain http connection should fail.
+	cli.StatusScheme = "http"
+	//nolint:bodyclose
+	_, err = cli.FetchStatus("/status")
+	require.Error(t, err)
+
+	server.Close()
+}
+
+func TestStatusAPIWithTLSCNCheck(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	dir := t.TempDir()
+
+	caPath := filepath.Join(dir, "ca-cert-cn.pem")
+	serverKeyPath := filepath.Join(dir, "server-key-cn.pem")
+	serverCertPath := filepath.Join(dir, "server-cert-cn.pem")
+	client1KeyPath := filepath.Join(dir, "client-key-cn-check-a.pem")
+	client1CertPath := filepath.Join(dir, "client-cert-cn-check-a.pem")
+	client2KeyPath := filepath.Join(dir, "client-key-cn-check-b.pem")
+	client2CertPath := filepath.Join(dir, "client-cert-cn-check-b.pem")
+
+	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(dir, "ca-key-cn.pem"), caPath)
+	require.NoError(t, err)
+	_, _, err = generateCert(1, "tidb-server-cn-check", caCert, caKey, serverKeyPath, serverCertPath)
+	require.NoError(t, err)
+	_, _, err = generateCert(2, "tidb-client-cn-check-a", caCert, caKey, client1KeyPath, client1CertPath, func(c *x509.Certificate) {
+		c.Subject.CommonName = "tidb-client-1"
+	})
+	require.NoError(t, err)
+	_, _, err = generateCert(3, "tidb-client-cn-check-b", caCert, caKey, client2KeyPath, client2CertPath, func(c *x509.Certificate) {
+		c.Subject.CommonName = "tidb-client-2"
+	})
+	require.NoError(t, err)
+
+	cli := testserverclient.NewTestServerClient()
+	cli.StatusScheme = "https"
+	cfg := util2.NewTestConfig()
+	cfg.Port = cli.Port
+	cfg.Status.StatusPort = cli.StatusPort
+	cfg.Security.ClusterSSLCA = caPath
+	cfg.Security.ClusterSSLCert = serverCertPath
+	cfg.Security.ClusterSSLKey = serverKeyPath
+	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	defer server.Close()
+	time.Sleep(time.Millisecond * 100)
+
+	hc := newTLSHttpClient(t, caPath,
+		client1CertPath,
+		client1KeyPath,
+	)
+	//nolint:bodyclose
+	_, err = hc.Get(cli.StatusURL("/status"))
+	require.Error(t, err)
+
+	hc = newTLSHttpClient(t, caPath,
+		client2CertPath,
+		client2KeyPath,
+	)
+	resp, err := hc.Get(cli.StatusURL("/status"))
+	require.NoError(t, err)
+	require.Nil(t, resp.Body.Close())
+}
+
+func TestInvalidTLS(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Security = config.Security{
+		SSLCA:   "bogus-ca-cert.pem",
+		SSLCert: "bogus-server-cert.pem",
+		SSLKey:  "bogus-server-key.pem",
+	}
+	_, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.Error(t, err)
+}
+
+func TestTLSAuto(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// Start the server without TLS configure, letting the server create these as AutoTLS is enabled
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
+	cli := testserverclient.NewTestServerClient()
+	cfg := util2.NewTestConfig()
+	cfg.Port = cli.Port
+	cfg.Status.ReportStatus = false
+	cfg.Security.AutoTLS = true
+	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	err := os.MkdirAll(cfg.TempStoragePath, 0700)
+	require.NoError(t, err)
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	err = cli.RunTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
+	require.NoError(t, err)
+
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	server.Close()
 }
