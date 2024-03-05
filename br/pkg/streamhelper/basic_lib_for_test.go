@@ -102,7 +102,7 @@ type fakeCluster struct {
 
 	onGetClient        func(uint64) error
 	serviceGCSafePoint uint64
-	currentTS uint64
+	currentTS          uint64
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -496,20 +496,20 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 }
 
 func (f *fakeCluster) advanceCheckpointBy(duration time.Duration) uint64 {
-    minCheckpoint := uint64(math.MaxUint64)
-    for _, r := range f.regions {
-        f.updateRegion(r.id, func(r *region) {
-            newCheckpointTime := oracle.GetTimeFromTS(r.checkpoint.Load()).Add(duration)
-            newCheckpoint := oracle.GoTimeToTS(newCheckpointTime)
+	minCheckpoint := uint64(math.MaxUint64)
+	for _, r := range f.regions {
+		f.updateRegion(r.id, func(r *region) {
+			newCheckpointTime := oracle.GetTimeFromTS(r.checkpoint.Load()).Add(duration)
+			newCheckpoint := oracle.GoTimeToTS(newCheckpointTime)
 			r.checkpoint.Store(newCheckpoint)
-            if newCheckpoint < minCheckpoint {
-                minCheckpoint = newCheckpoint
-            }
-            r.fsim.flushedEpoch.Store(0)
-        })
-    }
-    log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
-    return minCheckpoint
+			if newCheckpoint < minCheckpoint {
+				minCheckpoint = newCheckpoint
+			}
+			r.fsim.flushedEpoch.Store(0)
+		})
+	}
+	log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
+	return minCheckpoint
 }
 
 func (f *fakeCluster) advanceClusterTimeBy(duration time.Duration) uint64 {
@@ -654,7 +654,7 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name:    "whole",
+			Name: "whole",
 		},
 		Ranges: rngs,
 	}
@@ -685,6 +685,14 @@ func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName s
 func (t *testEnv) PauseTask(ctx context.Context, taskName string) error {
 	t.taskCh <- streamhelper.TaskEvent{
 		Type: streamhelper.EventPause,
+		Name: taskName,
+	}
+	return nil
+}
+
+func (t *testEnv) ResumeTask(ctx context.Context) error {
+	t.taskCh <- streamhelper.TaskEvent{
+		Type: streamhelper.EventResume,
 		Name: "whole",
 	}
 	return nil

@@ -76,18 +76,20 @@ func errorEvent(err error) TaskEvent {
 }
 
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
-    te := TaskEvent{}
-    var prefix string
+	te := TaskEvent{}
+	var prefix string
 
-    if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
-        prefix = PrefixOfTask()
-        te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
-    } else if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfPause())) {
-        prefix = PrefixOfPause()
-        te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
-    } else {
-        return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task/pause path (%s)", string(event.Kv.Key))
-    }
+	if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
+		prefix = PrefixOfTask()
+		te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
+	} else if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfPause())) {
+		prefix = PrefixOfPause()
+		te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
+	} else {
+		return TaskEvent{},
+			errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task/pause path (%s)",
+				string(event.Kv.Key))
+	}
 
 	switch {
 	case event.Type == clientv3.EventTypePut && prefix == PrefixOfTask():
@@ -99,23 +101,24 @@ func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (Ta
 	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfPause():
 		te.Type = EventResume
 	default:
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "invalid event type or prefix: type=%s, prefix=%s", event.Type, prefix)
+		return TaskEvent{},
+			errors.Annotatef(berrors.ErrInvalidArgument,
+				"invalid event type or prefix: type=%s, prefix=%s", event.Type, prefix)
 	}
 
-    te.Info = new(backuppb.StreamBackupTaskInfo)
-    if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
-        return TaskEvent{}, err
-    }
+	te.Info = new(backuppb.StreamBackupTaskInfo)
+	if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
+		return TaskEvent{}, err
+	}
 
-    var err error
-    te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
-    if err != nil {
-        return TaskEvent{}, err
-    }
+	var err error
+	te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
+	if err != nil {
+		return TaskEvent{}, err
+	}
 
-    return te, nil
+	return te, nil
 }
-
 
 func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResponse) ([]TaskEvent, error) {
 	result := make([]TaskEvent, 0, len(resp.Events))
@@ -136,7 +139,7 @@ func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResp
 func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
 	taskCh := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
 	pauseCh := t.Client.Watcher.Watch(ctx, PrefixOfPause(), clientv3.WithPrefix(), clientv3.WithRev(rev))
-	
+
 	// inner function def
 	handleResponse := func(resp clientv3.WatchResponse) bool {
 		events, err := t.eventFromWatch(ctx, resp)

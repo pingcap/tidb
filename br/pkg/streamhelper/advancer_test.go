@@ -476,7 +476,7 @@ func TestEnableCheckPointLimit(t *testing.T) {
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1*time.Minute
+		c.CheckPointLagLimit = 1 * time.Minute
 	})
 	adv.StartTaskListener(ctx)
 	for i := 0; i < 5; i++ {
@@ -486,7 +486,7 @@ func TestEnableCheckPointLimit(t *testing.T) {
 	}
 }
 
-func TestCheckPointLaggedFailure(t *testing.T) {
+func TestCheckPointLagged(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
 		fmt.Println(c)
@@ -497,15 +497,47 @@ func TestCheckPointLaggedFailure(t *testing.T) {
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1*time.Minute
+		c.CheckPointLagLimit = 1 * time.Minute
 	})
 	adv.StartTaskListener(ctx)
-	c.advanceClusterTimeBy(60 * time.Second)
-	c.advanceCheckpointBy(10 * time.Second)
+	c.advanceClusterTimeBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
-	c.advanceClusterTimeBy(60 * time.Second)
+	c.advanceClusterTimeBy(1 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-	require.Eventually(t,func() bool {
+	// after some times, the isPaused will be set and ticks are skipped
+	require.Eventually(t, func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))
-	},5*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond)
+}
+
+func TestCheckPointResume(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	adv.StartTaskListener(ctx)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	require.Eventually(t, func() bool {
+		return assert.NoError(t, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
+	//now the checkpoint issue is fixed and resumed
+	c.advanceCheckpointBy(1 * time.Minute)
+	env.ResumeTask(ctx)
+	require.Eventually(t, func() bool {
+		return assert.NoError(t, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
+	//with time passed, the checkpoint will exceed the limit again
+	c.advanceClusterTimeBy(2 * time.Minute)
+	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 }

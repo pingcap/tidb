@@ -71,6 +71,7 @@ type CheckpointAdvancer struct {
 	lastCheckpoint   *checkpoint
 	lastCheckpointMu sync.Mutex
 	inResolvingLock  atomic.Bool
+	isPaused         atomic.Bool
 
 	checkpoints   *spans.ValueSortedFull
 	checkpointsMu sync.Mutex
@@ -417,7 +418,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 	switch e.Type {
-	case EventAdd,EventResume:
+	case EventAdd:
 		utils.LogBackupTaskCountInc()
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
@@ -429,10 +430,9 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		}
 		log.Info("added event", zap.Stringer("task", e.Info),
 			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
-	case EventDel,EventPause:
+	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
-		log.Info("reach here")
 		c.taskRange = nil
 		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
 		// Do the null check because some of test cases won't equip the advancer with subscriber.
@@ -447,6 +447,14 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
+	case EventPause:
+		if c.task.GetName() == e.Name {
+			c.isPaused.CompareAndSwap(false, true)
+		}
+	case EventResume:
+		if c.task.GetName() == e.Name {
+			c.isPaused.CompareAndSwap(true, false)
+		}
 	case EventErr:
 		return e.Err
 	}
@@ -545,23 +553,23 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 	return c.subscriber.PendingErrors()
 }
 
-func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool,error) {
+func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, error) {
 	if c.cfg.CheckPointLagLimit <= 0 {
-		return false,nil
+		return false, nil
 	}
-	
-	now,err := c.env.FetchCurrentTS(ctx)
+
+	now, err := c.env.FetchCurrentTS(ctx)
 	if err != nil {
-		return true,err
+		return true, err
 	}
 
 	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(c.lastCheckpoint.TS))
 	if lagDuration > c.cfg.CheckPointLagLimit {
 		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
 			zap.Stringer("lag", lagDuration))
-		return true,nil
+		return true, nil
 	}
-	return false,nil
+	return false, nil
 }
 
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
@@ -575,9 +583,12 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	if err != nil {
 		return errors.Annotate(err, "failed to check timestamp")
 	}
-	if isLagged{
-		c.env.PauseTask(ctx, c.task.Name)
-		return errors.Annotate(errors.Errorf("check point lagged too large"),"check point lagged too large")
+	if isLagged {
+		err := c.env.PauseTask(ctx, c.task.Name)
+		if err != nil {
+			return errors.Annotate(err, "failed to pause task")
+		}
+		return errors.Annotate(errors.Errorf("check point lagged too large"), "check point lagged too large")
 	}
 	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
 	if err != nil {
@@ -634,7 +645,7 @@ func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
-	if c.task == nil {
+	if c.task == nil || c.isPaused.Load() {
 		log.Debug("No tasks yet, skipping advancing.")
 		return nil
 	}

@@ -155,7 +155,7 @@ type StreamMeta interface {
 	// UploadV3GlobalCheckpointForTask uploads the global checkpoint to the meta store.
 	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error
 	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.
-	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error 
+	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
 	PauseTask(ctx context.Context, taskName string) error
 }
 
