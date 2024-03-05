@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/cznic/mathutil"
 	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"runtime/trace"
@@ -125,6 +126,7 @@ type BuildWorker struct {
 	BuildTypes     []*types.FieldType
 	BuildKeyColIdx []int
 	WorkerID       uint
+	rowTable       *rowTable
 }
 
 // PartitionedHashJoinExec implements the hash join algorithm.
@@ -139,7 +141,8 @@ type PartitionedHashJoinExec struct {
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
 
-	prepared bool
+	prepared        bool
+	partitionNumber int
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -196,12 +199,16 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
+	e.partitionNumber = mathutil.Min(int(e.Concurrency), 16)
 	if e.RightAsBuildSide {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
 			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, false)
 	} else {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
 			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, false)
+	}
+	for _, buildWorker := range e.BuildWorkers {
+		buildWorker.rowTable = newRowTable(e.hashTableMeta)
 	}
 	e.PartitionedHashJoinCtx.allocPool = e.AllocPool
 	if e.PartitionedHashJoinCtx.memTracker != nil {
