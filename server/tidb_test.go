@@ -247,9 +247,14 @@ func TestStatusPort(t *testing.T) {
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
 
+<<<<<<< HEAD:server/tidb_test.go
 	server, err := NewServer(cfg, ts.tidbdrv)
+=======
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	err = server.Run(ts.Domain)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	require.Error(t, err)
-	require.Nil(t, server)
 }
 
 func TestStatusAPIWithTLS(t *testing.T) {
@@ -395,15 +400,23 @@ func TestSocketForwarding(t *testing.T) {
 	cfg.Port = cli.port
 	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
+<<<<<<< HEAD:server/tidb_test.go
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
+=======
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	defer server.Close()
 
 	cli.runTestRegression(t, func(config *mysql.Config) {
@@ -426,15 +439,21 @@ func TestSocket(t *testing.T) {
 	cfg.Host = ""
 	cfg.Status.ReportStatus = false
 
+<<<<<<< HEAD:server/tidb_test.go
 	ts := createTidbTestSuite(t)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
+=======
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	require.NoError(t, err)
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
 	defer server.Close()
 
 	confFunc := func(config *mysql.Config) {
@@ -460,16 +479,31 @@ func TestSocketAndIp(t *testing.T) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
+<<<<<<< HEAD:server/tidb_test.go
 	ts := createTidbTestSuite(t)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
+=======
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+<<<<<<< HEAD:server/tidb_test.go
 	cli.waitUntilServerCanConnect()
+=======
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.WaitUntilServerCanConnect()
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	defer server.Close()
 
 	// Test with Socket connection + Setup user1@% for all host access
@@ -624,15 +658,21 @@ func TestOnlySocket(t *testing.T) {
 	cfg.Host = "" // No network interface listening for mysql traffic
 	cfg.Status.ReportStatus = false
 
+<<<<<<< HEAD:server/tidb_test.go
 	ts := createTidbTestSuite(t)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
+=======
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	require.NoError(t, err)
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
 	defer server.Close()
 	require.Nil(t, server.listener)
 	require.NotNil(t, server.socket)
@@ -1233,18 +1273,33 @@ func TestGracefulShutdown(t *testing.T) {
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Performance.TCPKeepAlive = true
+<<<<<<< HEAD:server/tidb_test.go
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+=======
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	require.NotNil(t, server)
+
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+<<<<<<< HEAD:server/tidb_test.go
 	time.Sleep(time.Millisecond * 100)
 
 	resp, err := cli.fetchStatus("/status") // server is up
+=======
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	resp, err := cli.FetchStatus("/status") // server is up
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	require.NoError(t, err)
 	require.Nil(t, resp.Body.Close())
 
@@ -2505,17 +2560,32 @@ func TestLocalhostClientMapping(t *testing.T) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
+<<<<<<< HEAD:server/tidb_test.go
 	ts := createTidbTestSuite(t)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
+=======
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
+<<<<<<< HEAD:server/tidb_test.go
 	cli.waitUntilServerCanConnect()
+=======
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.WaitUntilServerCanConnect()
+>>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/commontest/tidb_test.go
 
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	// Create a db connection for root
