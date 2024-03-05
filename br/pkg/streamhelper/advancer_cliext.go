@@ -30,6 +30,7 @@ const (
 	EventDel
 	EventErr
 	EventPause
+	EventResume
 )
 
 func (t EventType) String() string {
@@ -42,6 +43,8 @@ func (t EventType) String() string {
 		return "Err"
 	case EventPause:
 		return "Pause"
+	case EventResume:
+		return "Resume"
 	}
 	return "Unknown"
 }
@@ -87,12 +90,14 @@ func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (Ta
     }
 
 	switch {
-	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfTask():
-		te.Type = EventDel
 	case event.Type == clientv3.EventTypePut && prefix == PrefixOfTask():
 		te.Type = EventAdd
+	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfTask():
+		te.Type = EventDel
 	case event.Type == clientv3.EventTypePut && prefix == PrefixOfPause():
 		te.Type = EventPause
+	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfPause():
+		te.Type = EventResume
 	default:
 		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "invalid event type or prefix: type=%s, prefix=%s", event.Type, prefix)
 	}
