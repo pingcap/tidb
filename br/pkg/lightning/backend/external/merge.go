@@ -129,7 +129,7 @@ func mergeOverlappingFilesInternal(
 		if err2 == nil {
 			return
 		}
-		
+
 		if err == nil {
 			err = err2
 		} else {
@@ -145,10 +145,5 @@ func mergeOverlappingFilesInternal(
 			return err
 		}
 	}
-	err = iter.Error()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return iter.Error()
 }
