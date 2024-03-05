@@ -644,6 +644,9 @@ func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, t
 
 	logger2 := logger.With(zap.String("tableName", tbl.Meta().Name.L))
 	decoder, err := kv.NewTableKVDecoder(tbl, tbl.Meta().Name.L, &sessionOpts, logger2)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if idxInfo == nil {
 		idxInfo = model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
