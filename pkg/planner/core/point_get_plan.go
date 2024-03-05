@@ -955,12 +955,30 @@ func newBatchPointGetPlan(
 ) *BatchPointGetPlan {
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
-	// TODO: for this PR!
-	// Add back the check for getPartitionExpr(ctx, tbl) != nil
-	// && partitionExpr.Expr != nil
-	// && partitionExpr.Expr.(*expression.column)
-	// and remove it in a follow up PR, to not make more changes
-	// than necessary in this PR, since it is already quite big.
+	if tbl.GetPartitionInfo() != nil {
+		// TODO: remove this limitation
+		// Only keeping it for now to limit impact of
+		// enable plan cache for partitioned tables PR.
+		is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+		table, ok := is.TableByID(tbl.ID)
+		if !ok {
+			return nil
+		}
+
+		partTable, ok := table.(partitionTable)
+		if !ok {
+			return nil
+		}
+
+		// PartitionExpr don't need columns and names for hash partition.
+		partExpr := partTable.PartitionExpr()
+		if partExpr == nil || partExpr.Expr == nil {
+			return nil
+		}
+		if _, ok := partExpr.Expr.(*expression.Column); !ok {
+			return nil
+		}
+	}
 
 	if handleCol != nil {
 		// condition key of where is primary key

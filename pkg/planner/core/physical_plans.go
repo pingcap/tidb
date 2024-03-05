@@ -143,8 +143,7 @@ type PhysicalTableReader struct {
 
 // PhysPlanPartInfo indicates partition helper info in physical plan.
 type PhysPlanPartInfo struct {
-	PruningConds []expression.Expression
-	// TODO: use PartitionNames for handling explicit partition pruning!
+	PruningConds   []expression.Expression
 	PartitionNames []model.CIStr
 	Columns        []*expression.Column
 	ColumnNames    types.NameSlice
