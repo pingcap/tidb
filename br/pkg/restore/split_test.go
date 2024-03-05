@@ -492,7 +492,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 		scattered[regionInfo.Region.Id] = true
 		return nil
 	}
-	regionSplitter.ScatterRegionsSync(ctx, regionInfos)
+	regionSplitter.ScatterRegions(ctx, regionInfos)
 	for key := range regions {
 		if key == alwaysFailedRegionID {
 			require.Falsef(t, scattered[key], "always failed region %d was scattered successfully", key)

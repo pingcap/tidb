@@ -44,11 +44,6 @@ const (
 	CoarseGrained Granularity = "coarse-grained"
 )
 
-const (
-	splitRegionKeysConcurrency   = 8
-	splitRegionRangesConcurrency = 32
-)
-
 type SplitContext struct {
 	isRawKv    bool
 	storeCount int
@@ -111,21 +106,18 @@ func (rs *RegionSplitter) ExecuteSplit(
 		sortedKeys = append(sortedKeys, r.EndKey)
 		totalRangeSize += r.Size
 	}
-	// need use first range's start key to scan region
-	// and the range size must be greater than 0 here
-	scanStartKey := sortedRanges[0].StartKey
 	sctx := SplitContext{
 		isRawKv:    isRawKv,
 		onSplit:    onSplit,
 		storeCount: storeCount,
 	}
-	return rs.executeSplitByRanges(ctx, sctx, scanStartKey, sortedKeys)
+	// the range size must be greater than 0 here
+	return rs.executeSplitByRanges(ctx, sctx, sortedKeys)
 }
 
 func (rs *RegionSplitter) executeSplitByRanges(
 	ctx context.Context,
 	splitContext SplitContext,
-	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
 	startTime := time.Now()
@@ -143,7 +135,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 		if len(roughSortedSplitKeys) == 0 {
 			break
 		}
-		if err := rs.executeSplitByKeys(ctx, splitContext, scanStartKey, roughSortedSplitKeys); err != nil {
+		if err := rs.executeSplitByKeys(ctx, splitContext, roughSortedSplitKeys); err != nil {
 			return errors.Trace(err)
 		}
 		if curRegionIndex >= len(sortedKeys) {
@@ -153,7 +145,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
 	// Then send split requests to each TiKV.
-	if err := rs.executeSplitByKeys(ctx, splitContext, scanStartKey, sortedKeys); err != nil {
+	if err := rs.executeSplitByKeys(ctx, splitContext, sortedKeys); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -168,12 +160,20 @@ func (rs *RegionSplitter) executeSplitByRanges(
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	splitContext SplitContext,
-	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
 	var mutex sync.Mutex
 	startTime := time.Now()
-	minKey := codec.EncodeBytesExt(nil, scanStartKey, splitContext.isRawKv)
+	if len(sortedKeys) == 0 {
+		return nil
+	}
+	// Notice: if there are only one key so that `minKey`` is equal to `maxKey`, there are 2 kind of results of
+	// pd.ScanRegions(minKey, maxKey):
+	// case 1: minKey = maxKey = a region's StartKey. PD returns nothing, but it's OK because it would skip spliting
+	// the boundary of the region.
+	// case 2: minKey = maxKey != any region's StartKey. PD returns one region, it would split the key on this region
+	// later.
+	minKey := codec.EncodeBytesExt(nil, sortedKeys[0], splitContext.isRawKv)
 	maxKey := codec.EncodeBytesExt(nil, sortedKeys[len(sortedKeys)-1], splitContext.isRawKv)
 	scatterRegions := make([]*split.RegionInfo, 0)
 	regionsMap := make(map[uint64]*split.RegionInfo)
@@ -261,7 +261,7 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 		}
 		return nil, errors.Trace(err)
 	}
-	rs.scatterRegions(ctx, append(newRegions, regionInfo))
+	rs.ScatterRegions(ctx, append(newRegions, regionInfo))
 	return newRegions, nil
 }
 
@@ -284,7 +284,7 @@ func (rs *RegionSplitter) splitRegions(
 // scatterRegions scatter the regions.
 // for same reason just log and ignore error.
 // See the comments of function waitRegionScattered.
-func (rs *RegionSplitter) scatterRegions(ctx context.Context, newRegions []*split.RegionInfo) {
+func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*split.RegionInfo) {
 	log.Info("start to scatter regions", zap.Int("regions", len(newRegions)))
 	// the retry is for the temporary network errors during sending request.
 	err := utils.WithRetry(ctx, func() error {
@@ -344,8 +344,7 @@ func (rs *RegionSplitter) waitRegionSplitted(ctx context.Context, regionID uint6
 func (rs *RegionSplitter) waitRegionsScattered(ctx context.Context, scatterRegions []*split.RegionInfo, timeout time.Duration) {
 	log.Info("start to wait for scattering regions", zap.Int("regions", len(scatterRegions)))
 	startTime := time.Now()
-	// it takes 30 minutes to scatter regions when each TiKV has 400k regions
-	leftCnt := rs.WaitForScatterRegionsTimeout(ctx, scatterRegions, 30*time.Minute)
+	leftCnt := rs.WaitForScatterRegionsTimeout(ctx, scatterRegions, timeout)
 	if leftCnt == 0 {
 		log.Info("waiting for scattering regions done",
 			zap.Int("regions", len(scatterRegions)),
@@ -435,7 +434,7 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 //
 // if the latest operator is `scatter-operator` and its status is TIMEOUT or CANCEL, the needRescatter
 // is true and the function caller needs to scatter this region again.
-func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, bool, error) {
+func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error) {
 	resp, err := rs.client.GetOperator(ctx, regionID)
 	if err != nil {
 		if common.IsRetryableError(err) {
@@ -451,10 +450,14 @@ func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID 
 		}
 		return false, false, errors.Annotatef(berrors.ErrPDInvalidResponse, "get operator error: %s", respErr.GetType())
 	}
-	retryTimes := ctx.Value(retryTimes).(int)
-	if retryTimes > 10 {
-		log.Info("get operator", zap.Uint64("regionID", regionID), zap.Stringer("resp", resp))
-	}
+	defer func() {
+		if !scatterDone {
+			retryTimes := ctx.Value(retryTimes).(int)
+			if retryTimes > 10 {
+				log.Info("get operator", zap.Uint64("regionID", regionID), zap.Stringer("resp", resp))
+			}
+		}
+	}()
 	// that 'scatter-operator' has finished
 	if string(resp.GetDesc()) != "scatter-region" {
 		return true, false, nil
@@ -504,7 +507,7 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 		}
 
 		if len(reScatterRegions) > 0 {
-			rs.scatterRegions(ctx1, reScatterRegions)
+			rs.ScatterRegions(ctx1, reScatterRegions)
 		}
 
 		if time.Since(startTime) > timeout {
