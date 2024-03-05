@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -79,6 +80,10 @@ func (c constantRegions) Stores(ctx context.Context) ([]streamhelper.Store, erro
 // If the arguments is `0`, this would remove the service safe point.
 func (c constantRegions) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
 	return 0, status.Error(codes.Unimplemented, "Unsupported operation")
+}
+
+func (c constantRegions) FetchCurrentTS(ctx context.Context) (uint64, error) {
+	return uint64(time.Now().UnixNano()), nil
 }
 
 func makeSubrangeRegions(keys ...string) constantRegions {

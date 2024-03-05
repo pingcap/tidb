@@ -478,10 +478,10 @@ func TestEnableCheckPointLimit(t *testing.T) {
 		c.CheckPointLagLimit = 1*time.Minute
 	})
 	adv.StartTaskListener(ctx)
-	c.advanceCheckpoints()
+	c.FetchCurrentTS();
 	require.NoError(t, adv.OnTick(ctx))
 	for i := 0; i < 5; i++ {
-		cp := c.advanceCheckpoints()
+		cp := c.advanceCheckpointBy()
 		require.NoError(t, adv.OnTick(ctx))
 		require.Equal(t, env.getCheckpoint(), cp)
 	}

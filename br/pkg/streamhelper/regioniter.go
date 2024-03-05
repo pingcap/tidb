@@ -42,6 +42,9 @@ type TiKVClusterMeta interface {
 	// NOTE: once we support multi tasks, perhaps we need to allow the caller to provide a namespace.
 	// For now, all tasks (exactly one task in fact) use the same checkpoint.
 	BlockGCUntil(ctx context.Context, at uint64) (uint64, error)
+
+	//TODO: It should be able to synchoronize the current TS with the PD.
+	FetchCurrentTS(ctx context.Context) (uint64, error)
 }
 
 type Store struct {
