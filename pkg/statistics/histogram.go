@@ -1065,7 +1065,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if allowUseModifyCount && float64(modifyCount) > hg.NotNullCount() {
 		rowCount = totalPercent * float64(modifyCount)
 	} else {
-
 		rowCount = totalPercent * hg.NotNullCount()
 	}
 
