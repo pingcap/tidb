@@ -516,7 +516,7 @@ func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.Sc
 
 func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
 	if b.enableV2 {
-		b.applyModifySchemaDefaultPlacementV2(m, diff)
+		return b.applyModifySchemaDefaultPlacementV2(m, diff)
 	}
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
@@ -661,7 +661,7 @@ func (b *Builder) applyTruncateTableOrPartitionV2(m *meta.Meta, diff *model.Sche
 }
 
 func (b *Builder) applyDropTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
+	return nil, errors.New("TODO")
 }
 
 func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
