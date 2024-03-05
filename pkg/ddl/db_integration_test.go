@@ -1632,13 +1632,14 @@ func TestDefaultColumnWithDateFormat(t *testing.T) {
 
 	// insert records
 	nowTime := time.Now()
-	for i := 0; i < 5; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t%d(c) values (1),(2)", i))
+	for i := 0; i < 6; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t%d(c) values (1)", i))
+		tk.MustExec(fmt.Sprintf("insert into t%d(c) values (1),(default)", i))
 	}
 	tk.MustGetErrCode("insert into t6(c) values (1)", errno.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("insert into t7(c) values (1)", errno.ErrTruncatedWrongValue)
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 6; i++ {
 		rows := tk.MustQuery(fmt.Sprintf("SELECT c1 from t%d order by c", i)).Rows()
 		for _, row := range rows {
 			d, ok := row[0].(string)
@@ -1653,10 +1654,12 @@ func TestDefaultColumnWithDateFormat(t *testing.T) {
 					require.Equal(t, nowTime.Add(1*time.Second).Format("2006-01-02 15.04.05"), d,
 						fmt.Sprintf("now time:%v, get time:%v", nowTime.Format("2006-01-02 15.04.05"), d))
 				}
-			case 3, 4, 5:
+			case 3:
 				if nowTime.Format("2006-01-02 15:04:05") != d {
 					require.Equal(t, nowTime.Add(1*time.Second).Format("2006-01-02 15:04:05"), d)
 				}
+			case 4, 5:
+				require.Equal(t, nowTime.Format("2006-01-02"), d)
 			}
 		}
 	}
@@ -1696,6 +1699,10 @@ func TestDefaultColumnWithDateFormat(t *testing.T) {
 			"  `c` int(10) DEFAULT NULL,\n" +
 			"  `c1` datetime DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';").Check(testkit.Rows(
+		"date_format(now(), _utf8mb4'%Y-%m-%d') DEFAULT_GENERATED"))
+	tk.MustQuery("show columns from test.t1 where field='c1';").Check(testkit.Rows(
+		"c1 datetime YES  date_format(now(), _utf8mb4'%Y-%m-%d') DEFAULT_GENERATED"))
 }
 
 func TestDefaultColumnWithReplace(t *testing.T) {
@@ -1719,6 +1726,7 @@ func TestDefaultColumnWithReplace(t *testing.T) {
 
 	// insert records
 	tk.MustExec("insert into t(c) values (1),(2),(3)")
+	tk.MustExec("insert into t values (4, default)")
 	// Different UUID values will result in different error code.
 	_, err := tk.Exec("insert into t1(c) values (1)")
 	originErr := errors.Cause(err)
@@ -1772,6 +1780,8 @@ func TestDefaultColumnWithReplace(t *testing.T) {
 			"  `c` int(10) DEFAULT NULL,\n" +
 			"  `c1` varchar(32) DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';").Check(testkit.Rows(
+		"replace(upper(uuid()), _utf8mb4'-', _utf8mb4'') DEFAULT_GENERATED"))
 }
 
 func TestDefaultColumnWithStrToDate(t *testing.T) {
@@ -1801,13 +1811,17 @@ func TestDefaultColumnWithStrToDate(t *testing.T) {
 	// insert records
 	tk.MustExec("insert into t0(c) values (1),(2),(3)")
 	tk.MustExec("insert into t1(c) values (1),(2),(3)")
+	tk.MustExec("insert into t0 values (4, default, default)")
+	tk.MustExec("insert into t1 values (4, default, default)")
 	tk.MustGetErrCode("insert into t3(c) values (1)", errno.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("insert into t4(c) values (1)", errno.ErrTruncatedWrongValue)
 	// MySQL will return an error. Related issue: https://github.com/pingcap/tidb/issues/51275.
 	tk.MustExec("insert into t5(c) values (1)")
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into t2(c) values (1),(2),(3)")
+	tk.MustExec("insert into t2 values (4, default, default)")
 	tk.MustExec(fmt.Sprintf(`set session sql_mode="%s"`, sqlMode))
+	tk.MustGetErrCode("insert into t2(c) values (5)", errno.ErrTruncatedWrongValue)
 
 	for i := 0; i < 3; i++ {
 		rows := tk.MustQuery(fmt.Sprintf("SELECT c1, c2 from t%d", i)).Rows()
@@ -1866,6 +1880,8 @@ func TestDefaultColumnWithStrToDate(t *testing.T) {
 			"  `c1` varchar(32) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),\n" +
 			"  `c2` int(11) DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d')\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';").Check(testkit.Rows(
+		"str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d') DEFAULT_GENERATED"))
 }
 
 func TestDefaultColumnWithUpper(t *testing.T) {
@@ -1890,6 +1906,7 @@ func TestDefaultColumnWithUpper(t *testing.T) {
 	tk.MustGetErrCode("insert into t1(c) values (1)", errno.ErrTruncatedWrongValue)
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "xyz", Hostname: "localhost"}
 	tk.MustExec("insert into t(c) values (4),(5),(6)")
+	tk.MustExec("insert into t values (7, default)")
 
 	rows := tk.MustQuery("SELECT c1 from t order by c").Rows()
 	for i, row := range rows {
@@ -1924,6 +1941,8 @@ func TestDefaultColumnWithUpper(t *testing.T) {
 			"  `c` int(10) DEFAULT NULL,\n" +
 			"  `c1` varchar(32) DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';").Check(testkit.Rows(
+		"upper(substring_index(user(), _utf8mb4'@', 1)) DEFAULT_GENERATED"))
 }
 
 func TestChangingDBCharset(t *testing.T) {

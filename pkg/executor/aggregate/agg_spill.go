@@ -368,9 +368,7 @@ func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
 		return
 	}
 
-	if t.CheckExceed() {
-		p.triggerFallBackAction(t)
-	}
+	p.triggerFallBackAction(t)
 }
 
 // Return true if we successfully set flag
