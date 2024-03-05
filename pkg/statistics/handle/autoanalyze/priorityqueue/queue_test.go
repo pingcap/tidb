@@ -12,23 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package priorityqueue
+package priorityqueue_test
 
 import (
 	"container/heap"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAnalysisInnerQueue(t *testing.T) {
 	// Test data
-	job1 := &TableAnalysisJob{Weight: 10}
-	job2 := &TableAnalysisJob{Weight: 5}
-	job3 := &TableAnalysisJob{Weight: 15}
+	job1 := &priorityqueue.TableAnalysisJob{Weight: 10}
+	job2 := &priorityqueue.TableAnalysisJob{Weight: 5}
+	job3 := &priorityqueue.TableAnalysisJob{Weight: 15}
 
 	// Create an empty priority queue
-	queue := analysisInnerQueue{}
+	queue := priorityqueue.AnalysisInnerQueue{}
 
 	// Push items into the queue
 	heap.Push(&queue, job1)
@@ -48,23 +49,23 @@ func TestAnalysisInnerQueue(t *testing.T) {
 
 func TestPushPopAnalysisInnerQueue(t *testing.T) {
 	// Test Push and Pop operations together
-	queue := analysisInnerQueue{}
-	heap.Push(&queue, &TableAnalysisJob{Weight: 10})
-	heap.Push(&queue, &TableAnalysisJob{Weight: 5})
+	queue := priorityqueue.AnalysisInnerQueue{}
+	heap.Push(&queue, &priorityqueue.TableAnalysisJob{Weight: 10})
+	heap.Push(&queue, &priorityqueue.TableAnalysisJob{Weight: 5})
 
-	poppedItem := heap.Pop(&queue).(*TableAnalysisJob)
+	poppedItem := heap.Pop(&queue).(*priorityqueue.TableAnalysisJob)
 	require.Equal(t, float64(10), poppedItem.Weight, "Popped item should have weight 10")
 	require.Equal(t, 1, queue.Len(), "After Pop, length of the queue should be 1")
 }
 
 func TestAnalysisPriorityQueue(t *testing.T) {
 	// Test data
-	job1 := &TableAnalysisJob{Weight: 10}
-	job2 := &TableAnalysisJob{Weight: 5}
-	job3 := &TableAnalysisJob{Weight: 15}
+	job1 := &priorityqueue.TableAnalysisJob{Weight: 10}
+	job2 := &priorityqueue.TableAnalysisJob{Weight: 5}
+	job3 := &priorityqueue.TableAnalysisJob{Weight: 15}
 
 	// Create a priority queue
-	queue := NewAnalysisPriorityQueue()
+	queue := priorityqueue.NewAnalysisPriorityQueue()
 
 	// Push items into the queue
 	queue.Push(job1)

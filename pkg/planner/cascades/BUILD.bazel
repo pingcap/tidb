@@ -23,7 +23,6 @@ go_library(
         "//pkg/planner/memo",
         "//pkg/planner/property",
         "//pkg/planner/util",
-        "//pkg/sessionctx",
         "//pkg/types",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/ranger",

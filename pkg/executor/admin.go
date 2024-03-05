@@ -152,7 +152,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
 
-	err := tables.SetPBColumnsDefaultValue(e.Ctx(), dagReq.Executors[0].IdxScan.Columns, e.cols)
+	err := tables.SetPBColumnsDefaultValue(e.Ctx().GetExprCtx(), dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +231,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 func (e *RecoverIndexExec) constructTableScanPB(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
 	tblScan.TableId = e.physicalID
-	err := tables.SetPBColumnsDefaultValue(e.Ctx(), tblScan.Columns, colInfos)
+	err := tables.SetPBColumnsDefaultValue(e.Ctx().GetExprCtx(), tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
@@ -403,7 +403,7 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 	}
 
 	if e.cols == nil {
-		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx(), model.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx().GetExprCtx(), model.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
 		if err != nil {
 			return nil, err
 		}
@@ -419,7 +419,7 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 	sctx := e.Ctx()
 	for i, col := range e.index.Meta().Columns {
 		if e.table.Meta().Columns[col.Offset].IsGenerated() {
-			val, err := e.cols[col.Offset].EvalVirtualColumn(sctx, row)
+			val, err := e.cols[col.Offset].EvalVirtualColumn(sctx.GetExprCtx(), row)
 			if err != nil {
 				return nil, err
 			}
@@ -525,7 +525,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.Ctx(), txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
+		_, err = e.index.Create(e.Ctx().GetTableCtx(), txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
 		if err != nil {
 			return result, err
 		}
@@ -637,7 +637,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
 			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
-				if err := e.index.Delete(e.Ctx(), txn, handleIdxVals, handle); err != nil {
+				if err := e.index.Delete(e.Ctx().GetTableCtx(), txn, handleIdxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++
@@ -857,7 +857,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB() (*tipb.DAGRequest, error) {
 
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	err := tables.SetPBColumnsDefaultValue(e.Ctx(), dagReq.Executors[0].IdxScan.Columns, e.columns)
+	err := tables.SetPBColumnsDefaultValue(e.Ctx().GetExprCtx(), dagReq.Executors[0].IdxScan.Columns, e.columns)
 	if err != nil {
 		return nil, err
 	}

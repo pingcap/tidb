@@ -38,6 +38,15 @@ import (
 // PlanContext is the context for building plan.
 type PlanContext = context.PlanContext
 
+// AsSctx converts PlanContext to sessionctx.Context.
+func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
+	sctx, ok := pctx.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
+	}
+	return sctx, nil
+}
+
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
@@ -263,8 +272,8 @@ type LogicalPlan interface {
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
 	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
-	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column, *logicalOptimizeOp, LogicalPlan) error
+	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
+	PruneColumns([]*expression.Column, *logicalOptimizeOp) (LogicalPlan, error)
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -362,7 +371,7 @@ type PhysicalPlan interface {
 	attach2Task(...task) task
 
 	// ToPB converts physical plan to tipb executor.
-	ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error)
+	ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error)
 
 	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
@@ -766,11 +775,16 @@ func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	if len(p.children) == 0 {
-		return nil
+		return p.self, nil
 	}
-	return p.children[0].PruneColumns(parentUsedCols, opt, p)
+	var err error
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p.self, nil
 }
 
 // Schema implements Plan Schema interface.

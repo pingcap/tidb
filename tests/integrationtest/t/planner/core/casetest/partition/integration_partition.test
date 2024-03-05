@@ -180,3 +180,8 @@ explain format='brief' select a from trange use index () where a > 10 order by b
 explain format='brief' select a from tlist use index () where a > 10 order by b limit 10;
 explain format='brief' select a from thash use index () where a > 10 order by b limit 10;
 
+# TestIssue51316
+drop table if exists t;
+create table t(col varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL) PARTITION BY KEY (`col`) PARTITIONS 7;
+explain format = brief select * from t where col = 'linpin';
+explain format = brief select * from t where col = 'LINPIN';

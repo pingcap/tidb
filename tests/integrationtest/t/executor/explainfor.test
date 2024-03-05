@@ -438,6 +438,9 @@ create table t(a int);
 drop table if exists r;
 create table r(a int);
 desc format='brief' select * from information_schema.tables where table_name='t';
+desc format='brief' select * from information_schema.tables where lower(table_name)='t';
+desc format='brief' select * from information_schema.tables where upper(table_name)=upper('t');
+
 desc format='brief' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
 desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
 desc format='brief' select * from information_schema.STATISTICS where table_name='t';

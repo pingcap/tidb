@@ -213,48 +213,6 @@ func (a *recordSet) OnFetchReturned() {
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
 }
 
-// TelemetryInfo records some telemetry information during execution.
-type TelemetryInfo struct {
-	UseNonRecursive       bool
-	UseRecursive          bool
-	UseMultiSchemaChange  bool
-	UseExchangePartition  bool
-	UseFlashbackToCluster bool
-	PartitionTelemetry    *PartitionTelemetryInfo
-	AccountLockTelemetry  *AccountLockTelemetryInfo
-	UseIndexMerge         bool
-	UseTableLookUp        atomic.Bool
-}
-
-// PartitionTelemetryInfo records table partition telemetry information during execution.
-type PartitionTelemetryInfo struct {
-	UseTablePartition                bool
-	UseTablePartitionList            bool
-	UseTablePartitionRange           bool
-	UseTablePartitionHash            bool
-	UseTablePartitionRangeColumns    bool
-	UseTablePartitionRangeColumnsGt1 bool
-	UseTablePartitionRangeColumnsGt2 bool
-	UseTablePartitionRangeColumnsGt3 bool
-	UseTablePartitionListColumns     bool
-	TablePartitionMaxPartitionsNum   uint64
-	UseCreateIntervalPartition       bool
-	UseAddIntervalPartition          bool
-	UseDropIntervalPartition         bool
-	UseCompactTablePartition         bool
-	UseReorganizePartition           bool
-}
-
-// AccountLockTelemetryInfo records account lock/unlock information during execution
-type AccountLockTelemetryInfo struct {
-	// The number of CREATE/ALTER USER statements that lock the user
-	LockUser int64
-	// The number of CREATE/ALTER USER statements that unlock the user
-	UnlockUser int64
-	// The number of CREATE/ALTER USER statements
-	CreateOrAlterUser int64
-}
-
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
@@ -291,7 +249,6 @@ type ExecStmt struct {
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.PlanCacheStmt
-	Ti          *TelemetryInfo
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -341,7 +298,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if pointExecutor == nil {
-		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
+		b := newExecutorBuilder(a.Ctx, a.InfoSchema)
 		pointExecutor = b.build(a.Plan).(*PointGetExecutor)
 		if b.err != nil {
 			return nil, b.err
@@ -364,7 +321,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
-		maxExecutionTime := getMaxExecutionTime(sctx)
+		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -560,19 +517,13 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 	}
 
-	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
-	if err = a.openExecutor(ctx, e); err != nil {
-		terror.Log(exec.Close(e))
-		return nil, err
-	}
-
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
 	cmd := byte(cmd32)
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.getSQLForProcessInfo()
-		maxExecutionTime := getMaxExecutionTime(sctx)
+		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
@@ -582,6 +533,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+	}
+
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
+	if err = a.openExecutor(ctx, e); err != nil {
+		terror.Log(exec.Close(e))
+		return nil, err
 	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
@@ -849,14 +806,6 @@ func isNoResultPlan(p plannercore.Plan) bool {
 		}
 	}
 	return false
-}
-
-// getMaxExecutionTime get the max execution timeout value.
-func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
-	if sctx.GetSessionVars().StmtCtx.HasMaxExecutionTime {
-		return sctx.GetSessionVars().StmtCtx.MaxExecutionTime
-	}
-	return sctx.GetSessionVars().MaxExecutionTime
 }
 
 type chunkRowRecordSet struct {
@@ -1201,7 +1150,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
+	b := newExecutorBuilder(ctx, a.InfoSchema)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -1787,7 +1736,7 @@ func getBinaryPlan(sCtx sessionctx.Context) string {
 		return binaryPlan
 	}
 	flat := getFlatPlan(stmtCtx)
-	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx, flat)
+	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx.GetPlanCtx(), flat)
 	stmtCtx.SetBinaryPlan(binaryPlan)
 	return binaryPlan
 }

@@ -184,7 +184,7 @@ func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool,
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, fun := range agg.AggFuncs {
-		ok, expr := rewriteExpr(agg.SCtx(), fun)
+		ok, expr := rewriteExpr(agg.SCtx().GetExprCtx(), fun)
 		if !ok {
 			return false, nil
 		}

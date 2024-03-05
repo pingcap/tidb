@@ -540,7 +540,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := w.colAssignExprs[i].Eval(w.Ctx(), chunk.Row{})
+		d, err := w.colAssignExprs[i].Eval(w.Ctx().GetExprCtx(), chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err

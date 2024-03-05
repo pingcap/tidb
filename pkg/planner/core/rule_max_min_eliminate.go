@@ -156,9 +156,14 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
 		// Since LogicalAggregation doesn’t use the parent LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
-		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt, newAgg); err != nil {
+		var (
+			p   LogicalPlan
+			err error
+		)
+		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
 			return nil, false
 		}
+		newAgg = p.(*LogicalAggregation)
 		aggs = append(aggs, newAgg)
 	}
 	return aggs, true
@@ -177,8 +182,8 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *log
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
 			sel = LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
-			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
-			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
 			sel.SetChildren(agg.Children()[0])
 			child = sel

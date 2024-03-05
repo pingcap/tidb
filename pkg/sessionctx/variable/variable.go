@@ -211,9 +211,6 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 		ok  bool
 		val string
 	)
-	if val, ok = s.stmtVars[sv.Name]; ok {
-		return val, nil
-	}
 	if val, ok = s.systems[sv.Name]; !ok {
 		return val, errors.New("sysvar has not yet loaded")
 	}

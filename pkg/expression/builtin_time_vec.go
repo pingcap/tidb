@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1555,8 +1554,7 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	ds := buf.Times()
 
 	mode := 0
-	modeStr, ok := ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
-	if ok && modeStr != "" {
+	if modeStr := ctx.GetDefaultWeekFormatMode(); modeStr != "" {
 		mode, err = strconv.Atoi(modeStr)
 		if err != nil {
 			return handleInvalidTimeError(ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))

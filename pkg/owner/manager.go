@@ -338,8 +338,8 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 	var resp *clientv3.GetResponse
 	var err error
 	for i := 0; i < 3; i++ {
-		if util.IsContextDone(ctx) {
-			return "", nil, op, 0, errors.Trace(ctx.Err())
+		if err = ctx.Err(); err != nil {
+			return "", nil, op, 0, errors.Trace(err)
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)

@@ -164,14 +164,14 @@ func TestPartitionPruningForEQ(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pt := tbl.(table.PartitionedTable)
-	query, err := expression.ParseSimpleExpr(tk.Session(), "a = '2020-01-01 00:00:00'", expression.WithTableInfo("", tbl.Meta()))
+	query, err := expression.ParseSimpleExpr(tk.Session().GetExprCtx(), "a = '2020-01-01 00:00:00'", expression.WithTableInfo("", tbl.Meta()))
 	require.NoError(t, err)
 	dbName := model.NewCIStr(tk.Session().GetSessionVars().CurrentDB)
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(tk.Session(), dbName, tbl.Meta().Name, tbl.Meta().Cols(), tbl.Meta())
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(tk.Session().GetExprCtx(), dbName, tbl.Meta().Name, tbl.Meta().Cols(), tbl.Meta())
 	require.NoError(t, err)
 	// Even the partition is not monotonous, EQ condition should be prune!
 	// select * from t where a = '2020-01-01 00:00:00'
-	res, err := core.PartitionPruning(tk.Session(), pt, []expression.Expression{query}, nil, columns, names)
+	res, err := core.PartitionPruning(tk.Session().GetPlanCtx(), pt, []expression.Expression{query}, nil, columns, names)
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	require.Equal(t, 0, res[0])

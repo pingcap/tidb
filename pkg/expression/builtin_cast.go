@@ -29,14 +29,12 @@ import (
 	"strings"
 	gotime "time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1771,11 +1769,7 @@ func (b *builtinCastDurationAsStringSig) evalString(ctx EvalContext, row chunk.R
 func padZeroForBinaryType(s string, tp *types.FieldType, ctx EvalContext) (string, bool, error) {
 	flen := tp.GetFlen()
 	if tp.GetType() == mysql.TypeString && types.IsBinaryStr(tp) && len(s) < flen {
-		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-		if err != nil {
-			return "", false, errors.Trace(err)
-		}
+		maxAllowedPacket := ctx.GetMaxAllowedPacket()
 		if uint64(flen) > maxAllowedPacket {
 			return "", true, handleAllowedPacketOverflowed(ctx, "cast_as_binary", maxAllowedPacket)
 		}

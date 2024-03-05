@@ -14,7 +14,11 @@
 
 package set
 
-import "golang.org/x/exp/maps"
+import (
+	"strings"
+
+	"golang.org/x/exp/maps"
+)
 
 // StringSet is a string set.
 type StringSet map[string]struct{}
@@ -45,6 +49,23 @@ func (s StringSet) Intersection(rhs StringSet) StringSet {
 	for elt := range s {
 		if rhs.Exist(elt) {
 			newSet.Insert(elt)
+		}
+	}
+	return newSet
+}
+
+// IntersectionWithLower returns the intersection of two sets with different case of string.
+func (s StringSet) IntersectionWithLower(rhs StringSet, toLower bool) StringSet {
+	newSet := NewStringSet()
+	for origElt := range rhs {
+		var elt string
+		if toLower {
+			elt = strings.ToLower(origElt)
+		} else {
+			elt = strings.ToUpper(origElt)
+		}
+		if s.Exist(elt) {
+			newSet.Insert(origElt)
 		}
 	}
 	return newSet

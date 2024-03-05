@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit/ddlhelper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -169,7 +168,7 @@ func TestPruneUseBinarySearchUnSigned(t *testing.T) {
 
 type testCtx struct {
 	require *require.Assertions
-	sctx    sessionctx.Context
+	sctx    *mock.Context
 	schema  *expression.Schema
 	columns []*expression.Column
 	names   types.NameSlice

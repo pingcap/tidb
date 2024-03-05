@@ -121,7 +121,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	return table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk)
+	return table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), chk)
 }
 
 // Close and release the used resources.

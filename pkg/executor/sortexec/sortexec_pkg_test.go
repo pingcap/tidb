@@ -123,7 +123,7 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 		cancelTime = time.Now()
 		wg.Done()
 	}()
-	err = sp.spillToDisk(rootTracker)
+	err = sp.spillToDisk()
 	wg.Wait()
 	cancelDuration := time.Since(cancelTime)
 	require.Less(t, cancelDuration, 1*time.Second)

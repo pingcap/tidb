@@ -60,7 +60,6 @@ go_library(
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/util",
         "//pkg/store/helper",
-        "//pkg/telemetry",
         "//pkg/ttl/cache",
         "//pkg/ttl/sqlbuilder",
         "//pkg/ttl/ttlworker",

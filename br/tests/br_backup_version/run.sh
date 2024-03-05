@@ -21,8 +21,8 @@ DB="$TEST_NAME"
 #    "cluster_id": 6931331682760961243
 expected_cluster_id=`run_curl "https://$PD_ADDR/pd/api/v1/members" | grep "cluster_id"`
 # example
-#"4.0.10"
-expected_cluster_version=`run_curl "https://$PD_ADDR/pd/api/v1/config/cluster-version"`
+#4.0.10
+expected_cluster_version=`run_curl "https://$PD_ADDR/pd/api/v1/config/cluster-version" | tr -d '"'`
 unset BR_LOG_TO_TERM
 
 function check_version() {

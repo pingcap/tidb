@@ -168,7 +168,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
 	start := func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
-		handleFineGrainedShuffle(nil, sctx, tableReader)
+		handleFineGrainedShuffle(nil, sctx.GetPlanCtx(), tableReader)
 		check(p, expStreamCount, expChildCount, curChildCount)
 		clear(plans)
 	}
@@ -356,7 +356,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	hashSender1.children = []PhysicalPlan{tableScan1}
 	hashSender1.HashCols = partitionCols
 	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
-	handleFineGrainedShuffle(nil, sctx, tableReader)
+	handleFineGrainedShuffle(nil, sctx.GetPlanCtx(), tableReader)
 	require.Equal(t, uint64(8), hashJoin.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(8), recv1.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(8), hashSender1.TiFlashFineGrainedShuffleStreamCount)
@@ -431,7 +431,7 @@ func TestPrunePhysicalColumns(t *testing.T) {
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
 	hashJoin := &PhysicalHashJoin{}
-	hashJoin = hashJoin.Init(sctx, nil, 0)
+	hashJoin = hashJoin.Init(sctx.GetPlanCtx(), nil, 0)
 	recv := &PhysicalExchangeReceiver{}
 	recv1 := &PhysicalExchangeReceiver{}
 	hashSender := &PhysicalExchangeSender{
@@ -474,7 +474,7 @@ func TestPrunePhysicalColumns(t *testing.T) {
 	recv1.SetChildren(hashSender1)
 	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col3)
 
-	prunePhysicalColumns(sctx, tableReader)
+	prunePhysicalColumns(sctx.GetPlanCtx(), tableReader)
 
 	// Optimized Plan：
 	// Join[col2, col3; col2==col3] <- ExchangeReceiver[col2] <- ExchangeSender[col2;col2] <- Projection[col2] <- Selection[col0, col1, col2; col0 < col1] <- TableScan[col0, col1, col2]

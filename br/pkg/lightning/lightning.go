@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"encoding/json"
@@ -1056,7 +1057,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 }
 
 // SwitchMode switches the mode of the TiKV cluster.
-func SwitchMode(ctx context.Context, cli pdhttp.Client, tls *common.TLS, mode string, ranges ...*import_sstpb.Range) error {
+func SwitchMode(ctx context.Context, cli pdhttp.Client, tls *tls.Config, mode string, ranges ...*import_sstpb.Range) error {
 	var m import_sstpb.SwitchMode
 	switch mode {
 	case config.ImportMode:

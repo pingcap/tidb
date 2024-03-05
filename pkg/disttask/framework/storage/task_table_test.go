@@ -42,7 +42,7 @@ func TestSplitSubtasks(t *testing.T) {
 	subtasks := make([]*proto.Subtask, 0, 10)
 	metaBytes := make([]byte, 100)
 	for i := 0; i < 10; i++ {
-		subtasks = append(subtasks, &proto.Subtask{ID: int64(i), Meta: metaBytes})
+		subtasks = append(subtasks, &proto.Subtask{SubtaskBase: proto.SubtaskBase{ID: int64(i)}, Meta: metaBytes})
 	}
 	bak := kv.TxnTotalSizeLimit.Load()
 	t.Cleanup(func() {

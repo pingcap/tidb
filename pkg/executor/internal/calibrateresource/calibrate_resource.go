@@ -139,7 +139,7 @@ type Executor struct {
 }
 
 func (e *Executor) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
-	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), tsExpr)
+	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx().GetPlanCtx(), tsExpr)
 	if err != nil {
 		return time.Time{}, err
 	}

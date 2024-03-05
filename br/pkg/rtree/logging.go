@@ -55,6 +55,6 @@ func (rs rangesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error 
 	encoder.AddInt("totalFiles", totalFile)
 	encoder.AddUint64("totalKVs", totalKV)
 	encoder.AddUint64("totalBytes", totalBytes)
-	encoder.AddUint64("totalSize", totalBytes)
+	encoder.AddUint64("totalSize", totalSize)
 	return nil
 }

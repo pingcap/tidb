@@ -263,7 +263,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	fmt.Println(sql)
 	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 	require.NoError(b, err, sql)
-	p, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
+	p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), stmt, s.GetIS())
 	require.NoError(b, err)
 	selection := p.(core.LogicalPlan).Children()[0]
 	m := make(core.ExprColumnMap, len(selection.Schema().Columns))

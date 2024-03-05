@@ -317,8 +317,9 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		}
 
 		opts := storage.ExternalStorageOptions{
-			NoCredentials:   cfg.NoCreds,
-			SendCredentials: cfg.SendCreds,
+			NoCredentials:            cfg.NoCreds,
+			SendCredentials:          cfg.SendCreds,
+			CheckS3ObjectLockOptions: true,
 		}
 		if err = client.SetStorage(ctx, backend, &opts); err != nil {
 			return nil, errors.Trace(err)

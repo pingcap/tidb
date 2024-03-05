@@ -61,8 +61,8 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		do.StatsHandle().Close()
 	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
-	joinNode := LogicalJoin{}.Init(ctx, 0)
-	dataSourceNode := DataSource{}.Init(ctx, 0)
+	joinNode := LogicalJoin{}.Init(ctx.GetPlanCtx(), 0)
+	dataSourceNode := DataSource{}.Init(ctx.GetPlanCtx(), 0)
 	dsSchema := expression.NewSchema()
 	var dsNames types.NameSlice
 	dsSchema.Append(&expression.Column{
@@ -186,10 +186,10 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode
 	joinNode := testCtx.joinNode
-	pushed, err := rewriteSimpleExpr(ctx, testCase.pushedDownConds, dataSourceNode.schema, testCtx.dsNames)
+	pushed, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.pushedDownConds, dataSourceNode.schema, testCtx.dsNames)
 	require.NoError(t, err)
 	dataSourceNode.pushedDownConds = pushed
-	others, err := rewriteSimpleExpr(ctx, testCase.otherConds, joinNode.schema, testCtx.joinColNames)
+	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.schema, testCtx.joinColNames)
 	require.NoError(t, err)
 	joinNode.OtherConditions = others
 	helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}

@@ -115,7 +115,7 @@ func NewCopContextBase(
 		handleIDs = []int64{extra.ID}
 	}
 
-	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx,
+	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx.GetExprCtx(),
 		model.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
 	if err != nil {
 		return nil, err

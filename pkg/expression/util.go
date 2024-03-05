@@ -1468,7 +1468,7 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // 2. Whether the statement can be cached.
 // 3. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
-func MaybeOverOptimized4PlanCache(ctx EvalContext, exprs []Expression) bool {
+func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
 	if !ctx.GetSessionVars().StmtCtx.UseCache {
 		return false

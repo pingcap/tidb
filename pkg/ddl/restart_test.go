@@ -116,11 +116,7 @@ func TestSchemaResume(t *testing.T) {
 	testRunInterruptedJob(t, store, dom, job)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
-	job = &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-	}
+	job = buildDropSchemaJob(dbInfo)
 	testRunInterruptedJob(t, store, dom, job)
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
 }
@@ -132,18 +128,7 @@ func TestStat(t *testing.T) {
 	require.NoError(t, err)
 	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
 
-	// TODO: Get this information from etcd.
-	//	m, err := d.Stats(nil)
-	//	c.Assert(err, IsNil)
-	//	c.Assert(m[ddlOwnerID], Equals, d.uuid)
-
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{true},
-	}
-
+	job := buildDropSchemaJob(dbInfo)
 	done := make(chan error, 1)
 	go runInterruptedJob(t, store, dom.DDL(), job, done)
 
@@ -158,8 +143,6 @@ LOOP:
 			restartWorkers(t, store, dom)
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
-			// TODO: Get this information from etcd.
-			// m, err := d.Stats(nil)
 			require.Nil(t, err)
 			break LOOP
 		}

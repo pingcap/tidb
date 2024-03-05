@@ -807,3 +807,40 @@ disconnect joe;
 connection default;
 
 set global tidb_enable_resource_control = default;
+
+# TestAdmin
+create table privilege__privileges.admin(a int, KEY idx_a (`a`));
+create user without_super;
+connect (without_super,localhost,without_super,,);
+connection without_super;
+-- error 8121
+admin set bdr role primary;
+-- error 8121
+admin show bdr role;
+-- error 8121
+admin unset bdr role;
+-- error 8121
+admin cancel ddl jobs 10;
+-- error 8121
+admin pause ddl jobs 10;
+-- error 8121
+admin resume ddl jobs 10;
+-- error 8121
+admin checksum table privilege__privileges.admin;
+-- error 8121
+admin check table privilege__privileges.admin;
+-- error 8121
+admin check index privilege__privileges.admin idx_a;
+-- error 8121
+admin show ddl jobs;
+-- error 8121
+admin show ddl job queries 10;
+-- error 8121
+ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
+-- error 8121
+ADMIN SHOW SLOW RECENT 3;
+-- error 8121
+ADMIN SHOW SLOW TOP ALL 3;
+
+disconnect without_super;
+connection default;

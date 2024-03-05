@@ -150,6 +150,8 @@ GRANT r_stats_meta TO key_column_tester;
 connection conn1;
 set role r_stats_meta;
 select count(*)>0 from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where upper(TABLE_NAME)='STATS_META';
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where lower(TABLE_NAME)='stats_meta';
 
 connection default;
 disconnect conn1;

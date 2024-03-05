@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -93,8 +94,6 @@ type litBackendCtx struct {
 func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
 	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
 	// backend must be a local backend.
-	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
-	//nolint:forcetypeassert
 	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
@@ -199,7 +198,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		se, _ := concurrency.NewSession(bc.etcdClient)
 		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
-			return true, false, err
+			return true, false, errors.Trace(err)
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {

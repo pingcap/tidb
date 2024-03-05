@@ -819,7 +819,7 @@ func TestTime(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func resetStmtContext(ctx EvalContext) {
+func resetStmtContext(ctx *mock.Context) {
 	ctx.GetSessionVars().StmtCtx.ResetStmtCache()
 }
 

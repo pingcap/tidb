@@ -23,7 +23,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -35,10 +34,7 @@ import (
 )
 
 func TestHandle(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 
 	ctx := util.WithInternalSourceType(context.Background(), "handle_test")
 
@@ -54,11 +50,13 @@ func TestHandle(t *testing.T) {
 	// no scheduler registered
 	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, proto.EmptyMeta)
 	require.NoError(t, err)
-	waitedTask, err := handle.WaitTask(ctx, task.ID, func(task *proto.Task) bool {
+	waitedTaskBase, err := handle.WaitTask(ctx, task.ID, func(task *proto.TaskBase) bool {
 		return task.IsDone()
 	})
 	require.NoError(t, err)
-	require.Equal(t, proto.TaskStateFailed, waitedTask.State)
+	require.Equal(t, proto.TaskStateFailed, waitedTaskBase.State)
+	waitedTask, err := mgr.GetTaskByIDWithHistory(ctx, task.ID)
+	require.NoError(t, err)
 	require.ErrorContains(t, waitedTask.Error, "unknown task type")
 
 	task, err = mgr.GetTaskByID(ctx, 1)

@@ -46,7 +46,7 @@ type resourceCtrlCaseContext struct {
 
 func newResourceCtrlCaseContext(t *testing.T, nodeCnt int, subtaskCntMap map[int64]map[proto.Step]int) *resourceCtrlCaseContext {
 	c := &resourceCtrlCaseContext{
-		TestDXFContext: testutil.NewTestDXFContext(t, nodeCnt),
+		TestDXFContext: testutil.NewTestDXFContext(t, nodeCnt, 16, true),
 		channelMap:     make(map[int64]map[int64]chan error),
 	}
 	c.init(subtaskCntMap)

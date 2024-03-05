@@ -30,7 +30,10 @@ import (
 )
 
 // TableRowStatsCache is the cache of table row count.
-var TableRowStatsCache = &StatsTableRowCache{}
+var TableRowStatsCache = &StatsTableRowCache{
+	tableRows: make(map[int64]uint64),
+	colLength: make(map[tableHistID]uint64),
+}
 
 // tableStatsCacheExpiry is the expiry time for table stats cache.
 var tableStatsCacheExpiry = 3 * time.Second
@@ -74,29 +77,56 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 	return c.colLength[id]
 }
 
+func (c *StatsTableRowCache) updateDirtyIDs(sctx sessionctx.Context) error {
+	if len(c.dirtyIDs) > 0 {
+		tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
+		if err != nil {
+			return err
+		}
+		for id, tr := range tableRows {
+			c.tableRows[id] = tr
+		}
+		colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
+		if err != nil {
+			return err
+		}
+		for id, cl := range colLength {
+			c.colLength[id] = cl
+		}
+		c.dirtyIDs = c.dirtyIDs[:0]
+	}
+	return nil
+}
+
+// UpdateByID tries to update the cache by table ID.
+func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
+		return c.updateDirtyIDs(sctx)
+	}
+	tableRows, err := getRowCountTables(sctx, id)
+	if err != nil {
+		return err
+	}
+	colLength, err := getColLengthTables(sctx, id)
+	if err != nil {
+		return err
+	}
+	c.tableRows[id] = tableRows[id]
+	for k, v := range colLength {
+		c.colLength[k] = v
+	}
+	c.modifyTime = time.Now()
+	return nil
+}
+
 // Update tries to update the cache.
 func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		if len(c.dirtyIDs) > 0 {
-			tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, tr := range tableRows {
-				c.tableRows[id] = tr
-			}
-			colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, cl := range colLength {
-				c.colLength[id] = cl
-			}
-			c.dirtyIDs = c.dirtyIDs[:0]
-		}
-		return nil
+		return c.updateDirtyIDs(sctx)
 	}
 	tableRows, err := getRowCountTables(sctx)
 	if err != nil {

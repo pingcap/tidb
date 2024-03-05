@@ -22,7 +22,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -74,10 +73,12 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
-		Type:            proto.TaskTypeExample,
+		TaskBase: proto.TaskBase{
+			Type:  proto.TaskTypeExample,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            bs,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
 		StateUpdateTime: time.Now(),
 	}
 	manager, err := storage.GetTaskManager()
@@ -169,10 +170,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 func TestSchedulerExtGlobalSort(t *testing.T) {
 	// Domain start scheduler manager automatically, we need to disable it as
 	// we test import task management in this case.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/disableSchedulerManager", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/disableSchedulerManager"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -184,6 +182,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
 
 	// create job
 	conn := tk.Session().(sqlexec.SQLExecutor)
@@ -217,10 +216,12 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
-		Type:            proto.ImportInto,
+		TaskBase: proto.TaskBase{
+			Type:  proto.ImportInto,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            bs,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
 		StateUpdateTime: time.Now(),
 	}
 	manager, err := storage.GetTaskManager()
@@ -290,10 +291,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	}
 
 	// to merge-sort stage
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -329,10 +327,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	}
 
 	// to write-and-ingest stage
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)")
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)

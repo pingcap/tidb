@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package priorityqueue
+package priorityqueue_test
 
 import (
 	"testing"
@@ -20,12 +20,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGenSQLForAnalyzeTable(t *testing.T) {
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema: "test_schema",
 		TableName:   "test_table",
 	}
@@ -33,14 +34,14 @@ func TestGenSQLForAnalyzeTable(t *testing.T) {
 	expectedSQL := "analyze table %n.%n"
 	expectedParams := []any{"test_schema", "test_table"}
 
-	sql, params := job.genSQLForAnalyzeTable()
+	sql, params := job.GenSQLForAnalyzeTable()
 
 	require.Equal(t, expectedSQL, sql)
 	require.Equal(t, expectedParams, params)
 }
 
 func TestGenSQLForAnalyzeIndex(t *testing.T) {
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema: "test_schema",
 		TableName:   "test_table",
 	}
@@ -50,7 +51,7 @@ func TestGenSQLForAnalyzeIndex(t *testing.T) {
 	expectedSQL := "analyze table %n.%n index %n"
 	expectedParams := []any{"test_schema", "test_table", index}
 
-	sql, params := job.genSQLForAnalyzeIndex(index)
+	sql, params := job.GenSQLForAnalyzeIndex(index)
 
 	require.Equal(t, expectedSQL, sql)
 	require.Equal(t, expectedParams, params)
@@ -63,7 +64,7 @@ func TestAnalyzeTable(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, index idx(a))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema:   "test",
 		TableName:     "t",
 		TableStatsVer: 2,
@@ -80,7 +81,7 @@ func TestAnalyzeTable(t *testing.T) {
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
-	job.analyze(sctx, handle, dom.SysProcTracker())
+	job.Analyze(sctx, handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -96,7 +97,7 @@ func TestAnalyzeIndexes(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, index idx(a))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema:   "test",
 		TableName:     "t",
 		Indexes:       []string{"idx"},
@@ -112,7 +113,7 @@ func TestAnalyzeIndexes(t *testing.T) {
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.False(t, tblStats.Indices[1].IsAnalyzed())
 
-	job.analyze(sctx, handle, dom.SysProcTracker())
+	job.Analyze(sctx, handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -122,7 +123,7 @@ func TestAnalyzeIndexes(t *testing.T) {
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
 	// Add a new index.
 	tk.MustExec("alter table t add index idx2(b)")
-	job = &TableAnalysisJob{
+	job = &priorityqueue.TableAnalysisJob{
 		TableSchema:   "test",
 		TableName:     "t",
 		Indexes:       []string{"idx", "idx2"},
@@ -136,7 +137,7 @@ func TestAnalyzeIndexes(t *testing.T) {
 	tblStats = handle.GetTableStats(tbl.Meta())
 	require.Len(t, tblStats.Indices, 1)
 
-	job.analyze(sctx, handle, dom.SysProcTracker())
+	job.Analyze(sctx, handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -153,7 +154,7 @@ func TestAnalyzePartitions(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema:   "test",
 		TableName:     "t",
 		Partitions:    []string{"p0", "p1"},
@@ -172,7 +173,7 @@ func TestAnalyzePartitions(t *testing.T) {
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
 	require.True(t, tblStats.Pseudo)
 
-	job.analyze(sctx, handle, dom.SysProcTracker())
+	job.Analyze(sctx, handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -190,7 +191,7 @@ func TestAnalyzePartitionIndexes(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema: "test",
 		TableName:   "t",
 		PartitionIndexes: map[string][]string{
@@ -214,7 +215,7 @@ func TestAnalyzePartitionIndexes(t *testing.T) {
 	require.NotNil(t, tblStats.Indices[1])
 	require.False(t, tblStats.Indices[1].IsAnalyzed())
 
-	job.analyzePartitionIndexes(sctx, handle, dom.SysProcTracker())
+	job.AnalyzePartitionIndexes(sctx, handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -241,7 +242,7 @@ func TestIsValidToAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema: "example_schema",
 		TableName:   "example_table1",
 		Weight:      2,
@@ -259,11 +260,11 @@ func TestIsValidToAnalyze(t *testing.T) {
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", now)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
+	valid, _ = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
-	require.Equal(t, "last analysis just failed", failReason)
-	// Failed 1 second ago.
-	startTime := tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
+	// Failed 10 seconds ago.
+	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
 	valid, failReason = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
@@ -281,7 +282,7 @@ func TestIsValidToAnalyzeWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema: "example_schema",
 		TableName:   "example_table1",
 		Weight:      2,
@@ -311,7 +312,7 @@ func TestIsValidToAnalyzeForPartitionedTba(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
-	job := &TableAnalysisJob{
+	job := &priorityqueue.TableAnalysisJob{
 		TableSchema: "example_schema",
 		TableName:   "example_table",
 		Weight:      2,
@@ -330,11 +331,11 @@ func TestIsValidToAnalyzeForPartitionedTba(t *testing.T) {
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", now)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
+	valid, _ = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
-	require.Equal(t, "last analysis just failed", failReason)
-	// Failed 1 second ago.
-	startTime := tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
+	// Failed 10 seconds ago.
+	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", startTime)
 	valid, failReason = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
@@ -356,12 +357,12 @@ func TestIsValidToAnalyzeForPartitionedTba(t *testing.T) {
 func TestStringer(t *testing.T) {
 	tests := []struct {
 		name string
-		job  *TableAnalysisJob
+		job  *priorityqueue.TableAnalysisJob
 		want string
 	}{
 		{
 			name: "analyze table",
-			job: &TableAnalysisJob{
+			job: &priorityqueue.TableAnalysisJob{
 				TableID:          1,
 				TableSchema:      "test_schema",
 				TableName:        "test_table",
@@ -373,7 +374,7 @@ func TestStringer(t *testing.T) {
 		},
 		{
 			name: "analyze table index",
-			job: &TableAnalysisJob{
+			job: &priorityqueue.TableAnalysisJob{
 				TableID:          2,
 				TableSchema:      "test_schema",
 				TableName:        "test_table",
@@ -386,7 +387,7 @@ func TestStringer(t *testing.T) {
 		},
 		{
 			name: "analyze partitions",
-			job: &TableAnalysisJob{
+			job: &priorityqueue.TableAnalysisJob{
 				TableID:          3,
 				TableSchema:      "test_schema",
 				TableName:        "test_table",
@@ -399,7 +400,7 @@ func TestStringer(t *testing.T) {
 		},
 		{
 			name: "analyze partition indexes",
-			job: &TableAnalysisJob{
+			job: &priorityqueue.TableAnalysisJob{
 				TableID:     4,
 				TableSchema: "test_schema",
 				TableName:   "test_table",

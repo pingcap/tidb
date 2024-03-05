@@ -39,7 +39,7 @@ func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expect
 }
 
 func TestRoleBasic(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 3)
+	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
@@ -57,7 +57,7 @@ func TestRoleBasic(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()"))
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
 	<-scheduler.TestRefreshedChan
 	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
@@ -71,7 +71,7 @@ func TestRoleBasic(t *testing.T) {
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	time.Sleep(5 * time.Second)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()"))
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
 	<-scheduler.TestRefreshedChan
 	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😆", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))

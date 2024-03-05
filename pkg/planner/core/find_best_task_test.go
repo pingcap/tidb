@@ -139,8 +139,8 @@ func TestCostOverflow(t *testing.T) {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	// Plan Tree: mockPlan -> mockDataSource
-	mockPlan := mockLogicalPlan4Test{costOverflow: true}.Init(ctx)
-	mockDS := mockDataSource{}.Init(ctx)
+	mockPlan := mockLogicalPlan4Test{costOverflow: true}.Init(ctx.GetPlanCtx())
+	mockDS := mockDataSource{}.Init(ctx.GetPlanCtx())
 	mockPlan.SetChildren(mockDS)
 	// An empty property is enough for this test.
 	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
@@ -156,8 +156,8 @@ func TestEnforcedProperty(t *testing.T) {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 	// PlanTree : mockLogicalPlan -> mockDataSource
-	mockPlan := mockLogicalPlan4Test{}.Init(ctx)
-	mockDS := mockDataSource{}.Init(ctx)
+	mockPlan := mockLogicalPlan4Test{}.Init(ctx.GetPlanCtx())
+	mockDS := mockDataSource{}.Init(ctx.GetPlanCtx())
 	mockPlan.SetChildren(mockDS)
 
 	col0 := &expression.Column{UniqueID: 1}
@@ -196,8 +196,8 @@ func TestHintCannotFitProperty(t *testing.T) {
 	mockPlan0 := mockLogicalPlan4Test{
 		hasHintForPlan2:  true,
 		canGeneratePlan2: true,
-	}.Init(ctx)
-	mockDS := mockDataSource{}.Init(ctx)
+	}.Init(ctx.GetPlanCtx())
+	mockDS := mockDataSource{}.Init(ctx.GetPlanCtx())
 	mockPlan0.SetChildren(mockDS)
 
 	col0 := &expression.Column{UniqueID: 1}

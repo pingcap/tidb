@@ -211,6 +211,7 @@ func init() {
 		ErrGroupBadNull: {
 			errno.ErrBadNull,
 			errno.ErrWarnNullToNotnull,
+			errno.ErrNoDefaultForField,
 		},
 		ErrGroupDividedByZero: {
 			errno.ErrDivisionByZero,

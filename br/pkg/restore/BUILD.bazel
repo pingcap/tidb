@@ -154,6 +154,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/types",
+        "//pkg/session",
         "//pkg/sessionctx/stmtctx",
         "//pkg/store/pdtypes",
         "//pkg/tablecodec",

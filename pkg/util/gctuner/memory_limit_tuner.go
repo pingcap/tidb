@@ -39,6 +39,10 @@ type memoryLimitTuner struct {
 	serverMemLimitBeforeAdjust   atomicutil.Uint64
 	percentageBeforeAdjust       atomicutil.Float64
 	nextGCTriggeredByMemoryLimit atomicutil.Bool
+
+	// The flag to disable memory limit adjust. There might be many tasks need to activate it in future,
+	// so it is integer type.
+	adjustDisabled atomicutil.Int64
 }
 
 // fallbackPercentage indicates the fallback memory limit percentage when turning.
@@ -53,6 +57,18 @@ func WaitMemoryLimitTunerExitInTest() {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
+}
+
+// DisableAdjustMemoryLimit makes memoryLimitTuner directly return `initGOMemoryLimitValue` when function `calcMemoryLimit` is called.
+func (t *memoryLimitTuner) DisableAdjustMemoryLimit() {
+	t.adjustDisabled.Add(1)
+	debug.SetMemoryLimit(initGOMemoryLimitValue)
+}
+
+// EnableAdjustMemoryLimit makes memoryLimitTuner return an adjusted memory limit when function `calcMemoryLimit` is called.
+func (t *memoryLimitTuner) EnableAdjustMemoryLimit() {
+	t.adjustDisabled.Add(-1)
+	t.UpdateMemoryLimit()
 }
 
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
@@ -155,7 +171,10 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 	debug.SetMemoryLimit(memoryLimit)
 }
 
-func (*memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
+func (t *memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
+	if t.adjustDisabled.Load() > 0 {
+		return initGOMemoryLimitValue
+	}
 	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * percentage) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if memoryLimit == 0 {
 		memoryLimit = math.MaxInt64

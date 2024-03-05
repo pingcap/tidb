@@ -2386,3 +2386,11 @@ set @@tidb_opt_fix_control = '46177:on';
 explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
 explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
 set @@tidb_opt_fix_control = default;
+
+# TestSysIsAccessibleWithTiFlashReadIsolation
+create table sys.t (id int);
+insert into sys.t values (1),(2);
+set tidb_isolation_read_engines='tiflash';
+select * from sys.t;
+drop table sys.t;
+set tidb_isolation_read_engines=DEFAULT;

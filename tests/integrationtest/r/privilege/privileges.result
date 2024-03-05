@@ -481,7 +481,7 @@ GRANT ALL ON *.* TO 'superuser';
 SET PASSWORD for 'nobodyuser' = 'newpassword';
 SET PASSWORD for 'nobodyuser' = '';
 SET PASSWORD for 'superuser' = 'newpassword';
-Error 1044 (42000): Access denied for user ''@'' to database 'mysql'
+Error 1044 (42000): Access denied for user 'superuser'@'%' to database 'mysql'
 CREATE ROLE tsg_r1;
 CREATE USER tsg_u1, tsg_u2;
 GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1;
@@ -587,3 +587,33 @@ GRANT UPDATE ON `role`.* TO 'joe'@'%'
 GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
 GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
 set global tidb_enable_resource_control = default;
+create table privilege__privileges.admin(a int, KEY idx_a (`a`));
+create user without_super;
+admin set bdr role primary;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show bdr role;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin unset bdr role;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin cancel ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin pause ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin resume ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin checksum table privilege__privileges.admin;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin check table privilege__privileges.admin;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin check index privilege__privileges.admin idx_a;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show ddl jobs;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show ddl job queries 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW SLOW RECENT 3;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW SLOW TOP ALL 3;
+Error 8121 (HY000): privilege check for 'Super' fail

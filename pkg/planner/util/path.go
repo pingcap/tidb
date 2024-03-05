@@ -124,7 +124,7 @@ func (path *AccessPath) IsTablePath() bool {
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx, path.TableFilters) {
+	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
 		return nil, path.TableFilters
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
@@ -334,7 +334,7 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 // GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
 func (path *AccessPath) GetCol2LenFromAccessConds(ctx context.PlanContext) Col2Len {
 	if path.IsTablePath() {
-		return ExtractCol2Len(ctx, path.AccessConds, nil, nil)
+		return ExtractCol2Len(ctx.GetExprCtx(), path.AccessConds, nil, nil)
 	}
-	return ExtractCol2Len(ctx, path.AccessConds, path.IdxCols, path.IdxColLens)
+	return ExtractCol2Len(ctx.GetExprCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }

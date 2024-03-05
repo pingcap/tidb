@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -36,7 +37,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		return plan, planChanged, nil
 	}
 	predicateNeeded := variable.EnableColumnTracking.Load()
-	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
+	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait
 	histNeeded := syncWait > 0
 	predicateColumns, histNeededColumns := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
 	if len(predicateColumns) > 0 {
@@ -94,21 +95,21 @@ func (syncWaitStatsLoadPoint) name() string {
 	return "sync_wait_stats_load_point"
 }
 
-const maxDuration = 1<<63 - 1
-
 // RequestLoadStats send load column/index stats requests to stats handle
 func RequestLoadStats(ctx PlanContext, neededHistItems []model.TableItemID, syncWait int64) error {
+	maxExecutionTime := ctx.GetSessionVars().GetMaxExecutionTime()
+	if maxExecutionTime > 0 && maxExecutionTime < uint64(syncWait) {
+		syncWait = int64(maxExecutionTime)
+	}
+	failpoint.Inject("assertSyncWaitFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			if syncWait != 1 {
+				panic("syncWait should be 1(ms)")
+			}
+		}
+	})
+	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
-	if hintMaxExecutionTime <= 0 {
-		hintMaxExecutionTime = maxDuration
-	}
-	sessMaxExecutionTime := int64(ctx.GetSessionVars().MaxExecutionTime)
-	if sessMaxExecutionTime <= 0 {
-		sessMaxExecutionTime = maxDuration
-	}
-	waitTime := min(syncWait, hintMaxExecutionTime, sessMaxExecutionTime)
-	var timeout = time.Duration(waitTime)
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true

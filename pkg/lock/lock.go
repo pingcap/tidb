@@ -18,16 +18,16 @@ import (
 	"errors"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
 // Checker uses to check tables lock.
 type Checker struct {
-	ctx sessionctx.Context
+	ctx context.TableLockReadContext
 	is  infoschema.InfoSchema
 }
 
@@ -35,7 +35,7 @@ type Checker struct {
 var ErrLockedTableDropped = errors.New("other table can be accessed after locked table dropped")
 
 // NewChecker return new lock Checker.
-func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
+func NewChecker(ctx context.TableLockReadContext, is infoschema.InfoSchema) *Checker {
 	return &Checker{ctx: ctx, is: is}
 }
 

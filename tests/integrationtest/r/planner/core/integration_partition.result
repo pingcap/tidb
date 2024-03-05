@@ -423,24 +423,16 @@ create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 va
 alter table tlist alter index a invisible;
 explain select a from tlist where a>=0 and a<=5;
 id	estRows	task	access object	operator info
-PartitionUnion_8	500.00	root		
-├─TableReader_11	250.00	root		data:Selection_10
-│ └─Selection_10	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
-│   └─TableFullScan_9	10000.00	cop[tikv]	table:tlist, partition:p0	keep order:false, stats:pseudo
-└─TableReader_14	250.00	root		data:Selection_13
-  └─Selection_13	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
-    └─TableFullScan_12	10000.00	cop[tikv]	table:tlist, partition:p1	keep order:false, stats:pseudo
+TableReader_7	250.00	root	partition:all	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:tlist	keep order:false, stats:pseudo
 create table tcollist (a int, b int, key(a)) partition by list columns (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
 alter table tcollist alter index a invisible;
 explain select a from tcollist where a>=0 and a<=5;
 id	estRows	task	access object	operator info
-PartitionUnion_8	500.00	root		
-├─TableReader_11	250.00	root		data:Selection_10
-│ └─Selection_10	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
-│   └─TableFullScan_9	10000.00	cop[tikv]	table:tcollist, partition:p0	keep order:false, stats:pseudo
-└─TableReader_14	250.00	root		data:Selection_13
-  └─Selection_13	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
-    └─TableFullScan_12	10000.00	cop[tikv]	table:tcollist, partition:p1	keep order:false, stats:pseudo
+TableReader_7	250.00	root	partition:p0,p1	data:Selection_6
+└─Selection_6	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:tcollist	keep order:false, stats:pseudo
 create database list_partition_cte;
 use list_partition_cte;
 drop table if exists tlist;
@@ -1312,31 +1304,19 @@ create table q1(a int, b int, key (a)) partition by range (a) (partition p0 valu
 create table q2(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
 explain format=brief select * from q1,q2;
 id	estRows	task	access object	operator info
-HashJoin	400000000.00	root		CARTESIAN inner join
-├─PartitionUnion(Build)	20000.00	root		
-│ ├─TableReader	10000.00	root		data:TableFullScan
-│ │ └─TableFullScan	10000.00	cop[tikv]	table:q2, partition:p0	keep order:false, stats:pseudo
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:q2, partition:p1	keep order:false, stats:pseudo
-└─PartitionUnion(Probe)	20000.00	root		
-  ├─TableReader	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:q1, partition:p0	keep order:false, stats:pseudo
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:q1, partition:p1	keep order:false, stats:pseudo
+HashJoin	100000000.00	root		CARTESIAN inner join
+├─TableReader(Build)	10000.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:q2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:q1	keep order:false, stats:pseudo
 analyze table q1;
 explain format=brief select * from q1,q2;
 id	estRows	task	access object	operator info
-HashJoin	400000000.00	root		CARTESIAN inner join
-├─PartitionUnion(Build)	20000.00	root		
-│ ├─TableReader	10000.00	root		data:TableFullScan
-│ │ └─TableFullScan	10000.00	cop[tikv]	table:q2, partition:p0	keep order:false, stats:pseudo
-│ └─TableReader	10000.00	root		data:TableFullScan
-│   └─TableFullScan	10000.00	cop[tikv]	table:q2, partition:p1	keep order:false, stats:pseudo
-└─PartitionUnion(Probe)	20000.00	root		
-  ├─TableReader	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:q1, partition:p0	keep order:false, stats:pseudo
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:q1, partition:p1	keep order:false, stats:pseudo
+HashJoin	100000000.00	root		CARTESIAN inner join
+├─TableReader(Build)	10000.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:q2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:q1	keep order:false, stats:pseudo
 analyze table q2;
 explain format=brief select * from q1,q2;
 id	estRows	task	access object	operator info

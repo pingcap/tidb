@@ -51,7 +51,7 @@ func (af *avgFunction) updateAvg(ctx types.Context, evalCtx *AggEvaluateContext,
 
 func (af *avgFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	evalCtx.Ctx = ctx
 	evalCtx.Value.SetNull()

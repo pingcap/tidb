@@ -111,8 +111,13 @@ func (tc *TLS) WithHost(host string) *TLS {
 
 // ToGRPCDialOption constructs a gRPC dial option.
 func (tc *TLS) ToGRPCDialOption() grpc.DialOption {
-	if tc.inner != nil {
-		return grpc.WithTransportCredentials(credentials.NewTLS(tc.inner))
+	return ToGRPCDialOption(tc.inner)
+}
+
+// ToGRPCDialOption constructs a gRPC dial option from tls.Config.
+func ToGRPCDialOption(tls *tls.Config) grpc.DialOption {
+	if tls != nil {
+		return grpc.WithTransportCredentials(credentials.NewTLS(tls))
 	}
 	return grpc.WithTransportCredentials(insecure.NewCredentials())
 }

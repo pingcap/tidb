@@ -36,7 +36,7 @@ func TestSubtaskIsDone(t *testing.T) {
 		{SubtaskStateCanceled, true},
 	}
 	for _, c := range cases {
-		require.Equal(t, c.done, (&Subtask{State: c.state}).IsDone())
+		require.Equal(t, c.done, (&Subtask{SubtaskBase: SubtaskBase{State: c.state}}).IsDone())
 	}
 }
 

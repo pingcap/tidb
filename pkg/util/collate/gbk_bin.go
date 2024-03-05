@@ -85,5 +85,5 @@ func (*gbkBinCollator) Pattern() WildcardPattern {
 
 // use binPattern directly, they are totally same.
 type gbkBinPattern struct {
-	binPattern
+	derivedBinPattern
 }

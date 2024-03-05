@@ -169,6 +169,33 @@ func TestGetVar(t *testing.T) {
 	}
 }
 
+func TestTypeConversion(t *testing.T) {
+	ctx := createContext(t)
+	// Set value as int64
+	key := "a"
+	val := int64(3)
+	ctx.GetSessionVars().SetUserVarVal(key, types.NewDatum(val))
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	ctx.GetSessionVars().SetUserVarType(key, tp)
+
+	args := []any{"a"}
+	// To Decimal.
+	tp = types.NewFieldType(mysql.TypeNewDecimal)
+	fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
+	require.NoError(t, err)
+	d, err := fn.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	des := types.NewDecFromInt(3)
+	require.Equal(t, des, d.GetValue())
+	// To Float.
+	tp = types.NewFieldType(mysql.TypeDouble)
+	fn, err = BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
+	require.NoError(t, err)
+	d, err = fn.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, float64(3), d.GetValue())
+}
+
 func TestValues(t *testing.T) {
 	ctx := createContext(t)
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}

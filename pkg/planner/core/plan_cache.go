@@ -54,11 +54,11 @@ type PlanCacheKeyTestIssue46760 struct{}
 type PlanCacheKeyTestIssue47133 struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
-func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+func SetParameterValuesIntoSCtx(sctx PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(sctx, chunk.Row{})
+		val, err := usingParam.Eval(sctx.GetExprCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -99,7 +99,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 2: set parameter values
-	if err := SetParameterValuesIntoSCtx(sctx, isNonPrepared, stmtAst.Params, params); err != nil {
+	if err := SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), isNonPrepared, stmtAst.Params, params); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -274,7 +274,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		return nil, nil, false, err
 	}
 	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-		if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+		if !unionScan && tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
 			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
 			// rebuilding the filters in UnionScan is pretty trivial.
 			sctx.GetSessionPlanCache().Delete(cacheKey)
@@ -316,14 +316,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx, stmt, p, names)
+	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
 			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
 		}
 	}
@@ -619,7 +619,7 @@ func rebuildRange(p Plan) error {
 }
 
 func convertConstant2Datum(ctx PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
-	val, err := con.Eval(ctx, chunk.Row{})
+	val, err := con.Eval(ctx.GetExprCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -758,7 +758,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
-func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
+func tryCachePointPlan(_ context.Context, sctx PlanContext,
 	stmt *PlanCacheStmt, p Plan, names types.NameSlice) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil
@@ -770,7 +770,7 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 	)
 
 	if plan, _ok := p.(*PointGetPlan); _ok {
-		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
 		if err != nil {
 			return err
 		}
@@ -799,7 +799,7 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		return false, nil
 	}
 	// check auto commit
-	if !IsAutoCommitTxn(sctx) {
+	if !IsAutoCommitTxn(sctx.GetSessionVars()) {
 		return false, nil
 	}
 	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {

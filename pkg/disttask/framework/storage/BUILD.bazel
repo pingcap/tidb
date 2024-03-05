@@ -54,7 +54,6 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_goleak//:goleak",

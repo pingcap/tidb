@@ -96,7 +96,7 @@ func updateInPredicate(ctx PlanContext, inPredicate expression.Expression, notEQ
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redundantValue := valueOK && value.Equal(ctx, notEQValue)
+		redundantValue := valueOK && value.Equal(ctx.GetExprCtx(), notEQValue)
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}
@@ -112,7 +112,7 @@ func updateInPredicate(ctx PlanContext, inPredicate expression.Expression, notEQ
 		newValues = append(newValues, lastValue)
 		specialCase = true
 	}
-	newPred := expression.NewFunctionInternal(ctx, v.FuncName.L, v.RetType, newValues...)
+	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), v.FuncName.L, v.RetType, newValues...)
 	return newPred, specialCase
 }
 

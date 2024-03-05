@@ -395,7 +395,7 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql1, "", "")
 		require.NoError(t, err)
 		is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-		builder, _ := core.NewPlanBuilder().Init(tk.Session(), is, hint.NewQBHintHandler(nil))
+		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
 		execPlan, ok := p.(*core.Execute)

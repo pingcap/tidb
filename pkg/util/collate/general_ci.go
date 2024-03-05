@@ -74,7 +74,7 @@ func (p *ciPattern) Compile(patternStr string, escape byte) {
 
 // Compile implements WildcardPattern interface.
 func (p *ciPattern) DoMatch(str string) bool {
-	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
 		return convertRuneGeneralCI(a) == convertRuneGeneralCI(b)
 	})
 }

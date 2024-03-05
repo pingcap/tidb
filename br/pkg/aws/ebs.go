@@ -592,10 +592,12 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 					return errors.Errorf("specified snapshot [%s] is not found", oldVol.SnapshotID)
 				}
 
-				// Copy tags from source snapshots
+				// Copy tags from source snapshots, but avoid recursive tagging
 				for j := range resp.Snapshots[0].Tags {
-					tags = append(tags,
-						ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+					if !strings.HasPrefix(aws.StringValue(resp.Snapshots[0].Tags[j].Key), "snapshot/") {
+						tags = append(tags,
+							ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+					}
 				}
 
 				req.SetTagSpecifications([]*ec2.TagSpecification{

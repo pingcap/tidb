@@ -301,7 +301,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 			updateDigest.String(): "",
 		},
 	}
-	err := r.RetrieveLocal(context.Background(), tk.Session())
+	err := r.RetrieveLocal(context.Background(), tk.Session().GetExprCtx())
 	require.NoError(t, err)
 	require.Equal(t, insertNormalized, r.SQLDigestsMap[insertDigest.String()])
 	require.Equal(t, "", r.SQLDigestsMap[updateDigest.String()])

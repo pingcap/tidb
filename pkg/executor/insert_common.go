@@ -348,10 +348,11 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 
 	e.evalBuffer.SetDatums(row...)
 	sctx := e.Ctx()
+	exprCtx := sctx.GetExprCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
-		val, err := expr.Eval(sctx, e.evalBuffer.ToRow())
+		val, err := expr.Eval(exprCtx, e.evalBuffer.ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -388,11 +389,12 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 	row := make([]types.Datum, rowLen)
 	hasValue := make([]bool, rowLen)
 	sctx := e.Ctx()
+	exprCtx := sctx.GetExprCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		con := expr.(*expression.Constant)
-		val, err := con.Eval(sctx, emptyRow)
+		val, err := con.Eval(exprCtx, emptyRow)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -580,9 +582,12 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 
 	var defaultVal types.Datum
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
-		defaultVal, err = table.EvalColDefaultExpr(e.Ctx(), col.ToInfo(), col.DefaultExpr)
+		defaultVal, err = table.EvalColDefaultExpr(e.Ctx().GetExprCtx(), col.ToInfo(), col.DefaultExpr)
 	} else {
-		defaultVal, err = table.GetColDefaultValue(e.Ctx(), col.ToInfo())
+		if err := table.CheckNoDefaultValueForInsert(e.Ctx().GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
+			return types.Datum{}, err
+		}
+		defaultVal, err = table.GetColDefaultValue(e.Ctx().GetExprCtx(), col.ToInfo())
 	}
 	if err != nil {
 		return types.Datum{}, err
@@ -695,17 +700,18 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	// Handle exchange partition
 	tbl := e.Table.Meta()
 	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(e.Ctx(), row, tbl); err != nil {
+		if err := checkRowForExchangePartition(e.Ctx().GetTableCtx(), row, tbl); err != nil {
 			return nil, err
 		}
 	}
 
 	sctx := e.Ctx()
+	exprCtx := sctx.GetExprCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(sctx, chunk.MutRowFromDatums(row).ToRow())
+		val, err := e.GenExprs[i].Eval(exprCtx, chunk.MutRowFromDatums(row).ToRow())
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
@@ -836,7 +842,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			alloc := e.Table.Allocators(sessVars).Get(autoid.AutoIncrementType)
+			alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoIncrementType)
 			err = alloc.Rebase(ctx, recordID, true)
 			if err != nil {
 				return nil, err
@@ -933,7 +939,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.Allocators(sessVars).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true)
+		err = e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -1051,7 +1057,7 @@ func (e *InsertValues) adjustAutoRandomDatum(
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
 func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
-	alloc := e.Table.Allocators(e.Ctx().GetSessionVars()).Get(autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	increment := e.Ctx().GetSessionVars().AutoIncrementIncrement
 	offset := e.Ctx().GetSessionVars().AutoIncrementOffset
@@ -1075,7 +1081,7 @@ func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, f
 	if recordID < 0 {
 		return nil
 	}
-	alloc := e.Table.Allocators(e.Ctx().GetSessionVars()).Get(autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
 	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
@@ -1114,7 +1120,7 @@ func (e *InsertValues) adjustImplicitRowID(
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		intHandle, err := tables.AllocHandle(ctx, e.Ctx(), e.Table)
+		intHandle, err := tables.AllocHandle(ctx, e.Ctx().GetTableCtx(), e.Table)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -1131,7 +1137,7 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	if recordID < 0 {
 		return nil
 	}
-	alloc := e.Table.Allocators(e.Ctx().GetSessionVars()).Get(autoid.RowIDAllocType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
 	shardFmt := autoid.NewShardIDFormat(
@@ -1350,7 +1356,7 @@ func (e *InsertValues) removeRow(
 		return true, nil
 	}
 
-	err = r.t.RemoveRecord(e.Ctx(), handle, oldRow)
+	err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
 	if err != nil {
 		return false, err
 	}
@@ -1396,9 +1402,9 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		vars.PresumeKeyNotExists = true
 	}
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 	} else {
-		_, err = e.Table.AddRecord(e.Ctx(), row, table.WithCtx(ctx))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx))
 	}
 	vars.PresumeKeyNotExists = false
 	if err != nil {

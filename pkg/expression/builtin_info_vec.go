@@ -34,7 +34,7 @@ func (b *builtinDatabaseSig) vectorized() bool {
 func (b *builtinDatabaseSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	currentDB := ctx.GetSessionVars().CurrentDB
+	currentDB := ctx.CurrentDB()
 	result.ReserveString(n)
 	if currentDB == "" {
 		for i := 0; i < n; i++ {

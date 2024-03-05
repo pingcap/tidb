@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "priorityqueue",
     srcs = [
+        "calculator.go",
         "interval.go",
         "job.go",
         "queue.go",
@@ -24,15 +25,16 @@ go_test(
     name = "priorityqueue_test",
     timeout = "short",
     srcs = [
+        "calculator_test.go",
         "interval_test.go",
         "job_test.go",
         "main_test.go",
         "queue_test.go",
     ],
-    embed = [":priorityqueue"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 17,
     deps = [
+        ":priorityqueue",
         "//pkg/parser/model",
         "//pkg/session",
         "//pkg/sessionctx",

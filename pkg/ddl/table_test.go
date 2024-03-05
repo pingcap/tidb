@@ -195,7 +195,7 @@ func TestTable(t *testing.T) {
 	count := 2000
 	tbl := testGetTable(t, domain, tblInfo.ID)
 	for i := 1; i <= count; i++ {
-		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		_, err := tbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	require.NoError(t, ctx.CommitTxn(context.Background()))

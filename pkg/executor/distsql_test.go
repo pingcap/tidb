@@ -181,7 +181,7 @@ func TestInconsistentIndex(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i), nil)
+		_, err = idxOp.Create(ctx.GetTableCtx(), txn, types.MakeDatums(i+10), kv.IntHandle(100+i), nil)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestInconsistentIndex(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		err = idxOp.Delete(ctx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
+		err = idxOp.Delete(ctx.GetTableCtx(), txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)

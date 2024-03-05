@@ -149,14 +149,14 @@ func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool)
 func (af *aggFunction) CreateContext(ctx expression.EvalContext) *AggEvaluateContext {
 	evalCtx := &AggEvaluateContext{Ctx: ctx}
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	return evalCtx
 }
 
 func (af *aggFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	evalCtx.Ctx = ctx
 	evalCtx.Value.SetNull()

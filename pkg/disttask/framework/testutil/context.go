@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -46,7 +45,7 @@ type tidbNode struct {
 
 // TestDXFContext is the context for testing DXF.
 type TestDXFContext struct {
-	T           *testing.T
+	T           testing.TB
 	Store       kv.Storage
 	Ctx         context.Context
 	TaskMgr     *storage.TaskManager
@@ -70,22 +69,22 @@ type TestDXFContext struct {
 
 // NewDXFContextWithRandomNodes creates a new TestDXFContext with random number
 // of nodes in range [minCnt, maxCnt].
-func NewDXFContextWithRandomNodes(t *testing.T, minCnt, maxCnt int) *TestDXFContext {
+func NewDXFContextWithRandomNodes(t testing.TB, minCnt, maxCnt int) *TestDXFContext {
 	c := newTestDXFContext(t)
 	nodeNum := c.Rand.Intn(maxCnt-minCnt+1) + minCnt
 	t.Logf("dxf context with random node num: %d", nodeNum)
-	c.init(nodeNum)
+	c.init(nodeNum, 16, true)
 	return c
 }
 
 // NewTestDXFContext creates a new TestDXFContext.
-func NewTestDXFContext(t *testing.T, nodeNum int) *TestDXFContext {
+func NewTestDXFContext(t testing.TB, nodeNum int, cpuCount int, reduceCheckInterval bool) *TestDXFContext {
 	c := newTestDXFContext(t)
-	c.init(nodeNum)
+	c.init(nodeNum, cpuCount, reduceCheckInterval)
 	return c
 }
 
-func newTestDXFContext(t *testing.T) *TestDXFContext {
+func newTestDXFContext(t testing.TB) *TestDXFContext {
 	seed := time.Now().UnixNano()
 	t.Log("dxf context seed:", seed)
 	c := &TestDXFContext{
@@ -101,11 +100,14 @@ func newTestDXFContext(t *testing.T) *TestDXFContext {
 	return c
 }
 
-func (c *TestDXFContext) init(nodeNum int) {
-	// make test faster
-	reduceCheckInterval(c.T)
-	// all nodes are isometric with 16 CPUs
-	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+func (c *TestDXFContext) init(nodeNum, cpuCount int, reduceCheckInterval bool) {
+	if reduceCheckInterval {
+		// make test faster
+		ReduceCheckInterval(c.T)
+	}
+	// all nodes are isometric
+	term := fmt.Sprintf("return(%d)", cpuCount)
+	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", term)
 	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()")
 	store := testkit.CreateMockStore(c.T)
@@ -387,10 +389,7 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	defer ctrl.Finish()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "dispatcher")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 
 	executionContext := testkit.NewDistExecutionContext(t, nodeNum)
 	testCtx := &TestContext{
@@ -425,17 +424,21 @@ func getTaskStepKey(id int64, step proto.Step) string {
 	return fmt.Sprintf("%d/%d", id, step)
 }
 
-func reduceCheckInterval(t *testing.T) {
+// ReduceCheckInterval reduces the check interval for test.
+func ReduceCheckInterval(t testing.TB) {
 	schedulerMgrCheckIntervalBak := scheduler.CheckTaskRunningInterval
 	schedulerCheckIntervalBak := scheduler.CheckTaskFinishedInterval
-	checkIntervalBak := taskexecutor.DefaultCheckInterval
-	maxIntervalBak := taskexecutor.MaxCheckInterval
+	taskCheckIntervalBak := taskexecutor.TaskCheckInterval
+	checkIntervalBak := taskexecutor.SubtaskCheckInterval
+	maxIntervalBak := taskexecutor.MaxSubtaskCheckInterval
 	t.Cleanup(func() {
 		scheduler.CheckTaskRunningInterval = schedulerMgrCheckIntervalBak
 		scheduler.CheckTaskFinishedInterval = schedulerCheckIntervalBak
-		taskexecutor.DefaultCheckInterval = checkIntervalBak
-		taskexecutor.MaxCheckInterval = maxIntervalBak
+		taskexecutor.TaskCheckInterval = taskCheckIntervalBak
+		taskexecutor.SubtaskCheckInterval = checkIntervalBak
+		taskexecutor.MaxSubtaskCheckInterval = maxIntervalBak
 	})
 	scheduler.CheckTaskRunningInterval, scheduler.CheckTaskFinishedInterval = 100*time.Millisecond, 100*time.Millisecond
-	taskexecutor.MaxCheckInterval, taskexecutor.DefaultCheckInterval = 10*time.Millisecond, 10*time.Millisecond
+	taskexecutor.TaskCheckInterval, taskexecutor.MaxSubtaskCheckInterval, taskexecutor.SubtaskCheckInterval =
+		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond
 }

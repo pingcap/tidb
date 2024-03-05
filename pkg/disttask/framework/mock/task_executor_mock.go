@@ -123,6 +123,21 @@ func (mr *MockTaskTableMockRecorder) GetSubtasksByExecIDAndStepAndStates(arg0, a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByExecIDAndStepAndStates", reflect.TypeOf((*MockTaskTable)(nil).GetSubtasksByExecIDAndStepAndStates), varargs...)
 }
 
+// GetTaskBaseByID mocks base method.
+func (m *MockTaskTable) GetTaskBaseByID(arg0 context.Context, arg1 int64) (*proto.TaskBase, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskBaseByID", arg0, arg1)
+	ret0, _ := ret[0].(*proto.TaskBase)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTaskBaseByID indicates an expected call of GetTaskBaseByID.
+func (mr *MockTaskTableMockRecorder) GetTaskBaseByID(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskBaseByID", reflect.TypeOf((*MockTaskTable)(nil).GetTaskBaseByID), arg0, arg1)
+}
+
 // GetTaskByID mocks base method.
 func (m *MockTaskTable) GetTaskByID(arg0 context.Context, arg1 int64) (*proto.Task, error) {
 	m.ctrl.T.Helper()
@@ -236,7 +251,7 @@ func (mr *MockTaskTableMockRecorder) RecoverMeta(arg0, arg1, arg2 any) *gomock.C
 }
 
 // RunningSubtasksBack2Pending mocks base method.
-func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.Subtask) error {
+func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.SubtaskBase) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RunningSubtasksBack2Pending", arg0, arg1)
 	ret0, _ := ret[0].(error)
@@ -399,18 +414,18 @@ func (mr *MockTaskExecutorMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTaskExecutor)(nil).Close))
 }
 
-// GetTask mocks base method.
-func (m *MockTaskExecutor) GetTask() *proto.Task {
+// GetTaskBase mocks base method.
+func (m *MockTaskExecutor) GetTaskBase() *proto.TaskBase {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTask")
-	ret0, _ := ret[0].(*proto.Task)
+	ret := m.ctrl.Call(m, "GetTaskBase")
+	ret0, _ := ret[0].(*proto.TaskBase)
 	return ret0
 }
 
-// GetTask indicates an expected call of GetTask.
-func (mr *MockTaskExecutorMockRecorder) GetTask() *gomock.Call {
+// GetTaskBase indicates an expected call of GetTaskBase.
+func (mr *MockTaskExecutorMockRecorder) GetTaskBase() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTask", reflect.TypeOf((*MockTaskExecutor)(nil).GetTask))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskBase", reflect.TypeOf((*MockTaskExecutor)(nil).GetTaskBase))
 }
 
 // Init mocks base method.

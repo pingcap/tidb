@@ -445,6 +445,9 @@ type StatsHandle interface {
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
+	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
+	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
 	// StatsGC is used to do the GC job.
 	StatsGC
 

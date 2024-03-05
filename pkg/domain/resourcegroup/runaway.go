@@ -499,7 +499,8 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	marked := r.marked.Load()
 	if !marked {
 		// note: now we don't check whether query is in watch list again.
-		until := time.Until(r.deadline)
+		now := time.Now()
+		until := r.deadline.Sub(now)
 		if until > 0 {
 			if r.setting.Action == rmpb.RunawayAction_Kill {
 				// if the execution time is close to the threshold, set a timeout
@@ -511,7 +512,6 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		}
 		// execution time exceeds the threshold, mark the query as runaway
 		if r.marked.CompareAndSwap(false, true) {
-			now := time.Now()
 			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
 			r.markQuarantine(&now)
 		}
@@ -529,20 +529,26 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 	}
 }
 
-// AfterCopRequest checks runaway after receiving coprocessor response.
-func (r *RunawayChecker) AfterCopRequest() {
-	if r.setting == nil {
-		return
+// CheckCopRespError checks TiKV error after receiving coprocessor response.
+func (r *RunawayChecker) CheckCopRespError(err error) error {
+	if err == nil || r.setting == nil || r.setting.Action != rmpb.RunawayAction_Kill {
+		return err
 	}
-	// Do not perform action here as it may be the last cop request and just let it finish. If it's not the last cop request, action would be performed in `BeforeCopRequest` when handling the next cop request.
-	// Here only marks the query as runaway
-	if !r.marked.Load() && r.deadline.Before(time.Now()) {
-		if r.marked.CompareAndSwap(false, true) {
+	if strings.HasPrefix(err.Error(), "Coprocessor task terminated due to exceeding the deadline") {
+		if !r.marked.Load() {
 			now := time.Now()
-			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-			r.markQuarantine(&now)
+			if r.deadline.Before(now) && r.marked.CompareAndSwap(false, true) {
+				r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
+				r.markQuarantine(&now)
+				return exeerrors.ErrResourceGroupQueryRunawayInterrupted
+			}
+		}
+		// Due to concurrency, check again.
+		if r.marked.Load() {
+			return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 		}
 	}
+	return err
 }
 
 func (r *RunawayChecker) markQuarantine(now *time.Time) {

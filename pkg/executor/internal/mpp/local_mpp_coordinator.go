@@ -754,7 +754,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 
 	ctx = distsql.WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	ctx = distsql.SetTiFlashConfVarsInContext(ctx, sctx)
+	ctx = distsql.SetTiFlashConfVarsInContext(ctx, sctx.GetSessionVars())
 	c.needTriggerFallback = allowTiFlashFallback
 	c.enableCollectExecutionInfo = config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 

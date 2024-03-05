@@ -201,7 +201,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.index++
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), req)
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if len(e.planPhysIDs) > 0 {
 					physID = e.planPhysIDs[i]
 				} else {
-					physID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, idxVals[e.partPos])
+					physID, err = core.GetPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
 					if err != nil {
 						continue
 					}
@@ -386,7 +386,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		} else {
 			if handle.IsInt() {
 				d := types.NewIntDatum(handle.IntValue())
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -395,7 +395,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if err1 != nil {
 					return err1
 				}
-				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, d)
+				tID, err = core.GetPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}

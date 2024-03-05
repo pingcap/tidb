@@ -210,7 +210,7 @@ func (b extensionFnContext) ActiveRoles() []*auth.RoleIdentity {
 }
 
 func (b extensionFnContext) CurrentDB() string {
-	return b.ctx.GetSessionVars().CurrentDB
+	return b.ctx.CurrentDB()
 }
 
 func init() {

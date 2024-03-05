@@ -647,7 +647,7 @@ func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *ast.ResultFi
 		record.User = row.GetString(i)
 	case "host":
 		record.Host = row.GetString(i)
-		record.patChars, record.patTypes = stringutil.CompilePatternBytes(record.Host, '\\')
+		record.patChars, record.patTypes = stringutil.CompilePatternBinary(record.Host, '\\')
 		record.hostIPNet = parseHostIPNet(record.Host)
 	}
 }
@@ -802,7 +802,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 		switch {
 		case f.ColumnAsName.L == "db":
 			value.DB = row.GetString(i)
-			value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBytes(strings.ToUpper(value.DB), '\\')
+			value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBinary(strings.ToUpper(value.DB), '\\')
 		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
@@ -972,7 +972,7 @@ func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
 // "10.0.%" would match "10.0.1" "10.0.1.118" ...
 func patternMatch(str string, patChars, patTypes []byte) bool {
-	return stringutil.DoMatchBytes(str, patChars, patTypes)
+	return stringutil.DoMatchBinary(str, patChars, patTypes)
 }
 
 // matchIdentity finds an identity to match a user + host

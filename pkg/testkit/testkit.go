@@ -688,7 +688,7 @@ func buildRowsRecordSet(ctx context.Context, rs sqlexec.RecordSet) sqlexec.Recor
 }
 
 // EnableFailPoint enables fail-point, and disable it when test finished.
-func EnableFailPoint(t *testing.T, name, expr string) {
+func EnableFailPoint(t testing.TB, name, expr string) {
 	require.NoError(t, failpoint.Enable(name, expr))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable(name))

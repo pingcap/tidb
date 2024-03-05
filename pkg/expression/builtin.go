@@ -1038,7 +1038,7 @@ func (c *builtinFuncCache[T]) getCache(ctxID uint64) (v T, ok bool) {
 
 func (c *builtinFuncCache[T]) getOrInitCache(ctx EvalContext, constructCache func() (T, error)) (T, error) {
 	intest.Assert(constructCache != nil)
-	ctxID := ctx.GetSessionVars().StmtCtx.CtxID()
+	ctxID := ctx.CtxID()
 	if item, ok := c.getCache(ctxID); ok {
 		return item, nil
 	}

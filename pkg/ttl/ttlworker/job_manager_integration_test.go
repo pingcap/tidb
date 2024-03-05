@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	dbsession "github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
@@ -178,10 +178,10 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval", fmt.Sprintf("return(%d)", time.Second))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval")
 
-	originAutoAnalyzeMinCnt := autoanalyze.AutoAnalyzeMinCnt
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	originAutoAnalyzeMinCnt := exec.AutoAnalyzeMinCnt
+	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
+		exec.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -364,10 +364,10 @@ func TestTTLJobDisable(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", time.Second))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/resize-workers-interval")
 
-	originAutoAnalyzeMinCnt := autoanalyze.AutoAnalyzeMinCnt
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	originAutoAnalyzeMinCnt := exec.AutoAnalyzeMinCnt
+	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
+		exec.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)

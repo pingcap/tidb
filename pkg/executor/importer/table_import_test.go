@@ -27,7 +27,6 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -189,25 +188,6 @@ func (c *mockPDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*m
 }
 
 func (c *mockPDClient) Close() {
-}
-
-type mockPDHttpClient struct {
-	pdhttp.Client
-}
-
-func TestGetTiKVModeSwitcherWithPDClient(t *testing.T) {
-	bak := NewPDHttpClient
-	t.Cleanup(func() {
-		NewPDHttpClient = bak
-	})
-
-	NewPDHttpClient = func(string, []string, ...pdhttp.ClientOption) pdhttp.Client {
-		return &mockPDHttpClient{}
-	}
-	pdClient, switcher, err := GetTiKVModeSwitcherWithPDClient(zap.NewExample())
-	require.NoError(t, err)
-	require.NotNil(t, pdClient)
-	require.NotNil(t, switcher)
 }
 
 func TestGetRegionSplitSizeKeys(t *testing.T) {
