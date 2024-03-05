@@ -19,10 +19,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -142,4 +145,55 @@ func (e *ShowBaseExtractor) FieldPatternLike() collate.WildcardPattern {
 	fieldPatternsLike := collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
 	fieldPatternsLike.Compile(e.fieldPattern, byte('\\'))
 	return fieldPatternsLike
+}
+
+// ShowStatsMetaExtractor is used to extract some predicates of 'show stats_meta'.
+type ShowStatsMetaExtractor struct {
+	extractHelper
+
+	// NodeTypes represents all components types we should send request to.
+	// e.g:
+	// 1. show stats_meta WHERE db_name ='mysql'
+	// 2. show stats_meta WHERE db_name in ('mysql', 'test')
+	DB set.StringSet
+
+	// Instances represents all components instances we should send request to.
+	// e.g:
+	// 1. show stats_meta WHERE table_name='test'
+	// 2. show stats_meta WHERE table_name in ('t1', 't2')
+	Table set.StringSet
+}
+
+// Check extract table_name and db_name filter condition for 'show stats_meta where ...' statement.
+// Used in Show's logical plan predicate push down.
+func (e *ShowStatsMetaExtractor) Check(
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, _, dbNames := e.extractCol(schema, names, predicates, "db_name", true)
+	remained, _, tableNames := e.extractCol(schema, names, remained, "table_name", false)
+	e.DB = dbNames
+	e.Table = tableNames
+	return remained
+}
+
+// Extract implements the ShowPredicateExtractor Extract interface
+func (*ShowStatsMetaExtractor) Extract() bool {
+	return false
+}
+
+// explainInfo implements the ShowPredicateExtractor interface.
+func (*ShowStatsMetaExtractor) explainInfo() string {
+	return ""
+}
+
+// Field implements the ShowPredicateExtractor interface.
+func (*ShowStatsMetaExtractor) Field() string {
+	return ""
+}
+
+// FieldPatternLike implements the ShowPredicateExtractor interface.
+func (*ShowStatsMetaExtractor) FieldPatternLike() collate.WildcardPattern {
+	return nil
 }

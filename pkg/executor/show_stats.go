@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	plancore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -109,8 +111,27 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
+
+	var dbFilter, tblFilter set.StringSet
+	if e.Extractor != nil {
+		if raw, ok := e.Extractor.(*plancore.ShowStatsMetaExtractor); ok {
+			if !raw.DB.Empty() {
+				dbFilter = raw.DB
+			}
+			if !raw.Table.Empty() {
+				tblFilter = raw.Table
+			}
+		}
+	}
+
 	for _, db := range dbs {
+		if dbFilter != nil && !dbFilter.Exist(db.Name.L) {
+			continue
+		}
 		for _, tbl := range db.Tables {
+			if tblFilter != nil && !tblFilter.Exist(tbl.Name.L) {
+				continue
+			}
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""

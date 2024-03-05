@@ -835,6 +835,19 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalShow) PredicatePushDown(predicates []expression.Expression, _ *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	if p.Tp == ast.ShowStatsMeta {
+		extractor := ShowStatsMetaExtractor{}
+		before := len(predicates)
+		predicates = extractor.Check(p.schema, p.names, predicates)
+		if len(predicates) != before {
+			p.Extractor = &extractor
+		}
+	}
+	return predicates, p.self
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	if p.Extractor != nil {
 		predicates = p.Extractor.Extract(p.SCtx(), p.schema, p.names, predicates)
