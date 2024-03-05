@@ -928,6 +928,7 @@ type infoschemaTestContext struct {
 	re     autoid.Requirement
 	ctx    context.Context
 	data   *infoschema.Data
+	is     infoschema.InfoSchema
 }
 
 func (tc *infoschemaTestContext) createSchema() {
@@ -947,27 +948,22 @@ func (tc *infoschemaTestContext) createSchema() {
 	})
 	require.NoError(tc.t, err)
 	tc.dbInfo = dbInfo
+
+	// init infoschema
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithDBInfos([]*model.DBInfo{tc.dbInfo}, nil, nil, 1)
+	require.NoError(tc.t, err)
+	tc.is = builder.Build()
 }
 
-func (tc *infoschemaTestContext) runCreateSchema() infoschema.InfoSchema {
+func (tc *infoschemaTestContext) runCreateSchema() {
 	// create schema
 	tc.createSchema()
 
-	// apply diff
-	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithDBInfos(nil, nil, nil, 1)
-	require.NoError(tc.t, err)
-	txn, err := tc.re.Store().Begin()
-	require.NoError(tc.t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn),
-		&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID})
-	require.NoError(tc.t, err)
-	is := builder.Build()
-
-	// check infoschema
-	dbInfo, ok := is.SchemaByID(tc.dbInfo.ID)
-	require.True(tc.t, ok)
-	require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
-	return is
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		dbInfo, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
+	})
 }
 
 func (tc *infoschemaTestContext) dropSchema() {
@@ -979,26 +975,16 @@ func (tc *infoschemaTestContext) dropSchema() {
 	require.NoError(tc.t, err)
 }
 
-func (tc *infoschemaTestContext) runDropSchema() infoschema.InfoSchema {
+func (tc *infoschemaTestContext) runDropSchema() {
 	// create schema
-	oldIs := tc.runCreateSchema()
+	tc.runCreateSchema()
 	// drop schema
 	tc.dropSchema()
 
-	// apply diff
-	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithOldInfoSchema(oldIs)
-	require.NoError(tc.t, err)
-	txn, err := tc.re.Store().Begin()
-	require.NoError(tc.t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn),
-		&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID, Version: 100})
-	require.NoError(tc.t, err)
-	is := builder.Build()
-
-	// check infoschema
-	_, ok := is.SchemaByID(tc.dbInfo.ID)
-	require.False(tc.t, ok)
-	return is
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		_, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.False(tc.t, ok)
+	})
 }
 
 func (tc *infoschemaTestContext) createTable(tblName string) int64 {
@@ -1032,28 +1018,19 @@ func (tc *infoschemaTestContext) createTable(tblName string) int64 {
 	return tblID
 }
 
-func (tc *infoschemaTestContext) runCreateTable(tblName string) (infoschema.InfoSchema, int64) {
+func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 	if tc.dbInfo == nil {
-		tc.createSchema()
+		tc.runCreateSchema()
 	}
 	// create table
 	tblID := tc.createTable(tblName)
-	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithDBInfos([]*model.DBInfo{tc.dbInfo}, nil, nil, 1)
-	require.NoError(tc.t, err)
 
-	// apply diff
-	txn, err := tc.re.Store().Begin()
-	require.NoError(tc.t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn),
-		&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblID})
-	require.NoError(tc.t, err)
-	is := builder.Build()
-
-	// check infoschema
-	tbl, ok := is.TableByID(tblID)
-	require.True(tc.t, ok)
-	require.Equal(tc.t, tbl.Meta().Name.O, tblName)
-	return is, tblID
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tblID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, tbl.Meta().Name.O, tblName)
+	})
+	return tblID
 }
 
 func (tc *infoschemaTestContext) dropTable(tblName string, tblID int64) {
@@ -1065,31 +1042,103 @@ func (tc *infoschemaTestContext) dropTable(tblName string, tblID int64) {
 	require.NoError(tc.t, err)
 }
 
-func (tc *infoschemaTestContext) runDropTable(tblName string) infoschema.InfoSchema {
+func (tc *infoschemaTestContext) runDropTable(tblName string) {
 	// createTable
-	is, tblID := tc.runCreateTable(tblName)
+	tblID := tc.runCreateTable(tblName)
 
 	// dropTable
 	tc.dropTable(tblName, tblID)
-	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithOldInfoSchema(is)
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tblID)
+		require.False(tc.t, ok)
+		require.Nil(tc.t, tbl)
+	})
+}
+
+func (tc *infoschemaTestContext) runModifyTable(tblName string, tp model.ActionType) {
+	switch tp {
+	case model.ActionAddColumn:
+		tc.runAddColumn(tblName)
+	case model.ActionModifyColumn:
+		tc.runModifyColumn(tblName)
+	default:
+		return
+	}
+}
+
+func (tc *infoschemaTestContext) runAddColumn(tblName string) {
+	tbl, err := tc.is.TableByName(tc.dbInfo.Name, model.NewCIStr(tblName))
 	require.NoError(tc.t, err)
 
+	tc.addColumn(tbl.Meta())
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tbl.Meta().ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, 2, len(tbl.Cols()))
+	})
+}
+
+func (tc *infoschemaTestContext) addColumn(tblInfo *model.TableInfo) {
+	colName := model.NewCIStr("b")
+	colID, err := genGlobalID(tc.re.Store())
+	require.NoError(tc.t, err)
+	colInfo := &model.ColumnInfo{
+		ID:        colID,
+		Name:      colName,
+		Offset:    1,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
+	}
+
+	tblInfo.Columns = append(tblInfo.Columns, colInfo)
+	err = kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateTable(tc.dbInfo.ID, tblInfo)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+}
+
+func (tc *infoschemaTestContext) runModifyColumn(tblName string) {
+	tbl, err := tc.is.TableByName(tc.dbInfo.Name, model.NewCIStr(tblName))
+	require.NoError(tc.t, err)
+
+	tc.modifyColumn(tbl.Meta())
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionModifyColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tbl.Meta().ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, "test", tbl.Cols()[0].Comment)
+	})
+}
+
+func (tc *infoschemaTestContext) modifyColumn(tblInfo *model.TableInfo) {
+	columnInfo := tblInfo.Columns
+	columnInfo[0].Comment = "test"
+
+	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateTable(tc.dbInfo.ID, tblInfo)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+}
+
+func (tc *infoschemaTestContext) applyDiffAddCheck(diff *model.SchemaDiff, checkFn func(tc *infoschemaTestContext)) {
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
-	// applyDiff
-	_, err = builder.ApplyDiff(meta.NewMeta(txn),
-		&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: tc.dbInfo.ID, TableID: tblID})
+
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(tc.is)
 	require.NoError(tc.t, err)
-	is = builder.Build()
-	// check infoschema
-	tbl, ok := is.TableByID(tblID)
-	require.False(tc.t, ok)
-	require.Nil(tc.t, tbl)
-	return is
+	// applyDiff
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), diff)
+	require.NoError(tc.t, err)
+	tc.is = builder.Build()
+	checkFn(tc)
 }
 
 func (tc *infoschemaTestContext) clear() {
 	tc.dbInfo = nil
+	tc.is = nil
 }
 
 func TestApplyDiff(t *testing.T) {
@@ -1118,6 +1167,10 @@ func TestApplyDiff(t *testing.T) {
 		tc.clear()
 		tc.runDropTable("test")
 		tc.clear()
+
+		tc.runCreateTable("test")
+		tc.runModifyTable("test", model.ActionAddColumn)
+		tc.runModifyTable("test", model.ActionModifyColumn)
 	}
 	// TODO(ywqzzy): check all actions.
 }
