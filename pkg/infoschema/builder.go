@@ -1243,25 +1243,12 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 // NewBuilder creates a new Builder with a Handle.
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
 	return &Builder{
-		enableV2:    variable.SchemaCacheSize.Load() > 0,
-		Requirement: r,
-		infoschemaV2: infoschemaV2{
-			infoSchema: &infoSchema{
-				infoSchemaMisc: infoSchemaMisc{
-					policyMap:             map[string]*model.PolicyInfo{},
-					resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-					ruleBundleMap:         map[int64]*placement.Bundle{},
-					referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
-				},
-				schemaMap:           map[string]*schemaTables{},
-				sortedTablesBuckets: make([]sortedTables, bucketCount),
-			},
-			Data: infoData,
-			r:    r,
-		},
-		dirtyDB:  make(map[string]bool),
-		factory:  factory,
-		infoData: infoData,
+		enableV2:     variable.SchemaCacheSize.Load() > 0,
+		Requirement:  r,
+		infoschemaV2: newInfoSchemaV2(r, infoData),
+		dirtyDB:      make(map[string]bool),
+		factory:      factory,
+		infoData:     infoData,
 	}
 }
 
