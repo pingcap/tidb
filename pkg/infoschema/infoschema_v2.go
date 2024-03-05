@@ -289,11 +289,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	if err != nil || ret == nil {
 		return nil, false
 	}
-	if err == nil {
-		is.tableCache.Set(key, ret)
-		return ret, true
-	}
-	return nil, false
+
+	is.tableCache.Set(key, ret)
+	return ret, true
 }
 
 func isSpecialDB(dbName string) bool {
