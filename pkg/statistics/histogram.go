@@ -1077,7 +1077,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// If the modifyCount is large (as a percentage of the base table rows), then any out of range estimate is
 	// unreliable - because this indicates that our statistics are stale. These bounds are therefore approximations.
 	// ModifyCount counts all inserts/updates/deletes - this logic has a bias towards modifications being inserts.
-
 	// Assume a minimum of 1 value is found if we have a high modifyCount. This targest the situation where we search
 	// for a statisically out of range value, but inserts result in the value actually being in that modified range.
 	modifyPercent := min(float64(modifyCount)/hg.NotNullCount(), 1.0)
@@ -1086,7 +1085,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	} else if rowCount < upperBound {
 		rowCount *= hg.GetIncreaseFactor(realtimeRowCount)
 	}
-
 	// Use modifyCount as the final upper bound
 	return min(rowCount, float64(modifyCount))
 }
