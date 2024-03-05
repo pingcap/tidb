@@ -409,10 +409,11 @@ func TestVarsutil(t *testing.T) {
 		a string
 		b string
 	}{
+		// test 0,1 for old true/false value
 		{"1", "ON"},
+		{"0", "OFF"},
 		{"oN", "ON"},
 		{"OfF", "OFF"},
-		{"0", "OFF"},
 		{"marker", "MARKER"},
 		{"2", "MARKER"},
 	} {
