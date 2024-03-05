@@ -484,13 +484,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 	}
 	task.Error = err
 	s.task.Store(&task)
-
-	if err = s.OnDone(s.ctx, s, &task); err != nil {
-		return errors.Trace(err)
-	}
-
-	// TODO: to reverting state?
-	return s.taskMgr.FailTask(s.ctx, task.ID, task.State, task.Error)
+	return s.taskMgr.RevertTask(s.ctx, task.ID, task.State, task.Error)
 }
 
 // MockServerInfo exported for scheduler_test.go

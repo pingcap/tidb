@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -39,17 +39,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBasic(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+type mockAutoIDRequirement struct {
+	store  kv.Storage
+	client *autoid.ClientDiscover
+}
+
+func (mr *mockAutoIDRequirement) Store() kv.Storage {
+	return mr.store
+}
+
+func (mr *mockAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return mr.client
+}
+
+func createAutoIDRequirement(t testing.TB, opts ...mockstore.MockTiKVStoreOption) autoid.Requirement {
+	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
+	return &mockAutoIDRequirement{
+		store:  store,
+		client: nil,
+	}
+}
+
+func TestBasic(t *testing.T) {
+	re := createAutoIDRequirement(t)
 	defer func() {
-		err := store.Close()
+		err := re.Store().Close()
 		require.NoError(t, err)
 	}()
-	// Make sure it calls perfschema.Init().
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
 
 	dbName := model.NewCIStr("Test")
 	tbName := model.NewCIStr("T")
@@ -57,7 +74,7 @@ func TestBasic(t *testing.T) {
 	idxName := model.NewCIStr("idx")
 	noexist := model.NewCIStr("noexist")
 
-	colID, err := genGlobalID(store)
+	colID, err := genGlobalID(re.Store())
 	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
 		ID:        colID,
@@ -82,7 +99,7 @@ func TestBasic(t *testing.T) {
 		State:   model.StatePublic,
 	}
 
-	tbID, err := genGlobalID(store)
+	tbID, err := genGlobalID(re.Store())
 	require.NoError(t, err)
 	tblInfo := &model.TableInfo{
 		ID:      tbID,
@@ -92,7 +109,7 @@ func TestBasic(t *testing.T) {
 		State:   model.StatePublic,
 	}
 
-	dbID, err := genGlobalID(store)
+	dbID, err := genGlobalID(re.Store())
 	require.NoError(t, err)
 	dbInfo := &model.DBInfo{
 		ID:     dbID,
@@ -104,17 +121,17 @@ func TestBasic(t *testing.T) {
 
 	dbInfos := []*model.DBInfo{dbInfo}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
 	require.NoError(t, err)
 
-	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 
-	txn, err := store.Begin()
+	txn, err := re.Store().Begin()
 	require.NoError(t, err)
 	checkApplyCreateNonExistsSchemaDoesNotPanic(t, txn, builder)
 	checkApplyCreateNonExistsTableDoesNotPanic(t, txn, builder, dbID)
@@ -124,11 +141,11 @@ func TestBasic(t *testing.T) {
 	is := builder.Build()
 
 	schemaNames := infoschema.AllSchemaNames(is)
-	require.Len(t, schemaNames, 4)
-	require.True(t, testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test"}))
+	require.Len(t, schemaNames, 3)
+	require.True(t, testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, "Test"}))
 
 	schemas := is.AllSchemas()
-	require.Len(t, schemas, 4)
+	require.Len(t, schemas, 3)
 
 	require.True(t, is.SchemaExists(dbName))
 	require.False(t, is.SchemaExists(noexist))
@@ -189,13 +206,13 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
-	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateTableOrView(dbID, dbName.L, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
 	require.NoError(t, err)
-	txn, err = store.Begin()
+	txn, err = re.Store().Begin()
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
 	require.NoError(t, err)
@@ -244,13 +261,14 @@ func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction
 
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func TestInfoTables(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	re := createAutoIDRequirement(t)
+
 	defer func() {
-		err := store.Close()
+		err := re.Store().Close()
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build()
 
@@ -307,27 +325,45 @@ func genGlobalID(store kv.Storage) (int64, error) {
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
 	})
-	return globalID, errors.Trace(err)
+	return globalID + 100, errors.Trace(err)
 }
 
 func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	re := createAutoIDRequirement(t)
+	defer func() {
+		err := re.Store().Close()
+		require.NoError(t, err)
+	}()
 
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	is := dom.InfoSchema()
+	dbInfo := &model.DBInfo{
+		ID:     1,
+		Name:   model.NewCIStr("test"),
+		Tables: []*model.TableInfo{},
+		State:  model.StatePublic,
+	}
+	dbInfos := []*model.DBInfo{dbInfo}
+	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	require.NoError(t, err)
+	is := builder.Build()
 	require.False(t, is.HasTemporaryTable())
 	db, ok := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
 
 	doChange := func(changes ...func(m *meta.Meta, builder *infoschema.Builder)) infoschema.InfoSchema {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		curIs := is
-		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder := infoschema.NewBuilder(dom, nil, nil).InitWithOldInfoSchema(curIs)
+				builder, err := infoschema.NewBuilder(re, nil, nil).InitWithOldInfoSchema(curIs)
+				require.NoError(t, err)
 				change(m, builder)
 				curIs = builder.Build()
 			}
@@ -395,7 +431,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	}
 
 	// create table
-	tbID, err := genGlobalID(store)
+	tbID, err := genGlobalID(re.Store())
 	require.NoError(t, err)
 	newIS := doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -405,12 +441,12 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	// full load
 	newDB, ok := newIS.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
-	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
+	builder, err = infoschema.NewBuilder(re, nil, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
 	require.True(t, builder.Build().HasTemporaryTable())
 
 	// create and then drop
-	tbID, err = genGlobalID(store)
+	tbID, err = genGlobalID(re.Store())
 	require.NoError(t, err)
 	require.False(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -418,7 +454,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	).HasTemporaryTable())
 
 	// create and then alter
-	tbID, err = genGlobalID(store)
+	tbID, err = genGlobalID(re.Store())
 	require.NoError(t, err)
 	require.True(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -426,9 +462,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	).HasTemporaryTable())
 
 	// create and truncate
-	tbID, err = genGlobalID(store)
+	tbID, err = genGlobalID(re.Store())
 	require.NoError(t, err)
-	newTbID, err := genGlobalID(store)
+	newTbID, err := genGlobalID(re.Store())
 	require.NoError(t, err)
 	require.True(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -436,9 +472,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	).HasTemporaryTable())
 
 	// create two and drop one
-	tbID, err = genGlobalID(store)
+	tbID, err = genGlobalID(re.Store())
 	require.NoError(t, err)
-	tbID2, err := genGlobalID(store)
+	tbID2, err := genGlobalID(re.Store())
 	require.NoError(t, err)
 	require.True(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -447,9 +483,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	).HasTemporaryTable())
 
 	// create temporary and then create normal
-	tbID, err = genGlobalID(store)
+	tbID, err = genGlobalID(re.Store())
 	require.NoError(t, err)
-	tbID2, err = genGlobalID(store)
+	tbID2, err = genGlobalID(re.Store())
 	require.NoError(t, err)
 	require.True(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -539,15 +575,15 @@ func TestBuildBundle(t *testing.T) {
 }
 
 func TestLocalTemporaryTables(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	re := createAutoIDRequirement(t)
 	var err error
 	defer func() {
-		err := store.Close()
+		err := re.Store().Close()
 		require.NoError(t, err)
 	}()
 
 	createNewSchemaInfo := func(schemaName string) *model.DBInfo {
-		schemaID, err := genGlobalID(store)
+		schemaID, err := genGlobalID(re.Store())
 		require.NoError(t, err)
 		return &model.DBInfo{
 			ID:    schemaID,
@@ -556,8 +592,8 @@ func TestLocalTemporaryTables(t *testing.T) {
 		}
 	}
 
-	createNewTable := func(schemaID int64, tbName string, tempType model.TempTableType) table.Table {
-		colID, err := genGlobalID(store)
+	createNewTable := func(schemaID int64, tbName string) table.Table {
+		colID, err := genGlobalID(re.Store())
 		require.NoError(t, err)
 
 		colInfo := &model.ColumnInfo{
@@ -568,7 +604,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 			State:     model.StatePublic,
 		}
 
-		tbID, err := genGlobalID(store)
+		tbID, err := genGlobalID(re.Store())
 		require.NoError(t, err)
 
 		tblInfo := &model.TableInfo{
@@ -580,7 +616,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 			DBID:    schemaID,
 		}
 
-		allocs := autoid.NewAllocatorsFromTblInfo(dom, schemaID, tblInfo)
+		allocs := autoid.NewAllocatorsFromTblInfo(re, schemaID, tblInfo)
 		tbl, err := table.TableFromMeta(allocs, tblInfo)
 		require.NoError(t, err)
 
@@ -632,20 +668,20 @@ func TestLocalTemporaryTables(t *testing.T) {
 
 	sc := infoschema.NewSessionTables()
 	db1 := createNewSchemaInfo("db1")
-	tb11 := createNewTable(db1.ID, "tb1", model.TempTableLocal)
-	tb12 := createNewTable(db1.ID, "Tb2", model.TempTableLocal)
-	tb13 := createNewTable(db1.ID, "tb3", model.TempTableLocal)
+	tb11 := createNewTable(db1.ID, "tb1")
+	tb12 := createNewTable(db1.ID, "Tb2")
+	tb13 := createNewTable(db1.ID, "tb3")
 
 	// db1b has the same name with db1
 	db1b := createNewSchemaInfo("db1b")
-	tb15 := createNewTable(db1b.ID, "tb5", model.TempTableLocal)
-	tb16 := createNewTable(db1b.ID, "tb6", model.TempTableLocal)
-	tb17 := createNewTable(db1b.ID, "tb7", model.TempTableLocal)
+	tb15 := createNewTable(db1b.ID, "tb5")
+	tb16 := createNewTable(db1b.ID, "tb6")
+	tb17 := createNewTable(db1b.ID, "tb7")
 
 	db2 := createNewSchemaInfo("db2")
-	tb21 := createNewTable(db2.ID, "tb1", model.TempTableLocal)
-	tb22 := createNewTable(db2.ID, "TB2", model.TempTableLocal)
-	tb24 := createNewTable(db2.ID, "tb4", model.TempTableLocal)
+	tb21 := createNewTable(db2.ID, "tb1")
+	tb22 := createNewTable(db2.ID, "TB2")
+	tb24 := createNewTable(db2.ID, "tb4")
 
 	prepareTables := []struct {
 		db *model.DBInfo
@@ -696,7 +732,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	err = sc.AddTable(db1b, tb11)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 	db1c := createNewSchemaInfo("db1")
-	err = sc.AddTable(db1c, createNewTable(db1c.ID, "tb1", model.TempTableLocal))
+	err = sc.AddTable(db1c, createNewTable(db1c.ID, "tb1"))
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 	err = sc.AddTable(db1b, tb11)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
@@ -723,7 +759,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	}
 
 	// test non exist tables by id
-	nonExistID, err := genGlobalID(store)
+	nonExistID, err := genGlobalID(re.Store())
 	require.NoError(t, err)
 
 	for _, id := range []int64{nonExistID, tb11.Meta().ID, tb22.Meta().ID} {
@@ -736,10 +772,10 @@ func TestLocalTemporaryTables(t *testing.T) {
 
 	// test SessionExtendedInfoSchema
 	dbTest := createNewSchemaInfo("test")
-	tmpTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableLocal)
-	normalTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableNone)
-	normalTbTestB := createNewTable(dbTest.ID, "tbb", model.TempTableNone)
-	normalTbTestC := createNewTable(db1.ID, "tbc", model.TempTableNone)
+	tmpTbTestA := createNewTable(dbTest.ID, "tba")
+	normalTbTestA := createNewTable(dbTest.ID, "tba")
+	normalTbTestB := createNewTable(dbTest.ID, "tbb")
+	normalTbTestC := createNewTable(db1.ID, "tbc")
 
 	is := &infoschema.SessionExtendedInfoSchema{
 		InfoSchema:           infoschema.MockInfoSchema([]*model.TableInfo{normalTbTestA.Meta(), normalTbTestB.Meta()}),
@@ -847,4 +883,287 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
 	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
+}
+
+func TestEnableInfoSchemaV2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Test the @@tidb_enable_infoschema_v2 variable.
+	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(0))
+
+	// Modify it.
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("1024"))
+	tk.MustQuery("select @@tidb_schema_cache_size").Check(testkit.Rows("1024"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(1024))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table v2 (id int)")
+
+	// Check the InfoSchema used is V2.
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	require.True(t, infoschema.IsV2(is))
+
+	// Execute some basic operations under infoschema v2.
+	tk.MustQuery("show tables").Check(testkit.Rows("v2"))
+	tk.MustExec("drop table v2")
+	tk.MustExec("create table v1 (id int)")
+
+	// Change infoschema back to v1 and check again.
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").Check(testkit.Rows("0"))
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(0))
+
+	tk.MustExec("drop table v1")
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	require.False(t, infoschema.IsV2(is))
+}
+
+type infoschemaTestContext struct {
+	// only test one db.
+	dbInfo *model.DBInfo
+	t      *testing.T
+	re     autoid.Requirement
+	ctx    context.Context
+	is     infoschema.InfoSchema
+}
+
+func (tc *infoschemaTestContext) createSchema() {
+	dbID, err := genGlobalID(tc.re.Store())
+	require.NoError(tc.t, err)
+	dbInfo := &model.DBInfo{
+		ID:     dbID,
+		Name:   model.NewCIStr("test"),
+		Tables: []*model.TableInfo{},
+		State:  model.StatePublic,
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+	tc.dbInfo = dbInfo
+
+	// init infoschema
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithDBInfos([]*model.DBInfo{tc.dbInfo}, nil, nil, 1)
+	require.NoError(tc.t, err)
+	tc.is = builder.Build()
+}
+
+func (tc *infoschemaTestContext) runCreateSchema() {
+	// create schema
+	tc.createSchema()
+
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		dbInfo, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
+	})
+}
+
+func (tc *infoschemaTestContext) dropSchema() {
+	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).DropDatabase(tc.dbInfo.ID, tc.dbInfo.Name.O)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+}
+
+func (tc *infoschemaTestContext) runDropSchema() {
+	// create schema
+	tc.runCreateSchema()
+
+	// drop schema
+	tc.dropSchema()
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		_, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.False(tc.t, ok)
+	})
+}
+
+func (tc *infoschemaTestContext) createTable(tblName string) int64 {
+	colName := model.NewCIStr("a")
+
+	colID, err := genGlobalID(tc.re.Store())
+	require.NoError(tc.t, err)
+	colInfo := &model.ColumnInfo{
+		ID:        colID,
+		Name:      colName,
+		Offset:    0,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
+	}
+
+	tblID, err := genGlobalID(tc.re.Store())
+	require.NoError(tc.t, err)
+	tblInfo := &model.TableInfo{
+		ID:      tblID,
+		Name:    model.NewCIStr(tblName),
+		Columns: []*model.ColumnInfo{colInfo},
+		State:   model.StatePublic,
+	}
+
+	err = kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateTableOrView(tc.dbInfo.ID, tc.dbInfo.Name.O, tblInfo)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+	return tblID
+}
+
+func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
+	if tc.dbInfo == nil {
+		tc.runCreateSchema()
+	}
+	// create table
+	tblID := tc.createTable(tblName)
+
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tblID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, tbl.Meta().Name.O, tblName)
+	})
+	return tblID
+}
+
+func (tc *infoschemaTestContext) dropTable(tblName string, tblID int64) {
+	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).DropTableOrView(tc.dbInfo.ID, tc.dbInfo.Name.O, tblID, tblName)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+}
+
+func (tc *infoschemaTestContext) runDropTable(tblName string) {
+	// createTable
+	tblID := tc.runCreateTable(tblName)
+
+	// dropTable
+	tc.dropTable(tblName, tblID)
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tblID)
+		require.False(tc.t, ok)
+		require.Nil(tc.t, tbl)
+	})
+}
+
+func (tc *infoschemaTestContext) runModifyTable(tblName string, tp model.ActionType) {
+	switch tp {
+	case model.ActionAddColumn:
+		tc.runAddColumn(tblName)
+	case model.ActionModifyColumn:
+		tc.runModifyColumn(tblName)
+	default:
+		return
+	}
+}
+
+func (tc *infoschemaTestContext) runAddColumn(tblName string) {
+	tbl, err := tc.is.TableByName(tc.dbInfo.Name, model.NewCIStr(tblName))
+	require.NoError(tc.t, err)
+
+	tc.addColumn(tbl.Meta())
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tbl.Meta().ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, 2, len(tbl.Cols()))
+	})
+}
+
+func (tc *infoschemaTestContext) addColumn(tblInfo *model.TableInfo) {
+	colName := model.NewCIStr("b")
+	colID, err := genGlobalID(tc.re.Store())
+	require.NoError(tc.t, err)
+	colInfo := &model.ColumnInfo{
+		ID:        colID,
+		Name:      colName,
+		Offset:    1,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
+	}
+
+	tblInfo.Columns = append(tblInfo.Columns, colInfo)
+	err = kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateTable(tc.dbInfo.ID, tblInfo)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+}
+
+func (tc *infoschemaTestContext) runModifyColumn(tblName string) {
+	tbl, err := tc.is.TableByName(tc.dbInfo.Name, model.NewCIStr(tblName))
+	require.NoError(tc.t, err)
+
+	tc.modifyColumn(tbl.Meta())
+	tc.applyDiffAddCheck(&model.SchemaDiff{Type: model.ActionModifyColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tbl.Meta().ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, "test", tbl.Cols()[0].Comment)
+	})
+}
+
+func (tc *infoschemaTestContext) modifyColumn(tblInfo *model.TableInfo) {
+	columnInfo := tblInfo.Columns
+	columnInfo[0].Comment = "test"
+
+	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateTable(tc.dbInfo.ID, tblInfo)
+		require.NoError(tc.t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(tc.t, err)
+}
+
+func (tc *infoschemaTestContext) applyDiffAddCheck(diff *model.SchemaDiff, checkFn func(tc *infoschemaTestContext)) {
+	txn, err := tc.re.Store().Begin()
+	require.NoError(tc.t, err)
+
+	builder, err := infoschema.NewBuilder(tc.re, nil, nil).InitWithOldInfoSchema(tc.is)
+	require.NoError(tc.t, err)
+	// applyDiff
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), diff)
+	require.NoError(tc.t, err)
+	tc.is = builder.Build()
+	checkFn(tc)
+}
+
+func (tc *infoschemaTestContext) clear() {
+	tc.dbInfo = nil
+	tc.is = nil
+}
+
+func TestApplyDiff(t *testing.T) {
+	re := createAutoIDRequirement(t)
+	defer func() {
+		err := re.Store().Close()
+		require.NoError(t, err)
+	}()
+
+	tc := &infoschemaTestContext{
+		t:   t,
+		re:  re,
+		ctx: kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+	}
+
+	tc.runCreateSchema()
+	tc.clear()
+	tc.runDropSchema()
+	tc.clear()
+	tc.runCreateTable("test")
+	tc.clear()
+	tc.runDropTable("test")
+	tc.clear()
+
+	tc.runCreateTable("test")
+	tc.runModifyTable("test", model.ActionAddColumn)
+	tc.runModifyTable("test", model.ActionModifyColumn)
+	// TODO check all actions..
 }

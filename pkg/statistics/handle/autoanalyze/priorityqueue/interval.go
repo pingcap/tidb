@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
-// noRecord is used to indicate that there is no related record in mysql.analyze_jobs.
-const noRecord = -1
+// NoRecord is used to indicate that there is no related record in mysql.analyze_jobs.
+const NoRecord = -1
 
 // justFailed is used to indicate that the last analysis has just failed.
 const justFailed = 0
@@ -80,9 +80,9 @@ const lastFailedDurationQueryForPartition = `
 	JOIN mysql.analyze_jobs aj ON aj.id = latest_failures.max_id;
 `
 
-// getAverageAnalysisDuration returns the average duration of the last 5 successful analyses for each specified partition.
+// GetAverageAnalysisDuration returns the average duration of the last 5 successful analyses for each specified partition.
 // If there are no successful analyses, it returns 0.
-func getAverageAnalysisDuration(
+func GetAverageAnalysisDuration(
 	sctx sessionctx.Context,
 	schema, tableName string,
 	partitionNames ...string,
@@ -99,25 +99,25 @@ func getAverageAnalysisDuration(
 
 	rows, _, err := util.ExecRows(sctx, query, params...)
 	if err != nil {
-		return noRecord, err
+		return NoRecord, err
 	}
 
 	// NOTE: if there are no successful analyses, we return 0.
 	if len(rows) == 0 || rows[0].IsNull(0) {
-		return noRecord, nil
+		return NoRecord, nil
 	}
 	avgDuration := rows[0].GetMyDecimal(0)
 	duration, err := avgDuration.ToFloat64()
 	if err != nil {
-		return noRecord, err
+		return NoRecord, err
 	}
 
 	return time.Duration(duration) * time.Second, nil
 }
 
-// getLastFailedAnalysisDuration returns the duration since the last failed analysis.
+// GetLastFailedAnalysisDuration returns the duration since the last failed analysis.
 // If there is no failed analysis, it returns 0.
-func getLastFailedAnalysisDuration(
+func GetLastFailedAnalysisDuration(
 	sctx sessionctx.Context,
 	schema, tableName string,
 	partitionNames ...string,
@@ -134,12 +134,12 @@ func getLastFailedAnalysisDuration(
 
 	rows, _, err := util.ExecRows(sctx, query, params...)
 	if err != nil {
-		return noRecord, err
+		return NoRecord, err
 	}
 
 	// NOTE: if there are no failed analyses, we return 0.
 	if len(rows) == 0 || rows[0].IsNull(0) {
-		return noRecord, nil
+		return NoRecord, nil
 	}
 	lastFailedDuration := rows[0].GetUint64(0)
 	if lastFailedDuration == 0 {

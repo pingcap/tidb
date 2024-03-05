@@ -17,7 +17,6 @@ package taskexecutor
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -277,12 +276,6 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 			executor.Cancel()
 		}
 	}
-}
-
-// TestContext only used in tests.
-type TestContext struct {
-	TestSyncSubtaskRun chan struct{}
-	mockDown           atomic.Bool
 }
 
 // startTaskExecutor handles a runnable task.
