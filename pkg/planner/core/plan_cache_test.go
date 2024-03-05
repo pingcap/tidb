@@ -1606,7 +1606,10 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 	// since it is already using the fast path!
 	tk.MustExec(`insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`)
 	tk.MustExec(`analyze table t`)
-	tk.MustQuery(`explain format='plan_cache' select * from t where a IN (2,1,4,1,1,5,5)`).Check(testkit.Rows("Batch_Point_Get_1 7.00 root table:t, partition:p1,p2, index:PRIMARY(a) keep order:false, desc:false"))
+	tk.MustQuery(`explain format='plan_cache' select * from t where a IN (2,1,4,1,1,5,5)`).Check(testkit.Rows(""+
+		"IndexLookUp_7 4.00 root partition:p1,p2 ",
+		"├─IndexRangeScan_5(Build) 4.00 cop[tikv] table:t, index:PRIMARY(a) range:[1,1], [2,2], [4,4], [5,5], keep order:false",
+		"└─TableRowIDScan_6(Probe) 4.00 cop[tikv] table:t keep order:false"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`select * from t where a IN (2,1,4,1,1,5,5)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
 	tk.MustQuery(`select * from t where a IN (1,3,4)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
