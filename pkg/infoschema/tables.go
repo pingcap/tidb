@@ -1989,7 +1989,7 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
 		// PD is not in the microservice mode
-		if resp.StatusCode == http.StatusNotFound {
+		if resp.StatusCode == http.StatusServiceUnavailable {
 			terror.Log(resp.Body.Close())
 			return servers, nil
 		}
