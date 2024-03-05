@@ -2002,14 +2002,27 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
+<<<<<<< HEAD:executor/builder.go
 			strings.ToLower(infoschema.TableResourceGroups):
+=======
+			strings.ToLower(infoschema.TableResourceGroups),
+			strings.ToLower(infoschema.TableRunawayWatches),
+			strings.ToLower(infoschema.TableCheckConstraints),
+			strings.ToLower(infoschema.TableTiDBCheckConstraints),
+			strings.ToLower(infoschema.TableKeywords),
+			strings.ToLower(infoschema.TableTiDBIndexUsage),
+			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+>>>>>>> 4f4f911b706 (executor: add memory tracker for memtableRetriever (#51455)):pkg/executor/builder.go
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor,
+					table:      v.Table,
+					columns:    v.Columns,
+					extractor:  v.Extractor,
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),
