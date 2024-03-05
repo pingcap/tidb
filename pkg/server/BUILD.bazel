@@ -105,6 +105,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/diagnosticspb",
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_kvproto//pkg/tikvpb",
+        "@com_github_pingcap_log//:log",
         "@com_github_pingcap_sysutil//:sysutil",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/promhttp",
