@@ -56,7 +56,6 @@ func UpdateStatsMeta(
 	delta variable.TableDelta,
 	id int64,
 	isLocked bool,
-	lastAnalyzeVersion uint64,
 ) (err error) {
 	if isLocked {
 		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
@@ -70,14 +69,14 @@ func UpdateStatsMeta(
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count, last_analyze_version) values (%?, %?, %?, 0, %?) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0), last_analyze_version = greatest(last_analyze_version, values(last_analyze_version))",
-				startTS, id, delta.Count, lastAnalyzeVersion, -delta.Delta, -delta.Delta)
+			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
+				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
 		} else {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count, last_analyze_version) values (%?, %?, %?, %?, %?) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count), last_analyze_version = greatest(last_analyze_version, values(last_analyze_version))",
-				startTS, id, delta.Count, delta.Delta, lastAnalyzeVersion)
+			_, err = statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
+				id, delta.Count, delta.Delta)
 		}
 		cache.TableRowStatsCache.Invalidate(id)
 	}

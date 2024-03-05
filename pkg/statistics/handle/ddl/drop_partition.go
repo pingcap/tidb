@@ -58,7 +58,6 @@ func (h *ddlHandlerImpl) onDropPartitions(t *util.DDLEvent) error {
 				variable.TableDelta{Count: count, Delta: delta},
 				globalTableInfo.ID,
 				isLocked,
-				0,
 			)
 			return err
 		}

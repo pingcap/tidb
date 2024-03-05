@@ -168,14 +168,9 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			if _, ok := lockedTables[physicalTableID]; ok {
 				isPartitionLocked = true
 			}
-			statsTbl, found := s.statsHandle.Get(physicalTableID)
-			lastAnalyzeVersion := uint64(0)
-			if found && statsTbl.LastAnalyzeVersion > 0 {
-				lastAnalyzeVersion = statsTbl.LastAnalyzeVersion
-			}
 			tableOrPartitionLocked := isTableLocked || isPartitionLocked
 			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
-				physicalTableID, tableOrPartitionLocked, lastAnalyzeVersion); err != nil {
+				physicalTableID, tableOrPartitionLocked); err != nil {
 				return err
 			}
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
@@ -192,7 +187,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
 			if !isTableLocked && !isPartitionLocked {
 				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-				if err = storage.UpdateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked, lastAnalyzeVersion); err != nil {
+				if err = storage.UpdateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
 					return err
 				}
 				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
@@ -204,13 +199,8 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			if _, ok := lockedTables[physicalTableID]; ok {
 				isTableLocked = true
 			}
-			statsTbl, found := s.statsHandle.Get(physicalTableID)
-			lastAnalyzeVersion := uint64(0)
-			if found && statsTbl.LastAnalyzeVersion > 0 {
-				lastAnalyzeVersion = statsTbl.LastAnalyzeVersion
-			}
 			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
-				physicalTableID, isTableLocked, lastAnalyzeVersion); err != nil {
+				physicalTableID, isTableLocked); err != nil {
 				return err
 			}
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()

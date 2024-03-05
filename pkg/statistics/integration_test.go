@@ -544,11 +544,13 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.Equal(t, lastAnalyzeVer, statsTbl.LastAnalyzeVersion)
-	tk.MustQuery(fmt.Sprintf("select last_analyze_version from mysql.stats_meta where table_id = %v", tbl.Meta().ID)).Check(testkit.Rows(fmt.Sprintf("%v", lastAnalyzeVer)))
 
-	// Again, INSERT and updating the modify_count should not set the last_analyze_version
-	tk.MustExec("insert into t values(1, 1)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	// Again, only alter table should not set the last_analyze_version
+	tk.MustExec("alter table t add column c int default 0")
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.Update(is))
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
