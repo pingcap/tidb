@@ -417,7 +417,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 	switch e.Type {
-	case EventAdd:
+	case EventAdd,EventResume:
 		utils.LogBackupTaskCountInc()
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
@@ -432,6 +432,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	case EventDel,EventPause:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
+		log.Info("reach here")
 		c.taskRange = nil
 		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
 		// Do the null check because some of test cases won't equip the advancer with subscriber.
