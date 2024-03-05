@@ -466,6 +466,10 @@ func TestSplitKeyRanges(t *testing.T) {
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "a", "c")
 
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("a", "c"), 0)
+	require.NoError(t, err)
+	require.Len(t, ranges, 0)
+
 	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("h", "y"), UnspecifiedLimit)
 	require.NoError(t, err)
 	require.Len(t, ranges, 3)
