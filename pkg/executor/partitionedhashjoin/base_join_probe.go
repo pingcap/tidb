@@ -281,16 +281,16 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 	}
 }
 
-func NewJoinProbe(ctx *PartitionedHashJoinCtx, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType, lUsed, rUsed, lUsedInOtherCondition, rUsedInOtherCondition []int) JoinProbe {
+func NewJoinProbe(ctx *PartitionedHashJoinCtx, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType) JoinProbe {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		keyIndex:              keyIndex,
 		columnTypes:           probeColumnTypes,
 		maxChunkSize:          ctx.SessCtx.GetSessionVars().MaxChunkSize,
-		lUsed:                 lUsed,
-		rUsed:                 rUsed,
-		lUsedInOtherCondition: lUsedInOtherCondition,
-		rUsedInOtherCondition: rUsedInOtherCondition,
+		lUsed:                 ctx.LUsed,
+		rUsed:                 ctx.RUsed,
+		lUsedInOtherCondition: ctx.LUsedInOtherCondition,
+		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 	}
 	for i := range keyIndex {
 		if !mysql.HasNotNullFlag(base.columnTypes[i].GetFlag()) {
