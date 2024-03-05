@@ -27,12 +27,12 @@ func TestVariable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, 0)
+	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, false)
 	tk.MustExec("set session tidb_dml_type = bulk")
-	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, 1)
+	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, true)
 	tk.MustExec("set session tidb_dml_type = standard")
-	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, 0)
-	// not supportegod yet.
+	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, false)
+	// not supported yet.
 	tk.MustExecToErr("set session tidb_dml_type = bulk(10)")
 }
 
