@@ -34,4 +34,17 @@ show tables;
 Tables_in_tt
 drop table test;
 Error 1051 (42S02): Unknown table 'tt.test'
+drop database tt;
 set global tidb_schema_cache_size = 0;
+create database tt1;
+show databases;
+Database
+INFORMATION_SCHEMA
+METRICS_SCHEMA
+PERFORMANCE_SCHEMA
+infoschema__infoschema_v2
+mysql
+sys
+test
+tt1
+drop database tt1;

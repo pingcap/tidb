@@ -1,6 +1,5 @@
 set global tidb_schema_cache_size = 1000;
 
-
 create database tt;
 show databases;
 drop database tt;
@@ -18,4 +17,11 @@ show tables;
 -- error 1051
 drop table test;
 
+drop database tt;
+
 set global tidb_schema_cache_size = 0;
+
+# force reload
+create database tt1;
+show databases;
+drop database tt1;
