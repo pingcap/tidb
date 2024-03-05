@@ -18,12 +18,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
 func TestListPartitionPruning(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -68,6 +72,9 @@ func TestListPartitionPruning(t *testing.T) {
 }
 
 func TestPartitionTableExplain(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -102,49 +109,42 @@ func TestPartitionTableExplain(t *testing.T) {
 }
 
 func TestBatchPointGetTablePartition(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("create table thash1(a int, b int, primary key(a,b) nonclustered) partition by hash(b) partitions 2")
 	tk.MustExec("insert into thash1 values(1,1),(1,2),(2,1),(2,2)")
-	tk.MustExec(`analyze table thash1`)
 
 	tk.MustExec("create table trange1(a int, b int, primary key(a,b) nonclustered) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
 	tk.MustExec("insert into trange1 values(1,1),(1,2),(2,1),(2,2)")
-	tk.MustExec(`analyze table trange1`)
 
 	tk.MustExec("create table tlist1(a int, b int, primary key(a,b) nonclustered) partition by list(b) (partition p0 values in (0, 1), partition p1 values in (2, 3))")
 	tk.MustExec("insert into tlist1 values(1,1),(1,2),(2,1),(2,2)")
-	tk.MustExec(`analyze table tlist1`)
 
 	tk.MustExec("create table thash2(a int, b int, primary key(a,b)) partition by hash(b) partitions 2")
 	tk.MustExec("insert into thash2 values(1,1),(1,2),(2,1),(2,2)")
-	tk.MustExec(`analyze table thash2`)
 
 	tk.MustExec("create table trange2(a int, b int, primary key(a,b)) partition by range(b) (partition p0 values less than (2), partition p1 values less than maxvalue)")
 	tk.MustExec("insert into trange2 values(1,1),(1,2),(2,1),(2,2)")
-	tk.MustExec(`analyze table trange2`)
 
 	tk.MustExec("create table tlist2(a int, b int, primary key(a,b)) partition by list(b) (partition p0 values in (0, 1), partition p1 values in (2, 3))")
 	tk.MustExec("insert into tlist2 values(1,1),(1,2),(2,1),(2,2)")
-	tk.MustExec(`analyze table tlist2`)
 
 	tk.MustExec("create table thash3(a int, b int, primary key(a)) partition by hash(a) partitions 2")
 	tk.MustExec("insert into thash3 values(1,0),(2,0),(3,0),(4,0)")
-	tk.MustExec(`analyze table thash3`)
 
 	tk.MustExec("create table trange3(a int, b int, primary key(a)) partition by range(a) (partition p0 values less than (3), partition p1 values less than maxvalue)")
 	tk.MustExec("insert into trange3 values(1,0),(2,0),(3,0),(4,0)")
-	tk.MustExec(`analyze table trange3`)
 
 	tk.MustExec("create table tlist3(a int, b int, primary key(a)) partition by list(a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))")
 	tk.MustExec("insert into tlist3 values(1,0),(2,0),(3,0),(4,0)")
-	tk.MustExec(`analyze table tlist3`)
 
 	tk.MustExec("create table issue45889(a int) partition by list(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))")
 	tk.MustExec("insert into issue45889 values (0),(0),(1),(1),(2),(2),(3),(3)")
-	tk.MustExec(`analyze table issue45889`)
 
 	var input []string
 	var output []struct {
@@ -195,40 +195,38 @@ func TestBatchPointGetTablePartition(t *testing.T) {
 }
 
 func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int, UNIQUE KEY (b)) PARTITION BY HASH(b) PARTITIONS 4")
 	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustExec(`analyze table t1`)
 
 	tk.MustExec("CREATE TABLE t2 (id int primary key, name_id int) PARTITION BY LIST(id) (" +
 		"partition p0 values IN (1, 2), " +
 		"partition p1 values IN (3, 4), " +
 		"partition p3 values IN (5))")
 	tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustExec(`analyze table t2`)
 
 	tk.MustExec("CREATE TABLE t3 (id int primary key, name_id int) PARTITION BY LIST COLUMNS(id) (" +
 		"partition p0 values IN (1, 2), " +
 		"partition p1 values IN (3, 4), " +
 		"partition p3 values IN (5))")
 	tk.MustExec("insert into t3 values(1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustExec(`analyze table t3`)
 
 	tk.MustExec("CREATE TABLE t4 (id int, name_id int, unique key(id, name_id)) PARTITION BY LIST COLUMNS(id, name_id) (" +
 		"partition p0 values IN ((1, 1),(2, 2)), " +
 		"partition p1 values IN ((3, 3),(4, 4)), " +
 		"partition p3 values IN ((5, 5)))")
 	tk.MustExec("insert into t4 values(1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustExec(`analyze table t4`)
 
 	tk.MustExec("CREATE TABLE t5 (id int, name varchar(10), unique key(id, name)) PARTITION BY LIST COLUMNS(id, name) (" +
 		"partition p0 values IN ((1,'a'),(2,'b')), " +
 		"partition p1 values IN ((3,'c'),(4,'d')), " +
 		"partition p3 values IN ((5,'e')))")
 	tk.MustExec("insert into t5 values(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
-	tk.MustExec(`analyze table t5`)
 
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 
