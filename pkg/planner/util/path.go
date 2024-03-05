@@ -57,7 +57,7 @@ type AccessPath struct {
 	// when PartialAlternativeIndexPaths is not empty, it means a special state for index merge path, and it can't have PartialIndexPaths
 	// at same time. Normal single index or table path also doesn't use this field.
 	PartialAlternativeIndexPaths [][]*AccessPath
-	// ShouldBeKeptCurrentFilter and ShouldBeKeptCurrentFilterExpression are only used with PartialAlternativeIndexPaths, which means for
+	// KeepIndexMergeORSourceFilter and IndexMergeORSourceFilter are only used with PartialAlternativeIndexPaths, which means for
 	// the new state/type of access path. (undetermined index merge path)
 	KeepIndexMergeORSourceFilter bool
 	// IndexMergeORSourceFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
