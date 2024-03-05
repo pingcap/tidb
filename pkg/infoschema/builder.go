@@ -166,7 +166,6 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 	return tblIDs, nil
 }
 
-// ywq todo the most complicate one
 func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	// It is not in StatePublic.
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
@@ -500,15 +499,10 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	// ywq todo
-	if b.enableV2 {
-		return nil
-	} else {
-		newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
-		newDbInfo.Charset = di.Charset
-		newDbInfo.Collate = di.Collate
-		return nil
-	}
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo.Charset = di.Charset
+	newDbInfo.Collate = di.Collate
+	return nil
 }
 
 func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.SchemaDiff) error {
@@ -522,14 +516,9 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.Sc
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	// ywq todo
-	if b.enableV2 {
-		return nil
-	} else {
-		newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
-		newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
-		return nil
-	}
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	return nil
 }
 
 func (b *Builder) applyDropSchema(schemaID int64) []int64 {
@@ -559,7 +548,6 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	return tableIDs
 }
 
-// ywq todo
 func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	if di, ok := b.infoSchema.SchemaByID(diff.SchemaID); ok {
 		return nil, ErrDatabaseExists.GenWithStackByArgs(
