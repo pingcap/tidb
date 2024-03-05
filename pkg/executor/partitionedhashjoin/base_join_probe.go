@@ -17,6 +17,8 @@ package partitionedhashjoin
 import (
 	"bytes"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"hash/fnv"
 	"unsafe"
 
@@ -37,7 +39,7 @@ const (
 )
 
 func (hCtx *PartitionedHashJoinCtx) hasOtherCondition() bool {
-	return hCtx.otherCondition != nil
+	return hCtx.OtherCondition != nil
 }
 
 type JoinProbe interface {
@@ -67,7 +69,8 @@ type rowIndexInfo struct {
 }
 
 type baseJoinProbe struct {
-	ctx                *PartitionedHashJoinCtx
+	ctx *PartitionedHashJoinCtx
+
 	currentChunk       *chunk.Chunk
 	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
 	currentRowsPos     []unsafe.Pointer // the current address of each matched rows
@@ -96,7 +99,7 @@ type baseJoinProbe struct {
 	selected      []bool
 }
 
-func (j *baseJoinProbe) isCurrentChunkProbeDone() bool {
+func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
 	return j.currentChunk == nil || j.currentProbeRow >= j.chunkRows
 }
 
@@ -115,7 +118,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.matchedRowsHeaders = make([]unsafe.Pointer, rows)
 	}
-	if j.ctx.filter != nil {
+	if j.ctx.Filter != nil {
 		if cap(j.filterVector) >= rows {
 			j.filterVector = j.filterVector[:rows]
 		} else {
@@ -137,8 +140,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.serializedKeys = make([][]byte, rows)
 	}
-	if j.ctx.filter != nil {
-		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
+	if j.ctx.Filter != nil {
+		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.Filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
 		if err != nil {
 			return err
 		}
@@ -175,9 +178,10 @@ func (j *baseJoinProbe) appendOffsetAndLength(offset int, length int) {
 func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chunk, remainCap int, err error) {
 	j.offsetAndLengthArray = j.offsetAndLengthArray[:0]
 	joinedChk = chk
-	if j.ctx.otherCondition != nil {
+	if j.ctx.OtherCondition != nil {
 		j.tmpChk.Reset()
 		j.rowIndexInfos = j.rowIndexInfos[:0]
+		j.selected = j.selected[:0]
 		joinedChk = j.tmpChk
 	}
 	return joinedChk, chk.RequiredRows() - chk.NumRows(), nil
@@ -274,5 +278,44 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+SizeOfNextPtr+SizeOfKeyLengthField), int(meta.getSerializedKeyLength(rowStart))))
 	default:
 		panic("unknown key match type")
+	}
+}
+
+func NewJoinProbe(ctx *PartitionedHashJoinCtx, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType, lUsed, rUsed, lUsedInOtherCondition, rUsedInOtherCondition []int) JoinProbe {
+	base := baseJoinProbe{
+		ctx:                   ctx,
+		keyIndex:              keyIndex,
+		columnTypes:           probeColumnTypes,
+		maxChunkSize:          ctx.SessCtx.GetSessionVars().MaxChunkSize,
+		lUsed:                 lUsed,
+		rUsed:                 rUsed,
+		lUsedInOtherCondition: lUsedInOtherCondition,
+		rUsedInOtherCondition: rUsedInOtherCondition,
+	}
+	for i := range keyIndex {
+		if !mysql.HasNotNullFlag(base.columnTypes[i].GetFlag()) {
+			base.hasNullableKey = true
+		}
+	}
+	base.matchedRowsHeaders = make([]unsafe.Pointer, 0, chunk.InitialCapacity)
+	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)
+	if base.ctx.Filter != nil {
+		base.filterVector = make([]bool, 0, chunk.InitialCapacity)
+	}
+	if base.hasNullableKey {
+		base.nullKeyVector = make([]bool, 0, chunk.InitialCapacity)
+	}
+	if base.ctx.OtherCondition != nil {
+		base.tmpChk = chunk.NewEmptyChunk(joinedColumnTypes)
+		base.selected = make([]bool, 0, chunk.InitialCapacity)
+		base.rowIndexInfos = make([]rowIndexInfo, 0, chunk.InitialCapacity)
+	}
+	switch joinType {
+	case core.InnerJoin:
+		return &innerJoinProbe{base}
+	case core.LeftOuterJoin:
+		return &leftOuterJoinProbe{innerJoinProbe: innerJoinProbe{base}}
+	default:
+		panic("unsupported join type")
 	}
 }

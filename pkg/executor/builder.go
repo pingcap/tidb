@@ -1480,6 +1480,37 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 	return e
 }
 
+func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, leftColumnIndex []int, rightColumnIndex []int) ([]int, []int) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		colIndex := x.Index
+		if colIndex >= leftColumnSize {
+			rightColumnIndex = append(rightColumnIndex, colIndex-leftColumnSize)
+		} else {
+			leftColumnIndex = append(leftColumnIndex, colIndex)
+		}
+		return leftColumnIndex, rightColumnIndex
+	case *expression.Constant, *expression.CorrelatedColumn:
+		return leftColumnIndex, rightColumnIndex
+	case *expression.ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			leftColumnIndex, rightColumnIndex = collectColumnIndexFromExpr(arg, leftColumnSize, leftColumnIndex, rightColumnIndex)
+		}
+		return leftColumnIndex, rightColumnIndex
+	default:
+		panic("unsupported expression")
+	}
+}
+
+func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumnSize int) ([]int, []int) {
+	leftColumnIndex := make([]int, 0, 1)
+	rightColumnIndex := make([]int, 0, 1)
+	for _, subExpr := range expr {
+		leftColumnIndex, rightColumnIndex = collectColumnIndexFromExpr(subExpr, leftColumnSize, leftColumnIndex, rightColumnIndex)
+	}
+	return leftColumnIndex, rightColumnIndex
+}
+
 func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1492,40 +1523,123 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 	}
 
 	e := &partitionedhashjoin.PartitionedHashJoinExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
+		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
+		ProbeSideTupleFetcher: &partitionedhashjoin.ProbeSideTupleFetcher{},
+		ProbeWorkers:          make([]*partitionedhashjoin.ProbeWorker, v.Concurrency),
+		BuildWorker:           &partitionedhashjoin.BuildWorker{},
 		PartitionedHashJoinCtx: &partitionedhashjoin.PartitionedHashJoinCtx{
-			SessCtx:     b.ctx,
-			JoinType:    v.JoinType,
-			Concurrency: v.Concurrency,
+			SessCtx:        b.ctx,
+			JoinType:       v.JoinType,
+			Concurrency:    v.Concurrency,
+			OtherCondition: v.OtherConditions,
 		},
 	}
 	err := e.Init()
 	if err != nil {
 		return nil
 	}
-	/*
-		e.PartitionedHashJoinCtx.RightAsBuildSide = true
-		if v.InnerChildIdx == 1 && v.UseOuterToBuild {
-			e.PartitionedHashJoinCtx.RightAsBuildSide = false
-		} else if v.InnerChildIdx == 0 && !v.UseOuterToBuild {
-			e.PartitionedHashJoinCtx.RightAsBuildSide = false
+	e.PartitionedHashJoinCtx.RightAsBuildSide = true
+	if v.InnerChildIdx == 1 && v.UseOuterToBuild {
+		e.PartitionedHashJoinCtx.RightAsBuildSide = false
+	} else if v.InnerChildIdx == 0 && !v.UseOuterToBuild {
+		e.PartitionedHashJoinCtx.RightAsBuildSide = false
+	}
+
+	defaultValues := v.DefaultValues
+	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
+	joinedTypes := make([]*types.FieldType, 0, len(lhsTypes)+len(rhsTypes))
+	for _, t := range lhsTypes {
+		joinedTypes = append(joinedTypes, t)
+	}
+	for _, t := range rhsTypes {
+		joinedTypes = append(joinedTypes, t)
+	}
+
+	if v.InnerChildIdx == 1 {
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
 		}
+	} else {
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	}
 
-		defaultValues := v.DefaultValues
-		lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
-
+	leftIsBuildSide := true
+	var probeKeys, buildKeys []*expression.Column
+	var buildSideExec exec.Executor
+	if v.UseOuterToBuild {
 		if v.InnerChildIdx == 1 {
-			if len(v.RightConditions) > 0 {
-				b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
-				return nil
-			}
+			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
+			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
+			e.PartitionedHashJoinCtx.Filter = v.LeftConditions
 		} else {
-			if len(v.LeftConditions) > 0 {
-				b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
-				return nil
-			}
+			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
+			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
+			e.PartitionedHashJoinCtx.Filter = v.RightConditions
+			leftIsBuildSide = false
 		}
-	*/
+		if defaultValues == nil {
+			defaultValues = make([]types.Datum, e.ProbeSideTupleFetcher.ProbeSideExec.Schema().Len())
+		}
+	} else {
+		if v.InnerChildIdx == 0 {
+			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
+			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
+			e.PartitionedHashJoinCtx.Filter = v.RightConditions
+		} else {
+			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
+			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
+			e.PartitionedHashJoinCtx.Filter = v.LeftConditions
+			leftIsBuildSide = false
+		}
+		if defaultValues == nil {
+			defaultValues = make([]types.Datum, buildSideExec.Schema().Len())
+		}
+	}
+	var probeColumnTypes []*types.FieldType
+	if leftIsBuildSide {
+		probeColumnTypes = rhsTypes
+	} else {
+		probeColumnTypes = lhsTypes
+	}
+	probeKeyColIdx := make([]int, len(probeKeys))
+	buildKeyColIdx := make([]int, len(buildKeys))
+	for i := range buildKeys {
+		buildKeyColIdx[i] = buildKeys[i].Index
+	}
+	for i := range probeKeys {
+		probeKeyColIdx[i] = probeKeys[i].Index
+	}
+
+	colsFromChildren := v.Schema().Columns
+	if v.JoinType == plannercore.LeftOuterSemiJoin || v.JoinType == plannercore.AntiLeftOuterSemiJoin {
+		// the matched column is added inside join
+		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
+	}
+	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
+	if childrenUsedSchema == nil {
+		b.err = errors.New("children used should never be nil")
+		return nil
+	}
+	lUsed := make([]int, 0, len(childrenUsedSchema[0]))
+	lUsed = append(lUsed, childrenUsedSchema[0]...)
+	rUsed := make([]int, 0, len(childrenUsedSchema[1]))
+	rUsed = append(rUsed, childrenUsedSchema[1]...)
+	var lUsedInOtherCondition, rUsedInOtherCondition []int
+	if v.OtherConditions != nil {
+		leftColumnSize := v.Children()[0].Schema().Len()
+		lUsedInOtherCondition, rUsedInOtherCondition = extractUsedColumnsInJoinOtherCondition(v.OtherConditions, leftColumnSize)
+	}
+	for i := uint(0); i < e.Concurrency; i++ {
+		e.ProbeWorkers[i] = &partitionedhashjoin.ProbeWorker{
+			HashJoinCtx: e.PartitionedHashJoinCtx,
+			WorkerID:    i,
+			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes, lUsed, rUsed, lUsedInOtherCondition, rUsedInOtherCondition),
+		}
+	}
 	return e
 }
 
