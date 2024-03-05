@@ -523,13 +523,12 @@ type ks3ObjectReader struct {
 	reader       io.ReadCloser
 	pos          int64
 	rangeInfo    RangeInfo
-	retryCnt     int
 	prefetchSize int
 }
 
 // Read implement the io.Reader interface.
 func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
-	r.retryCnt = 0
+	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
@@ -537,11 +536,11 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
-	for err != nil && errors.Cause(err) != io.EOF && r.retryCnt < maxErrorRetries { //nolint:errorlint
+	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),
-			zap.Int("retryCnt", r.retryCnt),
+			zap.Int("retryCnt", retryCnt),
 			zap.Error(err),
 		)
 		// if can retry, reopen a new reader and try read again
@@ -560,7 +559,7 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		if r.prefetchSize > 0 {
 			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
 		}
-		r.retryCnt++
+		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
