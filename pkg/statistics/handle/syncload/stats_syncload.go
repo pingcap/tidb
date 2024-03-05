@@ -287,7 +287,7 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate && s.updateCachedItem(item, wrapper.col, wrapper.idx) {
+	if needUpdate && s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad) {
 		s.writeToResultChan(task.ResultCh, result)
 	}
 	s.finishWorking(result)
@@ -461,7 +461,7 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index) (updated bool) {
+func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.StatsLoad.Lock()
 	defer s.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -472,8 +472,9 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
-		// If we don't have this column or its stats is fully loaded, we skip it.
-		if (!ok && !tbl.ColAndIdxExistenceMap.Has(item.ID, false)) || (ok && c.IsFullLoad()) {
+		// - If the stats is fully loaded,
+		// - If the stats is meta-loaded and we also just need the meta.
+		if ok && (c.IsFullLoad() || !fullLoaded) {
 			return true
 		}
 		tbl = tbl.Copy()
@@ -484,12 +485,14 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		}
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
-		// If we don't have this column or its stats is fully loaded, we skip it.
-		if (!ok && !tbl.ColAndIdxExistenceMap.Has(item.ID, true)) || (ok && index.IsFullLoad()) {
+		// - If the stats is fully loaded,
+		// - If the stats is meta-loaded and we also just need the meta.
+		if ok && (index.IsFullLoad() || !fullLoaded) {
 			return true
 		}
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
+		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
 		}
