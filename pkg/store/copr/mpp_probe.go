@@ -205,6 +205,7 @@ func (t *MPPFailedStoreProber) Run() {
 				logutil.BgLogger().Debug("ctx.done")
 				return
 			case <-ticker.C:
+				logutil.BgLogger().Info("mpp failed store probe scan", zap.Any("t", time.Now()))
 				t.scan(t.ctx)
 			}
 		}
