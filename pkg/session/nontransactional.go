@@ -413,12 +413,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	job.sql = dmlSQL
 	logutil.Logger(ctx).Info("start a Non-transactional DML",
 		zap.String("job", job.String(se.GetSessionVars().EnableRedactLog)), zap.Int("totalJobCount", totalJobCount))
-	var dmlSQLInLog string
-	if se.GetSessionVars().EnableRedactLog {
-		dmlSQLInLog = parser.Normalize(dmlSQL)
-	} else {
-		dmlSQLInLog = dmlSQL
-	}
+	dmlSQLInLog := parser.Normalize(dmlSQL, se.GetSessionVars().EnableRedactNew)
 
 	options.stmt.DMLStmt.SetText(nil, fmt.Sprintf("/* job %v/%v */ %s", job.jobID, totalJobCount, dmlSQL))
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DMLStmt)

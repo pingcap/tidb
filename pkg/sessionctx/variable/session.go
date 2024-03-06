@@ -1204,6 +1204,8 @@ type SessionVars struct {
 
 	// EnableRedactLog indicates that whether redact log.
 	EnableRedactLog bool
+	// EnableRedactNew indicates that whether redact log. Possible values are 'OFF', 'ON', 'MARKER'.
+	EnableRedactNew string
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64

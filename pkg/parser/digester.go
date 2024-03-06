@@ -81,11 +81,17 @@ func DigestNormalized(normalized string) (digest *Digest) {
 // Normalize generates the normalized statements.
 // it will get normalized form of statement text
 // which removes general property of a statement but keeps specific property.
-//
-// for example: Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
-func Normalize(sql string) (result string) {
+// possible values for 'redact' is "OFF", "ON" or "MARKER". Passing "" is seen as "OFF".
+
+// when "OFF", it is returned as is
+// for example, when "ON": Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
+// for example, when "MARKER": Normalize('select 1 from b where a = 1') => 'select ‹1› from b where a = ‹1›'
+func Normalize(sql string, redact string) (result string) {
+	if redact == "OFF" {
+		return sql
+	}
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalize(sql, false)
+	result = d.doNormalize(sql, redact, false)
 	digesterPool.Put(d)
 	return
 }
@@ -109,7 +115,7 @@ func NormalizeForBinding(sql string, forPlanReplayerReload bool) (result string)
 // for example: Normalize('select /*+ use_index(t, primary) */ 1 from b where a = 1') => 'select /*+ use_index(t, primary) */ ? from b where a = ?'
 func NormalizeKeepHint(sql string) (result string) {
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalize(sql, true)
+	result = d.doNormalize(sql, "ON", true)
 	digesterPool.Put(d)
 	return
 }
@@ -161,7 +167,7 @@ func (d *sqlDigester) doDigestNormalized(normalized string) (digest *Digest) {
 }
 
 func (d *sqlDigester) doDigest(sql string) (digest *Digest) {
-	d.normalize(sql, false, false, false)
+	d.normalize(sql, "ON", false, false, false)
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
 	digest = NewDigest(d.hasher.Sum(nil))
@@ -169,22 +175,22 @@ func (d *sqlDigester) doDigest(sql string) (digest *Digest) {
 	return
 }
 
-func (d *sqlDigester) doNormalize(sql string, keepHint bool) (result string) {
-	d.normalize(sql, keepHint, false, false)
+func (d *sqlDigester) doNormalize(sql string, redact string, keepHint bool) (result string) {
+	d.normalize(sql, redact, keepHint, false, false)
 	result = d.buffer.String()
 	d.buffer.Reset()
 	return
 }
 
 func (d *sqlDigester) doNormalizeForBinding(sql string, keepHint bool, forPlanReplayerReload bool) (result string) {
-	d.normalize(sql, keepHint, true, forPlanReplayerReload)
+	d.normalize(sql, "ON", keepHint, true, forPlanReplayerReload)
 	result = d.buffer.String()
 	d.buffer.Reset()
 	return
 }
 
 func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *Digest) {
-	d.normalize(sql, false, false, false)
+	d.normalize(sql, "ON", false, false, false)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
@@ -194,7 +200,7 @@ func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *
 }
 
 func (d *sqlDigester) doNormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
-	d.normalize(sql, false, true, false)
+	d.normalize(sql, "ON", false, true, false)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
@@ -212,7 +218,7 @@ const (
 	genericSymbolList = -2
 )
 
-func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool, forPlanReplayerReload bool) {
+func (d *sqlDigester) normalize(sql string, redact string, keepHint bool, forBinding bool, forPlanReplayerReload bool) {
 	d.lexer.reset(sql)
 	d.lexer.setKeepHint(keepHint)
 	for {
@@ -229,7 +235,7 @@ func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool, forP
 			continue
 		}
 
-		d.reduceLit(&currTok, forBinding)
+		d.reduceLit(&currTok, redact, forBinding, forPlanReplayerReload)
 		if forPlanReplayerReload {
 			// Apply for plan replayer to match specific rules, changing IN (...) to IN (?). This can avoid plan replayer load failures caused by parse errors.
 			d.replaceSingleLiteralWithInList(&currTok)
@@ -313,10 +319,33 @@ func (d *sqlDigester) reduceOptimizerHint(tok *token) (reduced bool) {
 	return
 }
 
-func (d *sqlDigester) reduceLit(currTok *token, forBinding bool) {
+func (d *sqlDigester) reduceLit(currTok *token, redact string, forBinding bool, forPlanReplayer bool) {
 	if !d.isLit(*currTok) {
 		return
 	}
+
+	if redact == "MARKER" && !forBinding && !forPlanReplayer {
+		switch currTok.lit {
+		case "?", "*":
+			return
+		}
+		input := currTok.lit
+		b := &strings.Builder{}
+		b.Grow(len(input))
+		_, _ = b.WriteRune('‹')
+		for _, c := range input {
+			if c == '‹' || c == '›' {
+				_, _ = b.WriteRune(c)
+				_, _ = b.WriteRune(c)
+			} else {
+				_, _ = b.WriteRune(c)
+			}
+		}
+		_, _ = b.WriteRune('›')
+		currTok.lit = b.String()
+		return
+	}
+
 	// count(*) => count(?)
 	if currTok.lit == "*" {
 		if d.isStarParam() {
