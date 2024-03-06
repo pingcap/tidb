@@ -1361,7 +1361,7 @@ const (
 	DefTiDBBatchDMLIgnoreError                     = false
 	DefTiDBMemQuotaAnalyze                         = -1
 	DefTiDBEnableAutoAnalyze                       = true
-	DefTiDBEnableAutoAnalyzePriorityQueue          = false
+	DefTiDBEnableAutoAnalyzePriorityQueue          = true
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
