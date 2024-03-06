@@ -17,7 +17,7 @@ FROM hub.pingcap.net/jenkins/centos7_jenkins
 USER root
 WORKDIR /root
 
-ENV GOLANG_VERSION 1.22.0
+ENV GOLANG_VERSION 1.22.1
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-amd64.tar.gz
 ENV GOLANG_DOWNLOAD_SHA256 f6c8a87aa03b92c4b0bf3d558e28ea03006eb29db78917daec5cfb6ec1046265
 ENV GOPATH /go
