@@ -1307,7 +1307,7 @@ func buildPartialPaths4MVIndex(
 		virColVals = append(virColVals, v)
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
-		virColVals, ok = jsonArrayExpr2Exprs(sctx.GetExprCtx(), sf.GetArgs()[1], jsonType)
+		virColVals, ok = jsonArrayExpr2Exprs(sctx.GetExprCtx(), ast.JSONContains, sf.GetArgs()[1], jsonType)
 		if !ok || len(virColVals) == 0 {
 			// json_contains(JSON, '[]') is TRUE. If the row has an empty array, it'll not exist on multi-valued index,
 			// but the `json_contains(array, '[]')` is still true, so also don't try to scan on the index.
@@ -1323,7 +1323,7 @@ func buildPartialPaths4MVIndex(
 			return nil, false, false, nil
 		}
 		var ok bool
-		virColVals, ok = jsonArrayExpr2Exprs(sctx.GetExprCtx(), sf.GetArgs()[1-jsonPathIdx], jsonType)
+		virColVals, ok = jsonArrayExpr2Exprs(sctx.GetExprCtx(), ast.JSONOverlaps, sf.GetArgs()[1-jsonPathIdx], jsonType)
 		if !ok || len(virColVals) == 0 { // forbid empty array for safety
 			return nil, false, false, nil
 		}
@@ -1639,8 +1639,11 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 }
 
 // jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
-func jsonArrayExpr2Exprs(sctx expression.EvalContext, jsonArrayExpr expression.Expression, targetType *types.FieldType) ([]expression.Expression, bool) {
-	if !expression.IsInmutableExpr(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
+func jsonArrayExpr2Exprs(sctx expression.BuildContext, jsonFuncName string, jsonArrayExpr expression.Expression, targetType *types.FieldType) ([]expression.Expression, bool) {
+	if expression.MaybeOverOptimized4PlanCache(sctx, []expression.Expression{jsonArrayExpr}) {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError(jsonFuncName + " function with immutable parameters can affect index selection"))
+	}
+	if !expression.IsImmutableExpr(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
 		return nil, false
 	}
 
