@@ -466,12 +466,10 @@ func TestSocketAndIp(t *testing.T) {
 	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-
 	<-RunInGoTestChan
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.waitUntilServerCanConnect()
