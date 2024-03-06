@@ -27,6 +27,7 @@ type topNWorker struct {
 	errOutputChan          chan<- rowWithError
 	finishChan             <-chan struct{}
 
+	topn    *TopNExec
 	chkHeap *topNChunkHeap
 }
 
@@ -35,65 +36,45 @@ func newTopNWorker(
 	fetcherAndWorkerSyncer *sync.WaitGroup,
 	errOutputChan chan<- rowWithError,
 	finishChan <-chan struct{},
-	chkHeap *topNChunkHeap) *topNWorker {
+	chkHeap *topNChunkHeap,
+	topn *TopNExec) *topNWorker {
 	return &topNWorker{
 		chunkChannel:           chunkChannel,
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
 		errOutputChan:          errOutputChan,
 		finishChan:             finishChan,
+		topn:                   topn,
 		chkHeap:                chkHeap,
 	}
 }
 
 func (t *topNWorker) fetchChunksAndProcess() {
-	t.fetchChunksAndBuildHeap()
-	t.fetchChunksAndUpdateHeap()
-}
-
-// Insert rows into heap until reaching to limit
-func (t *topNWorker) fetchChunksAndBuildHeap() {
-	for t.fetchChunksAndBuildHeapImpl() {
+	t.chkHeap.init(t.topn, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.ByItems, t.topn.keyColumns, t.topn.keyCmpFuncs)
+	for t.fetchChunksAndProcessImpl() {
 	}
 }
 
-func (t *topNWorker) fetchChunksAndBuildHeapImpl() bool {
-	if uint64(t.chkHeap.rowChunks.Len()) >= t.chkHeap.totalLimit {
-		return false
-	}
-
+func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 	select {
 	case <-t.finishChan:
 		return false
 	case chk, ok := <-t.chunkChannel:
-		defer t.fetcherAndWorkerSyncer.Done() // TODO fix it
-		if !ok {
-			t.chkHeap.initPtrs()
-			return false
-		}
-		t.chkHeap.rowChunks.Add(chk)
-	}
-	return true
-}
-
-func (t *topNWorker) fetchChunksAndUpdateHeap() {
-	for t.fetchChunksAndUpdateHeapImpl() {
-	}
-}
-
-func (t *topNWorker) fetchChunksAndUpdateHeapImpl() bool {
-	var (
-		chk *chunk.Chunk
-		ok  bool
-	)
-	select {
-	case <-t.finishChan:
-		return false
-	case chk, ok = <-t.chunkChannel:
 		if !ok {
 			return false
 		}
 		defer t.fetcherAndWorkerSyncer.Done()
-		t.chkHeap.processChkWithSpill(chk)
+
+		if uint64(t.chkHeap.rowChunks.Len()) < t.chkHeap.totalLimit {
+			if !t.chkHeap.isInitialized {
+				t.chkHeap.init(t.topn, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.ByItems, t.topn.keyColumns, t.topn.keyCmpFuncs)
+			}
+			t.chkHeap.rowChunks.Add(chk)
+		} else {
+			if !t.chkHeap.isRowPtrsInit {
+				t.chkHeap.initPtrs()
+			}
+			t.chkHeap.processChkWithSpill(chk)
+		}
 	}
 	return true
 }

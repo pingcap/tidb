@@ -40,6 +40,8 @@ type TopNExec struct {
 	resultChannel          chan rowWithError
 	chunkChannel           chan *chunk.Chunk
 
+	finishCh chan struct{} // TODO check this channel in proper position
+
 	chkHeap *topNChunkHeap
 
 	spillHelper *topNSpillHelper // TODO initialize it
@@ -59,6 +61,9 @@ type topNChunkHeap struct {
 	rowChunks *chunk.List
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
+
+	isInitialized bool
+	isRowPtrsInit bool
 
 	memTracker *memory.Tracker
 
@@ -82,23 +87,31 @@ func (h *topNChunkHeap) init(topnExec *TopNExec, totalLimit uint64, idx int, byI
 
 	h.totalLimit = totalLimit
 	h.idx = idx
+	h.isInitialized = true
 }
 
 func (h *topNChunkHeap) initPtrs() {
-	h.rowPtrs = make([]chunk.RowPtr, 0, h.rowChunks.Len())
 	h.memTracker.Consume(int64(chunk.RowPtrSize * h.rowChunks.Len()))
+	h.initPtrsImpl()
+}
+
+func (h *topNChunkHeap) initPtrsImpl() {
+	h.rowPtrs = make([]chunk.RowPtr, 0, h.rowChunks.Len())
 	for chkIdx := 0; chkIdx < h.rowChunks.NumChunks(); chkIdx++ {
 		rowChk := h.rowChunks.GetChunk(chkIdx)
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
 			h.rowPtrs = append(h.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
+	h.isRowPtrsInit = true
 }
 
 func (h *topNChunkHeap) clear() {
 	h.rowChunks.Clear()
 	h.memTracker.Consume(int64(-chunk.RowPtrSize * len(h.rowPtrs)))
 	h.rowPtrs = nil
+	h.isRowPtrsInit = false
+	h.isInitialized = false
 	h.idx = 0
 }
 

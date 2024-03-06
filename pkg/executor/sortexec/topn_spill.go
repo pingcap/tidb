@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -29,7 +30,11 @@ type topNSpillHelper struct {
 	cond             *sync.Cond
 	spillStatus      int
 	sortedRowsInDisk []*chunk.DataInDiskByChunks
-	topNExec         *TopNExec // TODO maybe this topNExec can be removed
+
+	finishCh          chan struct{}
+	errOutputChan     chan<- rowWithError
+	topNExec          *TopNExec // TODO maybe this topNExec can be removed
+	keyColumnsCompare func(i, j chunk.RowPtr) int
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
@@ -68,16 +73,26 @@ func (t *topNSpillHelper) isSpillNeeded() bool {
 	return t.spillStatus == needSpill
 }
 
-func (t *topNSpillHelper) addInDisk(inDisk *chunk.DataInDiskByChunks) {
-	t.cond.L.Lock()
-	defer t.cond.L.Unlock()
-	t.sortedRowsInDisk = append(t.sortedRowsInDisk, inDisk)
-}
-
 func (t *topNSpillHelper) isSpillTriggered() bool {
 	t.cond.L.Lock()
 	defer t.cond.L.Unlock()
 	return len(t.sortedRowsInDisk) > 0
+}
+
+func (t *topNSpillHelper) setInSpilling() {
+	t.cond.L.Lock()
+	defer t.cond.L.Unlock()
+	t.spillStatus = inSpilling
+}
+
+func (t *topNSpillHelper) setNeedSpillNoLock() {
+	t.spillStatus = needSpill
+}
+
+func (t *topNSpillHelper) addInDisk(inDisk *chunk.DataInDiskByChunks) {
+	t.cond.L.Lock()
+	defer t.cond.L.Unlock()
+	t.sortedRowsInDisk = append(t.sortedRowsInDisk, inDisk)
 }
 
 func (t *topNSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByChunks, tmpSpillChunk *chunk.Chunk) error {
@@ -89,11 +104,59 @@ func (t *topNSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByChunks, t
 	return nil
 }
 
-func (t *topNSpillHelper) spill() error {
-	return nil // TODO
+func (t *topNSpillHelper) spill() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
+
+	select {
+	case <-t.finishCh:
+		return nil
+	default:
+	}
+
+	t.setInSpilling()
+
+	workerNum := len(t.workers)
+	errChan := make(chan error, workerNum)
+	workerWaiter := &sync.WaitGroup{}
+	workerWaiter.Add(workerNum)
+	for i := 0; i < workerNum; i++ {
+		go func(idx int) {
+			defer func() {
+				if r := recover(); r != nil {
+					processPanicAndLog(t.errOutputChan, r)
+				}
+				workerWaiter.Done()
+			}()
+
+			spillErr := t.spillHeap(t.workers[idx].chkHeap)
+			if spillErr != nil {
+				errChan <- spillErr
+			}
+			t.workers[idx].chkHeap.clear()
+
+			// TODO add random failpoint
+		}(i)
+	}
+
+	workerWaiter.Wait()
+	close(errChan)
+
+	// Fetch only one error is enough
+	spillErr := <-errChan
+	if spillErr != nil {
+		return spillErr
+	}
+	return nil
 }
 
 func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
+	if !chkHeap.isRowPtrsInit {
+		chkHeap.initPtrsImpl()
+	}
 	slices.SortFunc(chkHeap.rowPtrs, t.topNExec.keyColumnsCompare)
 
 	// TODO update maxValueRow
@@ -132,7 +195,7 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 
 type topNSpillAction struct {
 	memory.BaseOOMAction
-	helper *topNSpillHelper
+	spillHelper *topNSpillHelper
 }
 
 // GetPriority get the priority of the Action.
@@ -140,14 +203,23 @@ func (*topNSpillAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
-func (s *topNSpillAction) Action(t *memory.Tracker) {
-	fallBack := s.executeAction(t)
-	if fallBack != nil {
-		fallBack.Action(t)
-	}
-}
+func (t *topNSpillAction) Action(tracker *memory.Tracker) {
+	t.spillHelper.cond.L.Lock()
+	defer t.spillHelper.cond.L.Unlock()
 
-func (s *topNSpillAction) executeAction(t *memory.Tracker) memory.ActionOnExceed {
-	// TODO when we should call fall back?
-	return s.GetFallback()
+	for t.spillHelper.isInSpillingNoLock() {
+		t.spillHelper.cond.Wait()
+	}
+	
+	hasEnoughData := hasEnoughDataToSpill(t.spillHelper.memTracker, tracker)
+	if tracker.CheckExceed() && t.spillHelper.isNotSpilledNoLock() && hasEnoughData {
+		t.spillHelper.setNeedSpillNoLock()
+		t.spillHelper.bytesConsumed.Store(tracker.BytesConsumed())
+		t.spillHelper.bytesLimit.Store(tracker.GetBytesLimit())
+		return
+	}
+	
+	if tracker.CheckExceed() && !hasEnoughData {
+		t.GetFallback()
+	}
 }
