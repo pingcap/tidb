@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -609,13 +610,12 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	}
 
 	item := b.infoData.tableByID(tableID)
-
 	if item == nil {
+		// not cached, no need to delete cached items.
 		return nil
 	}
 
 	b.infoData.delete(*item)
-
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.deleteReferredForeignKeys(dbInfo, tableID)
 	return affected
@@ -1000,7 +1000,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTables) {
 	if b.enableV2 {
-		if isSpecialDB(di.Name.L) {
+		if util.IsMemDB(di.Name.L) {
 			b.infoData.addSpecialDB(di, schTbls)
 		} else {
 			b.infoData.addDB(schemaVersion, di)

@@ -163,8 +163,6 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 
 func (isd *Data) delete(item tableItem) {
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
-	isd.byID.Delete(item)
-	isd.byName.Delete(item)
 }
 
 func (isd *Data) deleteDB(name model.CIStr) {
@@ -305,14 +303,8 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	return ret, true
 }
 
-func isSpecialDB(dbName string) bool {
-	return dbName == util.InformationSchemaName.L ||
-		dbName == util.PerformanceSchemaName.L ||
-		dbName == util.MetricSchemaName.L
-}
-
 func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
-	if isSpecialDB(schema.L) {
+	if util.IsMemDB(schema.L) {
 		if tbNames, ok := is.specials[schema.L]; ok {
 			if t, ok = tbNames.tables[tbl.L]; ok {
 				return
@@ -345,7 +337,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 }
 
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	if isSpecialDB(schema.L) {
+	if util.IsMemDB(schema.L) {
 		return is.Data.specials[schema.L].dbInfo, true
 	}
 
@@ -384,7 +376,7 @@ func (is *infoschemaV2) SchemaMetaVersion() int64 {
 
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 	var ok bool
-	if isSpecialDB(schema.L) {
+	if util.IsMemDB(schema.L) {
 		_, ok = is.Data.specials[schema.L]
 		return ok
 	}
@@ -400,8 +392,26 @@ func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 	return ok
 }
 
-func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	panic("TODO")
+func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (tbl table.Table, dbInfo *model.DBInfo, pd *model.PartitionDefinition) {
+	is.Data.schemaMap.Scan(func(item schemaItem) bool {
+		for _, t := range item.dbInfo.Tables {
+			for _, p := range t.Partition.Definitions {
+				if p.ID == partitionID {
+					allocs := autoid.NewAllocatorsFromTblInfo(is.r, item.dbInfo.ID, t)
+					ret, err := tables.TableFromMeta(allocs, t)
+					if err != nil {
+						return false
+					}
+					tbl = ret
+					dbInfo = item.dbInfo
+					pd = &p
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return nil, nil, nil
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
@@ -434,7 +444,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	if isSpecialDB(schema.L) {
+	if util.IsMemDB(schema.L) {
 		schTbls := is.Data.specials[schema.L]
 		tables := make([]table.Table, 0, len(schTbls.tables))
 		for _, tbl := range schTbls.tables {
