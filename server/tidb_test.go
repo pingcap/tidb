@@ -102,11 +102,9 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	ts.port = getPortFromTCPAddr(server.listener.Addr())
-	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
 	ts.server.InitGlobalConnID(ts.domain.ServerID)
@@ -115,6 +113,9 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 		err := ts.server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-RunInGoTestChan
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.waitUntilServerOnline()
 
 	t.Cleanup(func() {
@@ -248,8 +249,9 @@ func TestStatusPort(t *testing.T) {
 	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	err = server.Run(ts.domain)
 	require.Error(t, err)
-	require.Nil(t, server)
 }
 
 func TestStatusAPIWithTLS(t *testing.T) {
@@ -274,16 +276,17 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
 	cfg.Security.ClusterSSLCert = fileName("server-cert-2.pem")
 	cfg.Security.ClusterSSLKey = fileName("server-key-2.pem")
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
-
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	// https connection should work.
 	ts.runTestStatusAPI(t)
 
@@ -331,18 +334,17 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	cfg.Security.ClusterSSLCert = serverCertPath
 	cfg.Security.ClusterSSLKey = serverKeyPath
 	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
-	time.Sleep(time.Millisecond * 100)
-
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	hc := newTLSHttpClient(t, caPath,
 		client1CertPath,
 		client1KeyPath,
@@ -395,17 +397,17 @@ func TestSocketForwarding(t *testing.T) {
 	cfg.Port = cli.port
 	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	defer server.Close()
-
 	cli.runTestRegression(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
@@ -427,14 +429,14 @@ func TestSocket(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := createTidbTestSuite(t)
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-RunInGoTestChan
 	defer server.Close()
 
 	confFunc := func(config *mysql.Config) {
@@ -461,14 +463,15 @@ func TestSocketAndIp(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := createTidbTestSuite(t)
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.waitUntilServerCanConnect()
 	defer server.Close()
 
@@ -625,14 +628,14 @@ func TestOnlySocket(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := createTidbTestSuite(t)
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-RunInGoTestChan
 	defer server.Close()
 	require.Nil(t, server.listener)
 	require.NotNil(t, server.socket)
@@ -1233,17 +1236,19 @@ func TestGracefulShutdown(t *testing.T) {
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Performance.TCPKeepAlive = true
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	require.NotNil(t, server)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
 
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	resp, err := cli.fetchStatus("/status") // server is up
 	require.NoError(t, err)
 	require.Nil(t, resp.Body.Close())
@@ -2506,17 +2511,18 @@ func TestLocalhostClientMapping(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := createTidbTestSuite(t)
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.waitUntilServerCanConnect()
-
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	// Create a db connection for root
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {

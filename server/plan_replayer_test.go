@@ -78,7 +78,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
@@ -86,13 +86,13 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-RunInGoTestChan
+	client.port = getPortFromTCPAddr(server.listener.Addr())
+	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	client.waitUntilServerOnline()
 	filename, fileNameFromCapture := prepareData4PlanReplayer(t, client, dom)
 

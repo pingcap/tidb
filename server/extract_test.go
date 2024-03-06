@@ -49,13 +49,13 @@ func TestExtractHandler(t *testing.T) {
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
-
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-RunInGoTestChan
+	client.port = getPortFromTCPAddr(server.listener.Addr())
+	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	client.waitUntilServerOnline()
 	startTime := time.Now()
 	time.Sleep(time.Second)
