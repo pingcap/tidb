@@ -1460,7 +1460,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				}
 			}
 		}
-		chunksDone += 1
+		chunksDone++
 		rowsDone += chk.NumRows()
 	}
 	return nil
