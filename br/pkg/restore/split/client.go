@@ -576,6 +576,17 @@ func (c *pdClient) IsScatterRegionFinished(
 		}
 		return false, false, errors.Trace(err)
 	}
+	return IsScatterRegionFinished(resp)
+}
+
+// IsScatterRegionFinished checks whether the scatter region operator is
+// finished. TODO(lance6716): hide this function after scatter logic is unified
+// for BR and lightning.
+func IsScatterRegionFinished(resp *pdpb.GetOperatorResponse) (
+	scatterDone bool,
+	needRescatter bool,
+	scatterErr error,
+) {
 	// Heartbeat may not be sent to PD
 	if respErr := resp.GetHeader().GetError(); respErr != nil {
 		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {

@@ -29,13 +29,14 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type TestClient struct {
+	split.SplitClient
+
 	mu                  sync.RWMutex
 	stores              map[uint64]*metapb.Store
 	regions             map[uint64]*split.RegionInfo
@@ -243,26 +244,6 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 		})
 	}
 	return regions, nil
-}
-
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
-	return
-}
-
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
-	return nil
-}
-
-func (c *TestClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
-	return nil
-}
-
-func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
-	return nil
-}
-
-func (c *TestClient) IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error) {
-	return true, false, nil
 }
 
 type assertRetryLessThanBackoffer struct {
@@ -980,6 +961,7 @@ func TestSplitPoint2(t *testing.T) {
 }
 
 type fakeSplitClient struct {
+	split.SplitClient
 	regions []*split.RegionInfo
 }
 
@@ -998,33 +980,6 @@ func (f *fakeSplitClient) AppendRegion(startKey, endKey []byte) {
 	})
 }
 
-func (*fakeSplitClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) SplitRegion(ctx context.Context, regionInfo *split.RegionInfo, key []byte) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) BatchSplitRegions(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
-	return nil, nil, nil
-}
-func (*fakeSplitClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	return nil
-}
-func (*fakeSplitClient) ScatterRegions(ctx context.Context, regionInfo []*split.RegionInfo) error {
-	return nil
-}
-func (*fakeSplitClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	return nil, nil
-}
 func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	result := make([]*split.RegionInfo, 0)
 	count := 0
@@ -1038,16 +993,6 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 		}
 	}
 	return result, nil
-}
-func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error { return nil }
-func (*fakeSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
-	return nil
-}
-func (*fakeSplitClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
-	return nil
 }
 
 func TestGetRewriteTableID(t *testing.T) {

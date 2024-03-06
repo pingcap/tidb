@@ -180,7 +180,6 @@ go_test(
         "@com_github_tikv_client_go_v2//rawkv",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_pd_client//:client",
-        "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_google_grpc//status",
