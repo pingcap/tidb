@@ -244,12 +244,6 @@ func (c *testSplitClient) ScatterRegion(ctx context.Context, regionInfo *split.R
 	return nil
 }
 
-func (c *testSplitClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	return &pdpb.GetOperatorResponse{
-		Header: new(pdpb.ResponseHeader),
-	}, nil
-}
-
 func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -276,6 +270,13 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 		regions, err = c.hook.AfterScanRegions(regions, nil)
 	}
 	return regions, err
+}
+
+func (c *testSplitClient) IsScatterRegionFinished(
+	ctx context.Context,
+	regionID uint64,
+) (scatterDone bool, needRescatter bool, scatterErr error) {
+	return true, false, nil
 }
 
 func cloneRegion(region *split.RegionInfo) *split.RegionInfo {
