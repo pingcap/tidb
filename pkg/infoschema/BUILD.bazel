@@ -4,6 +4,8 @@ go_library(
     name = "infoschema",
     srcs = [
         "builder.go",
+        "builder_misc.go",
+        "bundle_builder.go",
         "cache.go",
         "cluster.go",
         "error.go",

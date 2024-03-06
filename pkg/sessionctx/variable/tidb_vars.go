@@ -1294,7 +1294,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert             = false
 	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeOn
 	DefTiDBEnableGlobalIndex                       = false
-	DefTiDBRedactLog                               = false
+	DefTiDBRedactLog                               = Off
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
 	DefTiDBShardAllocateStep                       = math.MaxInt64
