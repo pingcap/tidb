@@ -1112,8 +1112,12 @@ func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, local.importClientFactory, algorithm); err != nil {
-		return false, errors.Trace(err)
+	err = duplicateManager.CollectDuplicateRowsFromTiKV(ctx, local.importClientFactory, algorithm)
+	if err != nil {
+		if !common.ErrFoundDataConflictRecords.Equal(err) && !common.ErrFoundIndexConflictRecords.Equal(err) {
+			return false, errors.Trace(err)
+		}
+		return true, errors.Trace(err)
 	}
 	return duplicateManager.HasDuplicate(), nil
 }
