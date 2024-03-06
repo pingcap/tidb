@@ -161,7 +161,7 @@ func ColumnStatsIsInvalid(colStats *Column, sctx context.PlanContext, histColl *
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
 			!histColl.CanNotTriggerLoad {
-			HistogramNeededItems.insert(model.TableItemID{
+			HistogramNeededItems.Insert(model.TableItemID{
 				TableID:          histColl.PhysicalID,
 				ID:               cid,
 				IsIndex:          false,

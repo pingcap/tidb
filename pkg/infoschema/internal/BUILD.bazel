@@ -5,5 +5,17 @@ go_library(
     srcs = ["testkit.go"],
     importpath = "github.com/pingcap/tidb/pkg/infoschema/internal",
     visibility = ["//pkg/infoschema:__subpackages__"],
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/autoid",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/store/mockstore",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/types",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
 )

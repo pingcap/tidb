@@ -39,24 +39,22 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	predicateNeeded := variable.EnableColumnTracking.Load()
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait
 	histNeeded := syncWait > 0
-	predicateColumns, histNeededColumns := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
+	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
-	if !histNeeded {
-		return plan, planChanged, nil
-	}
 
-	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below.
+	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
+	// stats loading for the determinate mode.
 	is := plan.SCtx().GetInfoSchema().(infoschema.InfoSchema)
 	tblID2Tbl := make(map[int64]table.Table)
-	for _, neededCol := range histNeededColumns {
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, neededCol.TableID)
+	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, int64(physicalTblID))
 		if tbl == nil {
-			continue
+			return
 		}
-		tblID2Tbl[neededCol.TableID] = tbl
-	}
+		tblID2Tbl[int64(physicalTblID)] = tbl
+	})
 
 	// collect needed virtual columns from already needed columns
 	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on

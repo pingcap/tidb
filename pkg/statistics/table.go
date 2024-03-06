@@ -646,7 +646,7 @@ func (n *neededStatsMap) AllItems() []model.TableItemID {
 	return keys
 }
 
-func (n *neededStatsMap) insert(col model.TableItemID) {
+func (n *neededStatsMap) Insert(col model.TableItemID) {
 	n.m.Lock()
 	n.items[col] = struct{}{}
 	n.m.Unlock()

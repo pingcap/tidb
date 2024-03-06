@@ -53,7 +53,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 29,
+    shard_count = 31,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/mock",
