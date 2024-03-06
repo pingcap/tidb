@@ -15,7 +15,6 @@
 package metricsutil
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -30,14 +29,12 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	txninfo "github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/session/txninfo"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
 	statshandler_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
-	kvstore "github.com/pingcap/tidb/pkg/store"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
 	unimetrics "github.com/pingcap/tidb/pkg/store/mockstore/unistore/metrics"
 	ttlmetrics "github.com/pingcap/tidb/pkg/ttl/metrics"
-	"github.com/pingcap/tidb/pkg/util"
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
@@ -66,7 +63,7 @@ func RegisterMetrics() error {
 	}
 	defer pdCli.Close()
 
-	keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
+	keyspaceMeta, err := keyspace.GetKeyspaceMeta(pdCli, cfg.KeyspaceName)
 	if err != nil {
 		return err
 	}
@@ -88,7 +85,7 @@ func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 	}
 	defer pdCli.Close()
 
-	keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
+	keyspaceMeta, err := keyspace.GetKeyspaceMeta(pdCli, keyspaceName)
 	if err != nil {
 		return err
 	}
@@ -121,24 +118,4 @@ func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
 		unimetrics.RegisterMetrics()
 	}
 	return nil
-}
-
-func getKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {
-	// Load Keyspace meta with retry.
-	var keyspaceMeta *keyspacepb.KeyspaceMeta
-	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
-		var errInner error
-		keyspaceMeta, errInner = pdCli.LoadKeyspace(context.TODO(), keyspaceName)
-		// Retry when pd not bootstrapped or if keyspace not exists.
-		if kvstore.IsNotBootstrappedError(errInner) || kvstore.IsKeyspaceNotExistError(errInner) {
-			return true, errInner
-		}
-		// Do not retry when success or encountered unexpected error.
-		return false, errInner
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return keyspaceMeta, nil
 }

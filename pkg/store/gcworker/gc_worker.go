@@ -1255,7 +1255,7 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 	return allkeyspaces, nil
 }
 
-func isKeyspaceEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+func IsKeyspaceMetaEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if val, ok := keyspaceMeta.Config["safe_point_version"]; ok {
 		return val == config.SafePointV2
 	}
@@ -1287,7 +1287,7 @@ func (w *GCWorker) resolveAllKeyspacesLocks(ctx context.Context, runner *rangeta
 	for i := range keyspaces {
 		keyspaceMeta := keyspaces[i]
 		// Skip the keyspace which is not enabled or not enable safe point v2.
-		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || isKeyspaceEnableSafePointV2(keyspaceMeta) {
+		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || IsKeyspaceMetaEnableSafePointV2(keyspaceMeta) {
 			logutil.BgLogger().Debug("[gc worker] skip keyspace resolve locks", zap.Bool("is-not-enabled", keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED))
 			continue
 		}

@@ -15,14 +15,19 @@
 package keyspace
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -79,9 +84,7 @@ func NewEtcdSafePointKV(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Con
 	if config.GetGlobalConfig().EnableSafePointV2 {
 		etcdNameSpace = MakeKeyspaceEtcdNamespace(codec)
 	}
-	//Todo(ystaticy) implement WithPrefix in client-go
 	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
-	//return nil, nil
 }
 
 // GetKeyspaceTxnPrefix return the keyspace txn prefix
@@ -108,4 +111,24 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 	}
 
 	return txnLeftBound, txnRightBound
+}
+
+func GetKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {
+	// Load Keyspace meta with retry.
+	var keyspaceMeta *keyspacepb.KeyspaceMeta
+	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+		var errInner error
+		keyspaceMeta, errInner = pdCli.LoadKeyspace(context.TODO(), keyspaceName)
+		// Retry when pd not bootstrapped or if keyspace not exists.
+		if kvstore.IsNotBootstrappedError(errInner) || kvstore.IsKeyspaceNotExistError(errInner) {
+			return true, errInner
+		}
+		// Do not retry when success or encountered unexpected error.
+		return false, errInner
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return keyspaceMeta, nil
 }

@@ -29,6 +29,8 @@ import (
 
 const (
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
+	// SafePointVersion is safePoint version in keyspace meta config.
+	SafePointVersion = "safe_point_version"
 )
 
 // CheckGCEnable is use to check whether GC is enable.

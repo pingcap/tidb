@@ -84,7 +84,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20231212100244-799fae176cfb
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20240206021635-05a3758a1d24
+	github.com/pingcap/kvproto v0.0.0-20240222024302-881fcbf5bc41
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -323,3 +323,5 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/tikv/pd/client => /Users/yaojingyi/yaojingyi_workspace/workspace_master/pd_master_yjy_gcv2/client
