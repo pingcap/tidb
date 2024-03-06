@@ -294,6 +294,10 @@ func (c *testSplitClient) SetStoresLabel(ctx context.Context, stores []uint64, l
 	return nil
 }
 
+func (c *testSplitClient) IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error) {
+	return true, false, nil
+}
+
 func cloneRegion(region *split.RegionInfo) *split.RegionInfo {
 	r := &metapb.Region{}
 	if region.Region != nil {
