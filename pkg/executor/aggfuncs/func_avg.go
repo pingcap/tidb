@@ -89,7 +89,7 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr Pa
 	}
 	decimalCount := types.NewDecFromInt(p.count)
 	finalResult := new(types.MyDecimal)
-	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, 4)
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, ctx.GetSessionVars().GetDivPrecisionIncrement())
 	if err != nil {
 		return err
 	}
@@ -285,7 +285,7 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(ctx AggFuncUpdateC
 	}
 	decimalCount := types.NewDecFromInt(p.count)
 	finalResult := new(types.MyDecimal)
-	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, 4)
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, ctx.GetSessionVars().GetDivPrecisionIncrement())
 	if err != nil {
 		return err
 	}

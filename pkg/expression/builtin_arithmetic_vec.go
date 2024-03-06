@@ -87,7 +87,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 		if result.IsNull(i) {
 			continue
 		}
-		err = types.DecimalDiv(&x[i], &y[i], &to, 4)
+		err = types.DecimalDiv(&x[i], &y[i], &to, ctx.GetSessionVars().GetDivPrecisionIncrement())
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(ctx); err != nil {
 				return err
@@ -596,7 +596,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 		}
 
 		c := &types.MyDecimal{}
-		err = types.DecimalDiv(&num[0][i], &num[1][i], c, 4)
+		err = types.DecimalDiv(&num[0][i], &num[1][i], c, ctx.GetSessionVars().GetDivPrecisionIncrement())
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(ctx); err != nil {
 				return err
