@@ -115,6 +115,8 @@ type HistColl struct {
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
 
+	// The version of the statistics, refer to Version0, Version1, Version2 and so on.
+	StatsVer int
 	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
@@ -287,6 +289,7 @@ func (t *Table) Copy() *Table {
 		Indices:        make(map[int64]*Index, len(t.Indices)),
 		Pseudo:         t.Pseudo,
 		ModifyCount:    t.ModifyCount,
+		StatsVer:       t.StatsVer,
 	}
 	for id, col := range t.Columns {
 		newHistColl.Columns[id] = col.Copy()
@@ -325,6 +328,7 @@ func (t *Table) ShallowCopy() *Table {
 		Indices:        t.Indices,
 		Pseudo:         t.Pseudo,
 		ModifyCount:    t.ModifyCount,
+		StatsVer:       t.StatsVer,
 	}
 	nt := &Table{
 		HistColl:        newHistColl,
@@ -693,29 +697,10 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 // If not, it will return false and set the version to the tbl's.
 // We use this check to make sure all the statistics of the table are in the same version.
 func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
-	for _, col := range tbl.Columns {
-		if !col.IsAnalyzed() {
-			continue
-		}
-		if col.StatsVer != int64(*version) {
-			*version = int(col.StatsVer)
-			return false
-		}
-		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
-		return true
+	if tbl.StatsVer != Version0 && tbl.StatsVer != *version {
+		*version = tbl.StatsVer
+		return false
 	}
-	for _, idx := range tbl.Indices {
-		if !idx.IsAnalyzed() {
-			continue
-		}
-		if idx.StatsVer != int64(*version) {
-			*version = int(idx.StatsVer)
-			return false
-		}
-		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
-		return true
-	}
-	// This table has no statistics yet. We can directly return true.
 	return true
 }
 
