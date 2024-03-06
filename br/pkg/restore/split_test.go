@@ -261,6 +261,10 @@ func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelK
 	return nil
 }
 
+func (c *TestClient) IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error) {
+	return true, false, nil
+}
+
 type assertRetryLessThanBackoffer struct {
 	max     int
 	already int
