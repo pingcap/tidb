@@ -106,6 +106,10 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 		flag := row.GetInt64(9)
 		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
+		// All the objects in the table share the same stats version.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+		}
 		if isIndex > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -165,9 +169,13 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		table, ok := cache.Get(tblID)
-		table = table.Copy()
 		if !ok {
 			continue
+		}
+		table = table.Copy()
+		// All the objects in the table share the same stats version.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))

@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/driver",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/executor/importer",
         "//pkg/keyspace",
         "//pkg/kv",
@@ -19,6 +20,7 @@ go_library(
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//tikv",

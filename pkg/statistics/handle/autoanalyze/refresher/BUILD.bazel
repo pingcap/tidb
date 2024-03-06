@@ -27,10 +27,10 @@ go_test(
     name = "refresher_test",
     timeout = "short",
     srcs = ["refresher_test.go"],
-    embed = [":refresher"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 13,
     deps = [
+        ":refresher",
         "//pkg/parser/model",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/exec",

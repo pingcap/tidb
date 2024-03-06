@@ -29,11 +29,12 @@ var _ context.AllocatorContext = &TableContextImpl{}
 // TableContextImpl is used to provide context for table operations.
 type TableContextImpl struct {
 	sessionctx.Context
+	exprCtx exprctx.BuildContext
 }
 
 // NewTableContextImpl creates a new TableContextImpl.
-func NewTableContextImpl(sctx sessionctx.Context) *TableContextImpl {
-	return &TableContextImpl{Context: sctx}
+func NewTableContextImpl(sctx sessionctx.Context, exprCtx exprctx.BuildContext) *TableContextImpl {
+	return &TableContextImpl{Context: sctx, exprCtx: exprCtx}
 }
 
 // TxnRecordTempTable record the temporary table to the current transaction.
@@ -44,7 +45,7 @@ func (ctx *TableContextImpl) TxnRecordTempTable(tbl *model.TableInfo) tableutil.
 
 // GetExprCtx returns the ExprContext
 func (ctx *TableContextImpl) GetExprCtx() exprctx.BuildContext {
-	return ctx.Context
+	return ctx.exprCtx
 }
 
 func (ctx *TableContextImpl) vars() *variable.SessionVars {
