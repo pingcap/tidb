@@ -2563,3 +2563,10 @@ func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
 		}
 	}
 }
+
+// func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
+// 	for _, idx := range tblInfo.Columns {
+
+// 	}
+
+// }

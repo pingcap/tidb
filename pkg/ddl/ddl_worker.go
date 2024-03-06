@@ -1156,6 +1156,7 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 	return true, nil
 }
 
+// ywq todo
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
