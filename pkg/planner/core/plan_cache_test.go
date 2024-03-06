@@ -1563,19 +1563,27 @@ func TestPreparedPlanCachePartitions(t *testing.T) {
 	tk.MustExec(`set @a=2000000`)
 	// This should use TableDual
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0, 4}, [][]any{{"Point_Get_1", "table:t, partition:dual"}})
 	tk.MustExec(`set @a=1999999`)
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0, 4}, [][]any{{"Point_Get_1", "table:t, partition:p1M"}})
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 
 	tk.MustExec(`prepare stmt4 from 'select a,c,b from t where a IN (?,?,?)'`)
 	tk.MustExec(`set @a=1999999,@b=0,@c=-1`)
 	tk.MustQuery(`execute stmt4 using @a,@b,@c`).Sort().Check(testkit.Rows("-1 <nil> <nil>", "0 0 0", "1999999 1999999 1999999"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`execute stmt4 using @a,@b,@c`).Sort().Check(testkit.Rows("-1 <nil> <nil>", "0 0 0", "1999999 1999999 1999999"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
 
 func TestPreparedPlanCachePartitionIndex(t *testing.T) {
@@ -1588,12 +1596,19 @@ func TestPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk.MustExec(`prepare stmt from 'select * from t where a IN (?,?,?)'`)
 	tk.MustExec(`set @a=1,@b=3,@c=4`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0, 4}, [][]any{
+		{"IndexLookUp_7", ""},
+		{"├─IndexRangeScan_5(Build)", "table:t, index:PRIMARY(a)"},
+		{"└─TableRowIDScan_6(Probe)", "table:t"}})
 	tk.MustExec(`set @a=2,@b=5,@c=4`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "BA 5", "abc 2"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
 
 func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
