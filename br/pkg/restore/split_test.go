@@ -246,6 +246,14 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, nil
 }
 
+func (c *TestClient) IsScatterRegionFinished(
+	ctx context.Context,
+	regionID uint64,
+) (scatterDone bool, needRescatter bool, scatterErr error) {
+	resp, _ := c.GetOperator(ctx, regionID)
+	return split.IsScatterRegionFinished(resp)
+}
+
 type assertRetryLessThanBackoffer struct {
 	max     int
 	already int
