@@ -70,9 +70,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionRecoverSchema:
 		return b.applyRecoverSchema(m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
-		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
+		return nil, applyModifySchemaCharsetAndCollate(b, m, diff)
 	case model.ActionModifySchemaDefaultPlacement:
-		return nil, b.applyModifySchemaDefaultPlacement(m, diff)
+		return nil, applyModifySchemaDefaultPlacement(b, m, diff)
 	case model.ActionCreatePlacementPolicy:
 		return nil, b.applyCreatePolicy(m, diff)
 	case model.ActionDropPlacementPolicy:

@@ -537,3 +537,55 @@ func IsV2(is InfoSchema) bool {
 	_, ok := is.(*infoschemaV2)
 	return ok
 }
+
+func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaDefaultPlacementV2(m, diff)
+	}
+	return b.applyModifySchemaDefaultPlacement(m, diff)
+}
+
+func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
+	}
+	return b.applyModifySchemaCharsetAndCollate(m, diff)
+}
+
+// ywq todo test
+// need to delete dbinfo....
+func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.Charset = di.Charset
+	newDBInfo.Collate = di.Collate
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
+
+// ywq todo test
+func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
