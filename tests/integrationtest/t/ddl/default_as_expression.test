@@ -21,7 +21,7 @@ insert into t0 values (2, default);
 SELECT * FROM t0 WHERE c = date_format(@x,'%Y-%m') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m');
 insert into t1(c) values (1);
 insert into t1 values (2, default);
-SELECT * FROM t1 WHERE c = date_format(@x,'%Y-%m-%d') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d');
+SELECT * FROM t1 WHERE c = date_format(@x,'%Y-%m-%d');
 insert into t2(c) values (1);
 insert into t2 values (2, default);
 SELECT * FROM t2 WHERE c = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
@@ -35,26 +35,48 @@ SELECT * FROM t4 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_forma
 insert into t5(c) values (1);
 insert into t5 values (2, default);
 SELECT * FROM t5 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
+
 show create table t0;
 show create table t1;
 show create table t2;
+
+# test modify column, set default value, add index
+alter table t0 add index idx(c1);
+alter table t1 add index idx(c1);
+insert into t0 values (3, default);
+insert into t1 values (3, default);
+show create table t0;
+show create table t1;
 alter table t0 modify column c1 varchar(30) default 'xx';
 alter table t1 modify column c1 varchar(30) default 'xx';
+insert into t0 values (4, default);
+insert into t1 values (4, default);
 show create table t0;
 show create table t1;
 -- error 1292
 alter table t0 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
+alter table t0 alter column c1 SET DEFAULT (date_format(now(), '%Y-%m-%d'));
+insert into t0 values (5, default);
+-- error 1292
 alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
+delete from t1 where c = 4;
+alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
+insert into t1 values (5, default);
+alter table t0 drop index idx;
+alter table t1 drop index idx;
+show create table t0;
 show create table t1;
+SELECT count(1) FROM t0 WHERE c1 = date_format(@x,'%Y-%m') OR c1 = date_format(@x,'%Y-%m-%d') OR c1 = "xx";
+SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 show columns from test.t1 where field='c1';
 
 # TestDefaultColumnWithReplace
 # replace
 drop table if exists t, t1, t2;
-create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')));
-create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')));
-create table t2 (c int(10), c1 varchar(256) default (REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', '')));
+create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));
+create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));
+create table t2 (c int(10), c1 varchar(256) default (REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', '')), index idx(c1));
 -- error 3770
 create table t1 (c int(10), c1 varchar(256) default (REPLACE('xdfj-jfj', '-', '')));
 -- error 3770
@@ -73,7 +95,7 @@ alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')
 
 # insert records
 insert into t(c) values (1),(2),(3);
-insert into t values (4, default)
+insert into t values (4, default);
 # It consists of uppercase letters or numbers.
 SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
 
@@ -82,18 +104,32 @@ SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
 show create table t;
 show create table t1;
 show create table t2;
-alter table t1 modify column c1 varchar(30) default 'xx';
-show create table t1;
-alter table t1 modify column c1 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
-show create table t1;
-SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+
+# test modify column, set default value, add index
+alter table t alter column c1 set default 'xx';
+alter table t drop index idx;
+show create table t;
+insert into t values (5, default);
+show create table t;
+alter table t add unique index idx(c, c1);
+alter table t modify column c1 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
+insert into t values (6, default);
+SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
+show create table t;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t' AND COLUMN_NAME='c1';
+alter table t alter column c1 set default null;
+insert into t(c) values (7);
+alter table t alter column c1 drop default;
+-- error 1364
+insert into t(c) values (8);
+SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
 
 # TestDefaultColumnWithStrToDate
 # str_to_date
 drop table if exists t0, t1, t2, t3, t4, t5;
 # create table
-create table t0 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')), c2 date default (str_to_date('9999-01-01','%Y-%m-%d')));
-create table t1 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), c2 int default (str_to_date('9999-01-01','%Y-%m-%d')));
+create table t0 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')), c2 date default (str_to_date('9999-01-01','%Y-%m-%d')), index idx(c, c1));
+create table t1 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), c2 int default (str_to_date('9999-01-01','%Y-%m-%d')), unique key idx(c, c1));
 create table t3 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%m-%d')));
 create table t4 (c int(10), c1 varchar(32) default (str_to_date('01-01','%Y-%m-%d')));
 set @sqlMode := @@session.sql_mode;
@@ -128,13 +164,43 @@ insert into t2 values (4, default, default);
 set session sql_mode=@sqlMode;
 -- error 1292
 insert into t2(c) values (5);
+select * from t0;
+select * from t1;
+select * from t2;
+
+show create table t0;
+show create table t1;
+show create table t2;
+
+# test modify column, set default value, add index
+alter table t0 add index idx1(c1);
+alter table t1 add unique index idx1(c, c1);
+insert into t0 values (5, default, default);
+insert into t1 values (5, default, default);
+show create table t0;
+show create table t1;
+alter table t0 alter column c2 set default (current_date());
+alter table t1 modify column c1 varchar(30) default 'xx';
+insert into t0 values (6, default, default);
+insert into t1 values (6, default, default);
+show create table t0;
+show create table t1;
+alter table t0 alter column c1 drop default;
+alter table t1 modify column c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
+-- error 1364
+insert into t0 values (7, default, default);
+insert into t1 values (7, default, default);
+select * from t0 where c < 6;
+select c, c1 from t0 where c = 6 and c2 = date_format(now(),'%Y-%m-%d');;
+select * from t1;
+select * from t2;
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 
 # TestDefaultColumnWithUpper
 # upper
 drop table if exists t, t1, t2;
 # create table
-create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))));
+create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))), unique index idx(c, c1));
 create table t1 (c int(10), c1 int default (upper(substring_index(user(),_utf8mb4'@',1))));
 -- error 3770
 create table t2 (c int(10), c1 varchar(256) default (substring_index(user(),'@',1)));
@@ -150,9 +216,12 @@ alter table t add column c3 int default (upper(substring_index('fjks@jkkl','@',1
 insert into t1(c) values (1);
 show create table t;
 show create table t1;
+
+# test modify column, set default value, add index
 alter table t1 modify column c1 varchar(30) default 'xx';
 show create table t1;
 alter table t1 modify column c1 varchar(32) default (upper(substring_index(user(),'@',1)));
+alter table t1 add index idx1(c1);
 show create table t1;
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 
