@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/ttl/cache",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD:ttl/cache/BUILD.bazel
         "//infoschema",
         "//kv",
         "//parser/ast",
@@ -27,6 +28,24 @@ go_library(
         "//util/codec",
         "//util/logutil",
         "//util/mathutil",
+=======
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/table/tables",
+        "//pkg/tablecodec",
+        "//pkg/ttl/session",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/codec",
+        "//pkg/util/collate",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+>>>>>>> dd1c635a8bc (ttl: fix TTL cannot split tasks with right ranges for common handle int (#51532)):pkg/ttl/cache/BUILD.bazel
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//:zap",
@@ -47,7 +66,7 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 16,
     deps = [
         "//infoschema",
         "//kv",
