@@ -619,31 +619,26 @@ func NewErrFoundConflictRecords(ctx context.Context, key []byte, value []byte, t
 		SQLMode: mysql.ModeStrictAllTables,
 	}
 
+	logger2 := logger.With(zap.String("tableName", tbl.Meta().Name.L))
+	decoder, err := kv.NewTableKVDecoder(tbl, tbl.Meta().Name.L, &sessionOpts, logger2)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if tablecodec.IsRecordKey(key) {
 		// for data KV
-		se := kv.NewSession(&sessionOpts, log.Logger{})
-
 		handle, err := tablecodec.DecodeRowKey(key)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowData, _, err := tables.DecodeRawRowData(se,
-			tbl.Meta(), handle, tbl.Cols(), value)
-		if err != nil {
-			return errors.Trace(err)
-		}
+
+		rowData := decoder.DecodeRawRowDataAsStr(handle, value)
 
 		return errors.Trace(common.ErrFoundDataConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData))
 	}
 
 	// for index KV
 	_, idxID, _, err := tablecodec.DecodeIndexKey(key)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	logger2 := logger.With(zap.String("tableName", tbl.Meta().Name.L))
-	decoder, err := kv.NewTableKVDecoder(tbl, tbl.Meta().Name.L, &sessionOpts, logger2)
 	if err != nil {
 		return errors.Trace(err)
 	}
