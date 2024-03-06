@@ -780,7 +780,7 @@ func TestDivModMyDecimal(t *testing.T) {
 		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
 		require.NoError(t, err)
-		ec := DecimalDiv(&a, &b, &to, DivFracIncr)
+		ec := DecimalDiv(&a, &b, &to, 4)
 		require.Equal(t, tt.err, ec)
 		if tt.err == ErrDivByZero {
 			continue
