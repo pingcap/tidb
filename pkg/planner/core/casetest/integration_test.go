@@ -385,3 +385,47 @@ func TestFixControl45132(t *testing.T) {
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
 	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 }
+
+func TestInvisibleIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	// Optimizer cannot see invisible indexes.
+	tk.MustExec("create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b))")
+	tk.MustExec("insert into t values (1,2)")
+
+	// For issue 26217, can't use invisible index after admin check table.
+	tk.MustExec("admin check table t")
+
+	// Optimizer cannot use invisible indexes.
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1"))
+	require.False(t, tk.MustUseIndex("select a from t order by a", "i_a"))
+	tk.MustQuery("select a from t where a > 0").Check(testkit.Rows("1"))
+	require.False(t, tk.MustUseIndex("select a from t where a > 1", "i_a"))
+
+	// If use invisible indexes in index hint and sql hint, throw an error.
+	errStr := "[planner:1176]Key 'i_a' doesn't exist in table 't'"
+	tk.MustGetErrMsg("select * from t use index(i_a)", errStr)
+	tk.MustGetErrMsg("select * from t force index(i_a)", errStr)
+	tk.MustGetErrMsg("select * from t ignore index(i_a)", errStr)
+	tk.MustQuery("select /*+ USE_INDEX(t, i_a) */ * from t")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, errStr)
+	tk.MustQuery("select /*+ IGNORE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, errStr)
+	tk.MustQuery("select /*+ FORCE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, errStr)
+	// For issue 15519
+	inapplicableErrStr := "[planner:1815]force_index(test.aaa) is inapplicable, check whether the table(test.aaa) exists"
+	tk.MustQuery("select /*+ FORCE_INDEX(aaa) */ * from t")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, inapplicableErrStr)
+
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t i_a")
+}

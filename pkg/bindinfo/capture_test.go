@@ -331,8 +331,9 @@ func TestBindingSource(t *testing.T) {
 	bindHandle := dom.BindHandle()
 	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	binding, matched, warn := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
+	require.NoError(t, warn)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, bindinfo.Manual, binding.Source)
 
@@ -350,8 +351,9 @@ func TestBindingSource(t *testing.T) {
 	bindHandle.CaptureBaselines()
 	stmt, _, _ = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
 	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-	binding, matched = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	binding, matched, warn = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
+	require.NoError(t, warn)
 	require.Equal(t, "select * from `test` . `t` where `a` < ?", binding.OriginalSQL)
 	require.Equal(t, bindinfo.Capture, binding.Source)
 }
