@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -100,7 +101,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		SysVars: bc.sysVars,
 		IndexID: indexID,
 	}, lightning.DupeResAlgErr)
-	if err != nil {
+	if err != nil && !common.ErrFoundDataConflictRecords.Equal(err) && !common.ErrFoundIndexConflictRecords.Equal(err) {
 		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 		return err
@@ -141,7 +142,7 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
 		}, lightning.DupeResAlgErr)
-		if err != nil {
+		if err != nil && !common.ErrFoundDataConflictRecords.Equal(err) && !common.ErrFoundIndexConflictRecords.Equal(err) {
 			logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 			return err
