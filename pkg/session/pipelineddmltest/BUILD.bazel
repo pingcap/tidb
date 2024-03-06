@@ -8,9 +8,10 @@ go_test(
         "pipelineddml_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 11,
     deps = [
         "//pkg/config",
+        "//pkg/sessionctx/binloginfo",
         "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",

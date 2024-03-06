@@ -3822,13 +3822,11 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future = txnFailFuture{}
 	})
 
-	pipelined := s.sessionVars.BulkDMLEnabled && s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
-		!config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
 	s.txn.changeToPending(&txnFuture{
 		future:    future,
 		store:     s.store,
 		txnScope:  scope,
-		pipelined: pipelined,
+		pipelined: s.isPipelinedDML(),
 	})
 	return nil
 }
@@ -4304,6 +4302,26 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 	}
 
 	return indexusage.NewStmtIndexUsageCollector(s.idxUsageCollector)
+}
+
+// isPipelinedDML returns the current statement can be executed as a pipelined DML.
+func (s *session) isPipelinedDML() bool {
+	if !s.sessionVars.BulkDMLEnabled {
+		return false
+	}
+	stmtCtx := s.sessionVars.StmtCtx
+	if stmtCtx == nil {
+		return false
+	}
+	if !stmtCtx.InInsertStmt && !stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt {
+		// not a DML
+		return false
+	}
+	if s.isInternal() {
+		return false
+	}
+	return s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
+		!config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() && s.sessionVars.BinlogClient == nil
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
