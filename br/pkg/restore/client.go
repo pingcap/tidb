@@ -576,9 +576,10 @@ func (rc *Client) InitBackupMeta(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
-	reader *metautil.MetaReader) error {
+	reader *metautil.MetaReader,
+	loadStats bool) error {
 	if rc.needLoadSchemas(backupMeta) {
-		databases, err := metautil.LoadBackupTables(c, reader)
+		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2803,7 +2804,7 @@ func initFullBackupTables(
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, nil)
 
-	databases, err := metautil.LoadBackupTables(ctx, reader)
+	databases, err := metautil.LoadBackupTables(ctx, reader, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

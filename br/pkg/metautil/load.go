@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bazel-tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -38,11 +39,15 @@ func (db *Database) GetTable(name string) *Table {
 }
 
 // LoadBackupTables loads schemas from BackupMeta.
-func LoadBackupTables(ctx context.Context, reader *MetaReader) (map[string]*Database, error) {
+func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (map[string]*Database, error) {
 	ch := make(chan *Table)
 	errCh := make(chan error)
 	go func() {
-		if err := reader.ReadSchemasFiles(ctx, ch); err != nil {
+		var opts []ReadSchemaOption
+		if !loadStats {
+			opts = []ReadSchemaOption{metautil.SkipStats}
+		}
+		if err := reader.ReadSchemasFiles(ctx, ch, opts...); err != nil {
 			errCh <- errors.Trace(err)
 		}
 		close(ch)
