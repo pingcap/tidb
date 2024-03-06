@@ -84,6 +84,7 @@ func MergeOverlappingFiles(
 //	+ 20 * partSize
 //	+ 20 * 5MiB(stat file, we might not use all part, as stat file is quite small)
 //	+ readBufferSize * len(paths)
+//	+ memory taken by concurrent reading if check-hotspot is enabled
 //
 // memSizeLimit = 256 MiB now.
 // partSize = index-kv-data-file-size / (10000 / MergeSortOverlapThreshold) for import into.
