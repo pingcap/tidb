@@ -24,13 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -39,30 +39,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type mockAutoIDRequirement struct {
-	store  kv.Storage
-	client *autoid.ClientDiscover
-}
-
-func (mr *mockAutoIDRequirement) Store() kv.Storage {
-	return mr.store
-}
-
-func (mr *mockAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
-	return mr.client
-}
-
-func createAutoIDRequirement(t testing.TB, opts ...mockstore.MockTiKVStoreOption) autoid.Requirement {
-	store, err := mockstore.NewMockStore(opts...)
-	require.NoError(t, err)
-	return &mockAutoIDRequirement{
-		store:  store,
-		client: nil,
-	}
-}
-
 func TestBasic(t *testing.T) {
-	re := createAutoIDRequirement(t)
+	re := internal.CreateAutoIDRequirement(t)
 	defer func() {
 		err := re.Store().Close()
 		require.NoError(t, err)
@@ -74,7 +52,7 @@ func TestBasic(t *testing.T) {
 	idxName := model.NewCIStr("idx")
 	noexist := model.NewCIStr("noexist")
 
-	colID, err := genGlobalID(re.Store())
+	colID, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
 		ID:        colID,
@@ -99,7 +77,7 @@ func TestBasic(t *testing.T) {
 		State:   model.StatePublic,
 	}
 
-	tbID, err := genGlobalID(re.Store())
+	tbID, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	tblInfo := &model.TableInfo{
 		ID:      tbID,
@@ -109,7 +87,7 @@ func TestBasic(t *testing.T) {
 		State:   model.StatePublic,
 	}
 
-	dbID, err := genGlobalID(re.Store())
+	dbID, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	dbInfo := &model.DBInfo{
 		ID:     dbID,
@@ -120,13 +98,7 @@ func TestBasic(t *testing.T) {
 	tblInfo.DBID = dbInfo.ID
 
 	dbInfos := []*model.DBInfo{dbInfo}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
-		require.NoError(t, err)
-		return errors.Trace(err)
-	})
-	require.NoError(t, err)
+	internal.AddDB(t, re.Store(), dbInfo)
 
 	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
@@ -206,11 +178,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
-	err = kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateTableOrView(dbID, dbName.L, tblInfo)
-		require.NoError(t, err)
-		return errors.Trace(err)
-	})
+	internal.AddTable(t, re.Store(), dbInfo, tblInfo)
 	require.NoError(t, err)
 	txn, err = re.Store().Begin()
 	require.NoError(t, err)
@@ -261,7 +229,7 @@ func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction
 
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func TestInfoTables(t *testing.T) {
-	re := createAutoIDRequirement(t)
+	re := internal.CreateAutoIDRequirement(t)
 
 	defer func() {
 		err := re.Store().Close()
@@ -317,19 +285,8 @@ func TestInfoTables(t *testing.T) {
 	}
 }
 
-func genGlobalID(store kv.Storage) (int64, error) {
-	var globalID int64
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		var err error
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
-	})
-	return globalID + 100, errors.Trace(err)
-}
-
 func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
-	re := createAutoIDRequirement(t)
+	re := internal.CreateAutoIDRequirement(t)
 	defer func() {
 		err := re.Store().Close()
 		require.NoError(t, err)
@@ -431,7 +388,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	}
 
 	// create table
-	tbID, err := genGlobalID(re.Store())
+	tbID, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	newIS := doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -446,7 +403,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.True(t, builder.Build().HasTemporaryTable())
 
 	// create and then drop
-	tbID, err = genGlobalID(re.Store())
+	tbID, err = internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	require.False(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -454,7 +411,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	).HasTemporaryTable())
 
 	// create and then alter
-	tbID, err = genGlobalID(re.Store())
+	tbID, err = internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	require.True(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -462,9 +419,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	).HasTemporaryTable())
 
 	// create and truncate
-	tbID, err = genGlobalID(re.Store())
+	tbID, err = internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
-	newTbID, err := genGlobalID(re.Store())
+	newTbID, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	require.True(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -472,9 +429,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	).HasTemporaryTable())
 
 	// create two and drop one
-	tbID, err = genGlobalID(re.Store())
+	tbID, err = internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
-	tbID2, err := genGlobalID(re.Store())
+	tbID2, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	require.True(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -483,9 +440,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	).HasTemporaryTable())
 
 	// create temporary and then create normal
-	tbID, err = genGlobalID(re.Store())
+	tbID, err = internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
-	tbID2, err = genGlobalID(re.Store())
+	tbID2, err = internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	require.True(t, doChange(
 		createGlobalTemporaryTableChange(tbID),
@@ -575,7 +532,7 @@ func TestBuildBundle(t *testing.T) {
 }
 
 func TestLocalTemporaryTables(t *testing.T) {
-	re := createAutoIDRequirement(t)
+	re := internal.CreateAutoIDRequirement(t)
 	var err error
 	defer func() {
 		err := re.Store().Close()
@@ -583,7 +540,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	}()
 
 	createNewSchemaInfo := func(schemaName string) *model.DBInfo {
-		schemaID, err := genGlobalID(re.Store())
+		schemaID, err := internal.GenGlobalID(re.Store())
 		require.NoError(t, err)
 		return &model.DBInfo{
 			ID:    schemaID,
@@ -593,7 +550,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	}
 
 	createNewTable := func(schemaID int64, tbName string) table.Table {
-		colID, err := genGlobalID(re.Store())
+		colID, err := internal.GenGlobalID(re.Store())
 		require.NoError(t, err)
 
 		colInfo := &model.ColumnInfo{
@@ -604,7 +561,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 			State:     model.StatePublic,
 		}
 
-		tbID, err := genGlobalID(re.Store())
+		tbID, err := internal.GenGlobalID(re.Store())
 		require.NoError(t, err)
 
 		tblInfo := &model.TableInfo{
@@ -759,7 +716,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	}
 
 	// test non exist tables by id
-	nonExistID, err := genGlobalID(re.Store())
+	nonExistID, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 
 	for _, id := range []int64{nonExistID, tb11.Meta().ID, tb22.Meta().ID} {
@@ -932,23 +889,9 @@ type infoschemaTestContext struct {
 }
 
 func (tc *infoschemaTestContext) createSchema() {
-	dbID, err := genGlobalID(tc.re.Store())
-	require.NoError(tc.t, err)
-	dbInfo := &model.DBInfo{
-		ID:     dbID,
-		Name:   model.NewCIStr("test"),
-		Tables: []*model.TableInfo{},
-		State:  model.StatePublic,
-	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err = kv.RunInNewTxn(ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
-		require.NoError(tc.t, err)
-		return errors.Trace(err)
-	})
-	require.NoError(tc.t, err)
+	dbInfo := internal.MockDBInfo(tc.t, tc.re.Store(), "test")
+	internal.AddDB(tc.t, tc.re.Store(), dbInfo)
 	tc.dbInfo = dbInfo
-
 	// init infoschema
 	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithDBInfos([]*model.DBInfo{}, nil, nil, 1)
 	require.NoError(tc.t, err)
@@ -958,7 +901,6 @@ func (tc *infoschemaTestContext) createSchema() {
 func (tc *infoschemaTestContext) runCreateSchema() {
 	// create schema
 	tc.createSchema()
-
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
 		dbInfo, ok := tc.is.SchemaByID(tc.dbInfo.ID)
 		require.True(tc.t, ok)
@@ -966,56 +908,15 @@ func (tc *infoschemaTestContext) runCreateSchema() {
 	})
 }
 
-func (tc *infoschemaTestContext) dropSchema() {
-	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropDatabase(tc.dbInfo.ID, tc.dbInfo.Name.O)
-		require.NoError(tc.t, err)
-		return errors.Trace(err)
-	})
-	require.NoError(tc.t, err)
-}
-
 func (tc *infoschemaTestContext) runDropSchema() {
 	// create schema
 	tc.runCreateSchema()
 	// drop schema
-	tc.dropSchema()
-
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID, Version: 100}, func(tc *infoschemaTestContext) {
-		_, ok := tc.is.SchemaByName(tc.dbInfo.Name)
+	internal.DropDB(tc.t, tc.re.Store(), tc.dbInfo)
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		_, ok := tc.is.SchemaByID(tc.dbInfo.ID)
 		require.False(tc.t, ok)
 	})
-}
-
-func (tc *infoschemaTestContext) createTable(tblName string) int64 {
-	colName := model.NewCIStr("a")
-
-	colID, err := genGlobalID(tc.re.Store())
-	require.NoError(tc.t, err)
-	colInfo := &model.ColumnInfo{
-		ID:        colID,
-		Name:      colName,
-		Offset:    0,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		State:     model.StatePublic,
-	}
-
-	tblID, err := genGlobalID(tc.re.Store())
-	require.NoError(tc.t, err)
-	tblInfo := &model.TableInfo{
-		ID:      tblID,
-		Name:    model.NewCIStr(tblName),
-		Columns: []*model.ColumnInfo{colInfo},
-		State:   model.StatePublic,
-	}
-
-	err = kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateTableOrView(tc.dbInfo.ID, tc.dbInfo.Name.O, tblInfo)
-		require.NoError(tc.t, err)
-		return errors.Trace(err)
-	})
-	require.NoError(tc.t, err)
-	return tblID
 }
 
 func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
@@ -1023,23 +924,15 @@ func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 		tc.runCreateSchema()
 	}
 	// create table
-	tblID := tc.createTable(tblName)
+	tblInfo := internal.MockTableInfo(tc.t, tc.re.Store(), tblName)
+	internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo, tblInfo)
 
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, func(tc *infoschemaTestContext) {
-		tbl, ok := tc.is.TableByID(tblID)
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblInfo.ID}, func(tc *infoschemaTestContext) {
+		tbl, ok := tc.is.TableByID(tblInfo.ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, tbl.Meta().Name.O, tblName)
 	})
-	return tblID
-}
-
-func (tc *infoschemaTestContext) dropTable(tblName string, tblID int64) {
-	err := kv.RunInNewTxn(tc.ctx, tc.re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropTableOrView(tc.dbInfo.ID, tc.dbInfo.Name.O, tblID, tblName)
-		require.NoError(tc.t, err)
-		return errors.Trace(err)
-	})
-	require.NoError(tc.t, err)
+	return tblInfo.ID
 }
 
 func (tc *infoschemaTestContext) runDropTable(tblName string) {
@@ -1047,7 +940,7 @@ func (tc *infoschemaTestContext) runDropTable(tblName string) {
 	tblID := tc.runCreateTable(tblName)
 
 	// dropTable
-	tc.dropTable(tblName, tblID)
+	internal.DropTable(tc.t, tc.re.Store(), tc.dbInfo, tblID, tblName)
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, func(tc *infoschemaTestContext) {
 		tbl, ok := tc.is.TableByID(tblID)
 		require.False(tc.t, ok)
@@ -1080,7 +973,7 @@ func (tc *infoschemaTestContext) runAddColumn(tblName string) {
 
 func (tc *infoschemaTestContext) addColumn(tblInfo *model.TableInfo) {
 	colName := model.NewCIStr("b")
-	colID, err := genGlobalID(tc.re.Store())
+	colID, err := internal.GenGlobalID(tc.re.Store())
 	require.NoError(tc.t, err)
 	colInfo := &model.ColumnInfo{
 		ID:        colID,
@@ -1142,7 +1035,7 @@ func (tc *infoschemaTestContext) clear() {
 }
 
 func TestApplyDiff(t *testing.T) {
-	re := createAutoIDRequirement(t)
+	re := internal.CreateAutoIDRequirement(t)
 	defer func() {
 		err := re.Store().Close()
 		require.NoError(t, err)

@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -232,6 +233,24 @@ type infoschemaV2 struct {
 	ts            uint64
 	schemaVersion int64
 	*Data
+}
+
+// NewInfoSchemaV2 create infoschemaV2.
+func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
+	return infoschemaV2{
+		infoSchema: &infoSchema{
+			infoSchemaMisc: infoSchemaMisc{
+				policyMap:             map[string]*model.PolicyInfo{},
+				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
+				ruleBundleMap:         map[int64]*placement.Bundle{},
+				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+			},
+			schemaMap:           map[string]*schemaTables{},
+			sortedTablesBuckets: make([]sortedTables, bucketCount),
+		},
+		Data: infoData,
+		r:    r,
+	}
 }
 
 func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, matchFn func(a, b *tableItem) bool) (tableItem, bool) {
@@ -515,4 +534,224 @@ func isTableVirtual(id int64) bool {
 func IsV2(is InfoSchema) bool {
 	_, ok := is.(*infoschemaV2)
 	return ok
+}
+
+func applyTableUpdate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyTableUpdateV2(m, diff)
+	}
+	return b.applyTableUpdate(m, diff)
+}
+
+func applyCreateSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	return b.applyCreateSchema(m, diff)
+}
+
+func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
+	if b.enableV2 {
+		return b.applyDropSchemaV2(diff)
+	}
+	return b.applyDropSchema(diff)
+}
+
+func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyRecoverSchemaV2(m, diff)
+	}
+	return b.applyRecoverSchema(m, diff)
+}
+
+func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
+	}
+	return b.applyModifySchemaCharsetAndCollate(m, diff)
+}
+
+func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaDefaultPlacementV2(m, diff)
+	}
+	return b.applyModifySchemaDefaultPlacement(m, diff)
+}
+
+func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyCreatePolicyV2(m, diff)
+	}
+	return b.applyCreatePolicy(m, diff)
+}
+
+func applyDropPolicy(b *Builder, PolicyID int64) []int64 {
+	if b.enableV2 {
+		return b.applyDropPolicyV2(PolicyID)
+	}
+	return b.applyDropPolicy(PolicyID)
+}
+
+func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyAlterPolicyV2(m, diff)
+	}
+	return b.applyAlterPolicy(m, diff)
+}
+
+func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyCreateOrAlterResourceGroupV2(m, diff)
+	}
+	return b.applyCreateOrAlterResourceGroup(m, diff)
+}
+
+func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []int64 {
+	if b.enableV2 {
+		return b.applyDropResourceGroupV2(m, diff)
+	}
+	return b.applyDropResourceGroup(m, diff)
+}
+
+func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyTruncateTableOrPartitionV2(m, diff)
+	}
+	return b.applyTruncateTableOrPartition(m, diff)
+}
+
+func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		// return b.applyDropTableOrPartitionV2(m, diff)
+	}
+	return b.applyDropTableOrPartition(m, diff)
+}
+
+func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyRecoverTableV2(m, diff)
+	}
+	return b.applyRecoverTable(m, diff)
+}
+
+func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyCreateTablesV2(m, diff)
+	}
+	return b.applyCreateTables(m, diff)
+}
+
+func applyReorganizePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyReorganizePartitionV2(m, diff)
+	}
+	return b.applyReorganizePartition(m, diff)
+}
+
+func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyExchangeTablePartitionV2(m, diff)
+	}
+	return b.applyExchangeTablePartition(m, diff)
+}
+
+// TODO: more UT to check the correctness.
+func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+
+	oldTableID, newTableID := b.getTableIDs(diff)
+	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+
+	tblIDs, allocs, err := b.dropTableForUpdate(newTableID, oldTableID, oldDBInfo, diff)
+	if err != nil {
+		return nil, err
+	}
+
+	if tableIDIsValid(newTableID) {
+		// All types except DropTableOrView.
+		var err error
+		tblIDs, err = b.applyCreateTable(m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
+	di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil
+	}
+
+	b.infoData.deleteDB(di.Name)
+	tableIDs := make([]int64, 0, len(di.Tables))
+	for _, tbl := range di.Tables {
+		tableIDs = appendAffectedIDs(tableIDs, tbl)
+	}
+
+	di = di.Clone()
+	for _, id := range tableIDs {
+		b.deleteBundle(b.infoSchema, id)
+		b.applyDropTableV2(diff, di, id, nil)
+	}
+	return tableIDs
+}
+
+func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	panic("TODO")
+}
+
+func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	panic("TODO")
+}
+
+func (b *Builder) applyCreatePolicyV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	panic("TODO")
+}
+
+func (b *Builder) applyAlterPolicyV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyDropPolicyV2(PolicyID int64) []int64 {
+	panic("TODO")
+}
+
+func (b *Builder) applyDropResourceGroupV2(m *meta.Meta, diff *model.SchemaDiff) []int64 {
+	panic("TODO")
+}
+
+func (b *Builder) applyCreateOrAlterResourceGroupV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	panic("TODO")
+}
+
+func (b *Builder) applyTruncateTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyDropTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyCreateTablesV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyReorganizePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyExchangeTablePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
 }
