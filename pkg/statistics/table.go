@@ -297,10 +297,11 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx.Copy()
 	}
 	nt := &Table{
-		HistColl:        newHistColl,
-		Version:         t.Version,
-		Name:            t.Name,
-		TblInfoUpdateTS: t.TblInfoUpdateTS,
+		HistColl:           newHistColl,
+		Version:            t.Version,
+		Name:               t.Name,
+		TblInfoUpdateTS:    t.TblInfoUpdateTS,
+		LastAnalyzeVersion: t.LastAnalyzeVersion,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -329,11 +330,12 @@ func (t *Table) ShallowCopy() *Table {
 		ModifyCount:    t.ModifyCount,
 	}
 	nt := &Table{
-		HistColl:        newHistColl,
-		Version:         t.Version,
-		Name:            t.Name,
-		TblInfoUpdateTS: t.TblInfoUpdateTS,
-		ExtendedStats:   t.ExtendedStats,
+		HistColl:           newHistColl,
+		Version:            t.Version,
+		Name:               t.Name,
+		TblInfoUpdateTS:    t.TblInfoUpdateTS,
+		ExtendedStats:      t.ExtendedStats,
+		LastAnalyzeVersion: t.LastAnalyzeVersion,
 	}
 	return nt
 }
