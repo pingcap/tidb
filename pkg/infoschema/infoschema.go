@@ -252,7 +252,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 }
 
 // allocByID returns the Allocators of a table.
-func allocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
+func allocByID(is InfoSchema, id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return autoid.Allocators{}, false
