@@ -1641,6 +1641,7 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 // jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
 func jsonArrayExpr2Exprs(sctx expression.BuildContext, jsonFuncName string, jsonArrayExpr expression.Expression, targetType *types.FieldType) ([]expression.Expression, bool) {
 	if expression.MaybeOverOptimized4PlanCache(sctx, []expression.Expression{jsonArrayExpr}) {
+		// skip plan cache and try to generate the best plan in this case.
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError(jsonFuncName + " function with immutable parameters can affect index selection"))
 	}
 	if !expression.IsImmutableExpr(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
