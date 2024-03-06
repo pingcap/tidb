@@ -4179,8 +4179,19 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:7jGKpdA+Amwe8J5XyRI9gjrBNxmqsqE9z/2MBn132x4=",
         version = "v2.0.8-0.20240227133143-d5ccdf66f80c",
+=======
+        sha256 = "124b63a9e7a80fccf7f618cda8f376c2f07ae67c198cd8ee9af5c0dba840b1b4",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240305085506-3625fc04d0bd",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240305085506-3625fc04d0bd.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240305085506-3625fc04d0bd.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240305085506-3625fc04d0bd.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240305085506-3625fc04d0bd.zip",
+        ],
+>>>>>>> 6251f39f4a5 (.*: update client-go (#51498))
     )
     go_repository(
         name = "com_github_tikv_pd",
