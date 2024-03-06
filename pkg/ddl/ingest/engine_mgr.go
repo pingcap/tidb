@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -65,12 +64,6 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 		bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
 		info = LitInfoOpenEngine
 	} else {
-		if en.writerCount+1 > bc.cfg.TikvImporter.RangeConcurrency {
-			logutil.Logger(bc.ctx).Warn(LitErrExceedConcurrency, zap.Int64("job ID", jobID),
-				zap.Int64("index ID", indexID),
-				zap.Int("concurrency", bc.cfg.TikvImporter.RangeConcurrency))
-			return nil, dbterror.ErrIngestFailed.FastGenByArgs("concurrency quota exceeded")
-		}
 		en.writerCount++
 		info = LitInfoAddWriter
 	}
