@@ -504,7 +504,7 @@ func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int
 	if b.enableV2 {
 		return b.applyRecoverSchemaV2(m, diff)
 	}
-	return b.applyRecoverSchemaV2(m, diff)
+	return b.applyRecoverSchema(m, diff)
 }
 
 func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
