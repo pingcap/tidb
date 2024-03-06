@@ -413,7 +413,7 @@ func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
 }
 
 // GetPhysID returns the physical table ID.
-func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, colPos int, d types.Datum) (int64, error) {
+func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID, nil
@@ -433,12 +433,11 @@ func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, co
 			len(pi.Columns) > 1 {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		newKeyPartExpr := tables.ForKeyPruning{
-			KeyPartCols: []*expression.Column{{
-				Index:    colPos,
-				UniqueID: partitionExpr.KeyPartCols[0].UniqueID,
-			}},
-		}
+		// We need to change the partition column index!
+		col := &expression.Column{}
+		*col = *partitionExpr.KeyPartCols[0]
+		col.Index = 0
+		newKeyPartExpr := tables.ForKeyPruning{KeyPartCols: []*expression.Column{col}}
 		partIdx, err := newKeyPartExpr.LocateKeyPartition(pi.Num, []types.Datum{d})
 		if err != nil {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")

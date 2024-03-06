@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util"
@@ -1286,6 +1287,227 @@ func TestWarningWithDisablePlanCacheStmt(t *testing.T) {
 	tk.MustExec("execute st;")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func randValueForMVIndex(colType string) string {
+	randSize := 50
+	colType = strings.ToLower(colType)
+	switch colType {
+	case "int":
+		return fmt.Sprintf("%v", randSize-rand.Intn(randSize))
+	case "string":
+		return fmt.Sprintf("\"%v\"", rand.Intn(randSize))
+	case "json-string":
+		var array []string
+		arraySize := 1 + rand.Intn(5)
+		for i := 0; i < arraySize; i++ {
+			array = append(array, randValueForMVIndex("string"))
+		}
+		return "'[" + strings.Join(array, ", ") + "]'"
+	case "json-signed":
+		var array []string
+		arraySize := 1 + rand.Intn(5)
+		for i := 0; i < arraySize; i++ {
+			array = append(array, randValueForMVIndex("int"))
+		}
+		return "'[" + strings.Join(array, ", ") + "]'"
+	default:
+		return "unknown type " + colType
+	}
+}
+
+func insertValuesForMVIndex(nRows int, colTypes ...string) string {
+	var stmtVals []string
+	for i := 0; i < nRows; i++ {
+		var vals []string
+		for _, colType := range colTypes {
+			vals = append(vals, randValueForMVIndex(colType))
+		}
+		stmtVals = append(stmtVals, "("+strings.Join(vals, ", ")+")")
+	}
+	return strings.Join(stmtVals, ", ")
+}
+
+func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge bool, queryTemplate string, colTypes ...string) {
+	for i := 0; i < 5; i++ {
+		var vals []string
+		for _, colType := range colTypes {
+			vals = append(vals, randValueForMVIndex(colType))
+		}
+
+		query := queryTemplate
+		var setStmt, usingStmt string
+		for i, p := range vals {
+			query = strings.Replace(query, "?", p, 1)
+			if i > 0 {
+				setStmt += ", "
+				usingStmt += ", "
+			}
+			setStmt += fmt.Sprintf("@a%v=%v", i, p)
+			usingStmt += fmt.Sprintf("@a%v", i)
+		}
+		result := tk.MustQuery(query).Sort()
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		tk.MustExec(fmt.Sprintf("set %v", setStmt))
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%v'", queryTemplate))
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result1 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result1.Rows())
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result2 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result2.Rows())
+		if isIndexMerge {
+			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+		}
+		result3 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+		result.Check(result3.Rows())
+		if isIndexMerge {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // hit the cache
+		}
+
+		if isIndexMerge {
+			result4 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
+			result.Check(result4.Rows())
+			tkProcess := tk.Session().ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+			rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+			haveIndexMerge := false
+			for _, r := range rows {
+				if strings.Contains(r[0].(string), "IndexMerge") {
+					haveIndexMerge = true
+				}
+			}
+			require.True(t, haveIndexMerge) // IndexMerge has to be used.
+		}
+	}
+}
+
+func TestPlanCacheMVIndexRandomly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
+
+	// cases from TestIndexMergeFromComposedDNFCondition
+	tk.MustExec(`drop table if exists t2`)
+	tk.MustExec(`create table t2(a json, b json, c int, d int, e int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d))`)
+	tk.MustExec(fmt.Sprintf("insert into t2 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=?) or (? member of (b) and c=?)`,
+		`int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, ?) and d=?) or (? member of (b) and c=? and d=?)`,
+		`json-signed`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?)`,
+		`int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, false,
+		`select * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?) or e=?`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?) or d=?`,
+		`int`, `int`, `int`, `int`, `int`, `int`)
+
+	// cases from TestIndexMergeFromComposedCNFCondition
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1(a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))))`)
+	tk.MustExec(fmt.Sprintf("insert into t1 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int")))
+	tk.MustExec(`create table t2(a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d))`)
+	tk.MustExec(fmt.Sprintf("insert into t2 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t1, idx, idx2) */ * from t1 where ? member of (a) and ? member of (b)`,
+		`int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx, idx2) */ * from t2 where ? member of (a) and ? member of (b) and c=?`,
+		`int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx, idx2, idx4) */ * from t2 where ? member of (a) and ? member of (b) and c=? and d=?`,
+		`int`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, ?) and c=? and ? member of (b) and d=?`,
+		`json-signed`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, ?) and c=? and ? member of (b) and d=?`,
+		`json-signed`, `int`, `int`, `int`)
+	verifyPlanCacheForMVIndex(t, tk, false,
+		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ? member of (a) and c=? and c=?`,
+		`int`, `int`, `int`)
+
+	// case from TestIndexMergeIssue50265
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as signed array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "string", "json-string", "json-string", "json-string", "json-signed")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		`SELECT /*+ use_index_merge(t, domains, image_signatures, canonical_links, fpi) */ pk FROM t WHERE ? member of (domains) OR ? member of (image_signatures) OR ? member of (canonical_links) OR json_contains(fpi, "[69236881]") LIMIT 100`,
+		`string`, `string`, `string`)
+
+	// case from TestIndexMergeEliminateRedundantAndPaths
+	tk.MustExec(`DROP table if exists t`)
+	tk.MustExec("CREATE TABLE `t` (`pk` varbinary(255) NOT NULL,`nslc` json DEFAULT NULL,`fpi` json DEFAULT NULL,`point_of_sale_country` varchar(2) DEFAULT NULL,KEY `fpi` ((cast(`fpi` as signed array))),KEY `nslc` ((cast(`nslc` as char(1000) array)),`point_of_sale_country`),KEY `nslc_old` ((cast(`nslc` as char(1000) array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "string", "json-string", "json-signed", "string")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		"SELECT /*+ use_index_merge(t, fpi, nslc_old, nslc) */ * FROM   t WHERE   ? member of (fpi)   AND ? member of (nslc) LIMIT   100",
+		"int", "string")
+
+	// case from TestIndexMergeSingleCaseCouldFeelIndexMergeHint
+	tk.MustExec(`DROP table if exists t`)
+	tk.MustExec("CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as signed array))))")
+	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "json-string", "json-signed", "int")))
+	verifyPlanCacheForMVIndex(t, tk, true,
+		"SELECT  /*+ use_index_merge(t, nslc) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
+		"int", "string")
+	verifyPlanCacheForMVIndex(t, tk, true,
+		"SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
+		"int", "string")
+}
+
+func TestPlanCacheMVIndexManually(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	planSuiteData := plannercore.GetPlanCacheSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		if strings.HasPrefix(strings.ToLower(input[i]), "select") ||
+			strings.HasPrefix(strings.ToLower(input[i]), "execute") {
+			result := tk.MustQuery(input[i])
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(result.Rows())
+			})
+			result.Check(testkit.Rows(output[i].Result...))
+		} else {
+			tk.MustExec(input[i])
+		}
+	}
 }
 
 func BenchmarkPlanCacheBindingMatch(b *testing.B) {
