@@ -235,6 +235,7 @@ type infoschemaV2 struct {
 	*Data
 }
 
+// NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
 	return infoschemaV2{
 		infoSchema: &infoSchema{
