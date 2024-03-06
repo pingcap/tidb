@@ -124,6 +124,18 @@ func mergeOverlappingFilesInternal(
 	if err != nil {
 		return nil
 	}
+	defer func() {
+		err2 := writer.Close(ctx)
+		if err2 == nil {
+			return
+		}
+
+		if err == nil {
+			err = err2
+		} else {
+			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err2))
+		}
+	}()
 
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
@@ -133,10 +145,5 @@ func mergeOverlappingFilesInternal(
 			return err
 		}
 	}
-	err = iter.Error()
-	if err != nil {
-		return err
-	}
-
-	return writer.Close(ctx)
+	return iter.Error()
 }

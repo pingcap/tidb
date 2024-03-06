@@ -31,7 +31,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/server"
+	tidbserver "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
@@ -210,16 +210,18 @@ func TestTLSVerify(t *testing.T) {
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
-	server, err := server.NewServer(cfg, ts.Tidbdrv)
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
 	defer server.Close()
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.RunTestTLSConnection(t, nil)
 	require.NoError(t, err)
@@ -303,15 +305,16 @@ func TestTLSBasic(t *testing.T) {
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
-	server, err := server.NewServer(cfg, ts.Tidbdrv)
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	err = cli.RunTestTLSConnection(t, connOverrider) // We should establish connection successfully.
 	require.NoError(t, err)
 	cli.RunTestRegression(t, connOverrider, "TLSRegression")
@@ -370,7 +373,7 @@ func TestErrorNoRollback(t *testing.T) {
 		SSLCert: "wrong path",
 		SSLKey:  "wrong path",
 	}
-	_, err = server.NewServer(cfg, ts.Tidbdrv)
+	_, err = tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.Error(t, err)
 
 	// test reload tls fail with/without "error no rollback option"
@@ -379,16 +382,17 @@ func TestErrorNoRollback(t *testing.T) {
 		SSLCert: "/tmp/server-cert-rollback.pem",
 		SSLKey:  "/tmp/server-key-rollback.pem",
 	}
-	server, err := server.NewServer(cfg, ts.Tidbdrv)
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
-	time.Sleep(time.Millisecond * 100)
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
 	}
@@ -438,15 +442,16 @@ func TestReloadTLS(t *testing.T) {
 		SSLCert: "/tmp/server-cert-reload.pem",
 		SSLKey:  "/tmp/server-key-reload.pem",
 	}
-	server, err := server.NewServer(cfg, ts.Tidbdrv)
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	// The client provides a valid certificate.
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
@@ -531,16 +536,17 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
 	cfg.Security.ClusterSSLCert = fileName("server-cert-2.pem")
 	cfg.Security.ClusterSSLKey = fileName("server-key-2.pem")
-	server, err := server.NewServer(cfg, ts.Tidbdrv)
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
-
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	// https connection should work.
 	ts.RunTestStatusAPI(t)
 
@@ -588,15 +594,17 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	cfg.Security.ClusterSSLCert = serverCertPath
 	cfg.Security.ClusterSSLKey = serverKeyPath
 	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
-	server, err := server.NewServer(cfg, ts.Tidbdrv)
+	tidbserver.RunInGoTestChan = make(chan struct{})
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	defer server.Close()
 	time.Sleep(time.Millisecond * 100)
 
@@ -628,7 +636,7 @@ func TestInvalidTLS(t *testing.T) {
 		SSLCert: "bogus-server-cert.pem",
 		SSLKey:  "bogus-server-key.pem",
 	}
-	_, err := server.NewServer(cfg, ts.Tidbdrv)
+	_, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.Error(t, err)
 }
 
@@ -645,17 +653,18 @@ func TestTLSAuto(t *testing.T) {
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
 	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
+	tidbserver.RunInGoTestChan = make(chan struct{})
 	err := os.MkdirAll(cfg.TempStoragePath, 0700)
 	require.NoError(t, err)
-	server, err := server.NewServer(cfg, ts.Tidbdrv)
+	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-tidbserver.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	err = cli.RunTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
 	require.NoError(t, err)
 

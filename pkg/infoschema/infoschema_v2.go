@@ -78,11 +78,11 @@ type Data struct {
 	// But this mapping should be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
-	tableCache fifo.Cache[tableCacheKey, table.Table]
-
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
+
+	tableCache fifo.Cache[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -97,7 +97,6 @@ type Data struct {
 func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
 	isd.mu.RLock()
 	defer isd.mu.RUnlock()
-
 	return isd.getVersionByTSNoLock(ts)
 }
 
@@ -160,6 +159,30 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+}
+
+func (isd *Data) delete(item tableItem) {
+	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
+}
+
+func (isd *Data) deleteDB(name model.CIStr) {
+	dbInfo, schemaVersion := isd.schemaByName(name)
+	isd.schemaMap.Delete(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+}
+
+func (isd *Data) schemaByName(name model.CIStr) (res *model.DBInfo, schemaVersion int64) {
+	var dbInfo model.DBInfo
+	dbInfo.Name = name
+
+	isd.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
+		if item.Name() != name.L {
+			return false
+		}
+		res = item.dbInfo
+		schemaVersion = item.schemaVersion
+		return false
+	})
+	return res, schemaVersion
 }
 
 func compareByID(a, b tableItem) bool {
@@ -263,11 +286,12 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 
 	// Maybe the table is evicted? need to reload.
 	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.schemaVersion)
-	if err == nil {
-		is.tableCache.Set(key, ret)
-		return ret, true
+	if err != nil || ret == nil {
+		return nil, false
 	}
-	return nil, false
+
+	is.tableCache.Set(key, ret)
+	return ret, true
 }
 
 func isSpecialDB(dbName string) bool {
@@ -454,7 +478,18 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		// TODO load table panic!!!
 		panic(err)
 	}
-	tblInfo := res.(*model.TableInfo) // TODO: it could be missing!!!
+	if res == nil {
+		return nil, err
+	}
+	tblInfo := res.(*model.TableInfo)
+
+	// table removed.
+	if tblInfo == nil {
+		return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", dbID),
+			fmt.Sprintf("(Table ID %d)", tblID),
+		))
+	}
 
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
@@ -493,11 +528,11 @@ func applyCreateSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
 	return b.applyCreateSchema(m, diff)
 }
 
-func applyDropSchema(b *Builder, schemaID int64) []int64 {
+func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
 	if b.enableV2 {
-		return b.applyDropSchemaV2(schemaID)
+		return b.applyDropSchemaV2(diff)
 	}
-	return b.applyDropSchema(schemaID)
+	return b.applyDropSchema(diff)
 }
 
 func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -565,7 +600,7 @@ func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaD
 
 func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
-		return b.applyDropTableOrPartitionV2(m, diff)
+		// return b.applyDropTableOrPartitionV2(m, diff)
 	}
 	return b.applyDropTableOrPartition(m, diff)
 }
@@ -598,21 +633,27 @@ func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDif
 	return b.applyExchangeTablePartition(m, diff)
 }
 
+// TODO: more UT to check the correctness.
 func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	roDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
+
 	oldTableID, newTableID := b.getTableIDs(diff)
-	var tblIDs []int64
+	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+
+	tblIDs, allocs, err := b.dropTableForUpdate(newTableID, oldTableID, oldDBInfo, diff)
+	if err != nil {
+		return nil, err
+	}
+
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		oldAllocs, _ := allocByID(&b.infoschemaV2, oldTableID)
-		newAllocs := filterAllocators(diff, oldAllocs)
-		tblIDs, err = b.applyCreateTable(m, roDBInfo, newTableID, newAllocs, diff.Type, tblIDs, diff.Version)
+		tblIDs, err = b.applyCreateTable(m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -620,8 +661,24 @@ func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropSchemaV2(schemaID int64) []int64 {
-	panic("TODO")
+func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
+	di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil
+	}
+
+	b.infoData.deleteDB(di.Name)
+	tableIDs := make([]int64, 0, len(di.Tables))
+	for _, tbl := range di.Tables {
+		tableIDs = appendAffectedIDs(tableIDs, tbl)
+	}
+
+	di = di.Clone()
+	for _, id := range tableIDs {
+		b.deleteBundle(b.infoSchema, id)
+		b.applyDropTableV2(diff, di, id, nil)
+	}
+	return tableIDs
 }
 
 func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -661,7 +718,7 @@ func (b *Builder) applyTruncateTableOrPartitionV2(m *meta.Meta, diff *model.Sche
 }
 
 func (b *Builder) applyDropTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	return nil, errors.New("TODO")
+	panic("TODO")
 }
 
 func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {

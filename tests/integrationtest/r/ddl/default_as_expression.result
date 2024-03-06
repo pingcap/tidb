@@ -1,3 +1,226 @@
+use test;
+drop table if exists t0, t1, t2, t3, t4, t5, t6, t7;
+create table t0 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m')));
+create table t1 (c int(10), c1 datetime default (date_format(now(),'%Y-%m-%d')));
+create table t2 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H.%i.%s')));
+create table t3 (c int(10), c1 timestamp default (date_format(now(),'%Y-%m-%d %H.%i.%s')));
+create table t4 (c int(10), c1 date default (date_format(now(),'%Y-%m-%d %H:%i:%s')));
+create table t5 (c int(10), c1 date default (date_format(now(),_utf8mb4'%Y-%m-%d %H:%i:%s')));
+create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString %b %d %Y %h:%i %p`.
+create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString %Y-%m-%d %H:%i:%s %p`.
+alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+SET @x := NOW();
+insert into t0(c) values (1);
+insert into t0 values (2, default);
+SELECT * FROM t0 WHERE c = date_format(@x,'%Y-%m') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m');
+c	c1
+insert into t1(c) values (1);
+insert into t1 values (2, default);
+SELECT * FROM t1 WHERE c = date_format(@x,'%Y-%m-%d') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d');
+c	c1
+insert into t2(c) values (1);
+insert into t2 values (2, default);
+SELECT * FROM t2 WHERE c = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
+c	c1
+SET @x := NOW();
+insert into t3(c) values (1);
+insert into t3 values (2, default);
+SELECT * FROM t3 WHERE c = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
+c	c1
+insert into t4(c) values (1);
+insert into t4 values (2, default);
+SELECT * FROM t4 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
+c	c1
+insert into t5(c) values (1);
+insert into t5 values (2, default);
+SELECT * FROM t5 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
+c	c1
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4'%Y-%m')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` datetime DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H.%i.%s')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t0 modify column c1 varchar(30) default 'xx';
+alter table t1 modify column c1 varchar(30) default 'xx';
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(30) DEFAULT 'xx'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(30) DEFAULT 'xx'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t0 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
+Error 1292 (22007): Incorrect datetime value: '2024-03'
+alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` datetime DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+show columns from test.t1 where field='c1';
+Field	Type	Null	Key	Default	Extra
+c1	datetime	YES		date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+drop table if exists t, t1, t2;
+create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')));
+create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')));
+create table t2 (c int(10), c1 varchar(256) default (REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', '')));
+create table t1 (c int(10), c1 varchar(256) default (REPLACE('xdfj-jfj', '-', '')));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `REPLACE`.
+create table t1 (c int(10), c1 varchar(256) default (UPPER(UUID())));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `UPPER`.
+create table t1 (c int(10), c1 varchar(256) default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `REPLACE`.
+alter table t add column c2 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+alter table t add column c3 int default (UPPER(UUID()));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', ''));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+insert into t(c) values (1),(2),(3);
+insert into t values (4, default)
+SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
+count(1)
+4
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(256) DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` int(11) DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(256) DEFAULT replace(convert(upper(uuid()) using 'utf8mb4'), _utf8mb4'-', _utf8mb4'')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t1 modify column c1 varchar(30) default 'xx';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(30) DEFAULT 'xx'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t1 modify column c1 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(32) DEFAULT replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
+drop table if exists t0, t1, t2, t3, t4, t5;
+create table t0 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')), c2 date default (str_to_date('9999-01-01','%Y-%m-%d')));
+create table t1 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), c2 int default (str_to_date('9999-01-01','%Y-%m-%d')));
+create table t3 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%m-%d')));
+create table t4 (c int(10), c1 varchar(32) default (str_to_date('01-01','%Y-%m-%d')));
+set @sqlMode := @@session.sql_mode;
+set @@sql_mode='';
+create table t2 (c int(10), c1 blob default (str_to_date('1980-01-01','%Y-%m-%d')), c2 blob default (str_to_date('9999-01-01','%m-%d')));
+create table t5 (c int(10), c1 json default (str_to_date('9999-01-01','%Y-%m-%d')), c2 timestamp default (str_to_date('1980-01-01','%Y-%m-%d')));
+set session sql_mode=@sqlMode;
+create table t6 (c int(10), c1 varchar(32) default (str_to_date(upper('1980-01-01'),'%Y-%m-%d')));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `str_to_date with these args`.
+create table t6 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01',upper('%Y-%m-%d'))));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `str_to_date with these args`.
+alter table t0 add column c3 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+alter table t0 add column c4 int default (str_to_date('1980-01-01','%Y-%m-%d'));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+insert into t0(c) values (1),(2),(3);
+insert into t1(c) values (1),(2),(3);
+insert into t0 values (4, default, default);
+insert into t1 values (4, default, default);
+insert into t3(c) values (1);
+Error 1292 (22007): Incorrect datetime value: '0000-00-00 00:00:00'
+insert into t4(c) values (1);
+Error 1292 (22007): Incorrect datetime value: '2001-01-00 00:00:00'
+insert into t5(c) values (1);
+set @@sql_mode='';
+insert into t2(c) values (1),(2),(3);
+insert into t2 values (4, default, default);
+set session sql_mode=@sqlMode;
+insert into t2(c) values (5);
+Error 1292 (22007): Incorrect datetime value: '0000-00-00 00:00:00'
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+drop table if exists t, t1, t2;
+create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))));
+create table t1 (c int(10), c1 int default (upper(substring_index(user(),_utf8mb4'@',1))));
+create table t2 (c int(10), c1 varchar(256) default (substring_index(user(),'@',1)));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `substring_index`.
+create table t2 (c int(10), c1 varchar(256) default (upper(substring_index('fjks@jkkl','@',1))));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `upper`.
+create table t2 (c int(10), c1 varchar(256) default (upper(substring_index(user(),'x',1))));
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString x`.
+alter table t add column c2 varchar(32) default (upper(substring_index(user(),'@',1)));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+alter table t add column c3 int default (upper(substring_index('fjks@jkkl','@',1)));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+insert into t1(c) values (1);
+Error 1292 (22007): Truncated incorrect DOUBLE value: 'ROOT'
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(256) DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` int(11) DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t1 modify column c1 varchar(30) default 'xx';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(30) DEFAULT 'xx'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t1 modify column c1 varchar(32) default (upper(substring_index(user(),'@',1)));
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(32) DEFAULT upper(substring_index(user(), _utf8mb4'@', 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+column_default	extra
+upper(substring_index(user(), _utf8mb4'@', 1))	DEFAULT_GENERATED
 drop table if exists t0, t1, t2, t3;
 create table t0 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')));
 create table t1 (c int(10), c1 JSON default (date_format(now(),'%Y-%m-%d')));
@@ -52,12 +275,16 @@ t3	CREATE TABLE `t3` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
 column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
 column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
 column_default	extra
+date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 drop table t0, t1, t2, t3;
 create table t0 (c int(10), c1 BLOB default (REPLACE(UPPER(UUID()), '-', '')));
 create table t1 (c int(10), c1 JSON default (REPLACE(UPPER(UUID()), '-', '')));
@@ -112,12 +339,16 @@ t3	CREATE TABLE `t3` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
 column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
 column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
 column_default	extra
+replace(upper(uuid()), _utf8mb4'-', _utf8mb4'')	DEFAULT_GENERATED
 drop table t0, t1, t2, t3;
 create table t0 (c int(10), c1 BLOB default (str_to_date('1980-01-01','%Y-%m-%d')));
 create table t1 (c int(10), c1 JSON default (str_to_date('1980-01-01','%Y-%m-%d')));
@@ -173,12 +404,16 @@ t3	CREATE TABLE `t3` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
 column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
 column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
 column_default	extra
+str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 drop table t0, t1, t2, t3;
 create table t0 (c int(10), c1 BLOB default (upper(substring_index(user(),'@',1))));
 create table t1 (c int(10), c1 JSON default (upper(substring_index(user(),'@',1))));

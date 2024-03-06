@@ -678,13 +678,6 @@ func (rc *Client) SetConcurrencyPerStore(c uint) {
 	rc.concurrencyPerStore = c
 }
 
-func (rc *Client) GetTotalDownloadConcurrency() uint {
-	if rc.storeCount <= 0 {
-		log.Fatal("uninitialize store count", zap.Int("storeCount", rc.storeCount))
-	}
-	return rc.concurrencyPerStore * uint(rc.storeCount)
-}
-
 func (rc *Client) GetConcurrencyPerStore() uint {
 	return rc.concurrencyPerStore
 }
