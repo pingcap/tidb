@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -78,11 +79,11 @@ type Data struct {
 	// But this mapping should be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
-	tableCache fifo.Cache[tableCacheKey, table.Table]
-
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
+
+	tableCache fifo.Cache[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -97,7 +98,6 @@ type Data struct {
 func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
 	isd.mu.RLock()
 	defer isd.mu.RUnlock()
-
 	return isd.getVersionByTSNoLock(ts)
 }
 
@@ -162,6 +162,30 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
+func (isd *Data) delete(item tableItem) {
+	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
+}
+
+func (isd *Data) deleteDB(name model.CIStr) {
+	dbInfo, schemaVersion := isd.schemaByName(name)
+	isd.schemaMap.Delete(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+}
+
+func (isd *Data) schemaByName(name model.CIStr) (res *model.DBInfo, schemaVersion int64) {
+	var dbInfo model.DBInfo
+	dbInfo.Name = name
+
+	isd.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
+		if item.Name() != name.L {
+			return false
+		}
+		res = item.dbInfo
+		schemaVersion = item.schemaVersion
+		return false
+	})
+	return res, schemaVersion
+}
+
 func compareByID(a, b tableItem) bool {
 	if a.tableID < b.tableID {
 		return true
@@ -209,6 +233,24 @@ type infoschemaV2 struct {
 	ts            uint64
 	schemaVersion int64
 	*Data
+}
+
+// NewInfoSchemaV2 create infoschemaV2.
+func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
+	return infoschemaV2{
+		infoSchema: &infoSchema{
+			infoSchemaMisc: infoSchemaMisc{
+				policyMap:             map[string]*model.PolicyInfo{},
+				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
+				ruleBundleMap:         map[int64]*placement.Bundle{},
+				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+			},
+			schemaMap:           map[string]*schemaTables{},
+			sortedTablesBuckets: make([]sortedTables, bucketCount),
+		},
+		Data: infoData,
+		r:    r,
+	}
 }
 
 func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, matchFn func(a, b *tableItem) bool) (tableItem, bool) {
@@ -263,11 +305,12 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 
 	// Maybe the table is evicted? need to reload.
 	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.schemaVersion)
-	if err == nil {
-		is.tableCache.Set(key, ret)
-		return ret, true
+	if err != nil || ret == nil {
+		return nil, false
 	}
-	return nil, false
+
+	is.tableCache.Set(key, ret)
+	return ret, true
 }
 
 func isSpecialDB(dbName string) bool {
@@ -454,7 +497,18 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		// TODO load table panic!!!
 		panic(err)
 	}
-	tblInfo := res.(*model.TableInfo) // TODO: it could be missing!!!
+	if res == nil {
+		return nil, err
+	}
+	tblInfo := res.(*model.TableInfo)
+
+	// table removed.
+	if tblInfo == nil {
+		return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", dbID),
+			fmt.Sprintf("(Table ID %d)", tblID),
+		))
+	}
 
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)

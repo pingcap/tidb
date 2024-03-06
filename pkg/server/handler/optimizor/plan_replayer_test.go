@@ -97,7 +97,7 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-
+	<-server.RunInGoTestChan
 	client.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(srv.StatusListenerAddr())
 	client.WaitUntilServerOnline()

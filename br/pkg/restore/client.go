@@ -518,6 +518,10 @@ func (rc *Client) Close() {
 		rc.rawKVClient.Close()
 	}
 
+	if err := rc.fileImporter.Close(); err != nil {
+		log.Warn("failed to close file improter")
+	}
+
 	log.Info("Restore client closed")
 }
 
@@ -672,13 +676,6 @@ func (rc *Client) SetConcurrency(c uint) {
 func (rc *Client) SetConcurrencyPerStore(c uint) {
 	log.Info("per-store download worker pool", zap.Uint("size", c))
 	rc.concurrencyPerStore = c
-}
-
-func (rc *Client) GetTotalDownloadConcurrency() uint {
-	if rc.storeCount <= 0 {
-		log.Fatal("uninitialize store count", zap.Int("storeCount", rc.storeCount))
-	}
-	return rc.concurrencyPerStore * uint(rc.storeCount)
 }
 
 func (rc *Client) GetConcurrencyPerStore() uint {

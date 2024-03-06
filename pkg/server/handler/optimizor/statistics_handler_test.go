@@ -55,13 +55,13 @@ func TestDumpStatsAPI(t *testing.T) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
 
 	statsHandler := optimizor.NewStatsHandler(dom)

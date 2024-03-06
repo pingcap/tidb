@@ -18,6 +18,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -25,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 // FuzzyBindingCache is based on BindingCache, and provide some more advanced features, like
@@ -52,24 +55,40 @@ type fuzzyBindingCache struct {
 	fuzzy2SQLDigests map[string][]string // fuzzyDigest --> sqlDigests
 
 	sql2FuzzyDigest map[string]string // sqlDigest --> fuzzyDigest
+
+	// loadBindingFromStorageFunc is used to load binding from storage if cache miss.
+	loadBindingFromStorageFunc func(sqlDigest string) (Bindings, error)
 }
 
-func newFuzzyBindingCache() FuzzyBindingCache {
+func newFuzzyBindingCache(loadBindingFromStorageFunc func(string) (Bindings, error)) FuzzyBindingCache {
 	return &fuzzyBindingCache{
-		BindingCache:     newBindCache(),
-		fuzzy2SQLDigests: make(map[string][]string),
-		sql2FuzzyDigest:  make(map[string]string),
+		BindingCache:               newBindCache(),
+		fuzzy2SQLDigests:           make(map[string][]string),
+		sql2FuzzyDigest:            make(map[string]string),
+		loadBindingFromStorageFunc: loadBindingFromStorageFunc,
 	}
 }
 
 func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+	matchedBinding, isMatched, missingSQLDigest := fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
+	if len(missingSQLDigest) == 0 {
+		return
+	}
+	if fbc.loadBindingFromStorageFunc == nil {
+		return
+	}
+	fbc.loadFromStore(missingSQLDigest) // loadFromStore's SetBinding has a Mutex inside, so it's safe to call it without lock
+	matchedBinding, isMatched, _ = fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
+	return
+}
+
+func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
 	fbc.mu.RLock()
 	defer fbc.mu.RUnlock()
 	bindingCache := fbc.BindingCache
 	if bindingCache.Size() == 0 {
 		return
 	}
-
 	leastWildcards := len(tableNames) + 1
 	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, sqlDigest := range fbc.fuzzy2SQLDigests[fuzzyDigest] {
@@ -86,9 +105,33 @@ func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzz
 					break
 				}
 			}
+		} else {
+			missingSQLDigest = append(missingSQLDigest, sqlDigest)
 		}
 	}
-	return
+	return matchedBinding, isMatched, missingSQLDigest
+}
+
+func (fbc *fuzzyBindingCache) loadFromStore(missingSQLDigest []string) {
+	for _, sqlDigest := range missingSQLDigest {
+		bindings, err := fbc.loadBindingFromStorageFunc(sqlDigest)
+		if err != nil {
+			logutil.BgLogger().Warn("loadBindingFromStorageFunc binding failed", zap.String("sqlDigest", sqlDigest), zap.Error(err))
+			continue
+		}
+		// put binding into the cache
+		oldBinding := fbc.GetBinding(sqlDigest)
+		newBindings := removeDeletedBindings(merge(oldBinding, bindings))
+		if len(newBindings) > 0 {
+			err = fbc.SetBinding(sqlDigest, newBindings)
+			if err != nil {
+				// When the memory capacity of bing_cache is not enough,
+				// there will be some memory-related errors in multiple places.
+				// Only needs to be handled once.
+				logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(err))
+			}
+		}
+	}
 }
 
 func (fbc *fuzzyBindingCache) SetBinding(sqlDigest string, bindings Bindings) (err error) {
@@ -153,9 +196,10 @@ func (fbc *fuzzyBindingCache) Copy() (c FuzzyBindingCache, err error) {
 		fuzzy2SQLDigests[k] = newList
 	}
 	return &fuzzyBindingCache{
-		BindingCache:     bc,
-		fuzzy2SQLDigests: fuzzy2SQLDigests,
-		sql2FuzzyDigest:  sql2FuzzyDigest,
+		BindingCache:               bc,
+		fuzzy2SQLDigests:           fuzzy2SQLDigests,
+		sql2FuzzyDigest:            sql2FuzzyDigest,
+		loadBindingFromStorageFunc: fbc.loadBindingFromStorageFunc,
 	}, nil
 }
 
@@ -273,6 +317,9 @@ func (c *bindingCache) delete(key bindingCacheKey) bool {
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
 func (c *bindingCache) GetBinding(sqlDigest string) Bindings {
+	failpoint.Inject("get_binding_return_nil", func(_ failpoint.Value) {
+		failpoint.Return(nil)
+	})
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	return c.get(bindingCacheKey(sqlDigest))
