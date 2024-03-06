@@ -104,9 +104,16 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20240219030752-98ed21b132fa
 	github.com/tikv/pd/client v0.0.0-20240210135946-3488a653ddd9
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
+=======
+	github.com/tidwall/btree v1.7.0
+	github.com/tikv/client-go/v2 v2.0.8-0.20240305085506-3625fc04d0bd
+	github.com/tikv/pd/client v0.0.0-20240229065730-92a31c12238e
+	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
+>>>>>>> 6251f39f4a5 (.*: update client-go (#51498))
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
