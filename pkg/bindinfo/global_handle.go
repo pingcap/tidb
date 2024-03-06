@@ -706,9 +706,8 @@ func (h *globalBindingHandle) LoadBindingsFromStorage(sqlDigest string) (Binding
 
 func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
 	var bindings Bindings
-	selectStmt := fmt.Sprintf("SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = '%s'", sqlDigest)
 	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
-		rows, _, err := execRows(sctx, selectStmt)
+		rows, _, err := execRows(sctx, "SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = ?", sqlDigest)
 		if err != nil {
 			return err
 		}
