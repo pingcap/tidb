@@ -198,7 +198,7 @@ func StartExitSingleListener(ctx context.Context) (context.Context, context.Canc
 		printDelimate(fmt.Sprintf("Required Goroutine Dump = %v", dumpGoroutine))
 		if dumpGoroutine {
 			printDelimate("Start Dumping Goroutine")
-			os.Stdout.Write(AllStackInfo())
+			_, _ = os.Stdout.Write(AllStackInfo())
 			printDelimate("End of Dumping Goroutine")
 		}
 		log.Warn("received signal to exit", zap.Stringer("signal", sig))
