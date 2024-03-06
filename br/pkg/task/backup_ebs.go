@@ -353,10 +353,7 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 	}
 	for i := range allStores {
 		store := allStores[i]
-		if ectx.Err() != nil {
-			break
-		}
-		workerPool.ApplyOnErrorGroup(eg, func() error {
+		workerPool.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 			backupClient, connection, err := newBackupClient(ctx, store.Address, cfg, mgr.GetTLSConfig())
 			if err != nil {
 				return errors.Trace(err)

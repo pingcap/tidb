@@ -139,10 +139,10 @@ func TestStatsWriter(t *testing.T) {
 		controlWorker := utils.NewWorkerPool(2, "test")
 		eg, ectx := errgroup.WithContext(ctx)
 		taskCh := make(chan *types.PartitionStatisticLoadTask)
-		controlWorker.ApplyOnErrorGroup(eg, func() error {
+		controlWorker.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 			return downloadStats(ectx, stg, &cipher, statsFileIndexes, rewriteIDs, taskCh)
 		})
-		controlWorker.ApplyOnErrorGroup(eg, func() error {
+		controlWorker.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 			for task := range taskCh {
 				expectedJsonTable := fakeJsonTables[rerewriteIDs[task.PhysicalID]]
 				require.Equal(t, expectedJsonTable, task.JSONTable)

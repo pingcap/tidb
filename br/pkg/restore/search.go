@@ -92,7 +92,7 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 			return nil
 		}
 
-		pool.ApplyOnErrorGroup(eg, func() error {
+		pool.ApplyOnErrorGroupWithErrorContext(eg, egCtx, func() error {
 			m := &backuppb.Metadata{}
 			b, err := s.storage.ReadFile(egCtx, path)
 			if err != nil {

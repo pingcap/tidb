@@ -1336,12 +1336,8 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 
 		eg, ectx := errgroup.WithContext(ctx)
 		for _, store := range stores {
-			if err := ectx.Err(); err != nil {
-				return errors.Trace(err)
-			}
-
 			finalStore := store
-			rc.workerPool.ApplyOnErrorGroup(eg,
+			rc.workerPool.ApplyOnErrorGroupWithErrorContext(eg, ectx,
 				func() error {
 					err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
 					if err != nil {
@@ -1550,7 +1546,7 @@ LOOPFORTABLE:
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
 				// just keep the consistency as before.
-				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
+				rc.workerPool.ApplyOnErrorGroupWithErrorContext(eg, ectx, restoreFn)
 			}
 		}
 	}
@@ -1576,7 +1572,7 @@ func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.Fi
 
 	for _, file := range files {
 		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
+		rc.workerPool.ApplyOnErrorGroupWithErrorContext(eg, ectx,
 			func() error {
 				defer updateCh.Inc()
 				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
@@ -1666,12 +1662,8 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, store := range stores {
-		if err := ectx.Err(); err != nil {
-			return errors.Trace(err)
-		}
-
 		finalStore := store
-		rc.workerPool.ApplyOnErrorGroup(eg,
+		rc.workerPool.ApplyOnErrorGroupWithErrorContext(eg, ectx,
 			func() error {
 				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 				if rc.tlsConf != nil {
@@ -2085,7 +2077,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 				Partition: oldPartition,
 			},
 		}
-		pool.ApplyOnErrorGroup(eg, func() error {
+		pool.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 			exe, err := checksum.NewExecutorBuilder(newTableInfo, startTS).
 				SetOldTable(oldTable).
 				SetConcurrency(4).
@@ -2697,7 +2689,7 @@ func (rc *Client) RestoreKVFiles(
 		} else {
 			applyWg.Add(1)
 			downstreamId := idrules[files[0].TableId]
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+			rc.workerPool.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() (err error) {
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
@@ -2730,7 +2722,7 @@ func (rc *Client) RestoreKVFiles(
 		}
 	}
 
-	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+	rc.workerPool.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 		if supportBatch {
 			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		} else {

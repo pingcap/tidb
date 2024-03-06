@@ -231,12 +231,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 		i := i
 		storeId := recovery.allStores[i].GetId()
 		storeAddr := recovery.allStores[i].GetAddress()
-
-		if err := ectx.Err(); err != nil {
-			break
-		}
-
-		workers.ApplyOnErrorGroup(eg, func() error {
+		workers.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 			recoveryClient, conn, err := recovery.newRecoveryClient(ectx, storeAddr)
 			if err != nil {
 				return errors.Trace(err)
@@ -337,13 +332,10 @@ func (recovery *Recovery) RecoverRegions(ctx context.Context) (err error) {
 	workers := utils.NewWorkerPool(uint(min(totalRecoveredStores, common.MaxStoreConcurrency)), "Recover Regions")
 
 	for storeId, plan := range recovery.RecoveryPlan {
-		if err := ectx.Err(); err != nil {
-			break
-		}
 		storeId := storeId
 		plan := plan
 
-		workers.ApplyOnErrorGroup(eg, func() error {
+		workers.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 			return recovery.RecoverRegionOfStore(ectx, storeId, plan)
 		})
 	}

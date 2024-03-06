@@ -174,11 +174,10 @@ func (rs *RegionSplitter) executeSplitByKeys(
 	startTime := time.Now()
 	minKey := codec.EncodeBytesExt(nil, scanStartKey, splitContext.isRawKv)
 	maxKey := codec.EncodeBytesExt(nil, sortedKeys[len(sortedKeys)-1], splitContext.isRawKv)
-	scatterRegions := make([]*split.RegionInfo, 0)
-	regionsMap := make(map[uint64]*split.RegionInfo)
+	scatterRegions := make([]*split.RegionInfo, 0, len(sortedKeys)+128)
 
 	err := utils.WithRetry(ctx, func() error {
-		clear(regionsMap)
+		clear(scatterRegions)
 		regions, err := split.PaginateScanRegion(ctx, rs.client, minKey, maxKey, split.ScanRegionPaginationLimit)
 		if err != nil {
 			return err
@@ -194,7 +193,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 			region := regionMap[regionID]
 			keys := splitKeys
 			sctx := splitContext
-			workerPool.ApplyOnErrorGroup(eg, func() error {
+			workerPool.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 				log.Info("get split keys for split regions",
 					logutil.Region(region.Region), logutil.Keys(keys))
 				newRegions, err := rs.splitAndScatterRegions(ectx, region, keys, sctx.isRawKv)
@@ -208,23 +207,13 @@ func (rs *RegionSplitter) executeSplitByKeys(
 				}
 				log.Info("scattered regions", zap.Int("count", len(newRegions)))
 				mutex.Lock()
-				for _, r := range newRegions {
-					regionsMap[r.Region.Id] = r
-				}
+				scatterRegions = append(scatterRegions, newRegions...)
 				mutex.Unlock()
 				sctx.onSplit(keys)
 				return nil
 			})
 		}
-		err = eg.Wait()
-		if err != nil {
-			return err
-		}
-		for _, r := range regionsMap {
-			// merge all scatter regions
-			scatterRegions = append(scatterRegions, r)
-		}
-		return nil
+		return eg.Wait()
 	}, newSplitBackoffer())
 	if err != nil {
 		return errors.Trace(err)
@@ -726,7 +715,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 		return nil
 	}
 
-	helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
+	helper.pool.ApplyOnErrorGroupWithErrorContext(helper.eg, ctx, func() error {
 		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints, false)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))

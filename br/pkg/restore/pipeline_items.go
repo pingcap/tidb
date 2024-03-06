@@ -311,11 +311,11 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 	defer log.Debug("split worker closed")
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
-		b.wg.Done()
 		if err := eg.Wait(); err != nil {
 			b.sink.EmitError(err)
 		}
 		close(next)
+		b.wg.Done()
 		log.Info("TiKV Sender: split worker exits.")
 	}()
 
@@ -350,7 +350,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// And worker 2 finished its job before worker 1 done. Note the table wasn't restored fully,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
-			pool.ApplyOnErrorGroup(eg, func() error {
+			pool.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 				err := b.client.SplitRanges(ectx, result.Ranges, result.RewriteRules, b.updateCh, false)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))

@@ -3,6 +3,8 @@
 package utils
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -77,6 +79,24 @@ func (pool *WorkerPool) ApplyOnErrorGroup(eg *errgroup.Group, fn func() error) {
 	})
 }
 
+// ApplyOnErrorGroupWithErrorContext executes a task in an errorgroup, and check the context status before
+// run the given function.
+func (pool *WorkerPool) ApplyOnErrorGroupWithErrorContext(eg *errgroup.Group, ectx context.Context, fn func() error) {
+	worker, ctxErr := pool.ApplyWorkerWithContext(ectx)
+	// the context error is caused due to 2 situations:
+	// 1. the error is from function in the worker pool. At this time, the error group already keep the error, so the error
+	// is duplicated and would be given up.
+	// 2. the error is from the context's canceled parent context. Then the error group would save the error, and return back
+	// the error when the caller calls eg.Wait().
+	eg.Go(func() error {
+		if ctxErr != nil {
+			return errors.Trace(ctxErr)
+		}
+		defer pool.RecycleWorker(worker)
+		return fn()
+	})
+}
+
 // ApplyWithIDInErrorGroup executes a task in an errorgroup and provides it with the worker ID.
 func (pool *WorkerPool) ApplyWithIDInErrorGroup(eg *errgroup.Group, fn func(id uint64) error) {
 	worker := pool.ApplyWorker()
@@ -96,6 +116,20 @@ func (pool *WorkerPool) ApplyWorker() *Worker {
 		worker = <-pool.workers
 	}
 	return worker
+}
+
+// ApplyWorkerWithContext apply a worker with context, if the context is canceled, return the error instead.
+func (pool *WorkerPool) ApplyWorkerWithContext(ctx context.Context) (*Worker, error) {
+	var worker *Worker
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
+	}
+	select {
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case worker = <-pool.workers:
+	}
+	return worker, nil
 }
 
 // RecycleWorker recycle a worker.
