@@ -203,14 +203,15 @@ func TestTLSBasic(t *testing.T) {
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	err = cli.runTestTLSConnection(t, connOverrider) // We should establish connection successfully.
 	require.NoError(t, err)
 	cli.runTestRegression(t, connOverrider, "TLSRegression")
