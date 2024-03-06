@@ -101,6 +101,12 @@
       "execute st using @a, @b",
       "show warnings",
       "execute st using @a, @b",
+      "select @@last_plan_from_cache",
+      "prepare st from 'select /*+ use_index_merge(tx, ka, kb) */ * from tx where (? member of (a)) and (json_overlaps(b, ?))'",
+      "set @a=1, @b='[1,2]'",
+      "execute st using @a, @b",
+      "show warnings",
+      "execute st using @a, @b",
       "select @@last_plan_from_cache"
     ]
   }

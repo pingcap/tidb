@@ -458,6 +458,34 @@
         "Result": [
           "0"
         ]
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka, kb) */ * from tx where (? member of (a)) and (json_overlaps(b, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @b='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": [
+          "Warning 1105 skip prepared plan-cache: json_overlaps function with immutable parameters can affect index selection"
+        ]
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "0"
+        ]
       }
     ]
   }
