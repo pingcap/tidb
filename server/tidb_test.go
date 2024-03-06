@@ -334,18 +334,17 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	cfg.Security.ClusterSSLCert = serverCertPath
 	cfg.Security.ClusterSSLKey = serverKeyPath
 	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
-	time.Sleep(time.Millisecond * 100)
-
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	hc := newTLSHttpClient(t, caPath,
 		client1CertPath,
 		client1KeyPath,
