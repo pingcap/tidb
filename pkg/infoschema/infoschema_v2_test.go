@@ -66,7 +66,7 @@ func TestV2Basic(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, getTableInfo)
 
-	require.Equal(t, 2, is.SchemaMetaVersion())
+	require.Equal(t, int64(2), is.SchemaMetaVersion())
 	// TODO: support FindTableByPartitionID.
 }
 
