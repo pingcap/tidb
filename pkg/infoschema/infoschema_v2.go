@@ -163,6 +163,8 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 
 func (isd *Data) delete(item tableItem) {
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
+	isd.byID.Delete(item)
+	isd.byName.Delete(item)
 }
 
 func (isd *Data) deleteDB(name model.CIStr) {
@@ -183,6 +185,15 @@ func (isd *Data) schemaByName(name model.CIStr) (res *model.DBInfo, schemaVersio
 		return false
 	})
 	return res, schemaVersion
+}
+
+func (isd *Data) tableByID(id int64) *tableItem {
+	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
+	itm, ok := search(isd.byID, math.MaxInt64, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
+	if !ok {
+		return nil
+	}
+	return &itm
 }
 
 func compareByID(a, b tableItem) bool {
