@@ -158,14 +158,15 @@ func TestTLSAuto(t *testing.T) {
 	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
 	err := os.MkdirAll(cfg.TempStoragePath, 0700)
 	require.NoError(t, err)
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	err = cli.runTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
 	require.NoError(t, err)
 
