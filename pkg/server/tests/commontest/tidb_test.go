@@ -2769,6 +2769,7 @@ type mockProxyProtocolProxy struct {
 	backendIsSock bool
 	ln            net.Listener
 	run           atomic.Bool
+	runChan       chan struct{}
 }
 
 func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
@@ -2778,6 +2779,7 @@ func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSo
 		clientAddr:    clientAddr,
 		backendIsSock: backendIsSock,
 		ln:            nil,
+		runChan:       make(chan struct{}),
 	}
 }
 
@@ -2798,6 +2800,7 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 		}
 		go p.onConn(conn)
 	}
+	close(p.runChan)
 	return nil
 }
 
@@ -2914,7 +2917,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	defer func() {
 		ppProxy.Close()
 	}()
-
+	<-ppProxy.runChan
 	cli := testserverclient.NewTestServerClient()
 	cli.Port = testutil.GetPortFromTCPAddr(ppProxy.ListenAddr())
 	cli.WaitUntilServerCanConnect()
