@@ -689,17 +689,23 @@ func (h *globalBindingHandle) LoadBindingsFromStorage(sqlDigest string) (Binding
 	if sqlDigest == "" {
 		return nil, nil
 	}
-	bindings, err, _ := h.syncBindingSingleflight.Do(sqlDigest, func() (any, error) {
+	resultChan := h.syncBindingSingleflight.DoChan(sqlDigest, func() (any, error) {
 		return h.loadBindingsFromStorageInternal(sqlDigest)
 	})
-	if err != nil {
-		logutil.BgLogger().Warn("fail to LoadBindingsFromStorageToCache", zap.Error(err))
-		return nil, err
+	select {
+	case result := <-resultChan:
+		if result.Err != nil {
+			logutil.BgLogger().Warn("fail to LoadBindingsFromStorageToCache", zap.Error(err))
+			return nil, result.Err
+		}
+		bindings := result.Val
+		if bindings == nil {
+			return nil, nil
+		}
+		return bindings.(Bindings), nil
+	case <-time.After(1 * time.Second):
+		return nil, errors.New("load bindings from storage timeout")
 	}
-	if bindings == nil {
-		return nil, nil
-	}
-	return bindings.(Bindings), err
 }
 
 func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
