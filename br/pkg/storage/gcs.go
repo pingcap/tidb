@@ -198,12 +198,12 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt == nil {
 		opt = &WalkOption{}
 	}
-	if len(opt.ObjPrefix) != 0 {
-		return errors.New("gcs storage not support ObjPrefix for now")
-	}
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
+	}
+	if len(opt.ObjPrefix) != 0 {
+		prefix += opt.ObjPrefix
 	}
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
