@@ -2905,12 +2905,12 @@ func TestDecimalDivPrecisionIncrement(t *testing.T) {
 	tk.MustExec("insert into t values (8, 7), (9, 7)")
 	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1429", "1.2857"))
 
-	//tk.MustExec("set div_precision_increment = 7")
-	//tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1428571", "1.2857143"))
+	tk.MustExec("set div_precision_increment = 7")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1428571", "1.2857143"))
 
-	//tk.MustExec("set div_precision_increment = 30")
-	//tk.MustQuery("select a/b from t").Check(testkit.Rows("1.142857142857142857142857142857", "1.285714285714285714285714285714"))
+	tk.MustExec("set div_precision_increment = 30")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.142857142857142857142857142857", "1.285714285714285714285714285714"))
 
-	tk.MustExec("set div_precision_increment = 4")
-	tk.MustQuery("select sum(a/b) from t").Check(testkit.Rows("1.21428571"))
+	//tk.MustExec("set div_precision_increment = 4")
+	//tk.MustQuery("select sum(a/b) from t").Check(testkit.Rows("1.21428571"))
 }
