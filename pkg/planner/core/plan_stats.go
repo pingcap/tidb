@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,24 +40,83 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	predicateNeeded := variable.EnableColumnTracking.Load()
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait
 	histNeeded := syncWait > 0
-	predicateColumns, histNeededColumns := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
+	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
-	if !histNeeded {
-		return plan, planChanged, nil
-	}
 
-	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below.
+	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
+	// stats loading for the determinate mode.
 	is := plan.SCtx().GetInfoSchema().(infoschema.InfoSchema)
+	statsHandle := domain.GetDomain(plan.SCtx()).StatsHandle()
 	tblID2Tbl := make(map[int64]table.Table)
+	physTblIDsWithNeededCols := intset.NewFastIntSet()
 	for _, neededCol := range histNeededColumns {
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, neededCol.TableID)
-		if tbl == nil {
-			continue
-		}
-		tblID2Tbl[neededCol.TableID] = tbl
+		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
 	}
+	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
+		// 1. collect table metadata
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, int64(physicalTblID))
+		if tbl == nil {
+			return
+		}
+		tblID2Tbl[int64(physicalTblID)] = tbl
+
+		// 2. handle extra sync/async stats loading for the determinate mode
+
+		// If we visited a table without getting any columns need stats (likely because there are no pushed down
+		// predicates), and we are in the determinate mode, we need to make sure we are able to get the "analyze row
+		// count" in getStatsTable(), which means any column/index stats are available.
+		if plan.SCtx().GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate ||
+			// If we already collected some columns that need trigger sync laoding on this table, we don't need to
+			// additionally do anything for determinate mode.
+			physTblIDsWithNeededCols.Has(physicalTblID) ||
+			statsHandle == nil {
+			return
+		}
+		tblStats := statsHandle.GetTableStats(tbl.Meta())
+		if tblStats == nil || tblStats.Pseudo {
+			return
+		}
+		var colToTriggerLoad *model.TableItemID
+		for _, col := range tbl.Cols() {
+			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) {
+				continue
+			}
+			if colStats := tblStats.Columns[col.ID]; colStats != nil {
+				// Choose the first column we meet to trigger stats loading.
+				if colToTriggerLoad == nil && colStats.IsStatsInitialized() {
+					colToTriggerLoad = &model.TableItemID{TableID: int64(physicalTblID), ID: col.ID, IsIndex: false}
+				}
+				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+				if colStats.IsFullLoad() {
+					colToTriggerLoad = nil
+					break
+				}
+			}
+		}
+		if colToTriggerLoad == nil {
+			return
+		}
+		for _, idx := range tbl.Indices() {
+			if idx.Meta().State != model.StatePublic || idx.Meta().MVIndex {
+				continue
+			}
+			// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+			if idxStats := tblStats.Indices[idx.Meta().ID]; idxStats != nil && idxStats.IsFullLoad() {
+				colToTriggerLoad = nil
+				break
+			}
+		}
+		if colToTriggerLoad == nil {
+			return
+		}
+		if histNeeded {
+			histNeededColumns = append(histNeededColumns, *colToTriggerLoad)
+		} else {
+			statistics.HistogramNeededItems.Insert(*colToTriggerLoad)
+		}
+	})
 
 	// collect needed virtual columns from already needed columns
 	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on

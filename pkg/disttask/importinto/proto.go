@@ -30,7 +30,7 @@ import (
 // TaskMeta is the task of IMPORT INTO.
 // All the field should be serializable.
 type TaskMeta struct {
-	// IMPORT INTO job id.
+	// IMPORT INTO job id, see mysql.tidb_import_jobs.
 	JobID  int64
 	Plan   importer.Plan
 	Stmt   string
