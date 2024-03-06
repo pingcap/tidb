@@ -15,6 +15,7 @@
 package core
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
@@ -839,6 +840,235 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	return isMatchProp
 }
 
+// matchPropForIndexMergeAlternatives will match the prop with inside PartialAlternativeIndexPaths, and choose
+// 1 matched alternative to be a determined index merge partial path for each dimension in PartialAlternativeIndexPaths.
+// finally, after we collected the all decided index merge partial paths, we will output a concrete index merge path
+// with field PartialIndexPaths is fulfilled here.
+//
+// as we mentioned before, after deriveStats is done, the normal index OR path will be generated like below:
+//
+//	    `create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c))`
+//		`explain format='verbose' select * from t where a=1 or b=1 order by c`
+//
+// like the case here:
+// normal index merge OR path should be:
+// for a=1, it has two partial alternative paths: [a, ac]
+// for b=1, it has two partial alternative paths: [b, bc]
+// and the index merge path:
+//
+//	indexMergePath: {
+//	    PartialIndexPaths: empty                          // 1D array here, currently is not decided yet.
+//	    PartialAlternativeIndexPaths: [[a, ac], [b, bc]]  // 2D array here, each for one DNF item choices.
+//	}
+//
+// let's say we have a prop requirement like sort by [c] here, we will choose the better one [ac] (because it can keep
+// order) for the first batch [a, ac] from PartialAlternativeIndexPaths; and choose the better one [bc] (because it can
+// keep order too) for the second batch [b, bc] from PartialAlternativeIndexPaths. Finally we output a concrete index
+// merge path as
+//
+//	indexMergePath: {
+//	    PartialIndexPaths: [ac, bc]                       // just collected since they match the prop.
+//	    ...
+//	}
+//
+// how about the prop is empty? that means the choice to be decided from [a, ac] and [b, bc] is quite random just according
+// to their countAfterAccess. That's why we use a slices.SortFunc(matchIdxes, func(a, b int){}) inside there. After sort,
+// the ASC order of matchIdxes of matched paths are ordered by their countAfterAccess, choosing the first one is straight forward.
+//
+// there is another case shown below, just the pick the first one after matchIdxes is ordered is not always right, as shown:
+// special logic for alternative paths:
+//
+//	index merge:
+//	   matched paths-1: {pk, index1}
+//	   matched paths-2: {pk}
+//
+// if we choose first one as we talked above, says pk here in the first matched paths, then path2 has no choice(avoiding all same
+// index logic inside) but pk, this will result in all single index failure. so we need to sort the matchIdxes again according to
+// their matched paths length, here mean:
+//
+//	index merge:
+//	   matched paths-1: {pk, index1}
+//	   matched paths-2: {pk}
+//
+// and let matched paths-2 to be the first to make their determination --- choosing pk here, then next turn is matched paths-1 to
+// make their choice, since pk is occupied, avoiding-all-same-index-logic inside will try to pick index1 here, so work can be done.
+//
+// at last, according to determinedIndexPartialPaths to rewrite their real countAfterAccess, this part is move from deriveStats to
+// here.
+func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, prop *property.PhysicalProperty) (*util.AccessPath, bool) {
+	// target:
+	//	1: index merge case, try to match the every alternative partial path to the order property as long as
+	//	possible, and generate that property-matched index merge path out if any.
+	//	2: If the prop is empty (means no sort requirement), we will generate a random index partial combination
+	//	path from all alternatives in case that no index merge path comes out.
+
+	// Execution part doesn't support the merge operation for intersection case yet.
+	if path.IndexMergeIsIntersection {
+		return nil, false
+	}
+
+	noSortItem := prop.IsSortItemEmpty()
+	allSame, _ := prop.AllSameOrder()
+	if !allSame {
+		return nil, false
+	}
+	// step1: match the property from all the index partial alternative paths.
+	determinedIndexPartialPaths := make([]*util.AccessPath, 0, len(path.PartialAlternativeIndexPaths))
+	usedIndexMap := make(map[int64]struct{}, 1)
+	type idxWrapper struct {
+		// matchIdx is those match alternative paths from one alternative paths set.
+		// like we said above, for a=1, it has two partial alternative paths: [a, ac]
+		// if we met an empty property here, matchIdx from [a, ac] for a=1 will be both. = [0,1]
+		// if we met an sort[c] property here, matchIdx from [a, ac] for a=1 will be both. = [1]
+		matchIdx []int
+		// pathIdx actually is original position offset indicates where current matchIdx is
+		// computed from. eg: [[a, ac], [b, bc]] for sort[c] property:
+		//     idxWrapper{[ac], 0}, 0 is the offset in first dimension of PartialAlternativeIndexPaths
+		//     idxWrapper{[bc], 1}, 1 is the offset in first dimension of PartialAlternativeIndexPaths
+		pathIdx int
+	}
+	allMatchIdxes := make([]idxWrapper, 0, len(path.PartialAlternativeIndexPaths))
+	// special logic for alternative paths:
+	// index merge:
+	//  path1: {pk, index1}
+	//  path2: {pk}
+	// if we choose pk in the first path, then path2 has no choice but pk, this will result in all single index failure.
+	// so we should collect all match prop paths down, stored as matchIdxes here.
+	for pathIdx, oneItemAlternatives := range path.PartialAlternativeIndexPaths {
+		matchIdxes := make([]int, 0, 1)
+		for i, oneIndexAlternativePath := range oneItemAlternatives {
+			// if there is some sort items and this path doesn't match this prop, continue.
+			if !noSortItem && !ds.isMatchProp(oneIndexAlternativePath, prop) {
+				continue
+			}
+			// two possibility here:
+			// 1. no sort items requirement.
+			// 2. matched with sorted items.
+			matchIdxes = append(matchIdxes, i)
+		}
+		if len(matchIdxes) == 0 {
+			// if all index alternative of one of the cnf item's couldn't match the sort property,
+			// the entire index merge union path can be ignored for this sort property, return false.
+			return nil, false
+		}
+		if len(matchIdxes) > 1 {
+			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
+			tmpOneItemAlternatives := oneItemAlternatives
+			slices.SortStableFunc(matchIdxes, func(a, b int) int {
+				lhsCountAfter := tmpOneItemAlternatives[a].CountAfterAccess
+				if len(tmpOneItemAlternatives[a].IndexFilters) > 0 {
+					lhsCountAfter = tmpOneItemAlternatives[a].CountAfterIndex
+				}
+				rhsCountAfter := tmpOneItemAlternatives[b].CountAfterAccess
+				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
+					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
+				}
+				return cmp.Compare(lhsCountAfter, rhsCountAfter)
+			})
+		}
+		allMatchIdxes = append(allMatchIdxes, idxWrapper{matchIdxes, pathIdx})
+	}
+	// sort allMatchIdxes by its element length.
+	// index merge:                index merge:
+	//  path1: {pk, index1}  ==>    path2: {pk}
+	//  path2: {pk}                 path1: {pk, index1}
+	// here for the fixed choice pk of path2, let it be the first one to choose, left choice of index1 to path1.
+	slices.SortStableFunc(allMatchIdxes, func(a, b idxWrapper) int {
+		lhsLen := len(a.matchIdx)
+		rhsLen := len(b.matchIdx)
+		return cmp.Compare(lhsLen, rhsLen)
+	})
+	for _, matchIdxes := range allMatchIdxes {
+		// since matchIdxes are ordered by matchIdxes's length,
+		// we should use matchIdxes.pathIdx to locate where it comes from.
+		alternatives := path.PartialAlternativeIndexPaths[matchIdxes.pathIdx]
+		found := false
+		// pick a most suitable index partial alternative from all matched alternative paths according to asc CountAfterAccess,
+		// By this way, a distinguished one is better.
+		for _, oneIdx := range matchIdxes.matchIdx {
+			var indexID int64
+			if alternatives[oneIdx].IsTablePath() {
+				indexID = -1
+			} else {
+				indexID = alternatives[oneIdx].Index.ID
+			}
+			if _, ok := usedIndexMap[indexID]; !ok {
+				// try to avoid all index partial paths are all about a single index.
+				determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[oneIdx].Clone())
+				usedIndexMap[indexID] = struct{}{}
+				found = true
+				break
+			}
+		}
+		if !found {
+			// just pick the same name index (just using the first one is ok), in case that there may be some other
+			// picked distinctive index path for other partial paths latter.
+			determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[matchIdxes.matchIdx[0]].Clone())
+			// uedIndexMap[oneItemAlternatives[oneIdx].Index.ID] = struct{}{} must already be colored.
+		}
+	}
+	if len(usedIndexMap) == 1 {
+		// if all partial path are using a same index, meaningless and fail over.
+		return nil, false
+	}
+	// step2: gen a new **concrete** index merge path.
+	indexMergePath := &util.AccessPath{
+		PartialIndexPaths:        determinedIndexPartialPaths,
+		IndexMergeIsIntersection: false,
+		// inherit those determined can't pushed-down table filters.
+		TableFilters: path.TableFilters,
+	}
+	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
+	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
+	for _, path := range determinedIndexPartialPaths {
+		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
+		if len(path.TableFilters) > 0 {
+			if !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
+				// if this table filters can't be pushed down, all of them should be kept in the table side, cleaning the lookup side here.
+				path.TableFilters = nil
+			}
+			shouldKeepCurrentFilter = true
+		}
+		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
+			shouldKeepCurrentFilter = true
+			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+			path.IndexFilters = nil
+		}
+	}
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), []expression.Expression{path.IndexMergeORSourceFilter}) {
+		shouldKeepCurrentFilter = true
+	}
+	if shouldKeepCurrentFilter {
+		// add the cnf expression back as table filer.
+		indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.IndexMergeORSourceFilter)
+	}
+
+	// step3: after the index merge path is determined, compute the countAfterAccess as usual.
+	accessConds := make([]expression.Expression, 0, len(determinedIndexPartialPaths))
+	for _, p := range determinedIndexPartialPaths {
+		indexCondsForP := p.AccessConds[:]
+		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
+		if len(indexCondsForP) > 0 {
+			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
+		}
+	}
+	accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
+	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
+	if err != nil {
+		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+		sel = SelectionFactor
+	}
+	indexMergePath.CountAfterAccess = sel * ds.tableStats.RowCount
+	if noSortItem {
+		// since there is no sort property, index merge case is generated by random combination, each alternative with the lower/lowest
+		// countAfterAccess, here the returned matchProperty should be false.
+		return indexMergePath, false
+	}
+	return indexMergePath, true
+}
+
 func (ds *DataSource) isMatchPropForIndexMerge(path *util.AccessPath, prop *property.PhysicalProperty) bool {
 	// Execution part doesn't support the merge operation for intersection case yet.
 	if path.IndexMergeIsIntersection {
@@ -871,6 +1101,16 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	return candidate
 }
 
+func (ds *DataSource) convergeIndexMergeCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+	// since the all index path alternative paths is collected and undetermined, and we should determine a possible and concrete path for this prop.
+	possiblePath, match := ds.matchPropForIndexMergeAlternatives(path, prop)
+	if possiblePath == nil {
+		return nil
+	}
+	candidate := &candidatePath{path: possiblePath, isMatchProp: match}
+	return candidate
+}
+
 func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchPropForIndexMerge(path, prop)
@@ -884,6 +1124,14 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	for _, path := range ds.possibleAccessPaths {
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
+			continue
+		}
+		if len(path.PartialAlternativeIndexPaths) > 0 {
+			// OR normal index merge path, try to determine every index partial path for this property.
+			candidate := ds.convergeIndexMergeCandidate(path, prop)
+			if candidate != nil {
+				candidates = append(candidates, candidate)
+			}
 			continue
 		}
 		if path.PartialIndexPaths != nil {

@@ -61,7 +61,7 @@ type sessionBindingHandle struct {
 // NewSessionBindingHandle creates a new SessionBindingHandle.
 func NewSessionBindingHandle() SessionBindingHandle {
 	sessionHandle := &sessionBindingHandle{}
-	sessionHandle.ch = newFuzzyBindingCache()
+	sessionHandle.ch = newFuzzyBindingCache(nil)
 	return sessionHandle
 }
 

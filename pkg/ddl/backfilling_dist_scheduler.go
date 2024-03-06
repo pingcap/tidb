@@ -153,7 +153,7 @@ func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
 }
 
 // GetNextStep implements scheduler.Extension interface.
-func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
+func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.BackfillStepReadIndex
