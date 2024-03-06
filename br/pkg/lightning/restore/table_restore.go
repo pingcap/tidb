@@ -1036,7 +1036,7 @@ func (tr *TableRestore) importKV(
 			regionSplitKeys = int64(config.SplitRegionKeys)
 		}
 	}
-	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
+	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys, int64(rc.cfg.TikvImporter.MinRegionNum))
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
 	if err == nil && saveCpErr == nil {

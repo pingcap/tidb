@@ -26,6 +26,7 @@ const (
 	// lower the max-key-count to avoid tikv trigger region auto split
 	SplitRegionSize         ByteSize = 96 * units.MiB
 	SplitRegionKeys         int      = 1_280_000
+	MinRegionNum            int      = 0 // disable minRegionNum by default
 	MaxSplitRegionSizeRatio int      = 10
 
 	BufferSizeScale = 5

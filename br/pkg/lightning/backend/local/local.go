@@ -1242,7 +1242,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	return ranges
 }
 
-func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
+func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64, minRegionNum int64) ([]Range, error) {
 	iter := engine.newKVIter(ctx, &pebble.IterOptions{})
 	//nolint: errcheck
 	defer iter.Close()
@@ -1271,13 +1271,25 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	engineFileTotalSize := engine.TotalSize.Load()
 	engineFileLength := engine.Length.Load()
 
+	logger := log.FromContext(ctx).With(zap.Stringer("engine", engine.UUID))
+
+	if minRegionNum > 0 && engineFileTotalSize/regionSplitSize < minRegionNum {
+		regionSplitSize = engineFileTotalSize / minRegionNum
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalSize", engineFileTotalSize), zap.Int64("minRegionNum", minRegionNum), zap.Int64("regionSplitSize", regionSplitSize))
+	}
+	if minRegionNum > 0 && engineFileLength/regionSplitKeys < minRegionNum {
+		regionSplitKeys = engineFileLength / minRegionNum
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalCount", engineFileLength), zap.Int64("minRegionNum", minRegionNum), zap.Int64("regionSplitKeys", regionSplitKeys))
+	}
+
 	// <= 96MB no need to split into range
 	if engineFileTotalSize <= regionSplitSize && engineFileLength <= regionSplitKeys {
 		ranges := []Range{{start: firstKey, end: endKey}}
 		return ranges, nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.Stringer("engine", engine.UUID))
 	sizeProps, err := getSizeProperties(logger, engine.getDB(), local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1599,7 +1611,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	return allErr
 }
 
-func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys, minRegionNum int64) error {
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1626,7 +1638,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	}
 
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
+	ranges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys, minRegionNum)
 	if err != nil {
 		return err
 	}
