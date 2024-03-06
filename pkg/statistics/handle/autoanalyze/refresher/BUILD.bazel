@@ -28,7 +28,7 @@ go_test(
     timeout = "short",
     srcs = ["refresher_test.go"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 13,
     deps = [
         ":refresher",
         "//pkg/parser/model",
