@@ -871,7 +871,7 @@ func (bc *Client) BackupRanges(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if ctxErr := workerPool.ApplyOnErrorGroup(ectx, eg, func() error {
+		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
 			err := bc.BackupRange(elctx, req, replicaReadLabel, pr, metaWriter, progressCallBack)
 			if err != nil {
@@ -882,13 +882,10 @@ func (bc *Client) BackupRanges(
 				return errors.Trace(err)
 			}
 			return nil
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
 
-	return workerPool.Wait(eg, ectx)
+	return eg.Wait()
 }
 
 // BackupRange make a backup of the given key range.

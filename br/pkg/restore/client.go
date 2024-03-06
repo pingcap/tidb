@@ -871,15 +871,12 @@ func (rc *Client) CreateDatabases(ctx context.Context, dbs []*metautil.Database)
 	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
 	for _, db_ := range dbs {
 		db := db_
-		if ctxErr := workers.ApplyWithIDInErrorGroup(ectx, eg, func(id uint64) error {
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
 			return rc.createDatabaseWithDBConn(ectx, db.Info, conn)
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
-	return workers.Wait(eg, ectx)
+	return eg.Wait()
 }
 
 func (rc *Client) createDatabaseWithDBConn(ctx context.Context, db *model.DBInfo, conn *DB) error {
@@ -1115,15 +1112,12 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
 	for _, t := range tables {
 		table := t
-		if ctxErr := workers.ApplyWithIDInErrorGroup(ectx, eg, func(id uint64) error {
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			return createOneTable(ectx, db, table)
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
-	return workers.Wait(eg, ectx)
+	return eg.Wait()
 }
 
 func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
@@ -1137,7 +1131,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
 		tableSlice := tables[lastSent:end]
-		if ctxErr := workers.ApplyWithIDInErrorGroup(ectx, eg, func(id uint64) error {
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
 			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
@@ -1161,12 +1155,9 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 					zap.Stringer("database", ct.OldTable.DB.Name))
 			}
 			return err
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
-	return workers.Wait(eg, ectx)
+	return eg.Wait()
 }
 
 // NeedCheckFreshCluster is every time. except restore from a checkpoint or user has not set filter argument.
@@ -1348,21 +1339,22 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 
 		eg, ectx := errgroup.WithContext(ctx)
 		for _, store := range stores {
+			if err := ectx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+
 			finalStore := store
-			if ctxErr := rc.workerPool.ApplyOnErrorGroup(ectx, eg,
+			rc.workerPool.ApplyOnErrorGroup(eg,
 				func() error {
 					err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
 					if err != nil {
 						return errors.Trace(err)
 					}
 					return nil
-				}); ctxErr != nil {
-				log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-				break
-			}
+				})
 		}
 
-		if err := rc.workerPool.Wait(eg, ectx); err != nil {
+		if err := eg.Wait(); err != nil {
 			return errors.Trace(err)
 		}
 		rc.hasSpeedLimited = true
@@ -1519,6 +1511,15 @@ LOOPFORTABLE:
 		fileCount += len(files)
 		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
 			filesReplica := rangeFiles
+			if ectx.Err() != nil {
+				log.Warn("Restoring encountered error and already stopped, give up remained files.",
+					zap.Int("remained", len(leftFiles)),
+					logutil.ShortError(ectx.Err()))
+				// We will fetch the error from the errgroup then (If there were).
+				// Also note if the parent context has been canceled or something,
+				// breaking here directly is also a reasonable behavior.
+				break LOOPFORTABLE
+			}
 			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
@@ -1552,15 +1553,7 @@ LOOPFORTABLE:
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
 				// just keep the consistency as before.
-				if ctxErr := rc.workerPool.ApplyOnErrorGroup(ectx, eg, restoreFn); ctxErr != nil {
-					log.Warn("Restoring encountered error and already stopped, give up remained files.",
-						zap.Int("remained", len(leftFiles)),
-						logutil.ShortError(ctxErr))
-					// We will fetch the error from the errgroup then (If there were).
-					// Also note if the parent context has been canceled or something,
-					// breaking here directly is also a reasonable behavior.
-					break LOOPFORTABLE
-				}
+				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
 			}
 		}
 	}
@@ -1576,7 +1569,7 @@ LOOPFORTABLE:
 	// Once the parent context canceled and there is no task running in the errgroup,
 	// we may break the for loop without error in the errgroup. (Will this happen?)
 	// At that time, return the error in the context here.
-	return context.Cause(ectx)
+	return ctx.Err()
 }
 
 func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
@@ -1586,16 +1579,13 @@ func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.Fi
 
 	for _, file := range files {
 		fileReplica := file
-		if ctxErr := rc.workerPool.ApplyOnErrorGroup(ectx, eg,
+		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
 				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
-			}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+			})
 	}
-	if err := rc.workerPool.Wait(eg, ectx); err != nil {
+	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1679,8 +1669,12 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, store := range stores {
+		if err := ectx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
 		finalStore := store
-		if ctxErr := rc.workerPool.ApplyOnErrorGroup(ectx, eg,
+		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 				if rc.tlsConf != nil {
@@ -1713,13 +1707,13 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 					log.Error("close grpc connection failed in switch mode", zap.Error(err))
 				}
 				return nil
-			}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+			})
 	}
 
-	return errors.Trace(rc.workerPool.Wait(eg, ectx))
+	if err = eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func concurrentHandleTablesCh(
@@ -1749,7 +1743,7 @@ func concurrentHandleTablesCh(
 				return
 			}
 			cloneTable := tbl
-			worker, _ := workers.ApplyWorker(context.TODO())
+			worker := workers.ApplyWorker()
 			eg.Go(func() error {
 				defer workers.RecycleWorker(worker)
 				err := processFun(ectx, cloneTable)
@@ -2094,7 +2088,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 				Partition: oldPartition,
 			},
 		}
-		if ctxErr := pool.ApplyOnErrorGroup(ectx, eg, func() error {
+		pool.ApplyOnErrorGroup(eg, func() error {
 			exe, err := checksum.NewExecutorBuilder(newTableInfo, startTS).
 				SetOldTable(oldTable).
 				SetConcurrency(4).
@@ -2118,13 +2112,10 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 				zap.Uint64("total-bytes", checksumResp.TotalBytes),
 			)
 			return nil
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
 
-	return pool.Wait(eg, ectx)
+	return eg.Wait()
 }
 
 const (
@@ -2709,7 +2700,7 @@ func (rc *Client) RestoreKVFiles(
 		} else {
 			applyWg.Add(1)
 			downstreamId := idrules[files[0].TableId]
-			_ = rc.workerPool.ApplyOnErrorGroup(context.TODO(), eg, func() (err error) {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
@@ -2742,7 +2733,7 @@ func (rc *Client) RestoreKVFiles(
 		}
 	}
 
-	_ = rc.workerPool.ApplyOnErrorGroup(context.TODO(), eg, func() error {
+	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 		if supportBatch {
 			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		} else {
@@ -2751,7 +2742,7 @@ func (rc *Client) RestoreKVFiles(
 		return errors.Trace(err)
 	})
 
-	if err = rc.workerPool.Wait(eg, ectx); err != nil {
+	if err = eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
 		log.Error("restore files failed", zap.Error(err))
 	}

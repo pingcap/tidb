@@ -714,7 +714,7 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
-		if ctxErr := pool.ApplyOnErrorGroup(gCtx, g, func() error {
+		pool.ApplyOnErrorGroup(g, func() error {
 			if err := common.Retry("collect local duplicate rows", logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
 				var err error
@@ -733,12 +733,9 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 			rawEndKey := keyAdapter.Encode(nil, task.EndKey, common.MinRowID)
 			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
 			return errors.Trace(err)
-		}); ctxErr != nil {
-			logger.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
-	return errors.Trace(pool.Wait(g, gCtx))
+	return errors.Trace(g.Wait())
 }
 
 func (m *DupeDetector) splitKeyRangeByRegions(
@@ -920,7 +917,7 @@ func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importC
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
-		if ctxErr := taskPool.ApplyOnErrorGroup(gCtx, g, func() error {
+		taskPool.ApplyOnErrorGroup(g, func() error {
 			taskLogger := logger.With(
 				logutil.Key("startKey", task.StartKey),
 				logutil.Key("endKey", task.EndKey),
@@ -934,12 +931,9 @@ func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importC
 			}
 			err := m.processRemoteDupTask(gCtx, task, taskLogger, importClientFactory, regionPool)
 			return errors.Trace(err)
-		}); ctxErr != nil {
-			logger.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
-	return errors.Trace(taskPool.Wait(g, gCtx))
+	return errors.Trace(g.Wait())
 }
 
 // DupeController is used to collect duplicate keys from local and remote data source and resolve duplication.

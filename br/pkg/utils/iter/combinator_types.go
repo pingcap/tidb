@@ -5,9 +5,7 @@ package iter
 import (
 	"context"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -33,16 +31,13 @@ func (m *chunkMapping[T, R]) fillChunk(ctx context.Context) IterResult[fromSlice
 	r := make([]R, len(s.Item))
 	for i := 0; i < len(s.Item); i++ {
 		i := i
-		if ctxErr := m.quota.ApplyOnErrorGroup(cx, eg, func() error {
+		m.quota.ApplyOnErrorGroup(eg, func() error {
 			var err error
 			r[i], err = m.mapper(cx, s.Item[i])
 			return err
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
-	if err := m.quota.Wait(eg, cx); err != nil {
+	if err := eg.Wait(); err != nil {
 		return Throw[fromSlice[R]](err)
 	}
 	if len(r) > 0 {

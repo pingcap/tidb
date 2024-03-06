@@ -234,16 +234,13 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	clampedRanges := utils.IntersectAll(ranges, utils.CloneSlice(c.taskRange))
 	for _, r := range clampedRanges {
 		r := r
-		if ctxErr := workers.ApplyOnErrorGroup(cx, eg, func() (e error) {
+		workers.ApplyOnErrorGroup(eg, func() (e error) {
 			defer c.recordTimeCost("get regions in range")()
 			defer utils.PanicToErr(&e)
 			return c.GetCheckpointInRange(cx, r.StartKey, r.EndKey, collector)
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			return errors.Trace(ctxErr)
-		}
+		})
 	}
-	err = workers.Wait(eg, cx)
+	err = eg.Wait()
 	if err != nil {
 		return err
 	}

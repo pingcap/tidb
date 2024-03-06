@@ -233,7 +233,6 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				sctx.needScatter = false
 				return rs.executeSplitByKeys(ectx, sctx, scanStartKey, allKeys)
 			})
-			ctxErr != nil{}
 		}
 		return eg.Wait()
 	}, newSplitBackoffer())

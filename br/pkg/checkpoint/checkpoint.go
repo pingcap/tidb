@@ -857,7 +857,7 @@ func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir
 	eg, gCtx := errgroup.WithContext(ctx)
 	for _, filename := range removedFileNames {
 		name := filename
-		if ctxErr := pool.ApplyOnErrorGroup(gCtx, eg, func() error {
+		pool.ApplyOnErrorGroup(eg, func() error {
 			if err := s.DeleteFile(gCtx, name); err != nil {
 				log.Warn("failed to remove the file", zap.String("filename", name), zap.Error(err))
 				failedFilesCount.lock.Lock()
@@ -869,12 +869,9 @@ func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir
 				failedFilesCount.lock.Unlock()
 			}
 			return nil
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
-	if err := pool.Wait(eg, gCtx); err != nil {
+	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("all the checkpoint data has been removed", zap.String("checkpoint task", subDir))

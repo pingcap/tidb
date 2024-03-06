@@ -504,7 +504,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		HideQueryLog: redact.NeedRedact(),
 	}
 
-	_ = pool.ApplyOnErrorGroup(context.TODO(), g, func() error {
+	pool.ApplyOnErrorGroup(g, func() error {
 		// TODO: provide a detailed document to explain the algorithm and link it here
 		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
 		// check index KV

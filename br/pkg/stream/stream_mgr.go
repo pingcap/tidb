@@ -321,7 +321,7 @@ func FastUnmarshalMetaData(
 			return nil
 		}
 		readPath := path
-		if ctxErr := pool.ApplyOnErrorGroup(ectx, eg, func() error {
+		pool.ApplyOnErrorGroup(eg, func() error {
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {
 				log.Error("failed to read file", zap.String("file", readPath))
@@ -329,18 +329,15 @@ func FastUnmarshalMetaData(
 			}
 
 			return fn(readPath, b)
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			return errors.Trace(ctxErr)
-		}
+		})
 		return nil
 	})
 	if err != nil {
-		readErr := pool.Wait(eg, ectx)
+		readErr := eg.Wait()
 		if readErr != nil {
 			return errors.Annotatef(readErr, "scanning metadata meets error %s", err)
 		}
 		return errors.Annotate(err, "scanning metadata meets error")
 	}
-	return pool.Wait(eg, ectx)
+	return eg.Wait()
 }

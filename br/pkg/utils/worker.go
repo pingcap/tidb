@@ -3,8 +3,6 @@
 package utils
 
 import (
-	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -54,7 +52,7 @@ func (pool *WorkerPool) Limit() int {
 
 // Apply executes a task.
 func (pool *WorkerPool) Apply(fn taskFunc) {
-	worker, _ := pool.ApplyWorker(context.TODO())
+	worker := pool.ApplyWorker()
 	go func() {
 		defer pool.RecycleWorker(worker)
 		fn()
@@ -63,7 +61,7 @@ func (pool *WorkerPool) Apply(fn taskFunc) {
 
 // ApplyWithID execute a task and provides it with the worker ID.
 func (pool *WorkerPool) ApplyWithID(fn identifiedTaskFunc) {
-	worker, _ := pool.ApplyWorker(context.TODO())
+	worker := pool.ApplyWorker()
 	go func() {
 		defer pool.RecycleWorker(worker)
 		fn(worker.ID)
@@ -71,46 +69,33 @@ func (pool *WorkerPool) ApplyWithID(fn identifiedTaskFunc) {
 }
 
 // ApplyOnErrorGroup executes a task in an errorgroup.
-func (pool *WorkerPool) ApplyOnErrorGroup(ctx context.Context, eg *errgroup.Group, fn func() error) error {
-	worker, err := pool.ApplyWorker(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (pool *WorkerPool) ApplyOnErrorGroup(eg *errgroup.Group, fn func() error) {
+	worker := pool.ApplyWorker()
 	eg.Go(func() error {
 		defer pool.RecycleWorker(worker)
 		return fn()
 	})
-	return nil
 }
 
 // ApplyWithIDInErrorGroup executes a task in an errorgroup and provides it with the worker ID.
-func (pool *WorkerPool) ApplyWithIDInErrorGroup(ctx context.Context, eg *errgroup.Group, fn func(id uint64) error) error {
-	worker, err := pool.ApplyWorker(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (pool *WorkerPool) ApplyWithIDInErrorGroup(eg *errgroup.Group, fn func(id uint64) error) {
+	worker := pool.ApplyWorker()
 	eg.Go(func() error {
 		defer pool.RecycleWorker(worker)
 		return fn(worker.ID)
 	})
-	return nil
 }
 
 // ApplyWorker apply a worker.
-func (pool *WorkerPool) ApplyWorker(ctx context.Context) (*Worker, error) {
+func (pool *WorkerPool) ApplyWorker() *Worker {
 	var worker *Worker
-	if ctx.Err() != nil {
-		return nil, context.Cause(ctx)
-	}
 	select {
-	case <-ctx.Done():
-		return nil, context.Cause(ctx)
 	case worker = <-pool.workers:
 	default:
 		log.Debug("wait for workers", zap.String("pool", pool.name))
 		worker = <-pool.workers
 	}
-	return worker, nil
+	return worker
 }
 
 // RecycleWorker recycle a worker.
@@ -124,19 +109,6 @@ func (pool *WorkerPool) RecycleWorker(worker *Worker) {
 // HasWorker checks if the pool has unallocated workers.
 func (pool *WorkerPool) HasWorker() bool {
 	return pool.IdleCount() > 0
-}
-
-// Wait waits for all the goroutine to complete and catches the context cancel error.
-// workerpool.ApplyWithIDInErrorGroup now can handle the context done, so it can quickly stop the later task.
-// If the context is canceled by workerpool itself, it's OK to catch the real error from eg.err.
-// However, if the context is canceled by its parent context, the workerpool cannot ensure whether the function
-// canceling the parent context can handle the related error (mainly some bugs introduced). By this, the error
-// might be leak, and BR finishes the task successfully (it should be failed actually).
-func (pool *WorkerPool) Wait(eg *errgroup.Group, ectx context.Context) error {
-	if err := eg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(context.Cause(ectx))
 }
 
 // PanicToErr recovers when the execution get panicked, and set the error provided by the arg.

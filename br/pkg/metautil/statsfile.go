@@ -24,7 +24,6 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -189,8 +187,11 @@ func downloadStats(
 	eg, ectx := errgroup.WithContext(ctx)
 	downloadWorkerpool := utils.NewWorkerPool(4, "download stats for each partition")
 	for _, statsFileIndex := range statsFileIndexes {
+		if ectx.Err() != nil {
+			break
+		}
 		statsFile := statsFileIndex
-		if ctxErr := downloadWorkerpool.ApplyOnErrorGroup(ectx, eg, func() error {
+		downloadWorkerpool.ApplyOnErrorGroup(eg, func() error {
 			var statsContent []byte
 			if len(statsFile.InlineData) > 0 {
 				statsContent = statsFile.InlineData
@@ -242,11 +243,8 @@ func downloadStats(
 			}
 
 			return nil
-		}); ctxErr != nil {
-			log.Warn("worker pool apply exit due to context done", zap.Error(ctxErr))
-			break
-		}
+		})
 	}
 
-	return downloadWorkerpool.Wait(eg, ectx)
+	return eg.Wait()
 }
