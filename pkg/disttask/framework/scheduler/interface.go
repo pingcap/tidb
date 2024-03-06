@@ -129,7 +129,9 @@ type Extension interface {
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,
 	// then to StepDone, then scheduler will mark it as finished.
-	GetNextStep(task *proto.Task) proto.Step
+	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
+	// initialize required fields on scheduler.Init
+	GetNextStep(task *proto.TaskBase) proto.Step
 }
 
 // Param is used to pass parameters when creating scheduler.
