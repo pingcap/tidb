@@ -266,15 +266,16 @@ func TestTLSVerify(t *testing.T) {
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	defer server.Close()
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.runTestTLSConnection(t, nil)
 	require.NoError(t, err)
