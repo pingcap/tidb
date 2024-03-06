@@ -186,6 +186,15 @@ func (isd *Data) schemaByName(name model.CIStr) (res *model.DBInfo, schemaVersio
 	return res, schemaVersion
 }
 
+func (isd *Data) tableByID(id int64) *tableItem {
+	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
+	itm, ok := search(isd.byID, math.MaxInt64, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
+	if !ok {
+		return nil
+	}
+	return &itm
+}
+
 func compareByID(a, b tableItem) bool {
 	if a.tableID < b.tableID {
 		return true
@@ -313,14 +322,8 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	return ret, true
 }
 
-func isSpecialDB(dbName string) bool {
-	return dbName == util.InformationSchemaName.L ||
-		dbName == util.PerformanceSchemaName.L ||
-		dbName == util.MetricSchemaName.L
-}
-
 func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
-	if isSpecialDB(schema.L) {
+	if util.IsMemDB(schema.L) {
 		if tbNames, ok := is.specials[schema.L]; ok {
 			if t, ok = tbNames.tables[tbl.L]; ok {
 				return
@@ -353,7 +356,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 }
 
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	if isSpecialDB(schema.L) {
+	if util.IsMemDB(schema.L) {
 		return is.Data.specials[schema.L].dbInfo, true
 	}
 
@@ -392,7 +395,7 @@ func (is *infoschemaV2) SchemaMetaVersion() int64 {
 
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 	var ok bool
-	if isSpecialDB(schema.L) {
+	if util.IsMemDB(schema.L) {
 		_, ok = is.Data.specials[schema.L]
 		return ok
 	}
@@ -408,8 +411,27 @@ func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 	return ok
 }
 
-func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	panic("TODO")
+func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (tbl table.Table, dbInfo *model.DBInfo, pd *model.PartitionDefinition) {
+	is.Data.schemaMap.Scan(func(item schemaItem) bool {
+		for _, t := range item.dbInfo.Tables {
+			for _, p := range t.Partition.Definitions {
+				if p.ID == partitionID {
+					allocs := autoid.NewAllocatorsFromTblInfo(is.r, item.dbInfo.ID, t)
+					ret, err := tables.TableFromMeta(allocs, t)
+					if err != nil {
+						return false
+					}
+					tbl = ret
+					dbInfo = item.dbInfo
+					newP := p
+					pd = &newP
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return nil, nil, nil
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
@@ -442,7 +464,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	if isSpecialDB(schema.L) {
+	if util.IsMemDB(schema.L) {
 		schTbls := is.Data.specials[schema.L]
 		tables := make([]table.Table, 0, len(schTbls.tables))
 		for _, tbl := range schTbls.tables {
@@ -534,4 +556,56 @@ func isTableVirtual(id int64) bool {
 func IsV2(is InfoSchema) bool {
 	_, ok := is.(*infoschemaV2)
 	return ok
+}
+
+func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaDefaultPlacementV2(m, diff)
+	}
+	return b.applyModifySchemaDefaultPlacement(m, diff)
+}
+
+func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
+	}
+	return b.applyModifySchemaCharsetAndCollate(m, diff)
+}
+
+// ywq todo test
+// need to delete dbinfo....
+func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.Charset = di.Charset
+	newDBInfo.Collate = di.Collate
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
+
+// ywq todo test
+func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
 }

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -68,9 +69,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionRecoverSchema:
 		return b.applyRecoverSchema(m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
-		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
+		return nil, applyModifySchemaCharsetAndCollate(b, m, diff)
 	case model.ActionModifySchemaDefaultPlacement:
-		return nil, b.applyModifySchemaDefaultPlacement(m, diff)
+		return nil, applyModifySchemaDefaultPlacement(b, m, diff)
 	case model.ActionCreatePlacementPolicy:
 		return nil, b.applyCreatePolicy(m, diff)
 	case model.ActionDropPlacementPolicy:
@@ -607,20 +608,13 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
 	}
 
-	table, ok := b.infoschemaV2.TableByID(tableID)
-
-	if !ok {
+	item := b.infoData.tableByID(tableID)
+	if item == nil {
+		// not cached, no need to delete cached items.
 		return nil
 	}
 
-	b.infoData.delete(tableItem{
-		dbName:        dbInfo.Name.L,
-		dbID:          dbInfo.ID,
-		tableName:     table.Meta().Name.L,
-		tableID:       table.Meta().ID,
-		schemaVersion: diff.Version,
-	})
-
+	b.infoData.delete(*item)
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.deleteReferredForeignKeys(dbInfo, tableID)
 	return affected
@@ -1005,7 +999,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTables) {
 	if b.enableV2 {
-		if isSpecialDB(di.Name.L) {
+		if util.IsMemDB(di.Name.L) {
 			b.infoData.addSpecialDB(di, schTbls)
 		} else {
 			b.infoData.addDB(schemaVersion, di)
