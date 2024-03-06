@@ -36,7 +36,8 @@ const (
 	ScatterWaitMaxRetryTimes = 64
 	ScatterWaitInterval      = 50 * time.Millisecond
 	ScatterMaxWaitInterval   = time.Second
-	ScatterWaitUpperInterval = 180 * time.Second
+	// it takes 30 minutes to scatter regions when each TiKV has 400k regions
+	ScatterWaitUpperInterval = 30 * time.Minute
 
 	ScanRegionPaginationLimit = 128
 
