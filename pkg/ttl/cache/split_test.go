@@ -986,7 +986,7 @@ func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 		},
 		{
 			key: encode(tblID, types.NewIntDatum(math.MaxInt64))[:fixedLen-1],
-			d:   types.NewDatum(math.MaxInt64 - 0xFF),
+			d:   types.NewIntDatum(math.MaxInt64 - 0xFF),
 		},
 		{
 			key: encode(tblID, types.NewIntDatum(math.MaxInt64), types.NewIntDatum(0)),
@@ -1009,32 +1009,39 @@ func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 			d:   types.NewIntDatum(math.MinInt64 + 1),
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(0)),
-			d:   types.NewUintDatum(0),
+			key:      encode(tblID, types.NewUintDatum(0)),
+			d:        types.NewUintDatum(0),
+			unsigned: true,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(1)),
-			d:   types.NewUintDatum(1),
+			key:      encode(tblID, types.NewUintDatum(1)),
+			d:        types.NewUintDatum(1),
+			unsigned: true,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(1024)),
-			d:   types.NewUintDatum(1024),
+			key:      encode(tblID, types.NewUintDatum(1024)),
+			d:        types.NewUintDatum(1024),
+			unsigned: true,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(math.MaxInt64)),
-			d:   types.NewUintDatum(math.MaxInt64),
+			key:      encode(tblID, types.NewUintDatum(math.MaxInt64)),
+			d:        types.NewUintDatum(math.MaxInt64),
+			unsigned: true,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(math.MaxInt64+1)),
-			d:   types.NewUintDatum(math.MaxInt64 + 1),
+			key:      encode(tblID, types.NewUintDatum(math.MaxInt64+1)),
+			d:        types.NewUintDatum(math.MaxInt64 + 1),
+			unsigned: true,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(math.MaxUint64)),
-			d:   types.NewUintDatum(math.MaxUint64),
+			key:      encode(tblID, types.NewUintDatum(math.MaxUint64)),
+			d:        types.NewUintDatum(math.MaxUint64),
+			unsigned: true,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(math.MaxUint64))[:fixedLen-1],
-			d:   types.NewUintDatum(math.MaxUint64 - 0xFF),
+			key:      encode(tblID, types.NewUintDatum(math.MaxUint64))[:fixedLen-1],
+			d:        types.NewUintDatum(math.MaxUint64 - 0xFF),
+			unsigned: true,
 		},
 
 		{
@@ -1042,32 +1049,37 @@ func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 			d:   nullDatum,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(math.MaxUint64-1), types.NewIntDatum(0)),
-			d:   types.NewUintDatum(math.MaxUint64),
+			key:      encode(tblID, types.NewUintDatum(math.MaxUint64-1), types.NewIntDatum(0)),
+			d:        types.NewUintDatum(math.MaxUint64),
+			unsigned: true,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(123), types.NewIntDatum(0)),
-			d:   types.NewUintDatum(124),
+			key:      encode(tblID, types.NewUintDatum(123), types.NewIntDatum(0)),
+			d:        types.NewUintDatum(124),
+			unsigned: true,
 		},
 		{
-			key: encode(tblID, types.NewUintDatum(0), types.NewIntDatum(0)),
-			d:   types.NewUintDatum(1),
+			key:      encode(tblID, types.NewUintDatum(0), types.NewIntDatum(0)),
+			d:        types.NewUintDatum(1),
+			unsigned: true,
 		},
 		{
 			key: []byte{},
 			d:   types.NewIntDatum(math.MinInt64),
 		},
 		{
-			key: []byte{},
-			d:   types.NewUintDatum(0),
+			key:      []byte{},
+			d:        types.NewUintDatum(0),
+			unsigned: true,
 		},
 		{
 			key: tablecodec.GenTableRecordPrefix(tblID),
 			d:   types.NewIntDatum(math.MinInt64),
 		},
 		{
-			key: tablecodec.GenTableRecordPrefix(tblID),
-			d:   types.NewUintDatum(0),
+			key:      tablecodec.GenTableRecordPrefix(tblID),
+			d:        types.NewUintDatum(0),
+			unsigned: true,
 		},
 		{
 			// 3 is encoded intFlag
@@ -1076,8 +1088,9 @@ func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 		},
 		{
 			// 3 is encoded intFlag
-			key: append(tablecodec.GenTableRecordPrefix(tblID), []byte{3}...),
-			d:   types.NewUintDatum(0),
+			key:      append(tablecodec.GenTableRecordPrefix(tblID), []byte{3}...),
+			d:        types.NewUintDatum(0),
+			unsigned: true,
 		},
 		{
 			// 4 is encoded uintFlag
@@ -1086,8 +1099,9 @@ func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 		},
 		{
 			// 4 is encoded uintFlag
-			key: append(tablecodec.GenTableRecordPrefix(tblID), []byte{4}...),
-			d:   types.NewUintDatum(0),
+			key:      append(tablecodec.GenTableRecordPrefix(tblID), []byte{4}...),
+			d:        types.NewUintDatum(0),
+			unsigned: true,
 		},
 		{
 			// 5
@@ -1103,7 +1117,15 @@ func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		d := cache.GetNextIntDatumFromCommonHandle(c.key, tablecodec.GenTableRecordPrefix(tblID), c.d.Kind() == types.KindUint64 || c.unsigned)
+		if !c.d.IsNull() {
+			if c.unsigned {
+				require.Equal(t, types.KindUint64, c.d.Kind())
+			} else {
+				require.Equal(t, types.KindInt64, c.d.Kind())
+			}
+		}
+
+		d := cache.GetNextIntDatumFromCommonHandle(c.key, tablecodec.GenTableRecordPrefix(tblID), c.unsigned)
 		require.Equal(t, c.d, d)
 	}
 }

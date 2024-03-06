@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -314,16 +315,6 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 		return []ScanRange{newFullRange()}, nil
 	}
 
-	greaterOrEqual := func(a, b types.Datum) bool {
-		if isInt {
-			if unsigned {
-				return a.GetUint64() >= b.GetUint64()
-			}
-			return a.GetInt64() >= b.GetInt64()
-		}
-		return kv.Key(a.GetBytes()).Cmp(b.GetBytes()) >= 0
-	}
-
 	scanRanges := make([]ScanRange, 0, len(keyRanges))
 	curScanStart := nullDatum()
 	for i, keyRange := range keyRanges {
@@ -340,8 +331,16 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 			}
 		}
 
-		if !curScanStart.IsNull() && !curScanEnd.IsNull() && greaterOrEqual(curScanStart, curScanEnd) {
-			continue
+		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
+			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
+			intest.AssertNoError(err)
+			if err != nil {
+				return nil, err
+			}
+
+			if cmp >= 0 {
+				continue
+			}
 		}
 
 		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
