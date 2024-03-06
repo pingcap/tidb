@@ -82,7 +82,7 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		x := evalCtx.Value.GetMysqlDecimal()
 		y := types.NewDecFromInt(evalCtx.Count)
 		to := new(types.MyDecimal)
-		err := types.DecimalDiv(x, y, to, evalCtx.Ctx.GetSessionVars().GetDivPrecisionIncrement())
+		err := types.DecimalDiv(x, y, to, 4)
 		terror.Log(err)
 		frac := af.RetTp.GetDecimal()
 		if frac == -1 {
