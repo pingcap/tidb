@@ -180,6 +180,15 @@ func MockTable(t *testing.T, store kv.Storage, tblInfo *model.TableInfo) table.T
 	return tbl
 }
 
+func MockResourceGroupInfo(t *testing.T, store kv.Storage, groupName string) *model.ResourceGroupInfo {
+	id, err := GenGlobalID(store)
+	require.NoError(t, err)
+	return &model.ResourceGroupInfo{
+		ID:   id,
+		Name: model.NewCIStr(groupName),
+	}
+}
+
 // AddTable add mock table for testing.
 func AddTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -219,6 +228,39 @@ func DropDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
 
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).DropDatabase(dbInfo.ID, dbInfo.Name.O)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// AddResourceGroup add mock resource group for testing.
+func AddResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGroupInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).AddResourceGroup(group)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// UpdateResourceGroup update mock resource group for testing.
+func UpdateResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGroupInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateResourceGroup(group)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// DropResourceGroup drop mock resource group for testing.
+func DropResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGroupInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).DropResourceGroup(group.ID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
