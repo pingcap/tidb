@@ -30,6 +30,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -41,11 +42,19 @@ const (
 	unanalyzedTableDefaultLastUpdateDuration = -30 * time.Minute
 )
 
+// autoAnalysisTimeWindow is a struct that contains the start and end time of the auto analyze time window.
+type autoAnalysisTimeWindow struct {
+	start time.Time
+	end   time.Time
+}
+
 // Refresher provides methods to refresh stats info.
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sessionctx.SysProcTracker
+	// This will be refreshed every time we rebuild the priority queue.
+	autoAnalysisTimeWindow
 
 	// Jobs is the priority queue of analysis jobs.
 	// Exported for testing purposes.
@@ -68,6 +77,12 @@ func NewRefresher(
 
 // PickOneTableAndAnalyzeByPriority picks one table and analyzes it by priority.
 func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
+	// If the auto analyze time window is not set or the current time is not in the window, return false.
+	if r.start == (time.Time{}) || r.end == (time.Time{}) ||
+		!timeutil.WithinDayTimePeriod(r.start, r.end, time.Now()) {
+		return false
+	}
+
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
 		statslogutil.StatsLogger().Error(
@@ -125,6 +140,27 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 		func(sctx sessionctx.Context) error {
 			parameters := exec.GetAutoAnalyzeParameters(sctx)
 			autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+			// Get the available time period for auto analyze and check if the current time is in the period.
+			start, end, err := exec.ParseAutoAnalyzeWindow(
+				parameters[variable.TiDBAutoAnalyzeStartTime],
+				parameters[variable.TiDBAutoAnalyzeEndTime],
+			)
+			if err != nil {
+				statslogutil.StatsLogger().Error(
+					"parse auto analyze period failed",
+					zap.Error(err),
+				)
+				return err
+			}
+			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+				return nil
+			}
+			// We will check it again when we try to execute the job.
+			// So store the time window for later use.
+			r.autoAnalysisTimeWindow = autoAnalysisTimeWindow{
+				start: start,
+				end:   end,
+			}
 			calculator := priorityqueue.NewPriorityCalculator()
 			pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
@@ -142,6 +178,11 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 
 			dbs := infoschema.AllSchemaNames(is)
 			for _, db := range dbs {
+				// Sometimes the tables are too many. Auto-analyze will take too much time on it.
+				// so we need to check the available time.
+				if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+					return nil
+				}
 				// Ignore the memory and system database.
 				if util.IsMemOrSysDB(strings.ToLower(db)) {
 					continue

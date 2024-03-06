@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -129,4 +130,21 @@ func ParseAutoAnalyzeRatio(ratio string) float64 {
 		return variable.DefAutoAnalyzeRatio
 	}
 	return math.Max(autoAnalyzeRatio, 0)
+}
+
+// ParseAutoAnalyzeWindow parses the time window for auto analyze.
+// It parses the times in UTC location.
+func ParseAutoAnalyzeWindow(start, end string) (time.Time, time.Time, error) {
+	if start == "" {
+		start = variable.DefAutoAnalyzeStartTime
+	}
+	if end == "" {
+		end = variable.DefAutoAnalyzeEndTime
+	}
+	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
+	if err != nil {
+		return s, s, errors.Trace(err)
+	}
+	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
+	return s, e, err
 }
