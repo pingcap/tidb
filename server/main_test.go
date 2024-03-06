@@ -35,11 +35,7 @@ import (
 var testDataMap = make(testdata.BookKeeper, 1)
 
 func TestMain(m *testing.M) {
-<<<<<<< HEAD:server/main_test.go
-=======
-	server.RunInGoTest = true
-	server.RunInGoTestChan = make(chan struct{})
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/handler/extractorhandler/main_test.go
+	RunInGoTestChan = make(chan struct{})
 	testsetup.SetupForCommonTest()
 
 	RunInGoTest = true // flag for NewServer to known it is running in test environment
