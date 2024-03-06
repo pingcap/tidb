@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:ttl/cache/table.go
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -35,22 +34,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
-=======
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> dd1c635a8bc (ttl: fix TTL cannot split tasks with right ranges for common handle int (#51532)):pkg/ttl/cache/table.go
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -338,8 +323,7 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 		}
 
 		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
-			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
-			intest.AssertNoError(err)
+			cmp, err := curScanStart.Compare(nil, &curScanEnd, collate.GetBinaryCollator())
 			if err != nil {
 				return nil, err
 			}
@@ -413,11 +397,11 @@ func init() {
 	terror.MustNil(err)
 	commonHandleBytesByte = key[0]
 
-	key, err = codec.EncodeKey(time.UTC, nil, types.NewIntDatum(0))
+	key, err = codec.EncodeKey(nil, nil, types.NewIntDatum(0))
 	terror.MustNil(err)
 	commonHandleIntByte = key[0]
 
-	key, err = codec.EncodeKey(time.UTC, nil, types.NewUintDatum(0))
+	key, err = codec.EncodeKey(nil, nil, types.NewUintDatum(0))
 	terror.MustNil(err)
 	commonHandleUintByte = key[0]
 }
@@ -503,7 +487,6 @@ func GetNextIntDatumFromCommonHandle(key kv.Key, recordPrefix []byte, unsigned b
 	}
 
 	_, v, err := codec.DecodeOne(encodedVal)
-	intest.AssertNoError(err)
 	if err != nil {
 		// should never happen
 		terror.Log(errors.Annotatef(err, "TTL decode common handle failed, key: %s", hex.EncodeToString(key)))
