@@ -17,6 +17,7 @@ package cache
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -220,12 +222,15 @@ func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, s
 	ft := t.KeyColumns[0].FieldType
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24:
+		if len(t.KeyColumns) > 1 {
+			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, true, mysql.HasUnsignedFlag(ft.GetFlag()))
+		}
 		return t.splitIntRanges(ctx, tikvStore, splitCnt)
 	case mysql.TypeBit:
-		return t.splitBinaryRanges(ctx, tikvStore, splitCnt)
+		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false)
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
-			return t.splitBinaryRanges(ctx, tikvStore, splitCnt)
+			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false)
 		}
 	}
 	return []ScanRange{newFullRange()}, nil
@@ -295,7 +300,9 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 	return scanRanges, nil
 }
 
-func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storage, splitCnt int) ([]ScanRange, error) {
+func (t *PhysicalTable) splitCommonHandleRanges(
+	ctx context.Context, store tikv.Storage, splitCnt int, isInt bool, unsigned bool,
+) ([]ScanRange, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
 	startKey, endKey := recordPrefix, recordPrefix.PrefixNext()
 	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, splitCnt)
@@ -307,6 +314,16 @@ func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storag
 		return []ScanRange{newFullRange()}, nil
 	}
 
+	greaterOrEqual := func(a, b types.Datum) bool {
+		if isInt {
+			if unsigned {
+				return a.GetUint64() >= b.GetUint64()
+			}
+			return a.GetInt64() >= b.GetInt64()
+		}
+		return kv.Key(a.GetBytes()).Cmp(b.GetBytes()) >= 0
+	}
+
 	scanRanges := make([]ScanRange, 0, len(keyRanges))
 	curScanStart := nullDatum()
 	for i, keyRange := range keyRanges {
@@ -316,10 +333,14 @@ func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storag
 
 		curScanEnd := nullDatum()
 		if i != len(keyRanges)-1 {
-			curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
+			if isInt {
+				curScanEnd = GetNextIntDatumFromCommonHandle(keyRange.EndKey, recordPrefix, unsigned)
+			} else {
+				curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
+			}
 		}
 
-		if !curScanStart.IsNull() && !curScanEnd.IsNull() && kv.Key(curScanStart.GetBytes()).Cmp(curScanEnd.GetBytes()) >= 0 {
+		if !curScanStart.IsNull() && !curScanEnd.IsNull() && greaterOrEqual(curScanStart, curScanEnd) {
 			continue
 		}
 
@@ -376,12 +397,24 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 	return ranges, nil
 }
 
-var emptyBytesHandleKey kv.Key
+var commonHandleBytesByte byte
+
+var commonHandleIntByte byte
+
+var commonHandleUintByte byte
 
 func init() {
 	key, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(nil))
 	terror.MustNil(err)
-	emptyBytesHandleKey = key
+	commonHandleBytesByte = key[0]
+
+	key, err = codec.EncodeKey(time.UTC, nil, types.NewIntDatum(0))
+	terror.MustNil(err)
+	commonHandleIntByte = key[0]
+
+	key, err = codec.EncodeKey(time.UTC, nil, types.NewUintDatum(0))
+	terror.MustNil(err)
+	commonHandleUintByte = key[0]
 }
 
 // GetNextIntHandle is used for int handle tables.
@@ -421,6 +454,73 @@ func GetNextIntHandle(key kv.Key, recordPrefix []byte) kv.Handle {
 	return kv.IntHandle(u + 1)
 }
 
+// GetNextIntDatumFromCommonHandle is used for common handle tables with int value.
+// It returns the min handle whose encoded key is or after argument `key`
+// If it cannot find a valid value, a null datum will be returned.
+func GetNextIntDatumFromCommonHandle(key kv.Key, recordPrefix []byte, unsigned bool) (d types.Datum) {
+	if key.Cmp(recordPrefix) > 0 && !key.HasPrefix(recordPrefix) {
+		d.SetNull()
+		return d
+	}
+
+	typeByte := commonHandleIntByte
+	if unsigned {
+		typeByte = commonHandleUintByte
+	}
+
+	var minDatum types.Datum
+	if unsigned {
+		minDatum.SetUint64(0)
+	} else {
+		minDatum.SetInt64(math.MinInt64)
+	}
+
+	if key.Cmp(recordPrefix) <= 0 {
+		d = minDatum
+		return d
+	}
+
+	encodedVal := key[len(recordPrefix):]
+	if encodedVal[0] < typeByte {
+		d = minDatum
+		return d
+	}
+
+	if encodedVal[0] > typeByte {
+		d.SetNull()
+		return d
+	}
+
+	if len(encodedVal) < 9 {
+		newVal := make([]byte, 9)
+		copy(newVal, encodedVal)
+		encodedVal = newVal
+	}
+
+	_, v, err := codec.DecodeOne(encodedVal)
+	intest.AssertNoError(err)
+	if err != nil {
+		// should never happen
+		terror.Log(errors.Annotatef(err, "TTL decode common handle failed, key: %s", hex.EncodeToString(key)))
+		return nullDatum()
+	}
+
+	if len(encodedVal) > 9 {
+		if (unsigned && v.GetUint64() == math.MaxUint64) || (!unsigned && v.GetInt64() == math.MaxInt64) {
+			d.SetNull()
+			return d
+		}
+
+		if unsigned {
+			v.SetUint64(v.GetUint64() + 1)
+		} else {
+			v.SetInt64(v.GetInt64() + 1)
+		}
+	}
+
+	return v
+}
+
 // GetNextBytesHandleDatum is used for a table with one binary or string column common handle.
 // It returns the minValue whose encoded key is or after argument `key`
 // If it cannot find a valid value, a null datum will be returned.
@@ -436,12 +536,12 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	}
 
 	encodedVal := key[len(recordPrefix):]
-	if encodedVal[0] < emptyBytesHandleKey[0] {
+	if encodedVal[0] < commonHandleBytesByte {
 		d.SetBytes([]byte{})
 		return d
 	}
 
-	if encodedVal[0] > emptyBytesHandleKey[0] {
+	if encodedVal[0] > commonHandleBytesByte {
 		d.SetNull()
 		return d
 	}

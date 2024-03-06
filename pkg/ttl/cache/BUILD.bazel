@@ -25,6 +25,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//tikv",
@@ -46,7 +47,7 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 16,
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
