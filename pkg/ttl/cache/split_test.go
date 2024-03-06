@@ -205,15 +205,11 @@ func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
 }
 
 func bytesHandle(t *testing.T, data []byte) kv.Handle {
-<<<<<<< HEAD
-	encoded, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(data))
-=======
 	return commonHandle(t, types.NewBytesDatum(data))
 }
 
 func commonHandle(t *testing.T, d ...types.Datum) kv.Handle {
-	encoded, err := codec.EncodeKey(time.UTC, nil, d...)
->>>>>>> dd1c635a8bc (ttl: fix TTL cannot split tasks with right ranges for common handle int (#51532))
+	encoded, err := codec.EncodeKey(nil, nil, d...)
 	require.NoError(t, err)
 	h, err := kv.NewCommonHandle(encoded)
 	require.NoError(t, err)
@@ -934,7 +930,7 @@ func TestGetNextIntHandle(t *testing.T) {
 
 func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 	encode := func(tblID int64, d ...types.Datum) kv.Key {
-		encoded, err := codec.EncodeKey(time.UTC, nil, d...)
+		encoded, err := codec.EncodeKey(nil, nil, d...)
 		require.NoError(t, err)
 		h, err := kv.NewCommonHandle(encoded)
 		require.NoError(t, err)

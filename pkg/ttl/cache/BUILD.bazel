@@ -26,7 +26,6 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
-        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "@com_github_pingcap_errors//:errors",
