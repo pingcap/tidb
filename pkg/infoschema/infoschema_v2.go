@@ -423,7 +423,8 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (tbl table.Tab
 					}
 					tbl = ret
 					dbInfo = item.dbInfo
-					pd = &p
+					newP := p
+					pd = &newP
 					return false
 				}
 			}
