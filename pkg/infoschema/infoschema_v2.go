@@ -510,43 +510,49 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 
 func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
-	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (ret any, err error) {
+	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 		m := meta.NewSnapshotMeta(snapshot)
 
-		ret, err = m.GetTable(dbID, tblID)
-		return
+		tblInfo, err := m.GetTable(dbID, tblID)
+
+		if err != nil {
+			// TODO load table panic!!!
+			panic(err)
+		}
+
+		// table removed.
+		if tblInfo == nil {
+			return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+				fmt.Sprintf("(Schema ID %d)", dbID),
+				fmt.Sprintf("(Table ID %d)", tblID),
+			))
+		}
+
+		ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
+		ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
+		allocs := autoid.NewAllocatorsFromTblInfo(r, dbID, tblInfo)
+		// TODO: handle cached table!!!
+		ret, err := tables.TableFromMeta(allocs, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return ret, err
 	})
 
 	if err != nil {
-		// TODO load table panic!!!
-		panic(err)
+		return nil, errors.Trace(err)
 	}
 	if res == nil {
-		return nil, err
-	}
-	tblInfo := res.(*model.TableInfo)
-
-	// table removed.
-	if tblInfo == nil {
 		return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbID),
 			fmt.Sprintf("(Table ID %d)", tblID),
 		))
 	}
-
-	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
-	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
-	allocs := autoid.NewAllocatorsFromTblInfo(r, dbID, tblInfo)
-	// TODO: handle cached table!!!
-	ret, err := tables.TableFromMeta(allocs, tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ret, nil
+	return res.(table.Table), nil
 }
 
 var loadTableSF = &singleflight.Group{}
