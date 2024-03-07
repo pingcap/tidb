@@ -220,33 +220,6 @@ func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, mo
 	return
 }
 
-// UpdateStatsMetaDelta updates the count and modify_count for the given table in mysql.stats_meta.
-func (s *statsReadWriter) UpdateStatsMetaDelta(tableID int64, count, delta int64) (err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		lockedTables, err := s.statsHandler.GetLockedTables(tableID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		isLocked := false
-		if len(lockedTables) > 0 {
-			isLocked = true
-		}
-		startTS, err := util.GetStartTS(sctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = UpdateStatsMeta(
-			sctx,
-			startTS,
-			variable.TableDelta{Count: count, Delta: delta},
-			tableID,
-			isLocked,
-		)
-		return err
-	}, util.FlagWrapTxn)
-	return
-}
-
 // TableStatsFromStorage loads table stats info from storage.
 func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
