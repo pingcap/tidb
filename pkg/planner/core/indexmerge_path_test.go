@@ -232,7 +232,7 @@ func TestMVIndexRandom(t *testing.T) {
 	}
 }
 
-func TestPlanCacheMVIndexX(t *testing.T) {
+func TestPlanCacheMVIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
