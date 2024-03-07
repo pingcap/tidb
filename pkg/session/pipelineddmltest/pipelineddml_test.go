@@ -214,7 +214,7 @@ func TestPipelinedDMLInsertIgnore(t *testing.T) {
 		Check(testkit.Rows("0 -1", "1999 -1", "2999 -1", "3999 -1", "4999 -1", "5999 -1", "6999 -1", "7999 -1", "8999 -1", "999 -1", "9999 -1"))
 }
 
-func TestPipelinedDMLInsert2OnDuplicateKeyUpdate(t *testing.T) {
+func TestPipelinedDMLInsertOnDuplicateKeyUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -223,6 +223,41 @@ func TestPipelinedDMLInsert2OnDuplicateKeyUpdate(t *testing.T) {
 	tk.MustExec("insert into _t select * from t on duplicate key update b = values(b)")
 	require.Equal(t, tk.Session().AffectedRows(), uint64(10011))
 	compareTables(t, tk, "t", "_t")
+}
+
+func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
+	cnt := 2000
+	buf := bytes.NewBuffer(make([]byte, 0, 10240))
+	buf.WriteString("insert into t1 values ")
+	for i := 0; i < cnt; i++ {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		if i == 1500 {
+			buf.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, 250))
+		} else {
+			buf.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, i))
+		}
+	}
+	buf.WriteString(" on duplicate key update b = values(b) + 2000")
+	tk.MustExec("set session tidb_dml_type = bulk")
+	fmt.Println(buf.String())
+	tk.MustExec(buf.String())
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows(fmt.Sprintf("%d", 1999)))
+	tk.MustQuery("select a, b from t1 where a = 250").Check(testkit.Rows("250 2250"))
 }
 
 func TestPipelinedDMLDelete(t *testing.T) {
