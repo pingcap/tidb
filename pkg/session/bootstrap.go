@@ -571,7 +571,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
@@ -588,7 +588,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
@@ -602,7 +602,7 @@ const (
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
-        host VARCHAR(100) NOT NULL PRIMARY KEY,
+        host VARCHAR(261) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         keyspace_id bigint(8) NOT NULL DEFAULT -1);`
 
@@ -1024,11 +1024,56 @@ const (
 	// vresion 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
+<<<<<<< HEAD
+=======
+
+	// version 180
+	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
+	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
+	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
+	//   add cpu_count to mysql.dist_framework_meta
+	version180 = 180
+
+	// version 181
+	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
+	version181 = 181
+
+	// version 182
+	//   add new system table `mysql.request_unit_by_group`, which is used for
+	//   historical RU consumption by resource group per day.
+	version182 = 182
+
+	// version 183
+	//   replace `mysql.tidb_mdl_view` table
+	version183 = 183
+
+	// version 184
+	//   remove `mysql.load_data_jobs` table
+	version184 = 184
+
+	// version 185
+	//   drop `mysql.schema_index_usage` table
+	//   create `sys` schema
+	//   create `sys.schema_unused_indexes` table
+	version185 = 185
+
+	// version 186
+	//   modify `mysql.dist_framework_meta` host from VARCHAR(100) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask_history` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task` dispatcher_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task_history` dispatcher_id from varchar(256) to VARCHAR(261)
+	version186 = 186
+>>>>>>> 6ec70f17b56 (bootstrap: Modify column sizes in constant.go and bootstrap.go (#51457))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version179
+=======
+var currentBootstrapVersion int64 = version186
+>>>>>>> 6ec70f17b56 (bootstrap: Modify column sizes in constant.go and bootstrap.go (#51457))
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1183,6 +1228,16 @@ var (
 		upgradeToVer177,
 		upgradeToVer178,
 		upgradeToVer179,
+<<<<<<< HEAD
+=======
+		upgradeToVer180,
+		upgradeToVer181,
+		upgradeToVer182,
+		upgradeToVer183,
+		upgradeToVer184,
+		upgradeToVer185,
+		upgradeToVer186,
+>>>>>>> 6ec70f17b56 (bootstrap: Modify column sizes in constant.go and bootstrap.go (#51457))
 	}
 )
 
@@ -2897,7 +2952,88 @@ func upgradeToVer179(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
 }
 
+<<<<<<< HEAD
 func writeOOMAction(s Session) {
+=======
+func upgradeToVer180(s sessiontypes.Session, ver int64) {
+	if ver >= version180 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `cpu_count` INT DEFAULT 0 AFTER `role`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer181(s sessiontypes.Session, ver int64) {
+	if ver >= version181 {
+		return
+	}
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer182(s sessiontypes.Session, ver int64) {
+	if ver >= version182 {
+		return
+	}
+	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+}
+
+func upgradeToVer183(s sessiontypes.Session, ver int64) {
+	if ver >= version183 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer184(s sessiontypes.Session, ver int64) {
+	if ver >= version184 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.load_data_jobs")
+}
+
+func upgradeToVer185(s sessiontypes.Session, ver int64) {
+	if ver >= version185 {
+		return
+	}
+
+	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
+func upgradeToVer186(s sessiontypes.Session, ver int64) {
+	if ver >= version186 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta MODIFY COLUMN `host` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+}
+
+func writeOOMAction(s sessiontypes.Session) {
+>>>>>>> 6ec70f17b56 (bootstrap: Modify column sizes in constant.go and bootstrap.go (#51457))
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,
