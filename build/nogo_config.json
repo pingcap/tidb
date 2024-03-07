@@ -504,6 +504,7 @@
   },
   "revive": {
     "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       "GOROOT/": "ignore code",
       "/cgo/": "ignore cgo",
@@ -511,7 +512,6 @@
       "pkg/parser/goyacc/": "ignore goyacc code",
       "pkg/parser/ast/": "ignore parser/ast code",
       "pkg/parser/test_driver/": "ignore parser/test_driver code",
-      "dumpling/export/sql_type.go": "please fix it",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
