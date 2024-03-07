@@ -180,6 +180,7 @@ func MockTable(t *testing.T, store kv.Storage, tblInfo *model.TableInfo) table.T
 	return tbl
 }
 
+// MockResourceGroupInfo mock resource group for testing.
 func MockResourceGroupInfo(t *testing.T, store kv.Storage, groupName string) *model.ResourceGroupInfo {
 	id, err := GenGlobalID(store)
 	require.NoError(t, err)
