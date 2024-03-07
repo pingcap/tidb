@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1222,7 +1223,7 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
 		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
-		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		defer func() {
