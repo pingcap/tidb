@@ -51,13 +51,11 @@ func LoadCheckConstraint(tblInfo *model.TableInfo) ([]*Constraint, error) {
 func removeInvalidCheckConstraintsInfo(tblInfo *model.TableInfo) {
 	// check if all the columns referenced by check constraint exist
 	var conInfos []*model.ConstraintInfo
-	var hasChanged bool
 	for _, cons := range tblInfo.Constraints {
 		valid := true
 		for _, col := range cons.ConstraintCols {
 			if tblInfo.FindPublicColumnByName(col.L) == nil {
 				valid = false
-				hasChanged = true
 				break
 			}
 		}
@@ -65,10 +63,7 @@ func removeInvalidCheckConstraintsInfo(tblInfo *model.TableInfo) {
 			conInfos = append(conInfos, cons)
 		}
 	}
-	// only update the constraints if there are invalid constraints
-	if hasChanged {
-		tblInfo.Constraints = conInfos
-	}
+	tblInfo.Constraints = conInfos
 }
 
 // ToConstraint converts model.ConstraintInfo to Constraint
