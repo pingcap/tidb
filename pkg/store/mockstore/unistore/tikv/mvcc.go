@@ -976,6 +976,13 @@ func (store *MVCCStore) Flush(reqCtx *requestCtx, req *kvrpcpb.FlushRequest) err
 	startTS := req.StartTs
 	// Only check the PK's status first.
 	for _, m := range mutations {
+		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
+		if err != nil {
+			return err
+		}
+		if lock != nil {
+			continue
+		}
 		if bytes.Equal(m.Key, req.PrimaryKey) {
 			status := store.checkExtraTxnStatus(reqCtx, m.Key, startTS)
 			if status.isRollback {
