@@ -625,16 +625,10 @@ func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64
 }
 
 func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
-	if b.enableV2 {
-		return b.applyCreateOrAlterResourceGroupV2(m, diff)
-	}
 	return b.applyCreateOrAlterResourceGroup(m, diff)
 }
 
 func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []int64 {
-	if b.enableV2 {
-		return b.applyDropResourceGroupV2(m, diff)
-	}
 	return b.applyDropResourceGroup(m, diff)
 }
 
@@ -749,14 +743,6 @@ func (b *Builder) applyAlterPolicyV2(m *meta.Meta, diff *model.SchemaDiff) ([]in
 }
 
 func (b *Builder) applyDropPolicyV2(PolicyID int64) []int64 {
-	panic("TODO")
-}
-
-func (b *Builder) applyDropResourceGroupV2(m *meta.Meta, diff *model.SchemaDiff) []int64 {
-	panic("TODO")
-}
-
-func (b *Builder) applyCreateOrAlterResourceGroupV2(m *meta.Meta, diff *model.SchemaDiff) error {
 	panic("TODO")
 }
 

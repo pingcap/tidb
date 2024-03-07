@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -70,4 +71,68 @@ func TestV2Basic(t *testing.T) {
 	// TODO: support FindTableByPartitionID.
 }
 
-// TODO: test misc
+func TestMisc(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(t, err)
+	is := builder.Build()
+	require.Len(t, is.AllResourceGroups(), 0)
+
+	// test create resource group
+	resourceGroupInfo := internal.MockResourceGroupInfo(t, r.Store(), "test")
+	internal.AddResourceGroup(t, r.Store(), resourceGroupInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build()
+	require.Len(t, is.AllResourceGroups(), 1)
+	getResourceGroupInfo, ok := is.ResourceGroupByName(resourceGroupInfo.Name)
+	require.True(t, ok)
+	require.Equal(t, resourceGroupInfo, getResourceGroupInfo)
+	require.NoError(t, txn.Rollback())
+
+	// create another resource group
+	resourceGroupInfo2 := internal.MockResourceGroupInfo(t, r.Store(), "test2")
+	internal.AddResourceGroup(t, r.Store(), resourceGroupInfo2)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo2.ID})
+	require.NoError(t, err)
+	is = builder.Build()
+	require.Len(t, is.AllResourceGroups(), 2)
+	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo2.Name)
+	require.True(t, ok)
+	require.Equal(t, resourceGroupInfo2, getResourceGroupInfo)
+	require.NoError(t, txn.Rollback())
+
+	// test alter resource group
+	resourceGroupInfo.State = model.StatePublic
+	internal.UpdateResourceGroup(t, r.Store(), resourceGroupInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build()
+	require.Len(t, is.AllResourceGroups(), 2)
+	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo.Name)
+	require.True(t, ok)
+	require.Equal(t, resourceGroupInfo, getResourceGroupInfo)
+	require.NoError(t, txn.Rollback())
+
+	// test drop resource group
+	internal.DropResourceGroup(t, r.Store(), resourceGroupInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_ = applyDropResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
+	is = builder.Build()
+	require.Len(t, is.AllResourceGroups(), 1)
+	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo2.Name)
+	require.True(t, ok)
+	require.Equal(t, resourceGroupInfo2, getResourceGroupInfo)
+	require.NoError(t, txn.Rollback())
+}
