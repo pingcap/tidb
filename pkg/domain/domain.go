@@ -288,7 +288,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// We can fall back to full load, don't need to return the error.
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
-	// full load.
+
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -303,8 +303,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	// clear data
-	do.infoCache.Data = infoschema.NewData()
+
 	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -2264,6 +2263,10 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 func (do *Domain) initStats() {
 	statsHandle := do.StatsHandle()
 	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("panic when to init stats", zap.Any("r", r),
+				zap.Stack("stack"))
+		}
 		close(statsHandle.InitStatsDone)
 	}()
 	t := time.Now()
