@@ -42,12 +42,6 @@ const (
 	unanalyzedTableDefaultLastUpdateDuration = -30 * time.Minute
 )
 
-// autoAnalysisTimeWindow is a struct that contains the start and end time of the auto analyze time window.
-type autoAnalysisTimeWindow struct {
-	start time.Time
-	end   time.Time
-}
-
 // Refresher provides methods to refresh stats info.
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
@@ -77,9 +71,7 @@ func NewRefresher(
 
 // PickOneTableAndAnalyzeByPriority picks one table and analyzes it by priority.
 func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
-	// If the auto analyze time window is not set or the current time is not in the window, return false.
-	if r.start == (time.Time{}) || r.end == (time.Time{}) ||
-		!timeutil.WithinDayTimePeriod(r.start, r.end, time.Now()) {
+	if !r.autoAnalysisTimeWindow.isWithinTimeWindow(time.Now()) {
 		return false
 	}
 
@@ -152,14 +144,14 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 				)
 				return err
 			}
-			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
-				return nil
-			}
 			// We will check it again when we try to execute the job.
 			// So store the time window for later use.
 			r.autoAnalysisTimeWindow = autoAnalysisTimeWindow{
 				start: start,
 				end:   end,
+			}
+			if !r.autoAnalysisTimeWindow.isWithinTimeWindow(time.Now()) {
+				return nil
 			}
 			calculator := priorityqueue.NewPriorityCalculator()
 			pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
@@ -180,7 +172,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 			for _, db := range dbs {
 				// Sometimes the tables are too many. Auto-analyze will take too much time on it.
 				// so we need to check the available time.
-				if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+				if !r.autoAnalysisTimeWindow.isWithinTimeWindow(time.Now()) {
 					return nil
 				}
 				// Ignore the memory and system database.
@@ -653,4 +645,19 @@ func isEligibleForAnalysis(
 	}
 
 	return true
+}
+
+// autoAnalysisTimeWindow is a struct that contains the start and end time of the auto analyze time window.
+type autoAnalysisTimeWindow struct {
+	start time.Time
+	end   time.Time
+}
+
+// isWithinTimeWindow checks if the current time is within the time window.
+// If the auto analyze time window is not set or the current time is not in the window, return false.
+func (a autoAnalysisTimeWindow) isWithinTimeWindow(currentTime time.Time) bool {
+	if a.start == (time.Time{}) || a.end == (time.Time{}) {
+		return false
+	}
+	return timeutil.WithinDayTimePeriod(a.start, a.end, currentTime)
 }
