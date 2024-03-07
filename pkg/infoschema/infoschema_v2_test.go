@@ -102,6 +102,7 @@ func TestMisc(t *testing.T) {
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo2.ID})
+	require.NoError(t, err)
 	is = builder.Build()
 	require.Len(t, is.AllResourceGroups(), 2)
 	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo2.Name)
