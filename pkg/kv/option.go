@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -274,6 +273,3 @@ func getLossyDDLReorgSource(txnSource uint64) uint64 {
 func isLossyDDLReorgSourceSet(txnSource uint64) bool {
 	return (txnSource >> lossyDDLReorgSourceShift) != 0
 }
-
-// WithPipelinedMemDBSkipRemoteBuffer create context will skip remote buffer.
-var WithPipelinedMemDBSkipRemoteBuffer = tikv.WithPipelinedMemDBSkipRemoteBuffer
