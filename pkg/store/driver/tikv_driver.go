@@ -263,7 +263,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	return store, nil
 }
 
-func (d TiKVDriver) checkSafePointVersion(keyspaceMeta *keyspacepb.KeyspaceMeta, pdHttpCli pdhttp.Client) error {
+func (d TiKVDriver) checkSafePointVersion(keyspaceMeta *keyspacepb.KeyspaceMeta, pdHTTPCli pdhttp.Client) error {
 	if keyspaceMeta == nil {
 		return nil
 	}
@@ -278,7 +278,7 @@ func (d TiKVDriver) checkSafePointVersion(keyspaceMeta *keyspacepb.KeyspaceMeta,
 					SafePointVersion: config.SafePointV2,
 				},
 			}
-			err := pdHttpCli.UpdateKeyspaceSafePointVersion(ctx, keyspaceMeta.GetName(), &keyspaceSafePointVersionConfig)
+			err := pdHTTPCli.UpdateKeyspaceSafePointVersion(ctx, keyspaceMeta.GetName(), &keyspaceSafePointVersionConfig)
 			if err != nil {
 				return err
 			}
