@@ -314,7 +314,7 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		}
 	}
 	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
-	if dagReq != nil && dagReq.DivPrecisionIncrement != nil {
+	if dagReq.DivPrecisionIncrement != nil {
 		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
 	} else {
 		sctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
