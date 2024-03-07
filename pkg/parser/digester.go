@@ -82,7 +82,7 @@ func DigestNormalized(normalized string) (digest *Digest) {
 // it will get normalized form of statement text
 // which removes general property of a statement but keeps specific property.
 // possible values for 'redact' is "OFF", "ON" or "MARKER". Passing "" is seen as "OFF".
-
+//
 // when "OFF", it is returned as is
 // for example, when "ON": Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
 // for example, when "MARKER": Normalize('select 1 from b where a = 1') => 'select ‹1› from b where a = ‹1›'
