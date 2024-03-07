@@ -15,10 +15,8 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -32,10 +30,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-type retryTimeKey struct{}
-
-var retryTimes = new(retryTimeKey)
 
 type Granularity string
 
@@ -424,53 +418,6 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 	return len(regionInfo.PendingPeers) == 0, nil
 }
 
-// isScatterRegionFinished check the latest successful operator and return the follow status:
-//
-//	return (finished, needRescatter, error)
-//
-// if the latest operator is not `scatter-operator`, or its status is SUCCESS, it's likely that the
-// scatter region operator is finished.
-//
-// if the latest operator is `scatter-operator` and its status is TIMEOUT or CANCEL, the needRescatter
-// is true and the function caller needs to scatter this region again.
-func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error) {
-	resp, err := rs.client.GetOperator(ctx, regionID)
-	if err != nil {
-		if common.IsRetryableError(err) {
-			// retry in the next cycle
-			return false, false, nil
-		}
-		return false, false, errors.Trace(err)
-	}
-	// Heartbeat may not be sent to PD
-	if respErr := resp.GetHeader().GetError(); respErr != nil {
-		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
-			return true, false, nil
-		}
-		return false, false, errors.Annotatef(berrors.ErrPDInvalidResponse, "get operator error: %s", respErr.GetType())
-	}
-	defer func() {
-		if !scatterDone {
-			retryTimes := ctx.Value(retryTimes).(int)
-			if retryTimes > 10 {
-				log.Info("get operator", zap.Uint64("regionID", regionID), zap.Stringer("resp", resp))
-			}
-		}
-	}()
-	// that 'scatter-operator' has finished
-	if string(resp.GetDesc()) != "scatter-region" {
-		return true, false, nil
-	}
-	switch resp.GetStatus() {
-	case pdpb.OperatorStatus_SUCCESS:
-		return true, false, nil
-	case pdpb.OperatorStatus_RUNNING:
-		return false, false, nil
-	default:
-		return false, true, nil
-	}
-}
-
 func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*split.RegionInfo, timeout time.Duration) int {
 	var (
 		startTime   = time.Now()
@@ -481,10 +428,19 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 		reScatterRegions = make([]*split.RegionInfo, 0, len(regionInfos))
 	)
 	for {
-		ctx1 := context.WithValue(ctx, retryTimes, retryCnt)
+		loggedLongRetry := false
 		reScatterRegions = reScatterRegions[:0]
 		for regionID, regionInfo := range leftRegions {
-			ok, rescatter, err := rs.isScatterRegionFinished(ctx1, regionID)
+			if retryCnt > 10 && !loggedLongRetry {
+				loggedLongRetry = true
+				resp, err := rs.client.GetOperator(ctx, regionID)
+				log.Info("retried many times to wait for scattering regions, checking operator",
+					zap.Int("retryCnt", retryCnt),
+					zap.Uint64("anyRegionID", regionID),
+					zap.Stringer("resp", resp),
+					zap.Error(err))
+			}
+			ok, rescatter, err := rs.client.IsScatterRegionFinished(ctx, regionID)
 			if err != nil {
 				log.Warn("scatter region failed: do not have the region",
 					logutil.Region(regionInfo.Region), zap.Error(err))
@@ -506,7 +462,7 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 		}
 
 		if len(reScatterRegions) > 0 {
-			rs.ScatterRegions(ctx1, reScatterRegions)
+			rs.ScatterRegions(ctx, reScatterRegions)
 		}
 
 		if time.Since(startTime) > timeout {

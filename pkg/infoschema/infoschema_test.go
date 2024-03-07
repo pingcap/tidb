@@ -116,7 +116,7 @@ func TestBasic(t *testing.T) {
 	require.Len(t, schemaNames, 3)
 	require.True(t, testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, "Test"}))
 
-	schemas := is.AllSchemas()
+	schemas := is.AllSchemaNames()
 	require.Len(t, schemas, 3)
 
 	require.True(t, is.SchemaExists(dbName))
@@ -865,6 +865,7 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 
 	// Execute some basic operations under infoschema v2.
 	tk.MustQuery("show tables").Check(testkit.Rows("v2"))
+	tk.MustExec("truncate table v2")
 	tk.MustExec("drop table v2")
 	tk.MustExec("create table v1 (id int)")
 

@@ -3290,8 +3290,8 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	for _, dbInfo := range is.AllSchemas() {
-		for _, t := range is.SchemaTables(dbInfo.Name) {
+	for _, dbName := range is.AllSchemaNames() {
+		for _, t := range is.SchemaTables(dbName) {
 			pi := t.Meta().GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue

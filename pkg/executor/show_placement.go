@@ -315,14 +315,17 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
-	dbs := e.is.AllSchemas()
-	slices.SortFunc(dbs, func(i, j *model.DBInfo) int { return cmp.Compare(i.Name.O, j.Name.O) })
+	dbs := e.is.AllSchemaNames()
+	slices.SortFunc(dbs, func(i, j model.CIStr) int { return cmp.Compare(i.O, j.O) })
 
-	for _, dbInfo := range dbs {
-		if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
+	for _, dbName := range dbs {
+		if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.DBIsVisible(activeRoles, dbName.O) {
 			continue
 		}
-
+		dbInfo, ok := e.is.SchemaByName(dbName)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+		}
 		placement, err := e.getDBPlacement(dbInfo)
 		if err != nil {
 			return err
@@ -349,20 +352,20 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
-	dbs := e.is.AllSchemas()
-	slices.SortFunc(dbs, func(i, j *model.DBInfo) int { return cmp.Compare(i.Name.O, j.Name.O) })
+	dbs := e.is.AllSchemaNames()
+	slices.SortFunc(dbs, func(i, j model.CIStr) int { return cmp.Compare(i.O, j.O) })
 
-	for _, dbInfo := range dbs {
+	for _, dbName := range dbs {
 		tableRowSets := make([]tableRowSet, 0)
 
-		for _, tbl := range e.is.SchemaTables(dbInfo.Name) {
+		for _, tbl := range e.is.SchemaTables(dbName) {
 			tblInfo := tbl.Meta()
-			if checker != nil && !checker.RequestVerification(activeRoles, dbInfo.Name.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(activeRoles, dbName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
 				continue
 			}
 
 			var rows [][]any
-			ident := ast.Ident{Schema: dbInfo.Name, Name: tblInfo.Name}
+			ident := ast.Ident{Schema: dbName, Name: tblInfo.Name}
 			tblPlacement, err := e.getTablePlacement(tblInfo)
 			if err != nil {
 				return err

@@ -386,6 +386,18 @@ func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
 	return
 }
 
+func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
+	rs := make([]model.CIStr, 0, is.Data.schemaMap.Len())
+	is.Data.schemaMap.Scan(func(item schemaItem) bool {
+		rs = append(rs, item.dbInfo.Name)
+		return true
+	})
+	for _, sc := range is.Data.specials {
+		rs = append(rs, sc.dbInfo.Name)
+	}
+	return rs
+}
+
 func (is *infoschemaV2) SchemaMetaVersion() int64 {
 	return is.schemaVersion
 }
@@ -624,13 +636,6 @@ func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []
 		return b.applyDropResourceGroupV2(m, diff)
 	}
 	return b.applyDropResourceGroup(m, diff)
-}
-
-func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyTruncateTableOrPartitionV2(m, diff)
-	}
-	return b.applyTruncateTableOrPartition(m, diff)
 }
 
 func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
