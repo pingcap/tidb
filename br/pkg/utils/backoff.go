@@ -164,8 +164,8 @@ func NewBackupSSTBackoffer() Backoffer {
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	defer func() {
-		if bo.attempt != 0 {
-			log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
+		if bo.attempt == 0 {
+			log.Warn("failed to import ssts by unretryable error or retry attempt exhausted", zap.Int("attempt", bo.attempt), zap.Error(err))
 		}
 	}()
 	// we don't care storeID here.
