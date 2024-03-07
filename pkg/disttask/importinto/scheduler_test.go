@@ -71,15 +71,15 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	require.False(s.T(), sch.disableTiKVImportMode.Load())
 
 	sch.updateCurrentTask(&proto.Task{
-		ID:   1,
-		Meta: bs,
+		TaskBase: proto.TaskBase{ID: 1},
+		Meta:     bs,
 	})
 	require.Equal(s.T(), int64(1), sch.currTaskID.Load())
 	require.True(s.T(), sch.disableTiKVImportMode.Load())
 
 	sch.updateCurrentTask(&proto.Task{
-		ID:   1,
-		Meta: bs,
+		TaskBase: proto.TaskBase{ID: 1},
+		Meta:     bs,
 	})
 	require.Equal(s.T(), int64(1), sch.currTaskID.Load())
 	require.True(s.T(), sch.disableTiKVImportMode.Load())
@@ -114,9 +114,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 }
 
 func (s *importIntoSuite) TestGetNextStep() {
-	task := &proto.Task{
-		Step: proto.StepInit,
-	}
+	task := &proto.TaskBase{Step: proto.StepInit}
 	ext := &ImportSchedulerExt{}
 	for _, nextStep := range []proto.Step{proto.ImportStepImport, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
@@ -139,9 +137,9 @@ func (s *importIntoSuite) TestGetStepOfEncode() {
 
 func TestIsImporting2TiKV(t *testing.T) {
 	ext := &ImportSchedulerExt{}
-	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepEncodeAndSort}))
-	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepMergeSort}))
-	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepPostProcess}))
-	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepImport}))
-	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: proto.ImportStepWriteAndIngest}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepEncodeAndSort}}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepMergeSort}}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepPostProcess}}))
+	require.True(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}}))
+	require.True(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepWriteAndIngest}}))
 }

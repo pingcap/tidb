@@ -111,21 +111,32 @@ func RegisterRollbackTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerEx
 }
 
 // SubmitAndWaitTask schedule one task.
-func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, concurrency int) *proto.Task {
+func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, concurrency int) *proto.TaskBase {
 	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, nil)
 	require.NoError(t, err)
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }
 
 // WaitTaskDoneOrPaused wait task done or paused.
-func WaitTaskDoneOrPaused(ctx context.Context, t testing.TB, taskKey string) *proto.Task {
-	taskMgr, err := storage.GetTaskManager()
-	require.NoError(t, err)
-	gotTask, err := taskMgr.GetTaskByKeyWithHistory(ctx, taskKey)
-	require.NoError(t, err)
-	task, err := handle.WaitTask(ctx, gotTask.ID, func(task *proto.Task) bool {
+func WaitTaskDoneOrPaused(ctx context.Context, t testing.TB, taskKey string) *proto.TaskBase {
+	return waitTaskUntil(ctx, t, taskKey, func(task *proto.TaskBase) bool {
 		return task.IsDone() || task.State == proto.TaskStatePaused
 	})
+}
+
+// WaitTaskDone wait task done.
+func WaitTaskDone(ctx context.Context, t testing.TB, taskKey string) *proto.TaskBase {
+	return waitTaskUntil(ctx, t, taskKey, func(task *proto.TaskBase) bool {
+		return task.IsDone()
+	})
+}
+
+func waitTaskUntil(ctx context.Context, t testing.TB, taskKey string, fn func(task *proto.TaskBase) bool) *proto.TaskBase {
+	taskMgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	gotTask, err := taskMgr.GetTaskBaseByKeyWithHistory(ctx, taskKey)
+	require.NoError(t, err)
+	task, err := handle.WaitTask(ctx, gotTask.ID, fn)
 	require.NoError(t, err)
 	return task
 }

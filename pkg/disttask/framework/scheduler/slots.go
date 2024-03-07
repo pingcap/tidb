@@ -27,7 +27,7 @@ import (
 )
 
 type taskStripes struct {
-	task    *proto.Task
+	task    *proto.TaskBase
 	stripes int
 }
 
@@ -111,7 +111,7 @@ func (sm *SlotManager) update(ctx context.Context, nodeMgr *NodeManager, taskMgr
 // as usedSlots is updated asynchronously, it might return false even if there
 // are enough resources, or return true on resource shortage when some task
 // scheduled subtasks.
-func (sm *SlotManager) canReserve(task *proto.Task) (execID string, ok bool) {
+func (sm *SlotManager) canReserve(task *proto.TaskBase) (execID string, ok bool) {
 	usedSlots := *sm.usedSlots.Load()
 	capacity := int(sm.capacity.Load())
 	sm.mu.RLock()
@@ -142,7 +142,7 @@ func (sm *SlotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 
 // Reserve reserves resources for a task.
 // Reserve and UnReserve should be called in pair with same parameters.
-func (sm *SlotManager) reserve(task *proto.Task, execID string) {
+func (sm *SlotManager) reserve(task *proto.TaskBase, execID string) {
 	taskClone := *task
 
 	sm.mu.Lock()
@@ -161,7 +161,7 @@ func (sm *SlotManager) reserve(task *proto.Task, execID string) {
 }
 
 // UnReserve un-reserve resources for a task.
-func (sm *SlotManager) unReserve(task *proto.Task, execID string) {
+func (sm *SlotManager) unReserve(task *proto.TaskBase, execID string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	idx, ok := sm.task2Index[task.ID]

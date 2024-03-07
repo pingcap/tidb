@@ -231,7 +231,7 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
-	// EnableTelemetry enables the usage data report to PingCAP.
+	// EnableTelemetry enables the usage data report to PingCAP. Deprecated: Telemetry has been removed.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
@@ -1475,9 +1475,6 @@ func init() {
 }
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
-	if edition != versioninfo.CommunityEdition {
-		defaultConf.EnableTelemetry = false
-	}
 	conf := defaultConf
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {

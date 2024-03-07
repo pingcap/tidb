@@ -27,11 +27,18 @@ import (
 
 // PlanContext is the context for building plan.
 type PlanContext interface {
-	exprctx.BuildContext
 	contextutil.ValueStoreContext
 	tablelock.TableLockReadContext
+	// GetExprCtx gets the expression context.
+	GetExprCtx() exprctx.BuildContext
+	// GetStore returns the store of session.
+	GetStore() kv.Storage
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
+	// GetDomainInfoSchema returns the latest information schema in domain
+	// Different with `domain.InfoSchema()`, the information schema returned by this method
+	// includes the temporary table definitions stored in session
+	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
 	// GetInfoSchema returns the current infoschema
 	GetInfoSchema() infoschema.InfoSchemaMetaVersion
 	// UpdateColStatsUsage updates the column stats usage.
@@ -49,4 +56,14 @@ type PlanContext interface {
 	Txn(active bool) (kv.Transaction, error)
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool
+	// AdviseTxnWarmup advises the txn to warm up.
+	AdviseTxnWarmup() error
 }
+
+// EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
+// It is used by some mock contexts that are only required to implement PlanContext
+// but do not care about the actual implementation.
+type EmptyPlanContextExtended struct{}
+
+// AdviseTxnWarmup advises the txn to warm up.
+func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }

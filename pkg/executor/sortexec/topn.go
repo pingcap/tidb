@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"slices"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -32,18 +33,19 @@ type TopNExec struct {
 	Limit      *plannercore.PhysicalLimit
 	totalLimit uint64
 
-	// rowChunks is the chunks to store row values.
-	rowChunks *chunk.List
-	// rowPointer store the chunk index and row index for each row.
-	rowPtrs []chunk.RowPtr
-
 	chkHeap *topNChunkHeap
-	Idx     int
 }
 
 // topNChunkHeap implements heap.Interface.
 type topNChunkHeap struct {
 	*TopNExec
+
+	// rowChunks is the chunks to store row values.
+	rowChunks *chunk.List
+	// rowPointer store the chunk index and row index for each row.
+	rowPtrs []chunk.RowPtr
+
+	Idx int
 }
 
 // Less implement heap.Interface, but since we mantains a max heap,
@@ -89,18 +91,18 @@ func (h *topNChunkHeap) Swap(i, j int) {
 }
 
 func (e *TopNExec) keyColumnsCompare(i, j chunk.RowPtr) int {
-	rowI := e.rowChunks.GetRow(i)
-	rowJ := e.rowChunks.GetRow(j)
-	return e.compressRow(rowI, rowJ)
+	rowI := e.chkHeap.rowChunks.GetRow(i)
+	rowJ := e.chkHeap.rowChunks.GetRow(j)
+	return e.compareRow(rowI, rowJ)
 }
 
 func (e *TopNExec) initPointers() {
-	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
-	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
-	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
-		rowChk := e.rowChunks.GetChunk(chkIdx)
+	e.chkHeap.rowPtrs = make([]chunk.RowPtr, 0, e.chkHeap.rowChunks.Len())
+	e.memTracker.Consume(int64(8 * e.chkHeap.rowChunks.Len()))
+	for chkIdx := 0; chkIdx < e.chkHeap.rowChunks.NumChunks(); chkIdx++ {
+		rowChk := e.chkHeap.rowChunks.GetChunk(chkIdx)
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+			e.chkHeap.rowPtrs = append(e.chkHeap.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
 }
@@ -110,8 +112,10 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.fetched = false
-	e.Idx = 0
+	e.fetched = &atomic.Bool{}
+	e.fetched.Store(false)
+	e.chkHeap = &topNChunkHeap{TopNExec: e}
+	e.chkHeap.Idx = 0
 
 	return exec.Open(ctx, e.Children(0))
 }
@@ -119,9 +123,9 @@ func (e *TopNExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if !e.fetched {
+	if e.fetched.CompareAndSwap(false, true) {
 		e.totalLimit = e.Limit.Offset + e.Limit.Count
-		e.Idx = int(e.Limit.Offset)
+		e.chkHeap.Idx = int(e.Limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
 			return err
@@ -130,17 +134,16 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.fetched = true
 	}
-	if e.Idx >= len(e.rowPtrs) {
+	if e.chkHeap.Idx >= len(e.chkHeap.rowPtrs) {
 		return nil
 	}
 	if !req.IsFull() {
-		numToAppend := min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
+		numToAppend := min(len(e.chkHeap.rowPtrs)-e.chkHeap.Idx, req.RequiredRows()-req.NumRows())
 		rows := make([]chunk.Row, numToAppend)
 		for index := 0; index < numToAppend; index++ {
-			rows[index] = e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-			e.Idx++
+			rows[index] = e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.Idx])
+			e.chkHeap.Idx++
 		}
 		req.AppendRows(rows)
 	}
@@ -148,14 +151,13 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
-	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
-	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
-	for uint64(e.rowChunks.Len()) < e.totalLimit {
+	e.chkHeap.rowChunks = chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
+	e.chkHeap.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	e.chkHeap.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
+	for uint64(e.chkHeap.rowChunks.Len()) < e.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// adjust required rows by total limit
-		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.MaxChunkSize())
+		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.chkHeap.rowChunks.Len())), e.MaxChunkSize())
 		err := exec.Next(ctx, e.Children(0), srcChk)
 		if err != nil {
 			return err
@@ -163,7 +165,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		if srcChk.NumRows() == 0 {
 			break
 		}
-		e.rowChunks.Add(srcChk)
+		e.chkHeap.rowChunks.Add(srcChk)
 	}
 	e.initPointers()
 	e.initCompareFuncs()
@@ -175,7 +177,7 @@ const topNCompactionFactor = 4
 
 func (e *TopNExec) executeTopN(ctx context.Context) error {
 	heap.Init(e.chkHeap)
-	for uint64(len(e.rowPtrs)) > e.totalLimit {
+	for uint64(len(e.chkHeap.rowPtrs)) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
@@ -192,26 +194,26 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
-			err = e.doCompaction()
+		if e.chkHeap.rowChunks.Len() > len(e.chkHeap.rowPtrs)*topNCompactionFactor {
+			err = e.doCompaction(e.chkHeap)
 			if err != nil {
 				return err
 			}
 		}
 	}
-	slices.SortFunc(e.rowPtrs, e.keyColumnsCompare)
+	slices.SortFunc(e.chkHeap.rowPtrs, e.keyColumnsCompare)
 	return nil
 }
 
 func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 	for i := 0; i < childRowChk.NumRows(); i++ {
-		heapMaxPtr := e.rowPtrs[0]
+		heapMaxPtr := e.chkHeap.rowPtrs[0]
 		var heapMax, next chunk.Row
-		heapMax = e.rowChunks.GetRow(heapMaxPtr)
+		heapMax = e.chkHeap.rowChunks.GetRow(heapMaxPtr)
 		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
-			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
+			e.chkHeap.rowPtrs[0] = e.chkHeap.rowChunks.AppendRow(childRowChk.GetRow(i))
 			heap.Fix(e.chkHeap, 0)
 		}
 	}
@@ -222,19 +224,18 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // If we don't do compaction, in a extreme case like the child data is already ascending sorted
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
-func (e *TopNExec) doCompaction() error {
+func (e *TopNExec) doCompaction(chkHeap *topNChunkHeap) error {
 	newRowChunks := chunk.NewList(exec.RetTypes(e), e.InitCap(), e.MaxChunkSize())
-	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
-	for _, rowPtr := range e.rowPtrs {
-		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
+	newRowPtrs := make([]chunk.RowPtr, 0, chkHeap.rowChunks.Len())
+	for _, rowPtr := range chkHeap.rowPtrs {
+		newRowPtr := newRowChunks.AppendRow(chkHeap.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
 	newRowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
-	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
-	e.rowChunks = newRowChunks
+	e.memTracker.ReplaceChild(chkHeap.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
+	chkHeap.rowChunks = newRowChunks
 
-	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
-	e.memTracker.Consume(int64(8 * len(newRowPtrs)))
-	e.rowPtrs = newRowPtrs
+	e.memTracker.Consume(int64(8 * (len(newRowPtrs) - len(chkHeap.rowPtrs))))
+	chkHeap.rowPtrs = newRowPtrs
 	return nil
 }

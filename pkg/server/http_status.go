@@ -67,8 +67,13 @@ import (
 
 const defaultStatusPort = 10080
 
-func (s *Server) startStatusHTTP() {
+func (s *Server) startStatusHTTP() error {
+	err := s.initHTTPListener()
+	if err != nil {
+		return err
+	}
 	go s.startHTTPServer()
+	return nil
 }
 
 func serveError(w http.ResponseWriter, status int, txt string) {

@@ -44,11 +44,11 @@ func setWatchOption(ctx context.Context,
 	switch op.Tp {
 	case ast.QueryWatchResourceGroup:
 		if op.ExprValue != nil {
-			expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx, op.ExprValue, nil, nil, false)
+			expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
 			if err != nil {
 				return err
 			}
-			name, isNull, err := expr.EvalString(sctx, chunk.Row{})
+			name, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -62,11 +62,11 @@ func setWatchOption(ctx context.Context,
 	case ast.QueryWatchAction:
 		record.Action = rmpb.RunawayAction(op.IntValue)
 	case ast.QueryWatchType:
-		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx, op.ExprValue, nil, nil, false)
+		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
 		if err != nil {
 			return err
 		}
-		strval, isNull, err := expr.EvalString(sctx, chunk.Row{})
+		strval, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}

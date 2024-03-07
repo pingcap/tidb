@@ -377,7 +377,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs := restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -388,7 +388,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err = infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -400,7 +400,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 1, len(dbs))
 
-	builder, err = infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("d1")},
@@ -425,5 +425,5 @@ func TestGetExistedUserDBs(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(185), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(186), session.CurrentBootstrapVersion)
 }

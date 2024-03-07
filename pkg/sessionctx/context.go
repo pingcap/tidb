@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -65,9 +67,6 @@ type PlanCache interface {
 type Context interface {
 	SessionStatesHandler
 	contextutil.ValueStoreContext
-	exprctx.EvalContext
-	exprctx.BuildContext
-	planctx.PlanContext
 	tablelock.TableLockContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
@@ -98,6 +97,18 @@ type Context interface {
 	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
+
+	// GetExprCtx returns the expression context of the session.
+	GetExprCtx() exprctx.BuildContext
+
+	// GetTableCtx returns the table.MutateContext
+	GetTableCtx() tbctx.MutateContext
+
+	// GetPlanCtx gets the plan context of the current session.
+	GetPlanCtx() planctx.PlanContext
+
+	// GetDistSQLCtx gets the distsql ctx of the current session
+	GetDistSQLCtx() distsqlctx.DistSQLContext
 
 	GetSessionManager() util.SessionManager
 
@@ -134,12 +145,6 @@ type Context interface {
 	GetPreparedTxnFuture() TxnFuture
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
-	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
-	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-	GetBuiltinFunctionUsage() map[string]uint32
-	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
-	// Notice that this is a thread safe function
-	BuiltinFunctionUsageInc(scalarFuncSigName string)
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context

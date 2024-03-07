@@ -22,16 +22,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -45,11 +51,14 @@ import (
 
 var (
 	_ sessionctx.Context  = (*Context)(nil)
+	_ planctx.PlanContext = (*Context)(nil)
 	_ sqlexec.SQLExecutor = (*Context)(nil)
 )
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
+	planctx.EmptyPlanContextExtended
+	*exprctximpl.ExprCtxExtendedImpl
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -57,6 +66,7 @@ type Context struct {
 	is            infoschema.InfoSchemaMetaVersion
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
+	tblctx        *tbctximpl.TableContextImpl
 	cancel        context.CancelFunc
 	pcache        sessionctx.PlanCache
 	level         kvrpcpb.DiskFullOpt
@@ -191,6 +201,26 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 	return c.sessionVars
 }
 
+// GetPlanCtx returns the PlanContext.
+func (c *Context) GetPlanCtx() planctx.PlanContext {
+	return c
+}
+
+// GetExprCtx returns the expression context of the session.
+func (c *Context) GetExprCtx() exprctx.BuildContext {
+	return c
+}
+
+// GetTableCtx returns the table.MutateContext
+func (c *Context) GetTableCtx() tbctx.MutateContext {
+	return c.tblctx
+}
+
+// GetDistSQLCtx returns the distsql context of the session
+func (c *Context) GetDistSQLCtx() distsqlctx.DistSQLContext {
+	return c
+}
+
 // Txn implements sessionctx.Context Txn interface.
 func (c *Context) Txn(bool) (kv.Transaction, error) {
 	return &c.txn, nil
@@ -244,9 +274,6 @@ func (c *Context) GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion {
 func (*Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
-
-// BuiltinFunctionUsageInc implements sessionctx.Context.
-func (*Context) BuiltinFunctionUsageInc(_ string) {}
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (*Context) GetGlobalSysVar(_ sessionctx.Context, name string) (string, error) {
@@ -501,6 +528,8 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
+	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
+	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC

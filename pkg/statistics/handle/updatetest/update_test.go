@@ -90,7 +90,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	require.Equal(t, int64(rowCount1*2), stats1.RealtimeCount)
 
 	// Test IncreaseFactor.
-	count, err := cardinality.ColumnEqualRowCount(testKit.Session(), stats1, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
+	count, err := cardinality.ColumnEqualRowCount(testKit.Session().GetPlanCtx(), stats1, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(rowCount1*2), count)
 

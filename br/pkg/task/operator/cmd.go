@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"os"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +28,6 @@ import (
 )
 
 func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error) {
-	pdAddrs := strings.Join(cfg.PD, ",")
 	var tc *tls.Config
 	if cfg.TLS.IsEnabled() {
 		var err error
@@ -38,7 +36,7 @@ func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error)
 			return nil, err
 		}
 	}
-	mgr, err := pdutil.NewPdController(ctx, pdAddrs, tc, cfg.TLS.ToPDSecurityOption())
+	mgr, err := pdutil.NewPdController(ctx, cfg.PD, tc, cfg.TLS.ToPDSecurityOption())
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +106,7 @@ func hintAllReady() {
 // AdaptEnvForSnapshotBackup blocks the current goroutine and pause the GC safepoint and remove the scheduler by the config.
 // This function will block until the context being canceled.
 func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
+	utils.DumpGoroutineWhenExit.Store(true)
 	mgr, err := dialPD(ctx, &cfg.Config)
 	if err != nil {
 		return errors.Annotate(err, "failed to dial PD")
@@ -143,6 +142,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 		if cfg.OnAllReady != nil {
 			cfg.OnAllReady()
 		}
+		utils.DumpGoroutineWhenExit.Store(false)
 		hintAllReady()
 	}()
 	defer func() {

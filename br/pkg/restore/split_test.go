@@ -29,13 +29,14 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type TestClient struct {
+	split.SplitClient
+
 	mu                  sync.RWMutex
 	stores              map[uint64]*metapb.Store
 	regions             map[uint64]*split.RegionInfo
@@ -245,20 +246,12 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, nil
 }
 
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
-	return
-}
-
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
-	return nil
-}
-
-func (c *TestClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
-	return nil
-}
-
-func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
-	return nil
+func (c *TestClient) IsScatterRegionFinished(
+	ctx context.Context,
+	regionID uint64,
+) (scatterDone bool, needRescatter bool, scatterErr error) {
+	resp, _ := c.GetOperator(ctx, regionID)
+	return split.IsScatterRegionFinished(resp)
 }
 
 type assertRetryLessThanBackoffer struct {
@@ -298,7 +291,7 @@ func TestScanEmptyRegion(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -310,7 +303,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -468,7 +461,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -492,7 +485,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 		scattered[regionInfo.Region.Id] = true
 		return nil
 	}
-	regionSplitter.ScatterRegionsSync(ctx, regionInfos)
+	regionSplitter.ScatterRegions(ctx, regionInfos)
 	for key := range regions {
 		if key == alwaysFailedRegionID {
 			require.Falsef(t, scattered[key], "always failed region %d was scattered successfully", key)
@@ -514,7 +507,7 @@ func TestRawSplit(t *testing.T) {
 	ctx := context.Background()
 
 	regionSplitter := restore.NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges, nil, 0, "", true, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, nil, 1, true, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
@@ -633,122 +626,6 @@ FindRegion:
 		return false
 	}
 	return true
-}
-
-func TestChooseSplitKeysBySize(t *testing.T) {
-	// case #0 store count is zero, return nil
-	keys, _ := restore.ChooseSplitKeysBySize(0, 0, nil)
-	require.Len(t, keys, 0)
-
-	// case #1 choose the first two keys as split keys
-	rg := rtree.NewRangeTree()
-	firstEndKey := []byte("2")
-	SecondEndKey := []byte("3")
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("1"),
-		EndKey:   firstEndKey,
-		Size:     3,
-	})
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("2"),
-		EndKey:   SecondEndKey,
-		Size:     3,
-	})
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("3"),
-		EndKey:   []byte("4"),
-		Size:     4,
-	})
-
-	keys, size := restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
-	require.Len(t, keys, 2)
-	require.EqualValues(t, size, 3)
-	require.ElementsMatch(t, keys, [][]byte{firstEndKey, SecondEndKey})
-
-	// case #2 choose the first key as split key, because the first range is large enough
-	rg = rtree.NewRangeTree()
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("1"),
-		EndKey:   firstEndKey,
-		Size:     8,
-	})
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("2"),
-		EndKey:   SecondEndKey,
-		Size:     1,
-	})
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("3"),
-		EndKey:   []byte("4"),
-		Size:     1,
-	})
-
-	keys, size = restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
-	require.Len(t, keys, 1)
-	require.ElementsMatch(t, keys, [][]byte{firstEndKey})
-	require.EqualValues(t, size, 3)
-
-	// case #3 choose the second key as split key, because the first+second range is large enough
-	rg = rtree.NewRangeTree()
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("1"),
-		EndKey:   firstEndKey,
-		Size:     1,
-	})
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("3"),
-		EndKey:   SecondEndKey,
-		Size:     8,
-	})
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("4"),
-		EndKey:   []byte("5"),
-		Size:     1,
-	})
-
-	keys, size = restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
-	require.Len(t, keys, 1)
-	require.ElementsMatch(t, keys, [][]byte{SecondEndKey})
-	require.EqualValues(t, size, 3)
-
-	// case #4 too many stores, no need to split
-	rg = rtree.NewRangeTree()
-	rg.InsertRange(rtree.Range{
-		StartKey: []byte("1"),
-		EndKey:   []byte("2"),
-		Size:     8,
-	})
-	keys, size = restore.ChooseSplitKeysBySize(10, 100, rg.GetSortedRanges())
-	require.Len(t, keys, 0)
-	require.EqualValues(t, size, 0)
-}
-
-func TestNeedSplit(t *testing.T) {
-	testNeedSplit(t, false)
-	testNeedSplit(t, true)
-}
-
-func testNeedSplit(t *testing.T, isRawKv bool) {
-	regions := []*split.RegionInfo{
-		{
-			Region: &metapb.Region{
-				StartKey: codec.EncodeBytesExt(nil, []byte("b"), isRawKv),
-				EndKey:   codec.EncodeBytesExt(nil, []byte("d"), isRawKv),
-			},
-		},
-	}
-	// Out of region
-	require.Nil(t, restore.NeedSplit([]byte("a"), regions, isRawKv))
-	// Region start key
-	require.Nil(t, restore.NeedSplit([]byte("b"), regions, isRawKv))
-	// In region
-	region := restore.NeedSplit([]byte("c"), regions, isRawKv)
-	require.Equal(t, 0, bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytesExt(nil, []byte("b"), isRawKv)))
-	require.Equal(t, 0, bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytesExt(nil, []byte("d"), isRawKv)))
-	// Region end key
-	require.Nil(t, restore.NeedSplit([]byte("d"), regions, isRawKv))
-	// Out of region
-	require.Nil(t, restore.NeedSplit([]byte("e"), regions, isRawKv))
 }
 
 func TestRegionConsistency(t *testing.T) {
@@ -1092,6 +969,7 @@ func TestSplitPoint2(t *testing.T) {
 }
 
 type fakeSplitClient struct {
+	split.SplitClient
 	regions []*split.RegionInfo
 }
 
@@ -1110,33 +988,6 @@ func (f *fakeSplitClient) AppendRegion(startKey, endKey []byte) {
 	})
 }
 
-func (*fakeSplitClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) SplitRegion(ctx context.Context, regionInfo *split.RegionInfo, key []byte) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) BatchSplitRegions(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
-	return nil, nil, nil
-}
-func (*fakeSplitClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	return nil
-}
-func (*fakeSplitClient) ScatterRegions(ctx context.Context, regionInfo []*split.RegionInfo) error {
-	return nil
-}
-func (*fakeSplitClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	return nil, nil
-}
 func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	result := make([]*split.RegionInfo, 0)
 	count := 0
@@ -1150,16 +1001,6 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 		}
 	}
 	return result, nil
-}
-func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error { return nil }
-func (*fakeSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
-	return nil
-}
-func (*fakeSplitClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
-	return nil
 }
 
 func TestGetRewriteTableID(t *testing.T) {
@@ -1279,4 +1120,43 @@ func TestSplitCheckPartRegionConsistency(t *testing.T) {
 		regionInfo("c", "z"),
 	})
 	require.NoError(t, err)
+}
+
+func TestGetSplitSortedKeysFromSortedRegions(t *testing.T) {
+	splitContext := restore.SplitContext{}
+	sortedKeys := [][]byte{
+		[]byte("b"),
+		[]byte("d"),
+		[]byte("g"),
+		[]byte("j"),
+		[]byte("l"),
+	}
+	sortedRegions := []*split.RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id:       1,
+				StartKey: []byte("a"),
+				EndKey:   []byte("g"),
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id:       2,
+				StartKey: []byte("g"),
+				EndKey:   []byte("k"),
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id:       3,
+				StartKey: []byte("k"),
+				EndKey:   []byte("m"),
+			},
+		},
+	}
+	result := restore.TestGetSplitSortedKeysFromSortedRegionsTest(splitContext, sortedKeys, sortedRegions)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[1])
+	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[2])
+	require.Equal(t, [][]byte{[]byte("l")}, result[3])
 }

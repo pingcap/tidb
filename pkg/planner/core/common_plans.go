@@ -168,16 +168,6 @@ type AdminPlugins struct {
 	Plugins []string
 }
 
-// AdminShowTelemetry displays telemetry status including tracking ID, status and so on.
-type AdminShowTelemetry struct {
-	baseSchemaProducer
-}
-
-// AdminResetTelemetryID regenerates a new telemetry tracking ID.
-type AdminResetTelemetryID struct {
-	baseSchemaProducer
-}
-
 // Change represents a change plan.
 type Change struct {
 	baseSchemaProducer
@@ -208,7 +198,7 @@ type Execute struct {
 func isGetVarBinaryLiteral(sctx PlanContext, expr expression.Expression) (res bool) {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
 	if ok && scalarFunc.FuncName.L == ast.GetVar {
-		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
+		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx(), chunk.Row{})
 		if err != nil || isNull {
 			res = false
 		} else if dt, ok2 := sctx.GetSessionVars().GetUserVarVal(name); ok2 {

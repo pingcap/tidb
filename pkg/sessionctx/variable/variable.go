@@ -68,6 +68,8 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+	// Marker is a special log redact behavior
+	Marker = "MARKER"
 
 	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
 	// even if the performance might be slowed down.
@@ -211,9 +213,6 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 		ok  bool
 		val string
 	)
-	if val, ok = s.stmtVars[sv.Name]; ok {
-		return val, nil
-	}
 	if val, ok = s.systems[sv.Name]; !ok {
 		return val, errors.New("sysvar has not yet loaded")
 	}
