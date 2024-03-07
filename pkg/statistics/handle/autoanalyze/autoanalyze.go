@@ -286,7 +286,7 @@ func HandleAutoAnalyze(
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	// Get the available time period for auto analyze and check if the current time is in the period.
+	// Determine the time window for auto-analysis and verify if the current time falls within this range.
 	start, end, err := exec.ParseAutoAnalysisWindow(
 		parameters[variable.TiDBAutoAnalyzeStartTime],
 		parameters[variable.TiDBAutoAnalyzeEndTime],
