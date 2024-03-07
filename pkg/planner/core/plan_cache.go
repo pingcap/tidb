@@ -423,10 +423,6 @@ func rebuildRange(p Plan) error {
 			}
 		}
 	case *PhysicalTableScan:
-		err = reEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
-		if err != nil {
-			return errors.New("fail to build ranges, cannot re-evaluate partition constants")
-		}
 		err = buildRangeForTableScan(sctx, x)
 		if err != nil {
 			return err
@@ -437,28 +433,16 @@ func rebuildRange(p Plan) error {
 			return err
 		}
 	case *PhysicalTableReader:
-		err = reEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
-		if err != nil {
-			return err
-		}
 		err = rebuildRange(x.TablePlans[0])
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexReader:
-		err = reEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
-		if err != nil {
-			return err
-		}
 		err = rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexLookUpReader:
-		err = reEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
-		if err != nil {
-			return err
-		}
 		err = rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
@@ -627,10 +611,6 @@ func rebuildRange(p Plan) error {
 			}
 		}
 	case *PhysicalIndexMergeReader:
-		err = reEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
-		if err != nil {
-			return err
-		}
 		indexMerge := p.(*PhysicalIndexMergeReader)
 		for _, partialPlans := range indexMerge.PartialPlans {
 			err = rebuildRange(partialPlans[0])
@@ -658,28 +638,6 @@ func rebuildRange(p Plan) error {
 	case *Delete:
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
-		}
-	}
-	return nil
-}
-
-// reEvaluateParamMarkerConst updates all constants to their current ParamMarkers
-func reEvaluateParamMarkerConst(ctx PlanContext, exprs []expression.Expression) error {
-	var err error
-	for _, expr := range exprs {
-		switch v := expr.(type) {
-		case *expression.Constant:
-			if v.ParamMarker != nil {
-				v.Value, err = v.Eval(ctx.GetExprCtx(), chunk.Row{})
-				if err != nil {
-					return err
-				}
-			}
-		case *expression.ScalarFunction:
-			err = reEvaluateParamMarkerConst(ctx, v.GetArgs())
-			if err != nil {
-				return err
-			}
 		}
 	}
 	return nil
