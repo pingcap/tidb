@@ -624,13 +624,6 @@ func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64
 	return b.applyAlterPolicy(m, diff)
 }
 
-func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyTruncateTableOrPartitionV2(m, diff)
-	}
-	return b.applyTruncateTableOrPartition(m, diff)
-}
-
 func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
 		// return b.applyDropTableOrPartitionV2(m, diff)
