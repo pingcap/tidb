@@ -637,22 +637,9 @@ func TestApplyGoroutinePanic(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD:executor/parallel_apply_test.go
-func TestIssue24930(t *testing.T) {
+func TestParallelApplyCorrectness(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_parallel_apply=true")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("create table t2(a int)")
-	tk.MustQuery(`select case when t1.a is null
-    then (select t2.a from t2 where t2.a = t1.a limit 1) else t1.a end a
-	from t1 where t1.a=1 order by a limit 1`).Check(testkit.Rows()) // can return an empty result instead of hanging forever
-=======
-func TestParallelApplyCorrectness(t *testing.T) {
-	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
@@ -665,5 +652,18 @@ func TestParallelApplyCorrectness(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
->>>>>>> ac7dad34563 (*: fix parallel apply wrong result (#51414)):pkg/executor/parallel_apply_test.go
+}
+
+func TestIssue24930(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustQuery(`select case when t1.a is null
+    then (select t2.a from t2 where t2.a = t1.a limit 1) else t1.a end a
+	from t1 where t1.a=1 order by a limit 1`).Check(testkit.Rows()) // can return an empty result instead of hanging forever
 }
