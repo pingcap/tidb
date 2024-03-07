@@ -19,11 +19,12 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/config"
-	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/tikv"
@@ -121,7 +122,7 @@ func GetKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.Keyspace
 		var errInner error
 		keyspaceMeta, errInner = pdCli.LoadKeyspace(context.TODO(), keyspaceName)
 		// Retry when pd not bootstrapped or if keyspace not exists.
-		if kvstore.IsNotBootstrappedError(errInner) || kvstore.IsKeyspaceNotExistError(errInner) {
+		if IsNotBootstrappedError(errInner) || IsKeyspaceNotExistError(errInner) {
 			return true, errInner
 		}
 		// Do not retry when success or encountered unexpected error.
@@ -132,4 +133,20 @@ func GetKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.Keyspace
 	}
 
 	return keyspaceMeta, nil
+}
+
+// IsNotBootstrappedError returns true if the error is pd not bootstrapped error.
+func IsNotBootstrappedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), pdpb.ErrorType_NOT_BOOTSTRAPPED.String())
+}
+
+// IsKeyspaceNotExistError returns true the error is caused by keyspace not exists.
+func IsKeyspaceNotExistError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 }
