@@ -30,6 +30,9 @@ type panel struct {
 	Panels []panel `json:"panels"`
 }
 
+// a small linter to check if there are duplicate panel IDs in a dashboard json file.
+// grafana do have one linter https://github.com/grafana/dashboard-linter, but seems
+// it does not have rules to check duplicate panel IDs.
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: dashboard-linter <path-to-dashboard-json>")
@@ -75,7 +78,7 @@ func main() {
 		availableRange = append(availableRange, fmt.Sprintf("[%d, ∞)", nextID))
 	}
 	if len(duplicateIDs) > 0 {
-		fmt.Printf("Duplicate IDs found(id:count map) in file %s: %v\navailable ID range: %v\n",
+		fmt.Printf("Duplicate panel IDs found(id:count map) in file %s: %v\navailable panel ID range: %v\n",
 			fileName, duplicateIDs, availableRange)
 		os.Exit(1)
 	}
