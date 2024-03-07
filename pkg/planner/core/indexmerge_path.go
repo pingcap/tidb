@@ -1644,7 +1644,7 @@ func jsonArrayExpr2Exprs(sctx expression.BuildContext, jsonFuncName string, json
 		// skip plan cache and try to generate the best plan in this case.
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError(jsonFuncName + " function with immutable parameters can affect index selection"))
 	}
-	if !expression.IsImmutableExpr(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
+	if !expression.IsImmutableFunc(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
 		return nil, false
 	}
 
