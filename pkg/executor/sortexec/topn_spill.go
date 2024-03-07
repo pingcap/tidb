@@ -31,9 +31,8 @@ type topNSpillHelper struct {
 	spillStatus      int
 	sortedRowsInDisk []*chunk.DataInDiskByChunks
 
-	finishCh          chan struct{}
+	finishCh          <-chan struct{}
 	errOutputChan     chan<- rowWithError
-	topNExec          *TopNExec // TODO maybe this topNExec can be removed
 	keyColumnsCompare func(i, j chunk.RowPtr) int
 
 	memTracker  *memory.Tracker
@@ -47,16 +46,40 @@ type topNSpillHelper struct {
 	// Though the field type is chunk.Chunk, it contains only one row.
 	// If we set this type as chunk.Row, all rows in the chunk referred
 	// by this row will not release their memory.
-	maxValueRow chunk.Chunk // TODO initialize this chunk
+	maxValueRow *chunk.Chunk
 	workers     []*topNWorker
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
 }
 
-// TODO complete this function
-func newTopNSpillerHelper() *topNSpillHelper {
-	return nil
+func newTopNSpillerHelper(
+	finishCh <-chan struct{},
+	errOutputChan chan<- rowWithError,
+	keyColumnsCompare func(i, j chunk.RowPtr) int,
+	memTracker *memory.Tracker,
+	diskTracker *disk.Tracker,
+	fieldTypes []*types.FieldType,
+	maxValueRow *chunk.Chunk,
+	workers []*topNWorker,
+	concurrencyNum int) *topNSpillHelper {
+	lock := sync.Mutex{}
+	return &topNSpillHelper{
+		cond:               sync.NewCond(&lock),
+		spillStatus:        notSpilled,
+		sortedRowsInDisk:   make([]*chunk.DataInDiskByChunks, 0),
+		finishCh:           finishCh,
+		errOutputChan:      errOutputChan,
+		keyColumnsCompare:  keyColumnsCompare,
+		memTracker:         memTracker,
+		diskTracker:        diskTracker,
+		fieldTypes:         fieldTypes,
+		tmpSpillChunksChan: make(chan *chunk.Chunk, concurrencyNum),
+		maxValueRow:        maxValueRow,
+		workers:            workers,
+		bytesConsumed:      atomic.Int64{},
+		bytesLimit:         atomic.Int64{},
+	}
 }
 
 func (t *topNSpillHelper) isNotSpilledNoLock() bool {
@@ -157,7 +180,7 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	if !chkHeap.isRowPtrsInit {
 		chkHeap.initPtrsImpl()
 	}
-	slices.SortFunc(chkHeap.rowPtrs, t.topNExec.keyColumnsCompare)
+	slices.SortFunc(chkHeap.rowPtrs, t.keyColumnsCompare)
 
 	// TODO update maxValueRow
 
@@ -165,7 +188,7 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	tmpSpillChunk.Reset()
 
 	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes)
-	inDisk.GetDiskTracker().AttachTo(t.topNExec.diskTracker)
+	inDisk.GetDiskTracker().AttachTo(t.diskTracker)
 
 	rowPtrNum := len(chkHeap.rowPtrs)
 	for ; chkHeap.idx < rowPtrNum; chkHeap.idx++ {
@@ -210,7 +233,7 @@ func (t *topNSpillAction) Action(tracker *memory.Tracker) {
 	for t.spillHelper.isInSpillingNoLock() {
 		t.spillHelper.cond.Wait()
 	}
-	
+
 	hasEnoughData := hasEnoughDataToSpill(t.spillHelper.memTracker, tracker)
 	if tracker.CheckExceed() && t.spillHelper.isNotSpilledNoLock() && hasEnoughData {
 		t.spillHelper.setNeedSpillNoLock()
@@ -218,7 +241,7 @@ func (t *topNSpillAction) Action(tracker *memory.Tracker) {
 		t.spillHelper.bytesLimit.Store(tracker.GetBytesLimit())
 		return
 	}
-	
+
 	if tracker.CheckExceed() && !hasEnoughData {
 		t.GetFallback()
 	}
