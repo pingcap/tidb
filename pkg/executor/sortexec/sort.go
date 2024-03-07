@@ -115,11 +115,7 @@ func (e *SortExec) Close() error {
 			close(e.Parallel.resultChannel)
 			close(e.Parallel.chunkChannel)
 		} else {
-			for {
-				_, ok := <-e.Parallel.chunkChannel
-				if !ok {
-					break
-				}
+			for range e.Parallel.chunkChannel {
 				e.Parallel.fetcherAndWorkerSyncer.Done()
 			}
 		}
