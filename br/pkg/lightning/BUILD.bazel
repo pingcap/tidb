@@ -40,7 +40,7 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_golang//prometheus/promhttp",
         "@com_github_shurcool_httpgzip//:httpgzip",
-        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//http:go_default_library",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",

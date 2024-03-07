@@ -14,7 +14,7 @@ go_library(
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//error",
-        "@com_github_tikv_pd_client//errs",
+        "@com_github_tikv_pd_client//errs:go_default_library",
     ],
 )
 

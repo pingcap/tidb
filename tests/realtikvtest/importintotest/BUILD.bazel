@@ -51,7 +51,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",
-        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//http:go_default_library",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_mock//gomock",

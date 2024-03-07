@@ -28,7 +28,7 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
-        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//:go_default_library",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//keepalive",

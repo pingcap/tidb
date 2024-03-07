@@ -20,7 +20,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
-        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//http:go_default_library",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -45,7 +45,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//http:go_default_library",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",

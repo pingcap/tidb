@@ -108,7 +108,7 @@ require (
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
 	github.com/tikv/client-go/v2 v2.0.8-0.20240305085506-3625fc04d0bd
-	github.com/tikv/pd/client v0.0.0-20240229065730-92a31c12238e
+	github.com/tikv/pd/client v0.0.0-20240307022906-2574aaa0d0cf
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -323,5 +323,3 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/tikv/pd/client => /Users/yaojingyi/yaojingyi_workspace/workspace_master/pd_master_yjy_gcv2/client

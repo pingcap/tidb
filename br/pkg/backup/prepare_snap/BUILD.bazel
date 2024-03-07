@@ -22,7 +22,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//:go_default_library",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
@@ -47,7 +47,7 @@ go_test(
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//:go_default_library",
         "@org_uber_go_zap//zapcore",
     ],
 )

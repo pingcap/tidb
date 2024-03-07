@@ -8,7 +8,7 @@ go_library(
     deps = [
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//:go_default_library",
         "@org_uber_go_zap//:zap",
     ],
 )

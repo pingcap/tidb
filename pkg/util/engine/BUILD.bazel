@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//http:go_default_library",
     ],
 )
 
@@ -19,6 +19,6 @@ go_test(
     flaky = True,
     deps = [
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//http:go_default_library",
     ],
 )

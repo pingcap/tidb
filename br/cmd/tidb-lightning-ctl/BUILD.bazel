@@ -16,7 +16,7 @@ go_library(
         "//br/pkg/lightning/tikv",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//http:go_default_library",
     ],
 )
 
