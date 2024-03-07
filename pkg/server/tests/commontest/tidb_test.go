@@ -2793,6 +2793,7 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 	if err != nil {
 		return err
 	}
+	close(p.runChan)
 	for p.run.Load() {
 		conn, err := p.ln.Accept()
 		if err != nil {
@@ -2800,7 +2801,6 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 		}
 		go p.onConn(conn)
 	}
-	close(p.runChan)
 	return nil
 }
 
@@ -2893,6 +2893,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	// Prepare Server
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -2904,7 +2905,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	defer func() {
 		server.Close()
 	}()
-
+	<-server2.RunInGoTestChan
 	require.NotNil(t, server.Listener())
 	require.Nil(t, server.Socket())
 
