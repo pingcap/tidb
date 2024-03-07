@@ -795,6 +795,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if ingest.LitBackCtxMgr != nil {
 			ingest.LitBackCtxMgr.MarkJobFinish()
 		}
+		d.runningJobs = newRunningJobs()
 	})
 
 	return nil
