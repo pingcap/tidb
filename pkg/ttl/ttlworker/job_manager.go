@@ -999,8 +999,8 @@ GROUP BY
 	}
 
 	noRecordTables := make([]string, 0)
-	for _, db := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(db.Name) {
+	for _, dbName := range is.AllSchemaNames() {
+		for _, tbl := range is.SchemaTables(dbName) {
 			tblInfo := tbl.Meta()
 			if tblInfo.TTLInfo == nil {
 				continue
@@ -1010,7 +1010,7 @@ GROUP BY
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to get table's job interval",
 					zap.Error(err),
-					zap.String("db", db.Name.String()),
+					zap.String("db", dbName.String()),
 					zap.String("table", tblInfo.Name.String()),
 				)
 				interval = time.Hour

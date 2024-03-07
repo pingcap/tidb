@@ -152,14 +152,14 @@ func closeAll(objs ...Closeable) error {
 func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
-		newCond, err1 := expression.SubstituteCorCol2Constant(ctx, cond)
+		newCond, err1 := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 		if err1 != nil {
 			return nil, err1
 		}
 		access = append(access, newCond)
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, access, idxCols, colLens, 0)
+	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx.GetPlanCtx(), access, idxCols, colLens, 0)
 	return ranges, err
 }
 
@@ -312,7 +312,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetFromSessionVars(e.Ctx().GetSessionVars()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetMemTracker(e.memTracker).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.netDataSize)).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetSessionVars(), &builder.Request, e.netDataSize)).
 		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 	kvReq, err := builder.Build()
 	return kvReq, err
@@ -321,7 +321,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.plans)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.plans)
 		if err != nil {
 			return err
 		}
@@ -341,11 +341,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			args = append(args, expression.NewInt64Const(pid))
 		}
 
-		inCondition, err := expression.NewFunction(e.Ctx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		inCondition, err := expression.NewFunction(e.Ctx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
 		if err != nil {
 			return err
 		}
-		pbConditions, err := expression.ExpressionsToPBList(e.Ctx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
+		pbConditions, err := expression.ExpressionsToPBList(e.Ctx().GetExprCtx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
 		if err != nil {
 			return err
 		}
@@ -583,14 +583,14 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.idxPlans)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.idxPlans)
 		if err != nil {
 			return err
 		}
 	}
 
 	if e.corColInTblSide {
-		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.tblPlans)
 		if err != nil {
 			return err
 		}
@@ -716,7 +716,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.Ctx().GetSessionVars()).
 			SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetSessionVars(), &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 			SetMemTracker(tracker).
 			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
@@ -804,18 +804,19 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		BaseExecutor:     exec.NewBaseExecutor(e.Ctx(), e.Schema(), e.getTableRootPlanID()),
-		table:            table,
-		dagPB:            e.tableRequest,
-		startTS:          e.startTS,
-		txnScope:         e.txnScope,
-		readReplicaScope: e.readReplicaScope,
-		isStaleness:      e.isStaleness,
-		columns:          e.columns,
-		corColInFilter:   e.corColInTblSide,
-		plans:            e.tblPlans,
-		netDataSize:      e.avgRowSize * float64(len(task.handles)),
-		byItems:          e.byItems,
+		BaseExecutorV2:             exec.NewBaseExecutorV2(e.Ctx().GetSessionVars(), e.Schema(), e.getTableRootPlanID()),
+		tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx()),
+		table:                      table,
+		dagPB:                      e.tableRequest,
+		startTS:                    e.startTS,
+		txnScope:                   e.txnScope,
+		readReplicaScope:           e.readReplicaScope,
+		isStaleness:                e.isStaleness,
+		columns:                    e.columns,
+		corColInFilter:             e.corColInTblSide,
+		plans:                      e.tblPlans,
+		netDataSize:                e.avgRowSize * float64(len(task.handles)),
+		byItems:                    e.byItems,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)

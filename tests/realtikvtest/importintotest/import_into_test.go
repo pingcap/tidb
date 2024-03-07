@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"os"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -676,7 +676,9 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
 		strconv.Itoa(lineCount),
 	))
-	require.Less(s.T(), duration+5, durationWithLimit)
+	// previous import might be slower depends on the environment, so we check using 4 seconds here.
+	// might be unstable.
+	require.Less(s.T(), duration+4, durationWithLimit)
 }
 
 func (s *mockGCSSuite) TestChecksumNotMatch() {
@@ -769,7 +771,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	taskManager := storage.NewTaskManager(pool)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	subtasks, err := taskManager.GetAllSubtasksByStepAndState(ctx, storage.TestLastTaskID.Load(), proto.ImportStepImport, proto.SubtaskStateSucceed)
+	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, storage.TestLastTaskID.Load(), proto.ImportStepImport)
 	s.NoError(err)
 	s.Len(subtasks, 1)
 	serverInfo, err := infosync.GetServerInfo()
@@ -783,7 +785,6 @@ func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(jobID)
-	s.NoError(err)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
@@ -811,7 +812,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	backup := importer.NewTiKVModeSwitcher
-	importer.NewTiKVModeSwitcher = func(*common.TLS, pdhttp.Client, *zap.Logger) local.TiKVModeSwitcher {
+	importer.NewTiKVModeSwitcher = func(*tls.Config, pdhttp.Client, *zap.Logger) local.TiKVModeSwitcher {
 		return switcher
 	}
 	s.T().Cleanup(func() {

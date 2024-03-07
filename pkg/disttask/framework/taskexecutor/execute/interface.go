@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
-// StepExecutor defines the executor of a subtask.
+// StepExecutor defines the executor for subtasks of a task step.
 // the calling sequence is:
 //
 //	Init
@@ -29,7 +29,8 @@ import (
 //		else OnFinished
 //	Cleanup
 type StepExecutor interface {
-	// Init is used to initialize the environment for the subtask executor.
+	// Init is used to initialize the environment.
+	// if failed, task executor will retry later.
 	Init(context.Context) error
 	// RunSubtask is used to run the subtask.
 	RunSubtask(ctx context.Context, subtask *proto.Subtask) error
@@ -40,7 +41,7 @@ type StepExecutor interface {
 	// OnFinished is used to handle the subtask when it is finished.
 	// The subtask meta can be updated in place.
 	OnFinished(ctx context.Context, subtask *proto.Subtask) error
-	// Cleanup is used to clean up the environment for the subtask executor.
+	// Cleanup is used to clean up the environment.
 	Cleanup(context.Context) error
 }
 

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
@@ -51,6 +50,7 @@ func MockSignedTable() *model.TableInfo {
 	// indices: c_d_e, e, f, g, f_g, c_d_e_str, e_d_c_str_prefix
 	indices := []*model.IndexInfo{
 		{
+			ID:   1,
 			Name: model.NewCIStr("c_d_e"),
 			Columns: []*model.IndexColumn{
 				{
@@ -73,6 +73,7 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
+			ID:   2,
 			Name: model.NewCIStr("x"),
 			Columns: []*model.IndexColumn{
 				{
@@ -85,6 +86,7 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
+			ID:   3,
 			Name: model.NewCIStr("f"),
 			Columns: []*model.IndexColumn{
 				{
@@ -97,6 +99,7 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
+			ID:   4,
 			Name: model.NewCIStr("g"),
 			Columns: []*model.IndexColumn{
 				{
@@ -108,6 +111,7 @@ func MockSignedTable() *model.TableInfo {
 			State: model.StatePublic,
 		},
 		{
+			ID:   5,
 			Name: model.NewCIStr("f_g"),
 			Columns: []*model.IndexColumn{
 				{
@@ -125,6 +129,7 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
+			ID:   6,
 			Name: model.NewCIStr("c_d_e_str"),
 			Columns: []*model.IndexColumn{
 				{
@@ -146,6 +151,7 @@ func MockSignedTable() *model.TableInfo {
 			State: model.StatePublic,
 		},
 		{
+			ID:   7,
 			Name: model.NewCIStr("e_d_c_str_prefix"),
 			Columns: []*model.IndexColumn{
 				{
@@ -396,7 +402,7 @@ func MockView() *model.TableInfo {
 }
 
 // MockContext is only used for plan related tests.
-func MockContext() sessionctx.Context {
+func MockContext() *mock.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{},

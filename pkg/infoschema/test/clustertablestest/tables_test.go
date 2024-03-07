@@ -326,10 +326,9 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	assertShardingInfo("tv", nil)
 
 	testFunc := func(dbName string, expectInfo any) {
-		dbInfo := model.DBInfo{Name: model.NewCIStr(dbName)}
 		tableInfo := model.TableInfo{}
 
-		info := infoschema.GetShardingInfo(&dbInfo, &tableInfo)
+		info := infoschema.GetShardingInfo(model.NewCIStr(dbName), &tableInfo)
 		require.Equal(t, expectInfo, info)
 	}
 

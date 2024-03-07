@@ -46,7 +46,7 @@ type resourceCtrlCaseContext struct {
 
 func newResourceCtrlCaseContext(t *testing.T, nodeCnt int, subtaskCntMap map[int64]map[proto.Step]int) *resourceCtrlCaseContext {
 	c := &resourceCtrlCaseContext{
-		TestDXFContext: testutil.NewTestDXFContext(t, nodeCnt),
+		TestDXFContext: testutil.NewTestDXFContext(t, nodeCnt, 16, true),
 		channelMap:     make(map[int64]map[int64]chan error),
 	}
 	c.init(subtaskCntMap)
@@ -64,7 +64,7 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 	schedulerExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	schedulerExt.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
 	schedulerExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(task *proto.TaskBase) proto.Step {
 			return stepTransition[task.Step]
 		},
 	).AnyTimes()

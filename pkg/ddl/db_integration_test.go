@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode"
 
 	"github.com/pingcap/errors"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
@@ -1173,7 +1172,10 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
-	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
+	tk.MustGetErrCode("insert into test_alter_column set a = DEFAULT, b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
+	tk.MustGetErrCode("insert into test_alter_column values (DEFAULT, 'd', 'dd', DEFAULT)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into test_alter_column set a = NULL, b = 'd', c = 'dd'")
+	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
@@ -1607,29 +1609,31 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 }
 
-func TestDefaultColumnWithReplace(t *testing.T) {
+// TestDefaultValueAsExpressions is used for tests that are inconvenient to place in the pkg/tests directory.
+func TestDefaultValueAsExpressions(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("drop table if exists t, t1")
 
-	// create table
-	tk.MustExec("create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')))")
-	tk.MustExec("create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')))")
-	tk.MustExec("create table t2 (c int(10), c1 varchar(256) default (REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', '')))")
-	tk.MustGetErrCode("create table t1 (c int(10), c1 varchar(256) default (REPLACE('xdfj-jfj', '-', '')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
-	tk.MustGetErrCode("create table t1 (c int(10), c1 varchar(256) default (UPPER(UUID())))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
-	tk.MustGetErrCode("create table t1 (c int(10), c1 varchar(256) default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+	// date_format
+	tk.MustExec("create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')))")
+	tk.MustExec("create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')))")
+	// Error message like: Error 1292 (22007): Truncated incorrect DOUBLE value: '2024-03-05 16:37:25'.
+	tk.MustGetErrCode("insert into t6(c) values (1)", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("insert into t7(c) values (1)", errno.ErrTruncatedWrongValue)
 
-	// add column with default expression for table t is forbidden in MySQL 8.0
-	tk.MustGetErrCode("alter table t add column c2 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''))", errno.ErrBinlogUnsafeSystemFunction)
-	tk.MustGetErrCode("alter table t add column c3 int default (UPPER(UUID()))", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
-	tk.MustGetErrCode("alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', ''))", errno.ErrBinlogUnsafeSystemFunction)
-
-	// insert records
+	// user
+	tk.MustExec("create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))));")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	tk.MustExec("insert into t(c) values (1),(2),(3)")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "xyz", Hostname: "localhost"}
+	tk.MustExec("insert into t(c) values (4),(5),(6)")
+	tk.MustExec("insert into t values (7, default)")
+
+	// replace
+	tk.MustExec("create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')))")
 	// Different UUID values will result in different error code.
-	tk.MustGetErrCode("insert into t1(c) values (1)", errno.ErrTruncatedWrongValue)
 	_, err := tk.Exec("insert into t1(c) values (1)")
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
@@ -1638,50 +1642,6 @@ func TestDefaultColumnWithReplace(t *testing.T) {
 	if int(sqlErr.Code) != errno.ErrTruncatedWrongValue {
 		require.Equal(t, errno.ErrDataOutOfRange, int(sqlErr.Code))
 	}
-
-	rows := tk.MustQuery("SELECT c1 from t").Rows()
-	for _, row := range rows {
-		d, ok := row[0].(string)
-		require.True(t, ok)
-		// It consists of uppercase letters or numbers.
-		for _, r := range d {
-			if unicode.IsUpper(r) {
-				require.True(t, unicode.IsUpper(r), fmt.Sprintf("col val:%v, r:%v", d, r))
-			} else {
-				require.True(t, unicode.IsDigit(r), fmt.Sprintf("col val:%v, r:%v", d, r))
-			}
-		}
-	}
-
-	// TODO: Implement add the "convert" function when executing "show create table".
-	// `c1` varchar(16) DEFAULT (replace(convert(upper(uuid()) using utf8mb4),_utf8mb4'-',_utf8mb4''))
-	tk.MustQuery("show create table t").Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` int(11) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table t2").Check(testkit.Rows(
-		"t2 CREATE TABLE `t2` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT replace(convert(upper(uuid()) using ''utf8mb4''), _utf8mb4''-'', _utf8mb4'''')\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("alter table t1 modify column c1 varchar(30) default 'xx';")
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(30) DEFAULT 'xx'\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("alter table t1 modify column c1 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));")
-	tk.MustQuery("show create table t1").Check(testkit.Rows(
-		"t1 CREATE TABLE `t1` (\n" +
-			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(32) DEFAULT replace(upper(uuid()), _utf8mb4''-'', _utf8mb4'''')\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestChangingDBCharset(t *testing.T) {

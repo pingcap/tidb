@@ -514,7 +514,7 @@ func NewImportControllerWithPauser(
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
 		encBuilder:          encodingBuilder,
-		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls, pdHTTPCli, log.FromContext(ctx).Logger),
+		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls.TLSConfig(), pdHTTPCli, log.FromContext(ctx).Logger),
 
 		keyspaceName:      p.KeyspaceName,
 		resourceGroupName: p.ResourceGroupName,
@@ -2141,9 +2141,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
 	if isLocalBackend(rc.cfg) {
-		// TODO(lance6716): use rc.pdCli to create pd controller
-		pdController, err := pdutil.NewPdController(ctx, rc.pdCli.GetLeaderAddr(),
-			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
+		pdAddrs := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
+		pdController, err := pdutil.NewPdController(
+			ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
+		)
 		if err != nil {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 		}

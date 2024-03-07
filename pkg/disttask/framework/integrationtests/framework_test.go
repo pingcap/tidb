@@ -47,7 +47,7 @@ func submitTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string
 }
 
 func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 5)
+	c := testutil.NewTestDXFContext(t, 5, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	var wg util.WaitGroupWrapper
@@ -70,7 +70,7 @@ func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 }
 
 func TestFrameworkScaleInAndOut(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 5)
+	c := testutil.NewTestDXFContext(t, 5, 16, true)
 	seed := time.Now().UnixNano()
 	t.Logf("seed: %d", seed)
 	random := rand.New(rand.NewSource(seed))
@@ -97,7 +97,7 @@ func TestFrameworkScaleInAndOut(t *testing.T) {
 }
 
 func TestFrameworkWithQuery(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 2)
+	c := testutil.NewTestDXFContext(t, 2, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	var wg util.WaitGroupWrapper
@@ -121,7 +121,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 }
 
 func TestFrameworkCancelTask(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 2)
+	c := testutil.NewTestDXFContext(t, 2, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 
@@ -131,7 +131,7 @@ func TestFrameworkCancelTask(t *testing.T) {
 }
 
 func TestFrameworkSubTaskFailed(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 1)
+	c := testutil.NewTestDXFContext(t, 1, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)")
@@ -140,7 +140,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 }
 
 func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 1)
+	c := testutil.NewTestDXFContext(t, 1, 16, true)
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockExecSubtaskInitEnvErr", "return()")
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
@@ -148,7 +148,7 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 }
 
 func TestOwnerChangeWhenSchedule(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 3)
+	c := testutil.NewTestDXFContext(t, 3, 16, true)
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	scheduler.MockOwnerChange = func() {
 		c.AsyncChangeOwner()
@@ -160,7 +160,7 @@ func TestOwnerChangeWhenSchedule(t *testing.T) {
 func TestGC(t *testing.T) {
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/historySubtaskTableGcInterval", "return(1)")
-	c := testutil.NewTestDXFContext(t, 3)
+	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 
@@ -190,7 +190,7 @@ func TestGC(t *testing.T) {
 }
 
 func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 3)
+	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockSubtaskFinishedCancel", "1*return(true)")
@@ -199,7 +199,7 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 }
 
 func TestFrameworkRunSubtaskCancel(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 3)
+	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskCancel", "1*return(true)")
@@ -213,7 +213,7 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 		scheduler.DefaultCleanUpInterval = bak
 	}()
 	scheduler.DefaultCleanUpInterval = 500 * time.Millisecond
-	c := testutil.NewTestDXFContext(t, 3)
+	c := testutil.NewTestDXFContext(t, 3, 16, true)
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
 
@@ -244,7 +244,7 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 }
 
 func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 1)
+	c := testutil.NewTestDXFContext(t, 1, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelBeforeUpdateTask", "1*return(true)")

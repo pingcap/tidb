@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/session"
@@ -454,4 +455,22 @@ func TestParallelHashAgg(t *testing.T) {
 			rs.Check(rsStatic.Rows())
 		}
 	}
+}
+
+func TestIssue50849(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("insert into t select * from t;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/injectHashAggClosePanic", "return(true)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/injectHashAggClosePanic")
+	rs, err := tk.ExecWithContext(context.Background(), "select  /*+hash_agg()*/ sum(t1.a) from t t1 join t t2;")
+	require.NoError(t, err)
+	err = rs.Close()
+	// Check the error contains stack information
+	require.True(t, errors.HasStack(err))
 }

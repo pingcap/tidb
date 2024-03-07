@@ -30,14 +30,14 @@ func TestSlotManagerReserve(t *testing.T) {
 	sm := newSlotManager()
 	sm.updateCapacity(16)
 	// no node
-	_, ok := sm.canReserve(&proto.Task{Concurrency: 1})
+	_, ok := sm.canReserve(&proto.TaskBase{Concurrency: 1})
 	require.False(t, ok)
 
 	// reserve by stripes
 	sm.usedSlots.Store(&map[string]int{
 		"tidb-1": 16,
 	})
-	task := proto.Task{
+	task := proto.TaskBase{
 		Priority:    proto.NormalPriority,
 		Concurrency: 16,
 		CreateTime:  time.Now(),

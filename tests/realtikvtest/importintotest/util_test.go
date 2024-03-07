@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -51,6 +52,7 @@ func TestImportInto(t *testing.T) {
 
 func (s *mockGCSSuite) SetupSuite() {
 	s.Require().True(*realtikvtest.WithRealTiKV)
+	testutil.ReduceCheckInterval(s.T())
 	var err error
 	opt := fakestorage.Options{
 		Scheme:     "http",

@@ -73,10 +73,12 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
-		Type:            proto.TaskTypeExample,
+		TaskBase: proto.TaskBase{
+			Type:  proto.TaskTypeExample,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            bs,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
 		StateUpdateTime: time.Now(),
 	}
 	manager, err := storage.GetTaskManager()
@@ -90,10 +92,10 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
 	ext := importinto.ImportSchedulerExt{}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	nextStep := ext.GetNextStep(task)
+	nextStep := ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepImport, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
@@ -112,20 +114,20 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		require.NoError(t, manager.FinishSubtask(ctx, s.ExecID, s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepPostProcess, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
@@ -214,10 +216,12 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task := &proto.Task{
-		Type:            proto.ImportInto,
+		TaskBase: proto.TaskBase{
+			Type:  proto.ImportInto,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            bs,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
 		StateUpdateTime: time.Now(),
 	}
 	manager, err := storage.GetTaskManager()
@@ -233,10 +237,10 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ext := importinto.ImportSchedulerExt{
 		GlobalSort: true,
 	}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
-	nextStep := ext.GetNextStep(task)
+	nextStep := ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
@@ -288,10 +292,10 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 
 	// to merge-sort stage
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	nextStep = ext.GetNextStep(task)
+	nextStep = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepMergeSort, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
@@ -324,29 +328,29 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 
 	// to write-and-ingest stage
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs", "return(true)")
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepWriteAndIngest, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "importing", gotJobInfo.Step)
 	// on next stage, to post-process stage
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.ImportStepPostProcess, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// next stage, done
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 }

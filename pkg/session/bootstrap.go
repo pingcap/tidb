@@ -701,9 +701,11 @@ const (
 			index_name
 		FROM information_schema.cluster_tidb_index_usage
 		WHERE
-			last_access_time is null and
 			table_schema not in ('sys', 'mysql', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA') and
-			index_name != 'PRIMARY';`
+			index_name != 'PRIMARY'
+		GROUP BY table_schema, table_name, index_name
+		HAVING
+			sum(last_access_time) is null;`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -3008,8 +3010,6 @@ func upgradeToVer185(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, DropMySQLIndexUsageTable)
-	doReentrantDDL(s, CreateSysSchema)
-	doReentrantDDL(s, CreateSchemaUnusedIndexesView)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
@@ -3290,8 +3290,8 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	for _, dbInfo := range is.AllSchemas() {
-		for _, t := range is.SchemaTables(dbInfo.Name) {
+	for _, dbName := range is.AllSchemaNames() {
+		for _, t := range is.SchemaTables(dbName) {
 			pi := t.Meta().GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue

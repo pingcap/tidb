@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	pd "github.com/tikv/pd/client"
@@ -73,6 +74,18 @@ type SplitClient interface {
 	// SetStoresLabel add or update specified label of stores. If labelValue
 	// is empty, it clears the label.
 	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
+	// IsScatterRegionFinished check the latest successful operator and return the
+	// follow status:
+	//
+	//	return (finished, needRescatter, error)
+	//
+	// if the latest operator is not `scatter-operator`, or its status is SUCCESS,
+	// it's likely that the scatter region operator is finished.
+	//
+	// if the latest operator is `scatter-operator` and its status is TIMEOUT or
+	// CANCEL, the needRescatter is true and the function caller needs to scatter
+	// this region again.
+	IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error)
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -551,12 +564,53 @@ func (c *pdClient) SetStoresLabel(
 	return nil
 }
 
-func (c *pdClient) getPDAPIAddr() string {
-	addr := c.client.GetLeaderAddr()
-	if addr != "" && !strings.HasPrefix(addr, "http") {
-		addr = "http://" + addr
+func (c *pdClient) IsScatterRegionFinished(
+	ctx context.Context,
+	regionID uint64,
+) (scatterDone bool, needRescatter bool, scatterErr error) {
+	resp, err := c.GetOperator(ctx, regionID)
+	if err != nil {
+		if common.IsRetryableError(err) {
+			// retry in the next cycle
+			return false, false, nil
+		}
+		return false, false, errors.Trace(err)
 	}
-	return strings.TrimRight(addr, "/")
+	return IsScatterRegionFinished(resp)
+}
+
+// IsScatterRegionFinished checks whether the scatter region operator is
+// finished. TODO(lance6716): hide this function after scatter logic is unified
+// for BR and lightning.
+func IsScatterRegionFinished(resp *pdpb.GetOperatorResponse) (
+	scatterDone bool,
+	needRescatter bool,
+	scatterErr error,
+) {
+	// Heartbeat may not be sent to PD
+	if respErr := resp.GetHeader().GetError(); respErr != nil {
+		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
+			return true, false, nil
+		}
+		return false, false, errors.Annotatef(
+			berrors.ErrPDInvalidResponse,
+			"get operator error: %s, error message: %s",
+			respErr.GetType(),
+			respErr.GetMessage(),
+		)
+	}
+	// that 'scatter-operator' has finished
+	if string(resp.GetDesc()) != "scatter-region" {
+		return true, false, nil
+	}
+	switch resp.GetStatus() {
+	case pdpb.OperatorStatus_SUCCESS:
+		return true, false, nil
+	case pdpb.OperatorStatus_RUNNING:
+		return false, false, nil
+	default:
+		return false, true, nil
+	}
 }
 
 // CheckRegionEpoch check region epoch.

@@ -30,11 +30,17 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/errctx"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -261,13 +267,27 @@ func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
 	return nil
 }
 
+type planCtxImpl struct {
+	*Session
+	*planctximpl.PlanCtxExtendedImpl
+}
+
+type exprCtxImpl struct {
+	*Session
+	*exprctximpl.ExprCtxExtendedImpl
+}
+
 // Session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
 type Session struct {
 	sessionctx.Context
-	txn  transaction
-	Vars *variable.SessionVars
+	planctx.EmptyPlanContextExtended
+	txn     transaction
+	Vars    *variable.SessionVars
+	exprCtx *exprCtxImpl
+	planctx *planCtxImpl
+	tblctx  *tbctximpl.TableContextImpl
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]any
 }
@@ -328,6 +348,15 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
+	s.exprCtx = &exprCtxImpl{
+		Session:             s,
+		ExprCtxExtendedImpl: exprctximpl.NewExprExtendedImpl(s),
+	}
+	s.planctx = &planCtxImpl{
+		Session:             s,
+		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
+	}
+	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprCtx)
 	s.txn.kvPairs = &Pairs{}
 
 	return s
@@ -355,6 +384,21 @@ func (se *Session) GetSessionVars() *variable.SessionVars {
 	return se.Vars
 }
 
+// GetPlanCtx returns the PlanContext.
+func (se *Session) GetPlanCtx() planctx.PlanContext {
+	return se.planctx
+}
+
+// GetExprCtx returns the expression context of the session.
+func (se *Session) GetExprCtx() exprctx.BuildContext {
+	return se.exprCtx
+}
+
+// GetTableCtx returns the table.MutateContext
+func (se *Session) GetTableCtx() tbctx.MutateContext {
+	return se.tblctx
+}
+
 // SetValue saves a value associated with this context for key.
 func (se *Session) SetValue(key fmt.Stringer, value any) {
 	se.values[key] = value
@@ -371,16 +415,6 @@ func (*Session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
 // GetInfoSchema implements the sessionctx.Context interface.
 func (*Session) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
 	return nil
-}
-
-// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
-// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
-func (*Session) GetBuiltinFunctionUsage() map[string]uint32 {
-	return make(map[string]uint32)
-}
-
-// BuiltinFunctionUsageInc implements the sessionctx.Context interface.
-func (*Session) BuiltinFunctionUsageInc(_ string) {
 }
 
 // GetStmtStats implements the sessionctx.Context interface.
