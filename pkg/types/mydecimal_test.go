@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -780,7 +781,7 @@ func TestDivModMyDecimal(t *testing.T) {
 		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
 		require.NoError(t, err)
-		ec := DecimalDiv(&a, &b, &to, 4)
+		ec := DecimalDiv(&a, &b, &to, variable.DefDivPrecisionIncrement)
 		require.Equal(t, tt.err, ec)
 		if tt.err == ErrDivByZero {
 			continue
