@@ -528,10 +528,6 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) != len(x.IndexValues) {
-					// Previous run may have removed duplicates or non matching partitions
-					x.IndexValues = x.IndexValues[:cap(x.IndexValues)]
-				}
 				if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(x.AccessConditions, ranges, false, nil) {
 					return errors.New("rebuild to get an unsafe range")
 				}
@@ -598,7 +594,7 @@ func rebuildRange(p Plan) error {
 			}
 			if i >= len(x.IndexValues) {
 				// Previous execution had duplicates or non-matching partitions
-				x.IndexValues = x.IndexValues[:cap(x.IndexValues)]
+				return errors.New("rebuild to get an unsafe range, may exceed old IndexValue len")
 			}
 			for j, param := range params {
 				if param != nil {

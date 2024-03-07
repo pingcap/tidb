@@ -1757,13 +1757,17 @@ func TestPlanCachePartitionDuplicates(t *testing.T) {
 	tk.MustExec(`set @a0 = 3, @a1 = 20001, @a2 = 50000`)
 	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20001 20001", "3 3"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustExec(`set @a0 = 30003, @a1 = 20002, @a2 = 4`)
-	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20002 20002", "30003 30003", "4 4"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{{"Batch_Point_Get_1"}})
+	tk.MustExec(`set @a0 = 30003, @a1 = 20002, @a2 = 4`)
+	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20002 20002", "30003 30003", "4 4"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tkExplain := testkit.NewTestKit(t, store)
+	tkExplain.MustExec(`use test`)
+	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{{"Batch_Point_Get_1"}})
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, may exceed old IndexValue len"))
 }
 
 func TestPreparedStmtIndexLookup(t *testing.T) {
