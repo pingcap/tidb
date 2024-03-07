@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -389,4 +390,5 @@ func TestPipelinedDMLDisableRetry(t *testing.T) {
 	require.Nil(t, failpoint.Disable("tikvclient/beforePipelinedFlush"))
 	err := <-errCh
 	require.Error(t, err)
+	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
 }

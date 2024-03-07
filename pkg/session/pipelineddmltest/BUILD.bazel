@@ -11,6 +11,7 @@ go_test(
     shard_count = 12,
     deps = [
         "//pkg/config",
+        "//pkg/kv",
         "//pkg/sessionctx/binloginfo",
         "//pkg/testkit",
         "//pkg/testkit/testmain",
