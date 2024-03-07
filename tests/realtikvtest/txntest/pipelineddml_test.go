@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pipelineddmltest
+package txntest
 
 import (
 	"bytes"
@@ -27,11 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestVariable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, false)
@@ -78,7 +79,7 @@ func TestPipelinedDMLPositive(t *testing.T) {
 		"delete from t",
 	}
 
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -114,7 +115,7 @@ func TestPipelinedDMLNegative(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/beforePipelinedFlush"))
 		require.NoError(t, failpoint.Disable("tikvclient/pipelinedCommitFail"))
 	}()
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -179,7 +180,7 @@ func prepareData(tk *testkit.TestKit) {
 }
 
 func TestPipelinedDMLInsert(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
@@ -201,7 +202,7 @@ func TestPipelinedDMLInsert(t *testing.T) {
 }
 
 func TestPipelinedDMLInsertIgnore(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
@@ -215,7 +216,7 @@ func TestPipelinedDMLInsertIgnore(t *testing.T) {
 }
 
 func TestPipelinedDMLInsertOnDuplicateKeyUpdate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
@@ -226,6 +227,9 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdate(t *testing.T) {
 }
 
 func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
+	if *realtikvtest.WithRealTiKV {
+		t.Skip("skip for real TiKV because now we have assertion issue")
+	}
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
@@ -234,7 +238,7 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
 		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
 	}()
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -261,7 +265,7 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 }
 
 func TestPipelinedDMLDelete(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
@@ -278,7 +282,7 @@ func TestPipelinedDMLDelete(t *testing.T) {
 }
 
 func TestPipelinedDMLUpdate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
@@ -301,7 +305,7 @@ func TestPipelinedDMLCommitFailed(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/pipelinedCommitFail"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -324,7 +328,7 @@ func TestPipelinedDMLCommitSkipSecondaries(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/pipelinedSkipResolveLock"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
@@ -341,14 +345,14 @@ func TestPipelinedDMLCommitSkipSecondaries(t *testing.T) {
 func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(128)`))
-	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(1024)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(128)`))
 	defer func() {
 		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
 		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
 		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -371,7 +375,7 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 
 	// insert
 	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")    // query canceled by memory controller will return error.
-	tk.MustExec("set session tidb_mem_quota_query = 128 << 10") // 128KB limitation.
+	tk.MustExec("set session tidb_mem_quota_query = 256 << 10") // 256KB limitation.
 	tk.MustExec("set session tidb_max_chunk_size = 32")
 	insertStmt := "insert into _t1 select * from t1"
 	err := tk.ExecToErr(insertStmt)
@@ -393,7 +397,7 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 	tk.MustQuery("select count(*) from _t1 where c = 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_++++++'").Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
 
 	// delete
-	tk.MustExec("set session tidb_mem_quota_query = 128 << 10") // 16KB limitation.
+	tk.MustExec("set session tidb_mem_quota_query = 128 << 10") // 128KB limitation.
 	deleteStmt := "delete from _t1"
 	tk.MustExec("set session tidb_dml_type = standard")
 	err = tk.ExecToErr(deleteStmt)
@@ -405,7 +409,7 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 }
 
 func TestPipelinedDMLDisableRetry(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")

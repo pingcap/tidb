@@ -7328,7 +7328,7 @@
             "w": 8,
             "h": 7
           },
-          "id": 327,
+          "id": 333,
           "targets": [
             {
               "expr": "sum(delta(tidb_tikvclient_pipelined_flush_len_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le)",
@@ -7399,7 +7399,7 @@
             "w": 8,
             "h": 7
           },
-          "id": 328,
+          "id": 334,
           "targets": [
             {
               "expr": "sum(delta(tidb_tikvclient_pipelined_flush_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le)",
@@ -7484,7 +7484,7 @@
             "h": 7
           },
           "hiddenSeries": false,
-          "id": 329,
+          "id": 335,
           "legend": {
             "alignAsTable": true,
             "avg": false,
