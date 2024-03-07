@@ -20,7 +20,7 @@ go_library(
         "//pkg/sessionctx",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
-        "@com_github_tikv_pd_client//:go_default_library",
+        "@com_github_tikv_pd_client//:client",
         "@org_uber_go_zap//:zap",
     ],
 )

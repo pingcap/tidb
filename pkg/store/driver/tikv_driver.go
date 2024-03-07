@@ -214,7 +214,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
 	}
 
 	codec := pdClient.GetCodec()

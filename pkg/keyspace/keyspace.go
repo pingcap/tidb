@@ -113,6 +113,7 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 	return txnLeftBound, txnRightBound
 }
 
+// GetKeyspaceMeta return keyspace meta of the given keyspace name.
 func GetKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {
 	// Load Keyspace meta with retry.
 	var keyspaceMeta *keyspacepb.KeyspaceMeta

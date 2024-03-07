@@ -17,7 +17,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/util/codec",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_tikv_pd_client//http:go_default_library",
+        "@com_github_tikv_pd_client//http",
         "@in_gopkg_yaml_v2//:yaml_v2",
     ],
 )
@@ -46,6 +46,6 @@ go_test(
         "//pkg/util/codec",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//http:go_default_library",
+        "@com_github_tikv_pd_client//http",
     ],
 )

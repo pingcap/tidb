@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -1255,8 +1256,9 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 	return allkeyspaces, nil
 }
 
+// IsKeyspaceMetaEnableSafePointV2 return true if keyspace meta config has safe point version is v2.
 func IsKeyspaceMetaEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
-	if val, ok := keyspaceMeta.Config["safe_point_version"]; ok {
+	if val, ok := keyspaceMeta.Config[gcutil.SafePointVersion]; ok {
 		return val == config.SafePointV2
 	}
 	return false

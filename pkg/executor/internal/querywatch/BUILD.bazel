@@ -19,7 +19,7 @@ go_library(
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
-        "@com_github_tikv_pd_client//resource_group/controller:go_default_library",
+        "@com_github_tikv_pd_client//resource_group/controller",
     ],
 )
 

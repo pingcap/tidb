@@ -14,7 +14,7 @@ go_library(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/store/driver",
-        "@com_github_tikv_pd_client//:go_default_library",
+        "@com_github_tikv_pd_client//:client",
     ],
 )
 

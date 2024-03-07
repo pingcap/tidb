@@ -24,6 +24,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
+        "//pkg/util/gcutil",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -38,7 +39,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//txnkv/rangetask",
         "@com_github_tikv_client_go_v2//util",
-        "@com_github_tikv_pd_client//:go_default_library",
+        "@com_github_tikv_pd_client//:client",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -77,7 +78,7 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
-        "@com_github_tikv_pd_client//:go_default_library",
+        "@com_github_tikv_pd_client//:client",
         "@org_uber_go_goleak//:goleak",
     ],
 )

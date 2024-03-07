@@ -16,7 +16,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-binlog",
-        "@com_github_tikv_pd_client//:go_default_library",
+        "@com_github_tikv_pd_client//:client",
         "@io_etcd_go_etcd_api_v3//mvccpb",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
