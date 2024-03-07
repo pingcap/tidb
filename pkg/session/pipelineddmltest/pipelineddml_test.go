@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -365,4 +366,27 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 	tk.MustExec("set session tidb_dml_type = bulk")
 	tk.MustExec(deleteStmt)
 	tk.MustQuery("select count(*) from _t1").Check(testkit.Rows("0"))
+}
+
+func TestPipelinedDMLDisableRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(a int primary key, b int)")
+	tk1.MustExec("insert into t1 values(1, 1)")
+	require.Nil(t, failpoint.Enable("tikvclient/beforePipelinedFlush", `pause`))
+	tk1.MustExec("set session tidb_dml_type = bulk")
+	errCh := make(chan error)
+	go func() {
+		errCh <- tk1.ExecToErr("update t1 set b = b + 20")
+	}()
+	time.Sleep(500 * time.Millisecond)
+	tk2.MustExec("update t1 set b = b + 10")
+	require.Nil(t, failpoint.Disable("tikvclient/beforePipelinedFlush"))
+	err := <-errCh
+	require.Error(t, err)
 }
