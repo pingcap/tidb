@@ -483,15 +483,15 @@ func (w *GCWorker) runKeyspaceGCJobInSafePointV1(ctx context.Context, concurrenc
 }
 
 func (w *GCWorker) isKeyspaceInGCSafePointV2() bool {
-	return w.store.GetCodec().GetKeyspace() != nil && config.GetGlobalConfig().EnableSafePointV2
+	return config.GetGlobalConfig().EnableSafePointV2 && w.store != nil && w.store.GetCodec() != nil && w.store.GetCodec().GetKeyspace() != nil
 }
 
 func (w *GCWorker) isNullKeyspaceInGCSafePointV2() bool {
-	return w.store.GetCodec().GetKeyspace() == nil && config.GetGlobalConfig().EnableSafePointV2
+	return config.GetGlobalConfig().EnableSafePointV2 && (w.store.GetCodec() == nil || w.store.GetCodec().GetKeyspace() == nil)
 }
 
 func (w *GCWorker) isKeyspaceInGCSafePointV1() bool {
-	return w.store.GetCodec().GetKeyspace() != nil && !config.GetGlobalConfig().EnableSafePointV2
+	return !config.GetGlobalConfig().EnableSafePointV2 && w.store.GetCodec() != nil && w.store.GetCodec().GetKeyspace() != nil
 }
 
 // prepare checks preconditions for starting a GC job. It returns a bool
@@ -1346,8 +1346,8 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 
 	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	for {
-		keyspaceID := w.store.GetCodec().GetKeyspaceID()
 		if w.isKeyspaceInGCSafePointV2() {
+			keyspaceID := w.store.GetCodec().GetKeyspaceID()
 			newSafePoint, err = w.pdClient.UpdateGCSafePointV2(ctx, uint32(keyspaceID), safePoint)
 			logutil.Logger(ctx).Info("[gc worker] update keyspace gc safe point",
 				zap.String("uuid", w.uuid),
