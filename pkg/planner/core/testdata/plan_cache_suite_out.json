@@ -428,7 +428,7 @@
         "Result": null
       },
       {
-        "SQL": "create table tx (a json, b json, key ka ((cast(a as signed array))), key kb ((cast(b as signed array))))",
+        "SQL": "create table tx (a json, b json, c json, d int, key ka ((cast(a as signed array))), key kb ((cast(b as signed array))))",
         "Result": null
       },
       {
@@ -485,6 +485,84 @@
         "SQL": "select @@last_plan_from_cache",
         "Result": [
           "0"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka, kb) */ * from tx where (? member of (a)) and (d = 1 or json_overlaps(b, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @b='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka) */ * from tx where (? member of (a)) and (json_overlaps(c, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @c='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka) */ * from tx where (? member of (a)) and (json_contains(c, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @c='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
         ]
       }
     ]
