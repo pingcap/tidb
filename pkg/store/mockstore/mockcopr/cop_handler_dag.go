@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -111,6 +112,11 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
+	if dagReq != nil && dagReq.DivPrecisionIncrement != nil {
+		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
+	} else {
+		sctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
+	}
 
 	ctx := &dagContext{
 		dagReq:    dagReq,
