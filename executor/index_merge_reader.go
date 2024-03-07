@@ -728,11 +728,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 	}
 }
 
-<<<<<<< HEAD
-func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
-=======
-func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*indexMergeTableTask, error) {
->>>>>>> d4500b81eef (executor: fix query hang in IndexMerge Executor when it's killed (#45284))
+func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*lookupTableTask, error) {
 	failpoint.Inject("testIndexMergeMainReturnEarly", func(_ failpoint.Value) {
 		// To make sure processWorker make resultCh to be full.
 		// When main goroutine close finished, processWorker may be stuck when writing resultCh.
