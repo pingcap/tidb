@@ -112,7 +112,7 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
-	if dagReq != nil && dagReq.DivPrecisionIncrement != nil {
+	if dagReq.DivPrecisionIncrement != nil {
 		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
 	} else {
 		sctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
