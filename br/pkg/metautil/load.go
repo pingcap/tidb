@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/bazel-tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -45,7 +44,7 @@ func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (
 	go func() {
 		var opts []ReadSchemaOption
 		if !loadStats {
-			opts = []ReadSchemaOption{metautil.SkipStats}
+			opts = []ReadSchemaOption{SkipStats}
 		}
 		if err := reader.ReadSchemasFiles(ctx, ch, opts...); err != nil {
 			errCh <- errors.Trace(err)

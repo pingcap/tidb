@@ -1868,6 +1868,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 	inCh <-chan *CreatedTable,
 	errCh chan<- error,
 	statsConcurrency uint,
+	loadStats bool,
 ) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
@@ -1877,25 +1878,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
-		// Not need to return err when failed because of update analysis-meta
-		restoreTS, err := rc.GetTSWithRetry(ctx)
-		if err != nil {
-			log.Error("getTS failed", zap.Error(err))
-		} else {
-			updateMetaLock.Lock()
-
-			log.Info("start update metas",
-				zap.Stringer("table", oldTable.Info.Name),
-				zap.Stringer("db", oldTable.DB.Name))
-			err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
-			if err != nil {
-				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
-			}
-
-			updateMetaLock.Unlock()
-		}
-
-		if oldTable.Stats != nil {
+		if loadStats && oldTable.Stats != nil {
 			log.Info("start loads analyze after validate checksum",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
@@ -1909,7 +1892,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
-		} else if oldTable.StatsFileIndexes != nil {
+		} else if loadStats && oldTable.StatsFileIndexes != nil {
 			log.Info("start to load statistic data for each partition",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
@@ -1923,6 +1906,24 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
+		} else {
+			// Not need to return err when failed because of update analysis-meta
+			restoreTS, err := rc.GetTSWithRetry(ctx)
+			if err != nil {
+				log.Error("getTS failed", zap.Error(err))
+			} else {
+				updateMetaLock.Lock()
+
+				log.Info("start update metas",
+					zap.Stringer("table", oldTable.Info.Name),
+					zap.Stringer("db", oldTable.DB.Name))
+				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
+				if err != nil {
+					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
+				}
+
+				updateMetaLock.Unlock()
+			}
 		}
 		return nil
 	}, func() {
