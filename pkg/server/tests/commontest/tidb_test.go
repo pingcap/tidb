@@ -2769,6 +2769,7 @@ type mockProxyProtocolProxy struct {
 	backendIsSock bool
 	ln            net.Listener
 	run           atomic.Bool
+	runChan       chan struct{}
 }
 
 func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
@@ -2778,6 +2779,7 @@ func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSo
 		clientAddr:    clientAddr,
 		backendIsSock: backendIsSock,
 		ln:            nil,
+		runChan:       make(chan struct{}),
 	}
 }
 
@@ -2791,6 +2793,7 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 	if err != nil {
 		return err
 	}
+	close(p.runChan)
 	for p.run.Load() {
 		conn, err := p.ln.Accept()
 		if err != nil {
@@ -2890,6 +2893,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	// Prepare Server
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -2901,7 +2905,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	defer func() {
 		server.Close()
 	}()
-
+	<-server2.RunInGoTestChan
 	require.NotNil(t, server.Listener())
 	require.Nil(t, server.Socket())
 
@@ -2914,7 +2918,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	defer func() {
 		ppProxy.Close()
 	}()
-
+	<-ppProxy.runChan
 	cli := testserverclient.NewTestServerClient()
 	cli.Port = testutil.GetPortFromTCPAddr(ppProxy.ListenAddr())
 	cli.WaitUntilServerCanConnect()
