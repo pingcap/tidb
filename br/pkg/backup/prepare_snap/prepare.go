@@ -385,7 +385,7 @@ func (p *Preparer) sendWaitApply(ctx context.Context, reqs pendingRequests) erro
 }
 
 func (p *Preparer) streamOf(ctx context.Context, storeID uint64) (*prepareStream, error) {
-	s, ok := p.clients[storeID]
+	_, ok := p.clients[storeID]
 	if !ok {
 		log.Warn("stream of store found a store not established connection", zap.Uint64("store", storeID))
 		cli, err := p.env.ConnectToStore(ctx, storeID)
@@ -396,7 +396,7 @@ func (p *Preparer) streamOf(ctx context.Context, storeID uint64) (*prepareStream
 			return nil, errors.Annotatef(err, "failed to create and cache stream for store %d", storeID)
 		}
 	}
-	return s, nil
+	return p.clients[storeID], nil
 }
 
 func (p *Preparer) createAndCacheStream(ctx context.Context, cli PrepareClient, storeID uint64) error {
