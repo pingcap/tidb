@@ -132,9 +132,9 @@ func ParseAutoAnalyzeRatio(ratio string) float64 {
 	return math.Max(autoAnalyzeRatio, 0)
 }
 
-// ParseAutoAnalyzeWindow parses the time window for auto analyze.
+// ParseAutoAnalysisWindow parses the time window for auto analysis.
 // It parses the times in UTC location.
-func ParseAutoAnalyzeWindow(start, end string) (time.Time, time.Time, error) {
+func ParseAutoAnalysisWindow(start, end string) (time.Time, time.Time, error) {
 	if start == "" {
 		start = variable.DefAutoAnalyzeStartTime
 	}
