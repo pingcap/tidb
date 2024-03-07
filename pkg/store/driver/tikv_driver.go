@@ -189,10 +189,10 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		return nil, errors.Trace(err)
 	}
 
-	spkv, err = tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	//spkv, err = tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
+	//if err != nil {
+	//	return nil, errors.Trace(err)
+	//}
 
 	// ---------------- keyspace logic  ----------------
 	var (
