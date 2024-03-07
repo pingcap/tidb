@@ -233,6 +233,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	handle := dom.StatsHandle()
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
+	r.RebuildTableAnalysisJobQueue()
 	// No jobs in the queue.
 	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
