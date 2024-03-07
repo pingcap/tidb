@@ -125,17 +125,26 @@ func (m *memBuffer) IterReverse(k, lowerBound kv.Key) (kv.Iterator, error) {
 
 // SnapshotIter returns an Iterator for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
+	if m.isPipelinedDML {
+		return &kv.EmptyIterator{}
+	}
 	it := m.MemBuffer.SnapshotIter(k, upperbound)
 	return &tikvIterator{Iterator: it}
 }
 
 func (m *memBuffer) SnapshotIterReverse(k, lowerBound kv.Key) kv.Iterator {
+	if m.isPipelinedDML {
+		return &kv.EmptyIterator{}
+	}
 	it := m.MemBuffer.SnapshotIterReverse(k, lowerBound)
 	return &tikvIterator{Iterator: it}
 }
 
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotGetter() kv.Getter {
+	if m.isPipelinedDML {
+		return &kv.EmptyRetriever{}
+	}
 	return newKVGetter(m.MemBuffer.SnapshotGetter())
 }
 
