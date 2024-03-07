@@ -227,9 +227,6 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdate(t *testing.T) {
 }
 
 func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
-	if *realtikvtest.WithRealTiKV {
-		t.Skip("skip for real TiKV because now we have assertion issue")
-	}
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
@@ -244,24 +241,34 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
 	cnt := 2000
-	buf := bytes.NewBuffer(make([]byte, 0, 10240))
-	buf.WriteString("insert into t1 values ")
+	values := bytes.NewBuffer(make([]byte, 0, 10240))
 	for i := 0; i < cnt; i++ {
 		if i > 0 {
-			buf.WriteString(", ")
+			values.WriteString(", ")
 		}
 		if i == 1500 {
-			buf.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, 250))
+			values.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, 250))
 		} else {
-			buf.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, i))
+			values.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, i))
 		}
 	}
-	buf.WriteString(" on duplicate key update b = values(b) + 2000")
 	tk.MustExec("set session tidb_dml_type = bulk")
-	fmt.Println(buf.String())
-	tk.MustExec(buf.String())
-	tk.MustQuery("select count(*) from t1").Check(testkit.Rows(fmt.Sprintf("%d", 1999)))
-	tk.MustQuery("select a, b from t1 where a = 250").Check(testkit.Rows("250 2250"))
+	// Test insert meet duplicate key error.
+	tk.MustGetErrMsg("insert into t1 values "+values.String(), "[kv:1062]Duplicate entry '250' for key 't1.idx'")
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
+	// Test insert ignore
+	tk.MustExec("insert ignore into t1 values " + values.String())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '250' for key 't1.idx'"))
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("1999"))
+	tk.MustQuery("select a, b from t1 where a in (250, 1500)").Check(testkit.Rows("250 250"))
+	// Test insert on duplicate key update.
+	if !*realtikvtest.WithRealTiKV {
+		// TODO: fix me. skip for real TiKV because now we have assertion issue.
+		tk.MustExec("delete from t1")
+		tk.MustExec("insert into t1 values " + values.String() + " on duplicate key update b = values(b) + 2000")
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("1999"))
+		tk.MustQuery("select a, b from t1 where a in (250, 1500)").Check(testkit.Rows("250 2250"))
+	}
 }
 
 func TestPipelinedDMLDelete(t *testing.T) {
