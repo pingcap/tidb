@@ -116,7 +116,7 @@ func TestBackoffWithRetryableError(t *testing.T) {
 
 func TestPdBackoffWithRetryableError(t *testing.T) {
 	var counter int
-	backoffer := utils.NewPDReqBackoffer()
+	backoffer := utils.NewPDReqBackofferExt()
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()

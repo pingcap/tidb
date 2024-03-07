@@ -31,10 +31,6 @@ const (
 	backupSSTWaitInterval    = 2 * time.Second
 	backupSSTMaxWaitInterval = 3 * time.Second
 
-	resetTSRetryTime       = 16
-	resetTSWaitInterval    = 50 * time.Millisecond
-	resetTSMaxWaitInterval = 500 * time.Millisecond
-
 	resetTSRetryTimeExt       = 600
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
 	resetTSMaxWaitIntervalExt = 300 * time.Second
@@ -167,7 +163,11 @@ func NewBackupSSTBackoffer() Backoffer {
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
-	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
+	defer func() {
+		if bo.attempt != 0 {
+			log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
+		}
+	}()
 	// we don't care storeID here.
 	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
 	if res.Strategy == RetryStrategy {
@@ -218,14 +218,6 @@ type pdReqBackoffer struct {
 	attempt      int
 	delayTime    time.Duration
 	maxDelayTime time.Duration
-}
-
-func NewPDReqBackoffer() Backoffer {
-	return &pdReqBackoffer{
-		attempt:      resetTSRetryTime,
-		delayTime:    resetTSWaitInterval,
-		maxDelayTime: resetTSMaxWaitInterval,
-	}
 }
 
 func NewPDReqBackofferExt() Backoffer {
