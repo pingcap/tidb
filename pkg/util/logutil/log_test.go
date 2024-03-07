@@ -181,32 +181,75 @@ func TestSetLevel(t *testing.T) {
 	require.Equal(t, zap.DebugLevel, log.GetLevel())
 }
 
-func TestSlowQueryLoggerCreation(t *testing.T) {
-	level := "Error"
-	conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
-	_, prop, err := newSlowQueryLogger(conf)
-	// assert after init slow query logger, the original conf is not changed
-	require.Equal(t, conf.Level, level)
-	require.NoError(t, err)
-	// slow query logger doesn't use the level of the global log config, and the
-	// level should be less than WarnLevel which is used by it to log slow query.
-	require.NotEqual(t, conf.Level, prop.Level.String())
-	require.True(t, prop.Level.Level() <= zapcore.WarnLevel)
+func TestSlowQueryLoggerAndGeneralLoggerCreation(t *testing.T) {
+	var prop *log.ZapProperties
+	var err error
+	for i := 0; i < 2; i++ {
+		level := "Error"
+		conf := NewLogConfig(level, DefaultLogFormat, "", "", EmptyFileLogConfig, false)
+		if i == 0 {
+			_, prop, err = newSlowQueryLogger(conf)
+		} else {
+			_, prop, err = newGeneralLogger(conf)
+		}
+		// assert after init logger, the original conf is not changed
+		require.Equal(t, conf.Level, level)
+		require.NoError(t, err)
+		// logger doesn't use the level of the global log config, and the
+		// level should be equals to InfoLevel.
+		require.NotEqual(t, conf.Level, prop.Level.String())
+		require.True(t, prop.Level.Level() == zapcore.InfoLevel)
 
-	level = "warn"
-	slowQueryFn := "slow-query.log"
+		level = "warn"
+		name := "test.log"
+		fileConf := FileLogConfig{
+			log.FileLogConfig{
+				Filename:   name,
+				MaxSize:    10,
+				MaxDays:    10,
+				MaxBackups: 10,
+			},
+		}
+		conf = NewLogConfig(level, DefaultLogFormat, name, "", fileConf, false)
+		if i == 0 {
+			slowQueryConf := newSlowQueryLogConfig(conf)
+			// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
+			require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
+		} else {
+			generalConf := newGeneralLogConfig(conf)
+			// generalConf.MaxDays/MaxSize/MaxBackups should be same with global config.
+			require.Equal(t, fileConf.FileLogConfig, generalConf.File)
+		}
+	}
+}
+
+func TestCompressedLog(t *testing.T) {
+	level := "warn"
 	fileConf := FileLogConfig{
 		log.FileLogConfig{
-			Filename:   slowQueryFn,
+			Filename:   "test.log",
 			MaxSize:    10,
 			MaxDays:    10,
 			MaxBackups: 10,
+			Compress:   "xxx",
 		},
 	}
-	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, "", fileConf, false)
-	slowQueryConf := newSlowQueryLogConfig(conf)
-	// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
-	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
+	conf := NewLogConfig(level, DefaultLogFormat, "test.log", "", fileConf, false)
+	err := InitLogger(conf)
+	require.Error(t, err)
+
+	fileConf = FileLogConfig{
+		log.FileLogConfig{
+			Filename:   "test.log",
+			MaxSize:    10,
+			MaxDays:    10,
+			MaxBackups: 10,
+			Compress:   "gzip",
+		},
+	}
+	conf = NewLogConfig(level, DefaultLogFormat, "test.log", "", fileConf, false)
+	err = InitLogger(conf)
+	require.NoError(t, err)
 }
 
 func TestGlobalLoggerReplace(t *testing.T) {
