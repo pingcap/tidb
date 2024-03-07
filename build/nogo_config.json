@@ -504,7 +504,6 @@
   },
   "revive": {
     "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       "GOROOT/": "ignore code",
       "/cgo/": "ignore cgo",
