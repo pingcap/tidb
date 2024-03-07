@@ -235,6 +235,7 @@ go_test(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@io_etcd_go_etcd_tests_v3//integration",
         "@io_opencensus_go//stats/view",
         "@org_golang_x_exp//slices",
         "@org_uber_go_goleak//:goleak",
