@@ -261,8 +261,14 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '250' for key 't1.idx'"))
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("1999"))
 	tk.MustQuery("select a, b from t1 where a in (250, 1500)").Check(testkit.Rows("250 250"))
-	// Test insert on duplicate key update.
 	if !*realtikvtest.WithRealTiKV {
+		// TODO: fix me. skip for real TiKV because now we have assertion issue.
+		// Test replace into.
+		tk.MustExec("delete from t1")
+		tk.MustExec("replace into t1 values " + values.String())
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("1999"))
+		tk.MustQuery("select a, b from t1 where a in (250, 1500)").Check(testkit.Rows("1500 250"))
+		// Test insert on duplicate key update.
 		// TODO: fix me. skip for real TiKV because now we have assertion issue.
 		tk.MustExec("delete from t1")
 		tk.MustExec("insert into t1 values " + values.String() + " on duplicate key update b = values(b) + 2000")
