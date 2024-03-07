@@ -470,6 +470,81 @@ date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
 column_default	extra
 date_format(now(), _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+alter table t0 alter column c1 set default "xx";
+Error 1101 (42000): BLOB/TEXT/JSON column 'c1' can't have a default value
+alter table t1 alter column c1 set default "xx";
+Error 1101 (42000): BLOB/TEXT/JSON column 'c1' can't have a default value
+alter table t2 alter column c1 set default 'y';
+alter table t3 alter column c1 set default 'n';
+INSERT INTO t0 values (2, DEFAULT);
+INSERT INTO t2 values (2, DEFAULT);
+INSERT INTO t3 values (2, DEFAULT);
+alter table t0 modify column c1 BLOB default (date_format(now(),'%Y-%m-%d'));
+alter table t1 modify column c1 JSON default (date_format(now(),'%Y-%m-%d'));
+alter table t2 modify column c1 ENUM('y','n') default (date_format(now(),'%Y-%m-%d'));
+alter table t3 modify column c1 SET('y','n') default (date_format(now(),'%Y-%m-%d'));
+INSERT INTO t0 values (3, DEFAULT);
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` blob DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` json DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `c` int(10) DEFAULT NULL,
+  `c1` enum('y','n') DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `c` int(10) DEFAULT NULL,
+  `c1` set('y','n') DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t0 alter column c1 drop default;
+alter table t1 alter column c1 drop default;
+alter table t2 alter column c1 drop default;
+alter table t3 alter column c1 drop default;
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` blob
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` json
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `c` int(10) DEFAULT NULL,
+  `c1` enum('y','n')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create table t3;
+Table	Create Table
+t3	CREATE TABLE `t3` (
+  `c` int(10) DEFAULT NULL,
+  `c1` set('y','n')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select count(1) from t0 where c1 = date_format(now(), '%Y-%m-%d');
+count(1)
+4
+select * from t2;
+c	c1
+2	y
+select * from t3;
+c	c1
+2	n
 drop table t0, t1, t2, t3;
 create table t0 (c int(10), c1 BLOB default (REPLACE(UPPER(UUID()), '-', '')));
 create table t1 (c int(10), c1 JSON default (REPLACE(UPPER(UUID()), '-', '')));
