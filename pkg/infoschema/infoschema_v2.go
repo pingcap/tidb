@@ -624,14 +624,6 @@ func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64
 	return b.applyAlterPolicy(m, diff)
 }
 
-func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
-	return b.applyCreateOrAlterResourceGroup(m, diff)
-}
-
-func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []int64 {
-	return b.applyDropResourceGroup(m, diff)
-}
-
 func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
 		return b.applyTruncateTableOrPartitionV2(m, diff)
