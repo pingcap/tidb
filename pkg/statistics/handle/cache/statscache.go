@@ -73,7 +73,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		rows, _, err = util.ExecRows(
 			sctx,
-			"SELECT version, table_id, modify_count, count, last_analyze_version from mysql.stats_meta where version > %? order by version",
+			"SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version",
 			lastVersion,
 		)
 		return err

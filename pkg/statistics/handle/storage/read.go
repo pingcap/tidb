@@ -236,6 +236,11 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		if histID != idxInfo.ID {
 			continue
 		}
+		// All the objects in the table shares the same stats version.
+		// Update here.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+		}
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -323,6 +328,11 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
 			continue
+		}
+		// All the objects in the table shares the same stats version.
+		// Update here.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
@@ -568,6 +578,9 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 	if colHist.StatsAvailable() {
 		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+		if statsVer != statistics.Version0 {
+			tbl.StatsVer = int(statsVer)
+		}
 	}
 	tbl.Columns[c.ID] = colHist
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
@@ -619,6 +632,9 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 		return nil
 	}
 	tbl = tbl.Copy()
+	if idxHist.StatsVer != statistics.Version0 {
+		tbl.StatsVer = int(idxHist.StatsVer)
+	}
 	tbl.Indices[idx.ID] = idxHist
 	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)

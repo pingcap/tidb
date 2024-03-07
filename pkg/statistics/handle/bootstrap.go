@@ -66,7 +66,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, last_analyze_version from mysql.stats_meta"
+	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -107,6 +107,10 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 		flag := row.GetInt64(9)
 		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
+		// All the objects in the table share the same stats version.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+		}
 		if isIndex > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -174,6 +178,10 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			continue
 		}
 		table = table.Copy()
+		// All the objects in the table share the same stats version.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)

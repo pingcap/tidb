@@ -190,7 +190,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	var dbName, tableName string
 	var modifyCount, count int64
 	var other any
-	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count, &other)
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
 	require.NoError(t, err)
 	require.Equal(t, "planReplayer", dbName)
 	require.Equal(t, "t", tableName)

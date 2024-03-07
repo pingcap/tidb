@@ -209,12 +209,11 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 		     BIGINT(64) UNSIGNED NOT NULL,
-		table_id 		     BIGINT(64) NOT NULL,
-		modify_count	     BIGINT(64) NOT NULL DEFAULT 0,
-		count 			     BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot             BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		last_analyze_version BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 	 BIGINT(64) UNSIGNED NOT NULL,
+		table_id     BIGINT(64) NOT NULL,
+		modify_count BIGINT(64) NOT NULL DEFAULT 0,
+		count 	     BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot     BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -573,7 +572,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
@@ -593,7 +592,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
@@ -610,7 +609,7 @@ const (
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
-        host VARCHAR(100) NOT NULL PRIMARY KEY,
+        host VARCHAR(261) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         cpu_count int default 0,
         keyspace_id bigint(8) NOT NULL DEFAULT -1
@@ -1077,7 +1076,11 @@ const (
 	version185 = 185
 
 	// version 186
-	//   alter table `mysql.stats_meta` to add the column `lastAnalyzeVersion`.
+	//   modify `mysql.dist_framework_meta` host from VARCHAR(100) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask_history` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task` dispatcher_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task_history` dispatcher_id from varchar(256) to VARCHAR(261)
 	version186 = 186
 )
 
@@ -3023,7 +3026,11 @@ func upgradeToVer186(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN `last_analyze_version` bigint unsigned default 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta MODIFY COLUMN `host` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
 }
 
 func writeOOMAction(s sessiontypes.Session) {
@@ -3304,8 +3311,8 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	for _, dbInfo := range is.AllSchemas() {
-		for _, t := range is.SchemaTables(dbInfo.Name) {
+	for _, dbName := range is.AllSchemaNames() {
+		for _, t := range is.SchemaTables(dbName) {
 			pi := t.Meta().GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue

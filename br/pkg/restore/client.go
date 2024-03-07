@@ -3686,13 +3686,14 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 		return errors.Trace(err)
 	}
 	info := dom.InfoSchema()
-	allSchema := info.AllSchemas()
+	allSchemaName := info.AllSchemaNames()
 	recorder := tiflashrec.New()
 
 	expectTiFlashStoreCount := uint64(0)
 	needTiFlash := false
-	for _, s := range allSchema {
-		for _, t := range s.Tables {
+	for _, s := range allSchemaName {
+		for _, t := range info.SchemaTables(s) {
+			t := t.Meta()
 			if t.TiFlashReplica != nil {
 				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
 				recorder.AddTable(t.ID, *t.TiFlashReplica)
