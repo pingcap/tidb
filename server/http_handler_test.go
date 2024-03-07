@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/domain/infosync"
 	"io"
 	"math/rand"
 	"net"
@@ -1221,7 +1222,7 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
 		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
-		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		defer func() {
