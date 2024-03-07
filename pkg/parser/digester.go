@@ -87,7 +87,7 @@ func DigestNormalized(normalized string) (digest *Digest) {
 // for example, when "ON": Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
 // for example, when "MARKER": Normalize('select 1 from b where a = 1') => 'select ‹1› from b where a = ‹1›'
 func Normalize(sql string, redact string) (result string) {
-	if redact == "OFF" {
+	if redact == "" || redact == "OFF" {
 		return sql
 	}
 	d := digesterPool.Get().(*sqlDigester)
