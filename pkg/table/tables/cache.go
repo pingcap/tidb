@@ -40,7 +40,7 @@ var (
 
 type cachedTable struct {
 	TableCommon
-	cacheData atomic.Value
+	cacheData atomic.Pointer[cacheData]
 	totalSize int64
 	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
 	tokenLimit
@@ -90,11 +90,10 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 }
 
 func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, bool /*loading*/) {
-	tmp := c.cacheData.Load()
-	if tmp == nil {
+	data := c.cacheData.Load()
+	if data == nil {
 		return nil, false
 	}
-	data := tmp.(*cacheData)
 	if ts >= data.Start && ts < data.Lease {
 		leaseTime := oracle.GetTimeFromTS(data.Lease)
 		nowTime := oracle.GetTimeFromTS(ts)
@@ -223,7 +222,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 				return
 			}
 
-			tmp := c.cacheData.Load().(*cacheData)
+			tmp := c.cacheData.Load()
 			if tmp != nil && tmp.Start == ts {
 				c.cacheData.Store(&cacheData{
 					Start:     startTS,

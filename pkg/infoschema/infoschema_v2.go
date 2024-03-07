@@ -421,7 +421,23 @@ func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	panic("TODO")
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	dbInfos := is.AllSchemas()
+	for _, dbInfo := range dbInfos {
+		tbls := is.SchemaTables(dbInfo.Name)
+		for _, tbl := range tbls {
+			pi := tbl.Meta().GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, p := range pi.Definitions {
+				if p.ID == partitionID {
+					return tbl, dbInfo, &p
+				}
+			}
+		}
+	}
+	return nil, nil, nil
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
@@ -606,13 +622,6 @@ func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64
 		return b.applyAlterPolicyV2(m, diff)
 	}
 	return b.applyAlterPolicy(m, diff)
-}
-
-func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyTruncateTableOrPartitionV2(m, diff)
-	}
-	return b.applyTruncateTableOrPartition(m, diff)
 }
 
 func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {

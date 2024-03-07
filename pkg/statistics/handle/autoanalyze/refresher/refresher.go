@@ -95,7 +95,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 			"Auto analyze triggered",
 			zap.Stringer("job", job),
 		)
-		err = job.Execute(
+		err = job.Analyze(
 			r.statsHandle,
 			r.sysProcTracker,
 		)
@@ -160,15 +160,15 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 						continue
 					}
 					pi := tblInfo.GetPartitionInfo()
-					pushJobFunc := func(job *priorityqueue.TableAnalysisJob) {
+					pushJobFunc := func(job priorityqueue.AnalysisJob) {
 						if job == nil {
 							return
 						}
 						// Calculate the weight of the job.
-						job.Weight = calculator.CalculateWeight(job)
+						weight := calculator.CalculateWeight(job)
 						// We apply a penalty to larger tables, which can potentially result in a negative weight.
 						// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
-						if job.Weight <= 0 {
+						if weight <= 0 {
 							statslogutil.StatsLogger().Info(
 								"Table is not ready to analyze",
 								zap.String("reason", "weight is not positive"),
@@ -176,6 +176,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 							)
 							return
 						}
+						job.SetWeight(weight)
 						// Push the job onto the queue.
 						r.Jobs.Push(job)
 					}
@@ -250,7 +251,7 @@ func CreateTableAnalysisJob(
 	tblStats *statistics.Table,
 	autoAnalyzeRatio float64,
 	currentTs uint64,
-) *priorityqueue.TableAnalysisJob {
+) priorityqueue.AnalysisJob {
 	if !isEligibleForAnalysis(tblStats) {
 		return nil
 	}
@@ -294,7 +295,7 @@ func CreateStaticPartitionAnalysisJob(
 	partitionStats *statistics.Table,
 	autoAnalyzeRatio float64,
 	currentTs uint64,
-) *priorityqueue.TableAnalysisJob {
+) priorityqueue.AnalysisJob {
 	if !isEligibleForAnalysis(partitionStats) {
 		return nil
 	}
@@ -439,7 +440,7 @@ func createTableAnalysisJobForPartitions(
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 	autoAnalyzeRatio float64,
 	currentTs uint64,
-) *priorityqueue.TableAnalysisJob {
+) priorityqueue.AnalysisJob {
 	if !isEligibleForAnalysis(tblStats) {
 		return nil
 	}
@@ -465,7 +466,7 @@ func createTableAnalysisJobForPartitions(
 		return nil
 	}
 
-	job := priorityqueue.NewDynamicPartitionTableAnalysisJob(
+	job := priorityqueue.NewDynamicPartitionedTableAnalysisJob(
 		tableSchema,
 		tblInfo.Name.O,
 		tblInfo.ID,
