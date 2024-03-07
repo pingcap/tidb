@@ -1011,8 +1011,10 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	for _, schema := range schemas {
-		for _, table := range schema.Tables {
+		for _, tbl := range is.SchemaTables(schema.Name) {
+			table := tbl.Meta()
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
 				continue
 			}
