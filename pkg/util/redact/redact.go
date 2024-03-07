@@ -18,6 +18,7 @@ import (
 	"strings"
 )
 
+// Redact will redact the input string according to 'mode'. Check 'tidb_redact_log': https://github.com/pingcap/tidb/blob/acf9e3128693a5a13f31027f05f4de41edf8d7b2/pkg/sessionctx/variable/sysvar.go#L2154.
 func Redact(mode string, input string) string {
 	switch mode {
 	case "MARKER":
