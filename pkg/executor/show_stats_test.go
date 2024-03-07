@@ -36,6 +36,7 @@ func TestShowStatsMeta(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("analyze table t, t1")
 	result := tk.MustQuery("show stats_meta")
+	result = result.Sort()
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "t", result.Rows()[0][1])
 	require.Equal(t, "t1", result.Rows()[1][1])

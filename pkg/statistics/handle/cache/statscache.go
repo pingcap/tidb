@@ -129,7 +129,6 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = util.GetFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, row.GetUint64(4))
 		tables = append(tables, tbl)
 	}
 

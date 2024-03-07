@@ -55,10 +55,9 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
 		}
 		tbl := &statistics.Table{
-			HistColl:           newHistColl,
-			Version:            row.GetUint64(0),
-			Name:               util.GetFullTableName(is, tableInfo),
-			LastAnalyzeVersion: row.GetUint64(4),
+			HistColl: newHistColl,
+			Version:  row.GetUint64(0),
+			Name:     util.GetFullTableName(is, tableInfo),
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}

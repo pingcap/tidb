@@ -534,25 +534,4 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.NotEqual(t, uint64(0), statsTbl.LastAnalyzeVersion)
-
-	// Simulate the case for upgrading. Case of update stats delta.
-	tk.MustExec(fmt.Sprintf("update mysql.stats_meta set last_analyze_version = 0 where table_id = %v", tbl.Meta().ID))
-	lastAnalyzeVer := statsTbl.LastAnalyzeVersion
-	tk.MustExec("insert into t values(1, 1)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
-	statsTbl, found = h.Get(tbl.Meta().ID)
-	require.True(t, found)
-	require.Equal(t, lastAnalyzeVer, statsTbl.LastAnalyzeVersion)
-
-	// Again, only alter table should not set the last_analyze_version
-	tk.MustExec("alter table t add column c int default 0")
-	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.Update(is))
-	statsTbl, found = h.Get(tbl.Meta().ID)
-	require.True(t, found)
-	require.Equal(t, lastAnalyzeVer, statsTbl.LastAnalyzeVersion)
 }
