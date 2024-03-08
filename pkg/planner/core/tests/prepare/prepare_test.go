@@ -1276,9 +1276,10 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 			}
 		}
 	}
-	// Allow ~1% non-cached queries, due to background changes etc.
-	// (Actually just 1/3 %, since there are 3 tables * 4 queries per loop :)
-	if len(missedPlanCache) > (loops * 4 / 100) {
+	// Allow <=10% non-cached queries, due to background changes etc.
+	// + 3 intentionally misses, due to duplicate values
+	// Notice there are 3 tables * 4 queries per loop :)
+	if len(missedPlanCache) > (3 + 10*loops*3*4/100) {
 		require.Equal(t, []string{}, missedPlanCache)
 	}
 }
