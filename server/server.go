@@ -209,6 +209,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
+<<<<<<< HEAD:server/server.go
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
@@ -218,6 +219,17 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		health:            uatomic.NewBool(true),
 		inShutdownMode:    uatomic.NewBool(false),
 		printMDLLogTime:   time.Now(),
+=======
+		cfg:                    cfg,
+		driver:                 driver,
+		concurrentLimiter:      NewTokenLimiter(cfg.TokenLimit),
+		clients:                make(map[uint64]*clientConn),
+		ConnNumByResourceGroup: make(map[string]int),
+		internalSessions:       make(map[any]struct{}, 100),
+		health:                 uatomic.NewBool(false),
+		inShutdownMode:         uatomic.NewBool(false),
+		printMDLLogTime:        time.Now(),
+>>>>>>> d3a9c1b8677 (server: fix incorrect setting of health status (#51595)):pkg/server/server.go
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -434,6 +446,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
+	s.health.Store(true)
 	err = <-errChan
 	if err != nil {
 		return err
