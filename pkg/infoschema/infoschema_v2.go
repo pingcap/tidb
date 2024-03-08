@@ -186,15 +186,6 @@ func (isd *Data) schemaByName(name model.CIStr) (res *model.DBInfo, schemaVersio
 	return res, schemaVersion
 }
 
-func (isd *Data) tableByID(id int64) *tableItem {
-	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
-	itm, ok := search(isd.byID, math.MaxInt64, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
-	if !ok {
-		return nil
-	}
-	return &itm
-}
-
 func compareByID(a, b tableItem) bool {
 	if a.tableID < b.tableID {
 		return true
@@ -745,7 +736,6 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model
 	return nil
 }
 
-// ywq todo test
 func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
