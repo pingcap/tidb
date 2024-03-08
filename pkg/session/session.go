@@ -871,6 +871,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	var err error
 	txnSize := s.txn.Size()
 	isPessimistic := s.txn.IsPessimistic()
+	isPipelined := s.txn.IsPipelined()
 	r, ctx := tracing.StartRegionEx(ctx, "session.doCommitWithRetry")
 	defer r.End()
 
@@ -889,7 +890,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
+		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic && !isPipelined {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.GetSQLLabel()),
 				zap.Error(err),
@@ -3814,9 +3815,10 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	})
 
 	s.txn.changeToPending(&txnFuture{
-		future:   future,
-		store:    s.store,
-		txnScope: scope,
+		future:    future,
+		store:     s.store,
+		txnScope:  scope,
+		pipelined: s.isPipelinedDML(),
 	})
 	return nil
 }
@@ -4287,6 +4289,26 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 	}
 
 	return indexusage.NewStmtIndexUsageCollector(s.idxUsageCollector)
+}
+
+// isPipelinedDML returns the current statement can be executed as a pipelined DML.
+func (s *session) isPipelinedDML() bool {
+	if !s.sessionVars.BulkDMLEnabled {
+		return false
+	}
+	stmtCtx := s.sessionVars.StmtCtx
+	if stmtCtx == nil {
+		return false
+	}
+	if !stmtCtx.InInsertStmt && !stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt {
+		// not a DML
+		return false
+	}
+	if s.isInternal() {
+		return false
+	}
+	return s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
+		!config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() && s.sessionVars.BinlogClient == nil
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
