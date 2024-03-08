@@ -874,6 +874,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if ingest.LitBackCtxMgr != nil {
 			ingest.LitBackCtxMgr.MarkJobFinish()
 		}
+		d.runningJobs = newRunningJobs()
 	})
 
 	return nil
@@ -922,7 +923,7 @@ func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 }
 
 func (d *ddl) close() {
-	if isChanClosed(d.ctx.Done()) {
+	if d.ctx.Err() != nil {
 		return
 	}
 

@@ -483,6 +483,12 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	if p.PushedLimit != nil {
 		cloned.PushedLimit = p.PushedLimit.Clone()
 	}
+	if len(p.CommonHandleCols) != 0 {
+		cloned.CommonHandleCols = make([]*expression.Column, 0, len(p.CommonHandleCols))
+		for _, col := range p.CommonHandleCols {
+			cloned.CommonHandleCols = append(cloned.CommonHandleCols, col.Clone().(*expression.Column))
+		}
+	}
 	return cloned, nil
 }
 
@@ -961,7 +967,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 		pkIdx := tables.FindPrimaryIndex(ts.Table)
 		idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
 		for _, cond := range access {
-			newCond, err := expression.SubstituteCorCol2Constant(ctx, cond)
+			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 			if err != nil {
 				return nil, err
 			}

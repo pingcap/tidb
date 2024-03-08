@@ -1506,7 +1506,7 @@ func init() {
 
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
-	exec.BaseExecutor
+	exec.BaseExecutorV2
 
 	// numDualRows can only be 0 or 1.
 	numDualRows int
@@ -1621,7 +1621,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx(), e.filters, e.inputIter, e.selected)
+		e.selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.filters, e.inputIter, e.selected)
 		if err != nil {
 			return err
 		}
@@ -2258,7 +2258,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
-	vars.ClearStmtVars()
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
 	vars.DurationWaitTS = 0

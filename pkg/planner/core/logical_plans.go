@@ -412,29 +412,29 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 	copy(cpOtherConditions, p.OtherConditions)
 	copy(cpEqualConditions, p.EqualConditions)
 
-	ctx := p.SCtx()
+	exprCtx := p.SCtx().GetExprCtx()
 	// try to substitute columns in these condition.
 	for i, cond := range cpLeftConditions {
-		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(ctx, cond, schema, exprs); hasFail {
+		if hasFail, cpLeftConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpRightConditions {
-		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(ctx, cond, schema, exprs); hasFail {
+		if hasFail, cpRightConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpOtherConditions {
-		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(ctx, cond, schema, exprs); hasFail {
+		if hasFail, cpOtherConditions[i] = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 	}
 
 	for i, cond := range cpEqualConditions {
 		var tmp expression.Expression
-		if hasFail, tmp = expression.ColumnSubstituteAll(ctx, cond, schema, exprs); hasFail {
+		if hasFail, tmp = expression.ColumnSubstituteAll(exprCtx, cond, schema, exprs); hasFail {
 			return
 		}
 		cpEqualConditions[i] = tmp.(*expression.ScalarFunction)
@@ -1198,7 +1198,7 @@ func extractConstantCols(conditions []expression.Expression, sctx PlanContext, f
 		constObjs      []expression.Expression
 		constUniqueIDs = intset.NewFastIntSet()
 	)
-	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, conditions)
+	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx.GetExprCtx(), constObjs, conditions)
 	for _, constObj := range constObjs {
 		switch x := constObj.(type) {
 		case *expression.Column:
@@ -1348,7 +1348,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 		for _, col := range innerPlan.Schema().Columns {
 			if cc.UniqueID == col.CorrelatedColUniqueID {
 				ccc := &cc.Column
-				cond := expression.NewFunctionInternal(la.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
+				cond := expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
 				eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 			}
 		}
@@ -1371,9 +1371,13 @@ type LogicalMaxOneRow struct {
 }
 
 // LogicalTableDual represents a dual table plan.
+// Note that sometimes we don't set schema for LogicalTableDual (most notably in buildTableDual()), which means
+// outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
+// cause any actual problems now.
 type LogicalTableDual struct {
 	logicalSchemaProducer
 
+	// RowCount could only be 0 or 1.
 	RowCount int
 }
 
@@ -1543,8 +1547,9 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 		return false
 	}
 	sctx := p.SCtx()
+	exprCtx := sctx.GetExprCtx()
 	for i, col := range p.IdxCols {
-		if col.Equal(sctx, prop.SortItems[0].Col) {
+		if col.Equal(exprCtx, prop.SortItems[0].Col) {
 			return matchIndicesProp(sctx, p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
 		} else if i >= p.EqCondCount {
 			break
@@ -1730,7 +1735,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				continue
 			}
 			lCol, lOk := eqFunc.GetArgs()[0].(*expression.Column)
-			if lOk && lCol.Equal(ds.SCtx(), pkCol) {
+			if lOk && lCol.Equal(ds.SCtx().GetExprCtx(), pkCol) {
 				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
 				if rOk {
 					path.AccessConds = append(path.AccessConds, filter)
@@ -1740,7 +1745,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 				}
 			}
 			rCol, rOk := eqFunc.GetArgs()[1].(*expression.Column)
-			if rOk && rCol.Equal(ds.SCtx(), pkCol) {
+			if rOk && rCol.Equal(ds.SCtx().GetExprCtx(), pkCol) {
 				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
 				if lOk {
 					path.AccessConds = append(path.AccessConds, filter)

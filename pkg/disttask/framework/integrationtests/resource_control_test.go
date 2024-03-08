@@ -64,7 +64,7 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 	schedulerExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	schedulerExt.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
 	schedulerExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(task *proto.TaskBase) proto.Step {
 			return stepTransition[task.Step]
 		},
 	).AnyTimes()

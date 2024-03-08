@@ -688,9 +688,6 @@ type SessionVars struct {
 	}
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
-	// stmtVars variables are temporarily set by SET_VAR hint
-	// It only take effect for the duration of a single statement
-	stmtVars map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
@@ -1207,6 +1204,8 @@ type SessionVars struct {
 
 	// EnableRedactLog indicates that whether redact log.
 	EnableRedactLog bool
+	// EnableRedactNew indicates that whether redact log.
+	EnableRedactNew string
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
@@ -1941,7 +1940,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 			types:  make(map[string]*types.FieldType),
 		},
 		systems:                       make(map[string]string),
-		stmtVars:                      make(map[string]string),
 		PreparedStmts:                 make(map[uint32]any),
 		PreparedStmtNameToID:          make(map[string]uint32),
 		PlanCacheParams:               NewPlanCacheParamList(),
@@ -2404,9 +2402,6 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
-	if val, ok := s.stmtVars[name]; ok {
-		return val, ok
-	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -2482,17 +2477,6 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	}
 	afterMinus := atomic.AddInt64(&PreparedStmtCount, -int64(psCount))
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
-}
-
-// SetStmtVar sets the value of a system variable temporarily
-func (s *SessionVars) setStmtVar(name string, val string) error {
-	s.stmtVars[name] = val
-	return nil
-}
-
-// ClearStmtVars clear temporarily system variables.
-func (s *SessionVars) ClearStmtVars() {
-	s.stmtVars = make(map[string]string)
 }
 
 // GetSessionOrGlobalSystemVar gets a system variable.
@@ -3183,7 +3167,7 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	CopTasks          *stmtctx.CopTasksDetails
+	CopTasks          *execdetails.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
 	DiskMax           int64
@@ -3622,6 +3606,14 @@ func (s *SessionVars) GetRuntimeFilterTypes() []RuntimeFilterType {
 // GetRuntimeFilterMode return the session variable runtimeFilterMode
 func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
+}
+
+// GetMaxExecutionTime get the max execution timeout value.
+func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	if s.StmtCtx.HasMaxExecutionTime {
+		return s.StmtCtx.MaxExecutionTime
+	}
+	return s.MaxExecutionTime
 }
 
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable

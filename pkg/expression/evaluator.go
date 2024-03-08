@@ -44,11 +44,11 @@ type defaultEvaluator struct {
 	vectorizable bool
 }
 
-func (e *defaultEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) error {
+func (e *defaultEvaluator) run(ctx EvalContext, vecEnabled bool, input, output *chunk.Chunk) error {
 	iter := chunk.NewIterator4Chunk(input)
 	if e.vectorizable {
 		for i := range e.outputIdxes {
-			if ctx.GetSessionVars().EnableVectorizedExpression && e.exprs[i].Vectorized() {
+			if vecEnabled && e.exprs[i].Vectorized() {
 				if err := evalOneVec(ctx, e.exprs[i], input, output, e.outputIdxes[i]); err != nil {
 					return err
 				}
@@ -119,9 +119,9 @@ func (e *EvaluatorSuite) Vectorizable() bool {
 
 // Run evaluates all the expressions hold by this EvaluatorSuite.
 // NOTE: "defaultEvaluator" must be evaluated before "columnEvaluator".
-func (e *EvaluatorSuite) Run(ctx EvalContext, input, output *chunk.Chunk) error {
+func (e *EvaluatorSuite) Run(ctx EvalContext, vecEnabled bool, input, output *chunk.Chunk) error {
 	if e.defaultEvaluator != nil {
-		err := e.defaultEvaluator.run(ctx, input, output)
+		err := e.defaultEvaluator.run(ctx, vecEnabled, input, output)
 		if err != nil {
 			return err
 		}

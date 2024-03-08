@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -101,6 +100,7 @@ const (
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
+	forceMergeStep      = "__force_merge_step"
 )
 
 var (
@@ -123,6 +123,7 @@ var (
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
+		forceMergeStep:              false,
 		cloudStorageURIOption:       true,
 		disablePrecheckOption:       false,
 	}
@@ -175,8 +176,6 @@ var (
 	GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
 	// NewClientWithContext returns a kv.Client.
 	NewClientWithContext = pd.NewClientWithContext
-	// NewPDHttpClient returns a pdhttp.Client.
-	NewPDHttpClient = pdhttp.NewClient
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
@@ -257,6 +256,8 @@ type Plan struct {
 	IsRaftKV2 bool
 	// total data file size in bytes.
 	TotalFileSize int64
+	// used in tests to force enable merge-step when using global sort.
+	ForceMergeStep bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -748,6 +749,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[disablePrecheckOption]; ok {
 		p.DisablePrecheck = true
+	}
+	if _, ok := specifiedOptions[forceMergeStep]; ok {
+		p.ForceMergeStep = true
 	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.

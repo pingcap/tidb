@@ -945,6 +945,9 @@ const (
 
 	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
 	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
+
+	// TiDBSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	TiDBSchemaCacheSize = "tidb_schema_cache_size"
 )
 
 // TiDB vars that have only global scope
@@ -992,6 +995,8 @@ const (
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
+	// TiDBEnableAutoAnalyzePriorityQueue determines whether TiDB executes automatic analysis with priority queue.
+	TiDBEnableAutoAnalyzePriorityQueue = "tidb_enable_auto_analyze_priority_queue"
 	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
@@ -1147,6 +1152,8 @@ const (
 	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
 	// TiDBEnableParallelSort indicates if parallel sort is enabled.
 	TiDBEnableParallelSort = "enable_parallel_sort"
+	// TiDBLowResolutionTSOUpdateInterval defines how often to refresh low resolution timestamps.
+	TiDBLowResolutionTSOUpdateInterval = "tidb_low_resolution_tso_update_interval"
 )
 
 // TiDB intentional limits
@@ -1287,7 +1294,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert             = false
 	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeOn
 	DefTiDBEnableGlobalIndex                       = false
-	DefTiDBRedactLog                               = false
+	DefTiDBRedactLog                               = Off
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
 	DefTiDBShardAllocateStep                       = math.MaxInt64
@@ -1354,6 +1361,7 @@ const (
 	DefTiDBBatchDMLIgnoreError                     = false
 	DefTiDBMemQuotaAnalyze                         = -1
 	DefTiDBEnableAutoAnalyze                       = true
+	DefTiDBEnableAutoAnalyzePriorityQueue          = true
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
@@ -1470,23 +1478,26 @@ const (
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
+	DefTiDBSchemaCacheSize                            = 0
+	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 )
 
 // Process global variables.
 var (
-	ProcessGeneralLog             = atomic.NewBool(false)
-	RunAutoAnalyze                = atomic.NewBool(DefTiDBEnableAutoAnalyze)
-	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU             = atomic.NewBool(false)
-	EnableBatchDML                = atomic.NewBool(false)
-	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
-	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
-	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
-	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog                    = atomic.NewBool(false)
+	RunAutoAnalyze                       = atomic.NewBool(DefTiDBEnableAutoAnalyze)
+	EnableAutoAnalyzePriorityQueue       = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
+	GlobalLogMaxDays                     = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                       = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU                    = atomic.NewBool(false)
+	EnableBatchDML                       = atomic.NewBool(false)
+	EnableTmpStorageOnOOM                = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	ddlReorgWorkerCounter          int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize              int32 = DefTiDBDDLReorgBatchSize
+	ddlFlashbackConcurrency        int32 = DefTiDBDDLFlashbackConcurrency
+	ddlErrorCountLimit             int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat              int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount            int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                        = int32(DefTiDBForcePriority)
@@ -1527,7 +1538,8 @@ var (
 	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
 	// EnableRowLevelChecksum indicates whether to append checksum to row values.
-	EnableRowLevelChecksum = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
+	EnableRowLevelChecksum         = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
+	LowResolutionTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
 	// It should be a const and shouldn't be modified after tidb is started.
@@ -1573,6 +1585,8 @@ var (
 	CloudStorageURI           = atomic.NewString("")
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
+
+	SchemaCacheSize = atomic.NewInt64(DefTiDBSchemaCacheSize)
 )
 
 var (
@@ -1600,6 +1614,8 @@ var (
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
 	// ValidateCloudStorageURI validates the cloud storage URI.
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
+	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
+	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
 )
 
 // Hooks functions for Cluster Resource Control.

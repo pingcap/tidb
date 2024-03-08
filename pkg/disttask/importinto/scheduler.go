@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -37,8 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -136,6 +139,8 @@ type ImportSchedulerExt struct {
 	// It may be changed when we switch to a new task or switch to a new owner.
 	currTaskID            atomic.Int64
 	disableTiKVImportMode atomic.Bool
+
+	storeWithPD kv.StorageWithPD
 }
 
 var _ scheduler.Extension = (*ImportSchedulerExt)(nil)
@@ -173,13 +178,20 @@ func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.T
 	}
 
 	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
+	// TODO: use the TLS object from TiDB server
+	tidbCfg := tidb.GetGlobalConfig()
+	tls, err := util.NewTLSConfig(
+		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
+		util.WithCertAndKeyPath(tidbCfg.Security.ClusterSSLCert, tidbCfg.Security.ClusterSSLKey),
+	)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
+	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
+	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
+
 	switcher.ToImportMode(ctx)
-	pdCli.Close()
 	sch.lastSwitchTime.Store(time.Now())
 }
 
@@ -351,7 +363,7 @@ func (*ImportSchedulerExt) IsRetryableErr(error) bool {
 }
 
 // GetNextStep implements scheduler.Extension interface.
-func (sch *ImportSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
+func (sch *ImportSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if sch.GlobalSort {
@@ -379,13 +391,20 @@ func (sch *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
+	// TODO: use the TLS object from TiDB server
+	tidbCfg := tidb.GetGlobalConfig()
+	tls, err := util.NewTLSConfig(
+		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
+		util.WithCertAndKeyPath(tidbCfg.Security.ClusterSSLCert, tidbCfg.Security.ClusterSSLKey),
+	)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
 	}
+	pdHTTPCli := sch.storeWithPD.GetPDHTTPClient()
+	switcher := importer.NewTiKVModeSwitcher(tls, pdHTTPCli, logger)
+
 	switcher.ToNormalMode(ctx)
-	pdCli.Close()
 
 	// clear it, so next task can switch TiKV mode again.
 	sch.lastSwitchTime.Store(time.Time{})
@@ -403,13 +422,21 @@ func (sch *ImportSchedulerExt) updateCurrentTask(task *proto.Task) {
 
 type importScheduler struct {
 	*scheduler.BaseScheduler
+	storeWithPD kv.StorageWithPD
 }
 
-func newImportScheduler(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+// NewImportScheduler creates a new import scheduler.
+func NewImportScheduler(
+	ctx context.Context,
+	task *proto.Task,
+	param scheduler.Param,
+	storeWithPD kv.StorageWithPD,
+) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
+		storeWithPD:   storeWithPD,
 	}
 	return &sch
 }
@@ -427,7 +454,8 @@ func (sch *importScheduler) Init() (err error) {
 	}
 
 	sch.BaseScheduler.Extension = &ImportSchedulerExt{
-		GlobalSort: taskMeta.Plan.CloudStorageURI != "",
+		GlobalSort:  taskMeta.Plan.CloudStorageURI != "",
+		storeWithPD: sch.storeWithPD,
 	}
 	return sch.BaseScheduler.Init()
 }
@@ -693,8 +721,4 @@ func redactSensitiveInfo(task *proto.Task, taskMeta *TaskMeta) {
 		// marshal failed, should not happen
 		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
 	}
-}
-
-func init() {
-	scheduler.RegisterSchedulerFactory(proto.ImportInto, newImportScheduler)
 }

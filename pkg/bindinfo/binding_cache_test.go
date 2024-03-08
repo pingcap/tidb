@@ -19,10 +19,67 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
+
+func bindingFuzzyDigest(t *testing.T, b Binding) string {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(b.BindSQL, b.Charset, b.Collation)
+	require.NoError(t, err)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	return fuzzyDigest
+}
+
+func TestFuzzyBindingCache(t *testing.T) {
+	fbc := newFuzzyBindingCache(nil).(*fuzzyBindingCache)
+	b1 := Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
+	fDigest1 := bindingFuzzyDigest(t, b1)
+	b2 := Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
+	b3 := Binding{BindSQL: "SELECT * FROM db2.t3", SQLDigest: "b3"}
+	fDigest3 := bindingFuzzyDigest(t, b3)
+
+	// add 3 bindings and b1 and b2 have the same fuzzy digest
+	require.NoError(t, fbc.SetBinding(b1.SQLDigest, []Binding{b1}))
+	require.NoError(t, fbc.SetBinding(b2.SQLDigest, []Binding{b2}))
+	require.NoError(t, fbc.SetBinding(b3.SQLDigest, []Binding{b3}))
+	require.Equal(t, len(fbc.fuzzy2SQLDigests), 2) // b1 and b2 have the same fuzzy digest
+	require.Equal(t, len(fbc.fuzzy2SQLDigests[fDigest1]), 2)
+	require.Equal(t, len(fbc.fuzzy2SQLDigests[fDigest3]), 1)
+	require.Equal(t, len(fbc.sql2FuzzyDigest), 3)
+	_, ok := fbc.sql2FuzzyDigest[b1.SQLDigest]
+	require.True(t, ok)
+	_, ok = fbc.sql2FuzzyDigest[b2.SQLDigest]
+	require.True(t, ok)
+	_, ok = fbc.sql2FuzzyDigest[b3.SQLDigest]
+	require.True(t, ok)
+
+	// remove b2
+	fbc.RemoveBinding(b2.SQLDigest)
+	require.Equal(t, len(fbc.fuzzy2SQLDigests), 2)
+	require.Equal(t, len(fbc.fuzzy2SQLDigests[fDigest1]), 1)
+	require.Equal(t, len(fbc.fuzzy2SQLDigests[fDigest3]), 1)
+	require.Equal(t, len(fbc.sql2FuzzyDigest), 2)
+	_, ok = fbc.sql2FuzzyDigest[b1.SQLDigest]
+	require.True(t, ok)
+	_, ok = fbc.sql2FuzzyDigest[b2.SQLDigest]
+	require.False(t, ok) // can't find b2 now
+	_, ok = fbc.sql2FuzzyDigest[b3.SQLDigest]
+	require.True(t, ok)
+
+	// test deep copy
+	newCache, err := fbc.Copy()
+	require.NoError(t, err)
+	newFBC := newCache.(*fuzzyBindingCache)
+	newFBC.fuzzy2SQLDigests[fDigest1] = nil
+	delete(newFBC.sql2FuzzyDigest, b1.SQLDigest)
+	require.Equal(t, len(fbc.fuzzy2SQLDigests[fDigest1]), 1) // no impact to the original cache
+	_, ok = fbc.sql2FuzzyDigest[b1.SQLDigest]
+	require.True(t, ok)
+}
 
 func TestBindCache(t *testing.T) {
 	variable.MemQuotaBindingCache.Store(250)
