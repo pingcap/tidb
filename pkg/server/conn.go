@@ -102,6 +102,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -1159,7 +1160,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
 					zap.Uint64("timestamp", startTS),
-					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
+					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactNew)),
 				)
 			}
 			err1 := cc.writeError(ctx, err)
@@ -1171,19 +1172,22 @@ func (cc *clientConn) Run(ctx context.Context) {
 	}
 }
 
-func errStrForLog(err error, enableRedactLog bool) string {
-	if enableRedactLog {
+func errStrForLog(err error, redactMode string) string {
+	if redactMode == "ON" {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
 		// password or accesskey
 		if parser.ErrParse.Equal(err) {
 			return "fail to parse SQL and can't redact when enable log redaction"
 		}
 	}
+	var ret string
 	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 		// Do not log stack for duplicated entry error.
-		return err.Error()
+		ret = err.Error()
+	} else {
+		ret = errors.ErrorStack(err)
 	}
-	return errors.ErrorStack(err)
+	return redact.Redact(redactMode, ret)
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
