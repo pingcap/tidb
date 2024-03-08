@@ -72,7 +72,7 @@ func (b *Builder) applyDropPolicy(PolicyID int64) []int64 {
 	return []int64{}
 }
 
-func (b *Builder) applyCreateOrAlterResourceGroup(m *meta.Meta, diff *model.SchemaDiff) error {
+func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
 	group, err := m.GetResourceGroup(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -85,7 +85,7 @@ func (b *Builder) applyCreateOrAlterResourceGroup(m *meta.Meta, diff *model.Sche
 	return nil
 }
 
-func (b *Builder) applyDropResourceGroup(m *meta.Meta, diff *model.SchemaDiff) []int64 {
+func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []int64 {
 	group, ok := b.infoSchema.ResourceGroupByID(diff.SchemaID)
 	if !ok {
 		return nil
