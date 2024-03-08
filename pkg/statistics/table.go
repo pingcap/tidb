@@ -416,6 +416,12 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 	return nil, nil, nil, nil, false
 }
 
+// IsAnalyzed checks whether the table is analyzed or not by checking its last analyze's timestamp value.
+// A valid timestamp must be greater than 0.
+func (t *Table) IsAnalyzed() bool {
+	return t.LastAnalyzeVersion > 0
+}
+
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {

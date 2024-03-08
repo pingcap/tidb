@@ -141,7 +141,7 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 	if statsTbl.Pseudo {
 		return
 	}
-	if statsTbl.LastAnalyzeVersion == 0 {
+	if !statsTbl.IsAnalyzed() {
 		e.appendRow([]any{
 			dbName,
 			tblName,

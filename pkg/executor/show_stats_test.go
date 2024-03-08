@@ -40,6 +40,8 @@ func TestShowStatsMeta(t *testing.T) {
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "t", result.Rows()[0][1])
 	require.Equal(t, "t1", result.Rows()[1][1])
+	require.NotEqual(t, "<nil>", result.Rows()[0][6])
+	require.NotEqual(t, "<nil>", result.Rows()[1][6])
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "t", result.Rows()[0][1])
