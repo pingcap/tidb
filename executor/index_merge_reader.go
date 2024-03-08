@@ -48,6 +48,9 @@ import (
 
 var (
 	_ Executor = &IndexMergeReaderExecutor{}
+
+	// IndexMergeCancelFuncForTest is used just for test
+	IndexMergeCancelFuncForTest func()
 )
 
 const (
@@ -893,13 +896,16 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 			return
 		case <-finished:
 			return
-		case workCh <- task:
+		case resultCh <- task:
+			failpoint.Inject("testCancelContext", func() {
+				IndexMergeCancelFuncForTest()
+			})
 			select {
 			case <-ctx.Done():
 				return
 			case <-finished:
 				return
-			case resultCh <- task:
+			case workCh <- task:
 			}
 		}
 	}

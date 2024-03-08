@@ -412,3 +412,19 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
 }
+
+// ExecWithContext executes a sql statement with context
+func (tk *TestKit) ExecWithContext(ctx context.Context, sql string) (rs sqlexec.RecordSet, err error) {
+	var stmts []ast.StmtNode
+	stmts, err = tk.session.Parse(ctx, sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	rs, err = tk.Session().ExecuteStmt(ctx, stmts[0])
+	if err != nil {
+		tk.session.GetSessionVars().StmtCtx.AppendError(err)
+		return rs, errors.Trace(err)
+	}
+	return rs, nil
+}
