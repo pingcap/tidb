@@ -1709,7 +1709,7 @@ func TestFixControl33031(t *testing.T) {
 	tk.MustExec(`set @a = 1`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 1"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, Fix33031 fix-control set and partitioned table in cached Point Get plan"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, Fix33031 fix-control set and partitioned table in cached Point Get plan", "Warning 1105 skip plan-cache: plan rebuild failed, Fix33031 fix-control set and partitioned table in cached Point Get plan"))
 	tk.MustExec(`set @@tidb_opt_fix_control = "33031:OFF"`)
 	tk.MustExec(`set @a = 2`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 2"))
