@@ -39,7 +39,7 @@ func (r CurrentUserPropReader) RequiredOptionalEvalProps() context.OptionalEvalP
 
 // CurrentUser returns the current user
 func (r CurrentUserPropReader) CurrentUser(ctx context.EvalContext) (*auth.UserIdentity, error) {
-	p, err := getPropProvider[CurrentUserPropProvider](ctx, context.OptPropCurrentUser)
+	p, err := r.getProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -49,10 +49,14 @@ func (r CurrentUserPropReader) CurrentUser(ctx context.EvalContext) (*auth.UserI
 
 // ActiveRoles returns the active roles
 func (r CurrentUserPropReader) ActiveRoles(ctx context.EvalContext) ([]*auth.RoleIdentity, error) {
-	p, err := getPropProvider[CurrentUserPropProvider](ctx, context.OptPropCurrentUser)
+	p, err := r.getProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
 	_, roles := p()
 	return roles, nil
+}
+
+func (r CurrentUserPropReader) getProvider(ctx context.EvalContext) (CurrentUserPropProvider, error) {
+	return getPropProvider[CurrentUserPropProvider](ctx, context.OptPropCurrentUser)
 }
