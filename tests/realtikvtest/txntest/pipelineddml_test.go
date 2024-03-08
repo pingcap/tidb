@@ -171,8 +171,8 @@ func prepareData(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists t, _t")
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("create table _t like t")
-	results := make([]string, 0, 10000)
-	for i := 0; i < 10000; i++ {
+	results := make([]string, 0, 100)
+	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 		results = append(results, fmt.Sprintf("%d %d", i, i))
 	}
@@ -180,6 +180,14 @@ func prepareData(tk *testkit.TestKit) {
 }
 
 func TestPipelinedDMLInsert(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -189,40 +197,56 @@ func TestPipelinedDMLInsert(t *testing.T) {
 	compareTables(t, tk, "t", "_t")
 
 	tk.MustExec("insert into t select a + 10000, b from t")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(10000))
-	tk.MustQuery("select count(1) from t").Check(testkit.Rows("20000"))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(100))
+	tk.MustQuery("select count(1) from t").Check(testkit.Rows("200"))
 
 	// simulate multi regions by splitting table.
 	tk.MustExec("truncate table _t")
 	tk.MustQuery("split table _t between (0) and (10000) regions 10").Check(testkit.Rows("9 1"))
 	tk.MustQuery("select count(1) from _t").Check(testkit.Rows("0"))
 	tk.MustExec("insert into _t select * from t")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(20000))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(200))
 	compareTables(t, tk, "t", "_t")
 }
 
 func TestPipelinedDMLInsertIgnore(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
 	tk.MustExec("set session tidb_dml_type = bulk")
-	tk.MustExec("insert into _t values(0, -1), (999, -1), (1999, -1), (2999, -1), (3999, -1), (4999, -1), (5999, -1), (6999, -1), (7999, -1), (8999, -1), (9999, -1)")
+	tk.MustExec("insert into _t values(0, -1), (19, -1), (29, -1), (39, -1), (49, -1), (59, -1), (69, -1), (79, -1), (89, -1), (99, -1)")
 	tk.MustExec("insert ignore into _t select * from t")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(9989))
-	tk.MustQuery("select count(1) from _t").Check(testkit.Rows("10000"))
-	tk.MustQuery("select * from _t where a in (0, 999, 1999, 2999, 3999, 4999, 5999, 6999, 7999, 8999, 9999)").Sort().
-		Check(testkit.Rows("0 -1", "1999 -1", "2999 -1", "3999 -1", "4999 -1", "5999 -1", "6999 -1", "7999 -1", "8999 -1", "999 -1", "9999 -1"))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(90))
+	tk.MustQuery("select count(1) from _t").Check(testkit.Rows("100"))
+	tk.MustQuery("select * from _t where a in (0, 19, 29, 39, 49, 59, 69, 79, 89, 99)").Sort().
+		Check(testkit.Rows("0 -1", "19 -1", "29 -1", "39 -1", "49 -1", "59 -1", "69 -1", "79 -1", "89 -1", "99 -1"))
 }
 
 func TestPipelinedDMLInsertOnDuplicateKeyUpdate(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
-	tk.MustExec("insert into _t values(0, -1), (999, -1), (1999, -1), (2999, -1), (3999, -1), (4999, -1), (5999, -1), (6999, -1), (7999, -1), (8999, -1), (9999, -1)")
+	tk.MustExec("insert into _t values(0, -1), (19, -1), (29, -1), (39, -1), (49, -1), (59, -1), (69, -1), (79, -1), (89, -1), (99, -1)")
 	tk.MustExec("insert into _t select * from t on duplicate key update b = values(b)")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(10011))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(110))
 	compareTables(t, tk, "t", "_t")
 }
 
@@ -284,35 +308,53 @@ func TestPipelinedDMLDelete(t *testing.T) {
 	prepareData(tk)
 	tk.MustExec("set session tidb_dml_type = bulk")
 	tk.MustExec("delete from t where a % 2 = 0")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(5000))
-	tk.MustQuery("select count(1) from t").Check(testkit.Rows("5000"))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(50))
+	tk.MustQuery("select count(1) from t").Check(testkit.Rows("50"))
 
 	// simulate multi regions by splitting table.
+	tk.MustExec("update t set a = a * 101")
 	tk.MustQuery("split table t between (0) and (10000) regions 10").Check(testkit.Rows("9 1"))
 	tk.MustExec("delete from t where a % 2 = 1")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(5000))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(50))
 	tk.MustQuery("select count(1) from t").Check(testkit.Rows("0"))
 }
 
 func TestPipelinedDMLUpdate(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	prepareData(tk)
-	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("49995000"))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("4950"))
 	tk.MustExec("set session tidb_dml_type = bulk")
 	tk.MustExec("update t set b = b + 1")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(10000))
-	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("50005000"))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(100))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("5050"))
 
 	// simulate multi regions by splitting table.
+	tk.MustExec("update t set a = a * 100")
 	tk.MustQuery("split table t between (0) and (10000) regions 10").Check(testkit.Rows("9 1"))
 	tk.MustExec("update t set b = b + 1")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(10000))
-	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("50015000"))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(100))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("5150"))
 }
 
 func TestPipelinedDMLCommitFailed(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
 	require.NoError(t, failpoint.Enable("tikvclient/pipelinedCommitFail", `return`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/pipelinedCommitFail"))
@@ -330,12 +372,20 @@ func TestPipelinedDMLCommitFailed(t *testing.T) {
 	//require.Equal(t, tk.Session().AffectedRows(), uint64(0))
 	tk1.MustQuery("select * from _t").Check(testkit.Rows())
 
-	tk.MustExecToErr("insert into t select a + 10000, b from t")
+	tk.MustExecToErr("insert into t select a + 100, b from t")
 	//require.Equal(t, tk.Session().AffectedRows(), uint64(0))
-	tk1.MustQuery("select count(1) from t").Check(testkit.Rows("10000"))
+	tk1.MustQuery("select count(1) from t").Check(testkit.Rows("100"))
 }
 
 func TestPipelinedDMLCommitSkipSecondaries(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10240)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
 	require.NoError(t, failpoint.Enable("tikvclient/pipelinedSkipResolveLock", `return`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/pipelinedSkipResolveLock"))
@@ -347,12 +397,12 @@ func TestPipelinedDMLCommitSkipSecondaries(t *testing.T) {
 	prepareData(tk)
 	tk.MustExec("set session tidb_dml_type = bulk")
 	tk.MustExec("insert into _t select * from t")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(10000))
+	require.Equal(t, tk.Session().AffectedRows(), uint64(100))
 	compareTables(t, tk, "t", "_t")
 
-	tk.MustExec("insert into t select a + 10000, b from t")
-	require.Equal(t, tk.Session().AffectedRows(), uint64(10000))
-	tk.MustQuery("select count(1) from t").Check(testkit.Rows("20000"))
+	tk.MustExec("insert into t select a + 100, b from t")
+	require.Equal(t, tk.Session().AffectedRows(), uint64(100))
+	tk.MustQuery("select count(1) from t").Check(testkit.Rows("200"))
 }
 
 func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
