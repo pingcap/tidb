@@ -179,22 +179,20 @@ func matchPartitionNames(tblID int64, partitionNames []model.CIStr, pi *model.Pa
 		return true
 	}
 	found := false
-	for _, name := range partitionNames {
+	defs := pi.Definitions
+OuterLoop:
+	for i := range defs {
 		// TODO: create a map from id to partition definition index
-		for _, def := range pi.Definitions {
-			if def.ID == tblID && def.Name.L == name.L {
-				found = true
-				break
+		if defs[i].ID == tblID {
+			for _, name := range partitionNames {
+				if defs[i].Name.L == name.L {
+					found = true
+					break OuterLoop
+				}
 			}
 		}
-		if found {
-			break
-		}
 	}
-	if !found {
-		return false
-	}
-	return true
+	return found
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
