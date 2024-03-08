@@ -386,13 +386,8 @@ func (s *Server) reportConfig() {
 }
 
 // Run runs the server.
-<<<<<<< HEAD:server/server.go
-func (s *Server) Run() error {
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
-=======
 func (s *Server) Run(dom *domain.Domain) error {
-	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
->>>>>>> b7ce2393300 (*: force_init_stats doesn't block http api's startup (#50853)):pkg/server/server.go
+	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
