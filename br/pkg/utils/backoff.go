@@ -241,8 +241,12 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	default:
+		// If the connection timeout, pd client would cancel the context, and return grpc context cancel error.
+		// So make the codes.Canceled retryable too.
+		// It's OK to retry the grpc context cancel error, because the parent context cancel returns context.Canceled.
+		// For example, cancel the `ectx` and then pdClient.GetTS(ectx) returns context.Canceled instead of grpc context canceled.
 		switch status.Code(e) {
-		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
+		case codes.DeadlineExceeded, codes.Canceled, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
 		default:
