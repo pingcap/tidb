@@ -87,6 +87,7 @@ type SortExec struct {
 
 		resultChannel chan rowWithError
 
+		// Ensure that workers and fetcher have exited
 		closeSync chan struct{}
 
 		spillHelper *parallelSortSpillHelper
@@ -115,21 +116,17 @@ func (e *SortExec) Close() error {
 			close(e.Parallel.resultChannel)
 			close(e.Parallel.chunkChannel)
 		} else {
-			for {
-				_, ok := <-e.Parallel.chunkChannel
-				if !ok {
-					break
-				}
+			for range e.Parallel.chunkChannel {
 				e.Parallel.fetcherAndWorkerSyncer.Done()
 			}
+			<-e.Parallel.closeSync
 		}
-
-		<-e.Parallel.closeSync
 
 		// Ensure that `generateResult()` has exited,
 		// or data race may happen as `generateResult()`
 		// will use `e.Parallel.workers` and `e.Parallel.merger`.
-		<-e.Parallel.resultChannel
+		for range e.Parallel.resultChannel {
+		}
 		for i := range e.Parallel.workers {
 			e.Parallel.workers[i].batchRows = nil
 			e.Parallel.workers[i].localSortedRows = nil
