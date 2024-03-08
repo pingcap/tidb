@@ -75,16 +75,15 @@ type PartitionedHashJoinCtx struct {
 	Concurrency  uint
 	joinResultCh chan *internalutil.HashjoinWorkerResult
 	// closeCh add a lock for closing executor.
-	closeCh         chan struct{}
-	finished        atomic.Bool
-	UseOuterToBuild bool
-	buildFinished   chan error
-	JoinType        plannercore.JoinType
-	stats           *hashJoinRuntimeStats
-	ProbeKeyTypes   []*types.FieldType
-	BuildKeyTypes   []*types.FieldType
-	memTracker      *memory.Tracker // track memory usage.
-	diskTracker     *disk.Tracker   // track disk usage.
+	closeCh       chan struct{}
+	finished      atomic.Bool
+	buildFinished chan error
+	JoinType      plannercore.JoinType
+	stats         *hashJoinRuntimeStats
+	ProbeKeyTypes []*types.FieldType
+	BuildKeyTypes []*types.FieldType
+	memTracker    *memory.Tracker // track memory usage.
+	diskTracker   *disk.Tracker   // track disk usage.
 
 	RightAsBuildSide bool
 	Filter           expression.CNFExprs
@@ -101,10 +100,12 @@ type PartitionedHashJoinCtx struct {
 type ProbeSideTupleFetcher struct {
 	*PartitionedHashJoinCtx
 
-	ProbeSideExec      exec.Executor
-	ProbeChkResourceCh chan *probeChkResource
-	ProbeResultChs     []chan *chunk.Chunk
-	RequiredRows       int64
+	ProbeSideExec            exec.Executor
+	ProbeChkResourceCh       chan *probeChkResource
+	ProbeResultChs           []chan *chunk.Chunk
+	RequiredRows             int64
+	needScanHTAfterProbeDone bool
+	probeSideIsEmpty         bool
 }
 
 type ProbeWorker struct {
@@ -234,6 +235,16 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 	return nil
 }
 
+func (fetcher *ProbeSideTupleFetcher) shouldLimitProbeFetchSize() bool {
+	if fetcher.JoinType == plannercore.LeftOuterJoin && fetcher.RightAsBuildSide {
+		return true
+	}
+	if fetcher.JoinType == plannercore.RightOuterJoin && !fetcher.RightAsBuildSide {
+		return true
+	}
+	return false
+}
+
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, maxChunkSize int) {
@@ -254,12 +265,10 @@ func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 			}
 		}
 		probeSideResult := probeSideResource.chk
-		/*
-			if fetcher.isOuterJoin {
-				required := int(atomic.LoadInt64(&fetcher.RequiredRows))
-				probeSideResult.SetRequiredRows(required, maxChunkSize)
-			}
-		*/
+		if fetcher.shouldLimitProbeFetchSize() {
+			required := int(atomic.LoadInt64(&fetcher.RequiredRows))
+			probeSideResult.SetRequiredRows(required, maxChunkSize)
+		}
 		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
@@ -274,7 +283,10 @@ func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 					probeSideResult.Reset()
 				}
 			})
-			if probeSideResult.NumRows() == 0 && !fetcher.UseOuterToBuild {
+			if probeSideResult.NumRows() == 0 && !fetcher.needScanHTAfterProbeDone {
+				// this is a short path, if current join don't need to scan hash table
+				// after probe, then if the probe side is empty, the join result must
+				// be empty
 				fetcher.finished.Store(true)
 			}
 			emptyBuild, buildErr := fetcher.wait4BuildSide()
@@ -292,6 +304,7 @@ func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 		if probeSideResult.NumRows() == 0 {
 			return
 		}
+		fetcher.probeSideIsEmpty = false
 
 		probeSideResource.dest <- probeSideResult
 	}
@@ -306,11 +319,9 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (emptyBuild bool, err err
 			return false, err
 		}
 	}
-	/*
-		if fetcher.rowContainer.Len() == uint64(0) && (fetcher.joinType == plannercore.InnerJoin || fetcher.joinType == plannercore.SemiJoin) {
-			return true, nil
-		}
-	*/
+	if fetcher.probeSideIsEmpty == true && (fetcher.JoinType == plannercore.InnerJoin || fetcher.JoinType == plannercore.SemiJoin) {
+		return true, nil
+	}
 	return false, nil
 }
 
@@ -367,6 +378,8 @@ func (e *PartitionedHashJoinExec) initializeForProbe() {
 	e.joinResultCh = make(chan *internalutil.HashjoinWorkerResult, e.Concurrency+1)
 
 	e.ProbeSideTupleFetcher.PartitionedHashJoinCtx = e.PartitionedHashJoinCtx
+	e.ProbeSideTupleFetcher.needScanHTAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanHT()
+	e.ProbeSideTupleFetcher.probeSideIsEmpty = true
 	// e.ProbeSideTupleFetcher.ProbeResultChs is for transmitting the chunks which store the data of
 	// ProbeSideExec, it'll be written by probe side worker goroutine, and read by join
 	// workers.
