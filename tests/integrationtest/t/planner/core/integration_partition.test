@@ -565,7 +565,7 @@ drop table t1;
 # TestRangeColumnsMultiColumn
 create database RangeColumnsMulti;
 use RangeColumnsMulti;
--- error 1064
+-- error 1566
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p0 values less than (NULL,NULL,NULL));
 -- error 1654
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483649,'0000-00-00',""));
