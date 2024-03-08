@@ -609,27 +609,6 @@ func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.Sch
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
-func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
-	if b.enableV2 {
-		return b.applyCreatePolicyV2(m, diff)
-	}
-	return b.applyCreatePolicy(m, diff)
-}
-
-func applyDropPolicy(b *Builder, PolicyID int64) []int64 {
-	if b.enableV2 {
-		return b.applyDropPolicyV2(PolicyID)
-	}
-	return b.applyDropPolicy(PolicyID)
-}
-
-func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyAlterPolicyV2(m, diff)
-	}
-	return b.applyAlterPolicy(m, diff)
-}
-
 func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
 		// return b.applyDropTableOrPartitionV2(m, diff)
@@ -722,18 +701,6 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model
 }
 
 func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
-	panic("TODO")
-}
-
-func (b *Builder) applyCreatePolicyV2(m *meta.Meta, diff *model.SchemaDiff) error {
-	panic("TODO")
-}
-
-func (b *Builder) applyAlterPolicyV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
-func (b *Builder) applyDropPolicyV2(PolicyID int64) []int64 {
 	panic("TODO")
 }
 

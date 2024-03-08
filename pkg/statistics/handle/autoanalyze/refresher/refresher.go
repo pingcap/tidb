@@ -116,7 +116,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		// Only analyze one table each time.
 		return true
 	}
-	statslogutil.StatsLogger().Info(
+	statslogutil.StatsLogger().Debug(
 		"No table to analyze",
 	)
 	return false

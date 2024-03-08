@@ -1204,7 +1204,7 @@ type SessionVars struct {
 
 	// EnableRedactLog indicates that whether redact log.
 	EnableRedactLog bool
-	// EnableRedactNew indicates that whether redact log.
+	// EnableRedactNew indicates that whether redact log. Possible values are 'OFF', 'ON', 'MARKER'.
 	EnableRedactNew string
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
@@ -2803,6 +2803,9 @@ type Concurrency struct {
 
 	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
 	IdleTransactionTimeout int
+
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -3167,7 +3170,7 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	CopTasks          *stmtctx.CopTasksDetails
+	CopTasks          *execdetails.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
 	DiskMax           int64
