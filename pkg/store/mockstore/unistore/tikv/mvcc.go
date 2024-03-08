@@ -959,6 +959,93 @@ func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpc
 	return store.dbWriter.Write(batch)
 }
 
+// Flush implements the MVCCStore interface.
+func (store *MVCCStore) Flush(reqCtx *requestCtx, req *kvrpcpb.FlushRequest) error {
+	mutations := req.GetMutations()
+	if !slices.IsSortedFunc(mutations, func(i, j *kvrpcpb.Mutation) int {
+		return bytes.Compare(i.Key, j.Key)
+	}) {
+		return errors.New("mutations are not sorted")
+	}
+
+	regCtx := reqCtx.regCtx
+	hashVals := mutationsToHashVals(mutations)
+	regCtx.AcquireLatches(hashVals)
+	defer regCtx.ReleaseLatches(hashVals)
+
+	startTS := req.StartTs
+	// Only check the PK's status first.
+	for _, m := range mutations {
+		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
+		if err != nil {
+			return err
+		}
+		if lock != nil {
+			continue
+		}
+		if bytes.Equal(m.Key, req.PrimaryKey) {
+			status := store.checkExtraTxnStatus(reqCtx, m.Key, startTS)
+			if status.isRollback {
+				return kverrors.ErrAlreadyRollback
+			}
+			if status.isOpLockCommitted() {
+				// duplicated command
+				return nil
+			}
+		}
+	}
+	items, err := store.getDBItems(reqCtx, mutations)
+	if err != nil {
+		return err
+	}
+	for i, m := range mutations {
+		item := items[i]
+		if item != nil {
+			userMeta := mvcc.DBUserMeta(item.UserMeta())
+			if userMeta.CommitTS() > startTS {
+				return &kverrors.ErrConflict{
+					StartTS:          startTS,
+					ConflictTS:       userMeta.StartTS(),
+					ConflictCommitTS: userMeta.CommitTS(),
+					Key:              item.KeyCopy(nil),
+					Reason:           kvrpcpb.WriteConflict_Optimistic,
+				}
+			}
+		}
+		// Op_CheckNotExists type requests should not add lock
+		if m.Op == kvrpcpb.Op_CheckNotExists {
+			if item != nil {
+				val, err := item.Value()
+				if err != nil {
+					return err
+				}
+				if len(val) > 0 {
+					return &kverrors.ErrKeyAlreadyExists{Key: m.Key}
+				}
+			}
+			continue
+		}
+	}
+
+	dummyPrewriteReq := &kvrpcpb.PrewriteRequest{
+		PrimaryLock:  req.PrimaryKey,
+		StartVersion: startTS,
+	}
+	batch := store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
+	for i, m := range mutations {
+		if m.Op == kvrpcpb.Op_CheckNotExists {
+			continue
+		}
+		lock, err1 := store.buildPrewriteLock(reqCtx, m, items[i], dummyPrewriteReq)
+		if err1 != nil {
+			return err1
+		}
+		batch.Prewrite(m.Key, lock)
+	}
+
+	return store.dbWriter.Write(batch)
+}
+
 func (store *MVCCStore) tryOnePC(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation,
 	req *kvrpcpb.PrewriteRequest, items []*badger.Item, minCommitTS uint64, maxCommitTS uint64) (bool, error) {
 	if maxCommitTS != 0 && minCommitTS > maxCommitTS {
@@ -1391,6 +1478,30 @@ func (store *MVCCStore) CheckKeysLock(startTS uint64, resolved, committed []uint
 		}
 	}
 	return lockPairs, nil
+}
+
+// ReadBufferFromLock implements the MVCCStore interface.
+func (store *MVCCStore) ReadBufferFromLock(startTS uint64, keys ...[]byte) []*kvrpcpb.KvPair {
+	var buf []byte
+	pairs := make([]*kvrpcpb.KvPair, 0, len(keys))
+	for _, key := range keys {
+		buf = store.lockStore.Get(key, buf)
+		if len(buf) == 0 {
+			continue
+		}
+		lock := mvcc.DecodeLock(buf)
+		if lock.StartTS != startTS {
+			continue
+		}
+		val := getValueFromLock(&lock)
+		if len(val) > 0 {
+			pairs = append(pairs, &kvrpcpb.KvPair{
+				Key:   key,
+				Value: safeCopy(val),
+			})
+		}
+	}
+	return pairs
 }
 
 // CheckRangeLock implements the MVCCStore interface.

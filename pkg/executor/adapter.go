@@ -965,10 +965,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
-			stmtText := a.OriginText()
-			if sctx.GetSessionVars().EnableRedactLog {
-				stmtText = parser.Normalize(stmtText)
-			}
+			stmtText := parser.Normalize(a.OriginText(), sctx.GetSessionVars().EnableRedactNew)
 			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
 				"Note this may not be a uniqueness violation.",
 				zap.Error(err),

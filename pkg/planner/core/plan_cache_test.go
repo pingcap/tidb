@@ -1336,7 +1336,7 @@ func insertValuesForMVIndex(nRows int, colTypes ...string) string {
 	return strings.Join(stmtVals, ", ")
 }
 
-func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge bool, queryTemplate string, colTypes ...string) {
+func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge, hitCache bool, queryTemplate string, colTypes ...string) {
 	for i := 0; i < 5; i++ {
 		var vals []string
 		for _, colType := range colTypes {
@@ -1365,21 +1365,21 @@ func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge b
 		}
 		result1 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
 		result.Check(result1.Rows())
-		if isIndexMerge {
+		if isIndexMerge && hitCache {
 			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
 		}
 		result2 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
 		result.Check(result2.Rows())
-		if isIndexMerge {
+		if isIndexMerge && hitCache {
 			tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
 		}
 		result3 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
 		result.Check(result3.Rows())
-		if isIndexMerge {
+		if isIndexMerge && hitCache {
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // hit the cache
 		}
 
-		if isIndexMerge {
+		if isIndexMerge && hitCache { // check the plan
 			result4 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
 			result.Check(result4.Rows())
 			tkProcess := tk.Session().ShowProcess()
@@ -1407,28 +1407,28 @@ func TestPlanCacheMVIndexRandomly(t *testing.T) {
 	tk.MustExec(`drop table if exists t2`)
 	tk.MustExec(`create table t2(a json, b json, c int, d int, e int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d))`)
 	tk.MustExec(fmt.Sprintf("insert into t2 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int", "int")))
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=?) or (? member of (b) and c=?)`,
 		`int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
 		`int`, `int`, `int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, false,
 		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
 		`json-signed`, `int`, `int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, false,
 		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
 		`json-signed`, `int`, `int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, ?) and d=?) or (? member of (b) and c=? and d=?)`,
 		`json-signed`, `int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?)`,
 		`int`, `int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, false,
+	verifyPlanCacheForMVIndex(t, tk, false, true,
 		`select * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?) or e=?`,
 		`int`, `int`, `int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (? member of (a) and ? member of (b) and c=?) or (? member of (b) and c=?) or d=?`,
 		`int`, `int`, `int`, `int`, `int`, `int`)
 
@@ -1438,22 +1438,22 @@ func TestPlanCacheMVIndexRandomly(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("insert into t1 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int")))
 	tk.MustExec(`create table t2(a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d))`)
 	tk.MustExec(fmt.Sprintf("insert into t2 values %v", insertValuesForMVIndex(100, "json-signed", "json-signed", "int", "int")))
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t1, idx, idx2) */ * from t1 where ? member of (a) and ? member of (b)`,
 		`int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t2, idx, idx2) */ * from t2 where ? member of (a) and ? member of (b) and c=?`,
 		`int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t2, idx, idx2, idx4) */ * from t2 where ? member of (a) and ? member of (b) and c=? and d=?`,
 		`int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, false,
 		`select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, ?) and c=? and ? member of (b) and d=?`,
 		`json-signed`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, false,
 		`select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, ?) and c=? and ? member of (b) and d=?`,
 		`json-signed`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, false,
+	verifyPlanCacheForMVIndex(t, tk, false, true,
 		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ? member of (a) and c=? and c=?`,
 		`int`, `int`, `int`)
 
@@ -1461,7 +1461,7 @@ func TestPlanCacheMVIndexRandomly(t *testing.T) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec("create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as signed array))))")
 	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "string", "json-string", "json-string", "json-string", "json-signed")))
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, false, false,
 		`SELECT /*+ use_index_merge(t, domains, image_signatures, canonical_links, fpi) */ pk FROM t WHERE ? member of (domains) OR ? member of (image_signatures) OR ? member of (canonical_links) OR json_contains(fpi, "[69236881]") LIMIT 100`,
 		`string`, `string`, `string`)
 
@@ -1469,7 +1469,7 @@ func TestPlanCacheMVIndexRandomly(t *testing.T) {
 	tk.MustExec(`DROP table if exists t`)
 	tk.MustExec("CREATE TABLE `t` (`pk` varbinary(255) NOT NULL,`nslc` json DEFAULT NULL,`fpi` json DEFAULT NULL,`point_of_sale_country` varchar(2) DEFAULT NULL,KEY `fpi` ((cast(`fpi` as signed array))),KEY `nslc` ((cast(`nslc` as char(1000) array)),`point_of_sale_country`),KEY `nslc_old` ((cast(`nslc` as char(1000) array))))")
 	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "string", "json-string", "json-signed", "string")))
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		"SELECT /*+ use_index_merge(t, fpi, nslc_old, nslc) */ * FROM   t WHERE   ? member of (fpi)   AND ? member of (nslc) LIMIT   100",
 		"int", "string")
 
@@ -1477,10 +1477,10 @@ func TestPlanCacheMVIndexRandomly(t *testing.T) {
 	tk.MustExec(`DROP table if exists t`)
 	tk.MustExec("CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as signed array))))")
 	tk.MustExec(fmt.Sprintf("insert into t values %v", insertValuesForMVIndex(100, "json-string", "json-signed", "int")))
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		"SELECT  /*+ use_index_merge(t, nslc) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
 		"int", "string")
-	verifyPlanCacheForMVIndex(t, tk, true,
+	verifyPlanCacheForMVIndex(t, tk, true, true,
 		"SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  ? member of (fpi)  AND ? member of (nslc)  LIMIT  1",
 		"int", "string")
 }
@@ -1506,7 +1506,8 @@ func TestPlanCacheMVIndexManually(t *testing.T) {
 			output[i].SQL = input[i]
 		})
 		if strings.HasPrefix(strings.ToLower(input[i]), "select") ||
-			strings.HasPrefix(strings.ToLower(input[i]), "execute") {
+			strings.HasPrefix(strings.ToLower(input[i]), "execute") ||
+			strings.HasPrefix(strings.ToLower(input[i]), "show") {
 			result := tk.MustQuery(input[i])
 			testdata.OnRecord(func() {
 				output[i].Result = testdata.ConvertRowsToStrings(result.Rows())

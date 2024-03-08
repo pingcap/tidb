@@ -69,9 +69,9 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableI
 func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment string) {
 	var tblColIDs []model.TableItemID
 	if histNeededOnly {
-		_, tblColIDs = CollectColumnStatsUsage(lp, false, true)
+		_, tblColIDs, _ = CollectColumnStatsUsage(lp, false, true)
 	} else {
-		tblColIDs, _ = CollectColumnStatsUsage(lp, true, false)
+		tblColIDs, _, _ = CollectColumnStatsUsage(lp, true, false)
 	}
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
