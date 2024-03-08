@@ -2439,7 +2439,7 @@
             },
             {
               "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
-              "legendFormat": "limit-{{instance}}",
+              "legendFormat": "quota-{{instance}}",
               "refId": "B"
             }
           ],
@@ -2606,6 +2606,13 @@
               "intervalFactor": 1,
               "legendFormat": "{{module}}-{{instance}}",
               "refId": "I"
+            },
+            {
+              "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "quota-{{instance}}",
+              "refId": "J"
             }
           ],
           "thresholds": [],
@@ -19688,7 +19695,7 @@
             },
             {
               "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
-              "legendFormat": "limit-{{instance}}",
+              "legendFormat": "quota-{{instance}}",
               "refId": "B"
             }
           ],
