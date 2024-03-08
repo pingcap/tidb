@@ -2912,6 +2912,9 @@ func TestDecimalDivPrecisionIncrement(t *testing.T) {
 	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.142857142857142857142857142857", "1.285714285714285714285714285714"))
 
 	tk.MustExec("set div_precision_increment = 4")
+	tk.MustQuery("select avg(a) from t").Check(testkit.Rows("8.5000"))
+
+	tk.MustExec("set div_precision_increment = 4")
 	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571"))
 
 	tk.MustExec("set div_precision_increment = 10")
