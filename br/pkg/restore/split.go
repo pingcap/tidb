@@ -419,6 +419,8 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 }
 
 func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*split.RegionInfo, timeout time.Duration) int {
+	// TODO(lance6716):
+
 	var (
 		startTime   = time.Now()
 		interval    = split.ScatterWaitInterval

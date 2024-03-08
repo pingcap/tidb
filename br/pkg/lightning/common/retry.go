@@ -162,3 +162,5 @@ func isSingleRetryableError(err error) bool {
 		}
 	}
 }
+
+func IsErrorWith

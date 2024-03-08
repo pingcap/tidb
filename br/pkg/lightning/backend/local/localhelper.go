@@ -323,7 +323,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 
 // ScatterRegion scatter the regions and retry if it fails. It returns error if can not scatter after max_retry.
 func (local *Backend) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
+	backoffer := split.NewWaitRegionOnlineBackoffer()
 	err := utils.WithRetry(ctx, func() error {
 		var failedErr error
 		err := local.splitCli.ScatterRegion(ctx, regionInfo)
@@ -356,7 +356,7 @@ func (local *Backend) BatchSplitRegions(
 	var failedErr error
 	splitRegions := newRegions
 	// wait for regions to be split
-	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
+	backoffer := split.NewWaitRegionOnlineBackoffer()
 	failedErr = utils.WithRetry(ctx, func() error {
 		retryRegions := make([]*split.RegionInfo, 0)
 		for _, region := range splitRegions {
@@ -421,7 +421,7 @@ func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, err
 func (local *Backend) waitForScatterRegions(ctx context.Context, regions []*split.RegionInfo) (scatterCount int, _ error) {
 	var (
 		retErr    error
-		backoffer = split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
+		backoffer = split.NewWaitRegionOnlineBackoffer()
 	)
 	// WithRetry will return multierr which is hard to use, so we use `retErr`
 	// to save the error needed to return.

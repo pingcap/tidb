@@ -208,7 +208,7 @@ type WaitRegionOnlineBackoffer struct {
 }
 
 // NewWaitRegionOnlineBackoffer create a backoff to wait region online.
-func NewWaitRegionOnlineBackoffer() utils.Backoffer {
+func NewWaitRegionOnlineBackoffer() *WaitRegionOnlineBackoffer {
 	return &WaitRegionOnlineBackoffer{
 		Stat: utils.InitialRetryState(
 			WaitRegionOnlineAttemptTimes,

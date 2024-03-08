@@ -22,7 +22,9 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
@@ -74,18 +76,15 @@ type SplitClient interface {
 	// SetStoresLabel add or update specified label of stores. If labelValue
 	// is empty, it clears the label.
 	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
-	// IsScatterRegionFinished check the latest successful operator and return the
-	// follow status:
+	// WaitForScatterRegion waits for an already started scatter region action to
+	// finish. Internally it will backoff and retry at the maximum internal of 2
+	// seconds. If the scatter makes progress during the retry, it will not decrease
+	// the retry counter. If there's always no progress, it will retry for about 1h.
+	// Caller can set the context timeout to control the max waiting time.
 	//
-	//	return (finished, needRescatter, error)
-	//
-	// if the latest operator is not `scatter-operator`, or its status is SUCCESS,
-	// it's likely that the scatter region operator is finished.
-	//
-	// if the latest operator is `scatter-operator` and its status is TIMEOUT or
-	// CANCEL, the needRescatter is true and the function caller needs to scatter
-	// this region again.
-	IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error)
+	// The first return value is always the number of regions that are not finished
+	// scattering no matter what the error is.
+	WaitForScatterRegion(ctx context.Context, regionInfos []*RegionInfo) (notFinished int, err error)
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -564,7 +563,7 @@ func (c *pdClient) SetStoresLabel(
 	return nil
 }
 
-func (c *pdClient) IsScatterRegionFinished(
+func (c *pdClient) isScatterRegionFinished(
 	ctx context.Context,
 	regionID uint64,
 ) (scatterDone bool, needRescatter bool, scatterErr error) {
@@ -577,6 +576,88 @@ func (c *pdClient) IsScatterRegionFinished(
 		return false, false, errors.Trace(err)
 	}
 	return IsScatterRegionFinished(resp)
+}
+
+func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionInfo) (int, error) {
+	var (
+		retErr        error
+		backoffer     = NewWaitRegionOnlineBackoffer()
+		retryCnt      = 0
+		notScattered  = make([]*RegionInfo, 0, len(regions))
+		needRescatter = make([]*RegionInfo, 0, len(regions))
+	)
+	// WithRetry will return multierr which is hard to use, so we use `retErr`
+	// to save the error needed to return.
+	_ = utils.WithRetry(ctx, func() error {
+		loggedLongRetry := false
+		needRescatter = needRescatter[:0]
+
+		for _, region := range regions {
+			regionID := region.Region.GetId()
+
+			if retryCnt > 10 && !loggedLongRetry {
+				loggedLongRetry = true
+				resp, err := c.GetOperator(ctx, regionID)
+				brlog.FromContext(ctx).Info(
+					"retried many times to wait for scattering regions, checking operator",
+					zap.Int("retryCnt", retryCnt),
+					zap.Uint64("firstRegionID", regionID),
+					zap.Stringer("response", resp),
+					zap.Error(err),
+				)
+			}
+
+			ok, rescatter, err := c.isScatterRegionFinished(ctx, regionID)
+			if err != nil {
+				if !common.IsRetryableError(err) {
+					brlog.FromContext(ctx).Warn(
+						"wait for scatter region encountered non-retryable error",
+						logutil.Region(region.Region),
+						zap.Error(err),
+					)
+					retErr = err
+					// return nil to stop utils.WithRetry, the error is saved in `retErr`
+					return nil
+				}
+				brlog.FromContext(ctx).Warn(
+					"wait for scatter region encountered error, will retry again",
+					logutil.Region(region.Region),
+					zap.Error(err),
+				)
+				notScattered = append(notScattered, region)
+				continue
+			}
+			if ok {
+				continue
+			}
+			if rescatter {
+				needRescatter = append(needRescatter, region)
+			}
+			// RUNNING_STATUS, just wait and check it in the next loop
+		}
+
+		if len(notScattered) == 0 {
+			regions = notScattered
+			return nil
+		}
+		if len(notScattered) < len(regions) {
+			// if scatter has progress, we should not increase the retry counter
+			backoffer.Stat.ReduceRetry()
+		}
+		if len(needRescatter) > 0 {
+			c.ScatterRegions(ctx, needRescatter)
+		}
+
+		regions = retryRegions
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "wait for scatter region failed")
+	}, backoffer)
+
+	if len(regions) > 0 && retErr == nil {
+		retErr = errors.Errorf(
+			"wait for scatter region timeout, print the first unfinished region %v",
+			regions[0].Region.String(),
+		)
+	}
 }
 
 // IsScatterRegionFinished checks whether the scatter region operator is
