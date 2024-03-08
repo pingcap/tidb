@@ -190,6 +190,16 @@ func MockResourceGroupInfo(t *testing.T, store kv.Storage, groupName string) *mo
 	}
 }
 
+// MockPolicyInfo mock policy for testing.
+func MockPolicyInfo(t *testing.T, store kv.Storage, policyName string) *model.PolicyInfo {
+	id, err := GenGlobalID(store)
+	require.NoError(t, err)
+	return &model.PolicyInfo{
+		ID:   id,
+		Name: model.NewCIStr(policyName),
+	}
+}
+
 // AddTable add mock table for testing.
 func AddTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -262,6 +272,39 @@ func DropResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGrou
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).DropResourceGroup(group.ID)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// CreatePolicy create mock policy for testing.
+func CreatePolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreatePolicy(policy)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// UpdatePolicy update mock policy for testing.
+func UpdatePolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdatePolicy(policy)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// DropPolicy drop mock policy for testing.
+func DropPolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).DropPolicy(policy.ID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
