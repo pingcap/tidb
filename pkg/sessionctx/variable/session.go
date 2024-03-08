@@ -1204,6 +1204,8 @@ type SessionVars struct {
 
 	// EnableRedactLog indicates that whether redact log.
 	EnableRedactLog bool
+	// EnableRedactNew indicates that whether redact log.
+	EnableRedactNew string
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
@@ -3165,7 +3167,7 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	CopTasks          *stmtctx.CopTasksDetails
+	CopTasks          *execdetails.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
 	DiskMax           int64
