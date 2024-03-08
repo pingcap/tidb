@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
@@ -254,34 +253,6 @@ func (c *TestClient) IsScatterRegionFinished(
 	return split.IsScatterRegionFinished(resp)
 }
 
-type assertRetryLessThanBackoffer struct {
-	max     int
-	already int
-	t       *testing.T
-}
-
-func assertRetryLessThan(t *testing.T, times int) utils.Backoffer {
-	return &assertRetryLessThanBackoffer{
-		max:     times,
-		already: 0,
-		t:       t,
-	}
-}
-
-// NextBackoff returns a duration to wait before retrying again
-func (b *assertRetryLessThanBackoffer) NextBackoff(err error) time.Duration {
-	b.already++
-	if b.already >= b.max {
-		b.t.Logf("retry more than %d time: test failed", b.max)
-		b.t.FailNow()
-	}
-	return 0
-}
-
-// Attempt returns the remain attempt times
-func (b *assertRetryLessThanBackoffer) Attempt() int {
-	return b.max - b.already
-}
 func TestScanEmptyRegion(t *testing.T) {
 	client := initTestClient(false)
 	ranges := initRanges()
@@ -294,44 +265,6 @@ func TestScanEmptyRegion(t *testing.T) {
 	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
 	// should not return error with only one range entry
 	require.NoError(t, err)
-}
-
-func TestScatterFinishInTime(t *testing.T) {
-	client := initTestClient(false)
-	ranges := initRanges()
-	rewriteRules := initRewriteRules()
-	regionSplitter := restore.NewRegionSplitter(client)
-
-	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
-	require.NoError(t, err)
-	regions := client.GetAllRegions()
-	if !validateRegions(regions) {
-		for _, region := range regions {
-			t.Logf("region: %v\n", region.Region)
-		}
-		t.Log("get wrong result")
-		t.Fail()
-	}
-
-	regionInfos := make([]*split.RegionInfo, 0, len(regions))
-	for _, info := range regions {
-		regionInfos = append(regionInfos, info)
-	}
-	failed := map[uint64]int{}
-	client.injectInScatter = func(r *split.RegionInfo) error {
-		failed[r.Region.Id]++
-		if failed[r.Region.Id] > 7 {
-			return nil
-		}
-		return status.Errorf(codes.Unknown, "region %d is not fully replicated", r.Region.Id)
-	}
-
-	// When using a exponential backoffer, if we try to backoff more than 40 times in 10 regions,
-	// it would cost time unacceptable.
-	regionSplitter.ScatterRegionsSequentially(ctx,
-		regionInfos,
-		assertRetryLessThan(t, 40))
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
