@@ -757,5 +757,5 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 	rs, err := tk.ExecWithContext(ctx, "select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);")
 	require.NoError(t, err)
 	session.ResultSetToStringSlice(ctx, tk.Session(), rs)
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/testCancelContext")
+	failpoint.Disable("github.com/pingcap/tidb/executor/testCancelContext")
 }
