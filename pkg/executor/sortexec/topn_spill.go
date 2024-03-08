@@ -98,7 +98,7 @@ func (t *topNSpillHelper) isSpillNeeded() bool {
 
 func (t *topNSpillHelper) isSpillTriggered() bool {
 	t.cond.L.Lock()
-	defer t.cond.L.Unlock()
+ 	defer t.cond.L.Unlock()
 	return len(t.sortedRowsInDisk) > 0
 }
 

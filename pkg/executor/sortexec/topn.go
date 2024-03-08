@@ -71,15 +71,14 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	if variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
-		concurrency := e.Ctx().GetSessionVars().Concurrency.ExecutorConcurrency
-		e.chunkChannel = make(chan *chunk.Chunk, concurrency)
 		e.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 
+		concurrency := e.Ctx().GetSessionVars().Concurrency.ExecutorConcurrency
 		workers := make([]*topNWorker, concurrency)
 		for i := range workers {
 			chkHeap := &topNChunkHeap{}
 			chkHeap.init(e, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.ByItems, e.keyColumns, e.keyCmpFuncs)
-			workers[i] = newTopNWorker(e.chunkChannel, e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, chkHeap, e)
+			workers[i] = newTopNWorker(e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, chkHeap, e)
 		}
 
 		e.spillHelper = newTopNSpillerHelper(
@@ -267,9 +266,10 @@ func (e *TopNExec) fetchChunksFromChild(ctx context.Context) {
 func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
 	err := e.spillHelper.spillHeap(e.chkHeap)
 	if err != nil {
-		close(e.chunkChannel)
 		return err
 	}
+
+	e.chunkChannel = make(chan *chunk.Chunk, len(e.spillHelper.workers))
 
 	// Wait for the finish of chunk fetcher
 	fetcherWaiter := util.WaitGroupWrapper{}
@@ -283,6 +283,7 @@ func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
 
 	for i := range e.spillHelper.workers {
 		worker := e.spillHelper.workers[i]
+		worker.setChunkChannel(e.chunkChannel)
 		workersWaiter.Run(func() {
 			worker.run()
 		})
@@ -310,13 +311,10 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 			e.resultChannel <- rowWithError{err: err}
 			return
 		}
-	} else {
-		if e.chunkChannel != nil {
-			close(e.chunkChannel)
-		}
 	}
 
 	// TODO we may send result rows in spill mode
+	// TODO spill restore
 	// Send result rows
 	rowPtrNum := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < rowPtrNum; e.chkHeap.idx++ {

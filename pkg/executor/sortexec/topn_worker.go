@@ -32,20 +32,22 @@ type topNWorker struct {
 }
 
 func newTopNWorker(
-	chunkChannel <-chan *chunk.Chunk,
 	fetcherAndWorkerSyncer *sync.WaitGroup,
 	errOutputChan chan<- rowWithError,
 	finishChan <-chan struct{},
 	chkHeap *topNChunkHeap,
 	topn *TopNExec) *topNWorker {
 	return &topNWorker{
-		chunkChannel:           chunkChannel,
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
 		errOutputChan:          errOutputChan,
 		finishChan:             finishChan,
 		topn:                   topn,
 		chkHeap:                chkHeap,
 	}
+}
+
+func (t *topNWorker) setChunkChannel(chunkChannel <-chan *chunk.Chunk) {
+	t.chunkChannel = chunkChannel
 }
 
 func (t *topNWorker) fetchChunksAndProcess() {
