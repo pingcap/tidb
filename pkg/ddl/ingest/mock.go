@@ -240,11 +240,6 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 	return nil
 }
 
-// LockForWrite implements Writer.LockForWrite interface.
-func (*MockWriter) LockForWrite() func() {
-	return func() {}
-}
-
 // Close implements Writer.Close interface.
 func (*MockWriter) Close(_ context.Context) error {
 	return nil

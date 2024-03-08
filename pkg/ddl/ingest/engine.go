@@ -44,7 +44,6 @@ type Writer interface {
 	// WriteRow writes one row into downstream.
 	// To enable uniqueness check, the handle should be non-empty.
 	WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error
-	LockForWrite() (unlock func())
 	Close(ctx context.Context) error
 }
 
