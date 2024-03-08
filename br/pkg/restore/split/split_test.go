@@ -8,6 +8,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
@@ -76,13 +77,13 @@ func TestScanRegionBackOfferWithStopRetry(t *testing.T) {
 	require.Equal(t, counter, 6)
 }
 
-type mockScatterPDClient struct {
+type mockScatterFailedPDClient struct {
 	pd.Client
 	failed       map[uint64]int
 	failedBefore int
 }
 
-func (c *mockScatterPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
+func (c *mockScatterFailedPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
 	if c.failed == nil {
 		c.failed = make(map[uint64]int)
 	}
@@ -97,7 +98,7 @@ type recordCntBackoffer struct {
 	already int
 }
 
-func (b *recordCntBackoffer) NextBackoff(err error) time.Duration {
+func (b *recordCntBackoffer) NextBackoff(error) time.Duration {
 	b.already++
 	return 0
 }
@@ -109,7 +110,7 @@ func (b *recordCntBackoffer) Attempt() int {
 func TestScatterSequentiallyRetryCnt(t *testing.T) {
 	client := pdClient{
 		needScatterVal: true,
-		client:         &mockScatterPDClient{failedBefore: 7},
+		client:         &mockScatterFailedPDClient{failedBefore: 7},
 	}
 	client.needScatterInit.Do(func() {})
 
@@ -133,4 +134,47 @@ func TestScatterSequentiallyRetryCnt(t *testing.T) {
 		backoffer,
 	)
 	require.Equal(t, 7, backoffer.already)
+}
+
+type mockOldPDClient struct {
+	pd.Client
+
+	scattered map[uint64]struct{}
+}
+
+func (c *mockOldPDClient) ScatterRegion(_ context.Context, regionID uint64) error {
+	if c.scattered == nil {
+		c.scattered = make(map[uint64]struct{})
+	}
+	c.scattered[regionID] = struct{}{}
+	return nil
+}
+
+func (c *mockOldPDClient) ScatterRegions(context.Context, []uint64, ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "Ah, yep")
+}
+
+func TestScatterBackwardCompatibility(t *testing.T) {
+	client := pdClient{
+		needScatterVal: true,
+		client:         &mockOldPDClient{},
+	}
+	client.needScatterInit.Do(func() {})
+
+	ctx := context.Background()
+	regions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id: 1,
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id: 2,
+			},
+		},
+	}
+	err := client.ScatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, map[uint64]struct{}{1: {}, 2: {}}, client.client.(*mockOldPDClient).scattered)
 }
