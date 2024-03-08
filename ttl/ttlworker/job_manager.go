@@ -459,15 +459,6 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		return
 	}
 
-<<<<<<< HEAD:ttl/ttlworker/job_manager.go
-	// don't lock job if there's no free scan workers in local
-	// it's a mechanism to avoid too many scan tasks waiting in the ttl_tasks table.
-	if len(m.taskManager.idleScanWorkers()) == 0 {
-		return
-	}
-
-	newJobTables := m.readyForNewJobTables(now)
-=======
 	// if the table of a running job disappears, also cancel it
 	for _, job := range m.runningJobs {
 		_, ok := m.infoSchemaCache.Tables[job.tbl.ID]
@@ -485,8 +476,13 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		job.finish(se, now, summary)
 	}
 
-	jobTables := m.readyForLockHBTimeoutJobTables(now)
->>>>>>> acf9e312869 (ttl: remove TTL job when the table has been dropped (#51541)):pkg/ttl/ttlworker/job_manager.go
+	// don't lock job if there's no free scan workers in local
+	// it's a mechanism to avoid too many scan tasks waiting in the ttl_tasks table.
+	if len(m.taskManager.idleScanWorkers()) == 0 {
+		return
+	}
+
+	newJobTables := m.readyForNewJobTables(now)
 	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
 	// when the heart beat is not sent
 	for _, table := range newJobTables {

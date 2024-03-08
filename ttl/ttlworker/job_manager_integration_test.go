@@ -464,16 +464,12 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 		{"alter table test.t remove ttl", "alter table test.t ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'"},
 		{"alter table test.t ttl_enable = 'OFF'", "alter table test.t ttl_enable = 'ON'"},
 	}
-	for i, rb := range removeBehaviors {
+	for _, rb := range removeBehaviors {
 		se := sessionFactory()
-		m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
-			return true
-		})
+		m := ttlworker.NewJobManager("manager-1", nil, store, nil)
 		m.TaskManager().ResizeWorkersWithSysVar()
 		require.NoError(t, m.InfoSchemaCache().Update(se))
-		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
-		// submit job
-		require.NoError(t, m.SubmitJob(se, table.Meta().ID, table.Meta().ID, fmt.Sprintf("request%d", i)))
+		m.RescheduleJobs(se, now)
 		sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 		rows, err := se.ExecuteSQL(ctx, sql, args...)
 		require.NoError(t, err)
@@ -486,7 +482,6 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 		// break the table
 		tk.MustExec(rb.remove)
 		require.NoError(t, m.InfoSchemaCache().Update(se))
-		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 		m.RescheduleJobs(se, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, now.Nanosecond(), now.Location()))
 		tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or the TTL on this table has been stopped"))
 
@@ -495,6 +490,9 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 		table, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		m.DoGC(context.TODO(), se)
+		m.Stop()
+		require.NoError(t, m.WaitStopped(context.Background(), time.Second*5))
+		now = now.Add(time.Hour * 24)
 	}
 }
 
@@ -657,9 +655,7 @@ func TestGCScanTasks(t *testing.T) {
 	addScanTaskRecord(3, 2, 1)
 	addScanTaskRecord(3, 2, 2)
 
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
-		return true
-	})
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
 	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id, scan_id from mysql.tidb_ttl_task order by job_id, scan_id asc").Check(testkit.Rows("1 1", "1 2"))
@@ -676,9 +672,7 @@ func TestGCTableStatus(t *testing.T) {
 	// insert table status without corresponding table
 	tk.MustExec("INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (?, ?)", 2024, 2024)
 
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
-		return true
-	})
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
 	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select * from mysql.tidb_ttl_table_status").Check(nil)
@@ -737,9 +731,7 @@ func TestGCTTLHistory(t *testing.T) {
 	addHistory(6, 91)
 	addHistory(7, 100)
 
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
-		return true
-	})
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
 	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
