@@ -553,19 +553,13 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
 	}
 
-	table, ok := b.infoschemaV2.TableByID(tableID)
-
-	if !ok {
+	item := b.infoData.tableByID(tableID)
+	if item == nil {
+		// not cached, no need to delete cached items.
 		return nil
 	}
 
-	b.infoData.delete(tableItem{
-		dbName:        dbInfo.Name.L,
-		dbID:          dbInfo.ID,
-		tableName:     table.Meta().Name.L,
-		tableID:       table.Meta().ID,
-		schemaVersion: diff.Version,
-	})
+	b.infoData.delete(*item)
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.deleteReferredForeignKeys(dbInfo, tableID)
