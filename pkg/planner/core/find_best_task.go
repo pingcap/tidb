@@ -1471,6 +1471,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 						break
 					}
 				}
+				if path != nil && path.Index != nil && path.Index.Global {
+					// Don't convert to point get during ddl
+					// TODO: Revisit truncate partition and global index
+					if len(ds.tableInfo.GetPartitionInfo().DroppingDefinitions) > 0 ||
+						len(ds.tableInfo.GetPartitionInfo().AddingDefinitions) > 0 {
+						canConvertPointGet = false
+					}
+				}
 			}
 		}
 		if canConvertPointGet {

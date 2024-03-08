@@ -1360,7 +1360,6 @@ func tryPointGetPlan(ctx PlanContext, selStmt *ast.SelectStmt, check bool) *Poin
 
 func checkTblIndexForPointPlan(ctx PlanContext, tblName *ast.TableName, schema *expression.Schema,
 	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool) *PointGetPlan {
-	// TODO: Follow up how Global Index for partitioned tables works with this?
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
@@ -1375,6 +1374,13 @@ func checkTblIndexForPointPlan(ctx PlanContext, tblName *ast.TableName, schema *
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
 			continue
+		}
+		if idxInfo.Global {
+			if tblName.TableInfo == nil ||
+				len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
+				len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
+				continue
+			}
 		}
 		if isTableDual {
 			if check && latestIndexes == nil {
