@@ -966,6 +966,11 @@ error = '''
 This partition function is not allowed
 '''
 
+["ddl:1566"]
+error = '''
+Not allowed to use NULL value in VALUES LESS THAN
+'''
+
 ["ddl:1567"]
 error = '''
 Incorrect partition name
