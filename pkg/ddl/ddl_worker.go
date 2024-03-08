@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	kv2 "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -415,6 +416,12 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	// lock to reduce conflict
 	d.globalIDLock.Lock()
 	err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+		key := []byte{0x6d, 0x4e, 0x65, 0x78, 0x74, 0x47, 0x6c, 0x6f, 0x62, 0xff, 0x61, 0x6c, 0x49, 0x44, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x73}
+		txn.SetOption(kv.Pessimistic, true)
+		lockCtx := kv2.NewLockCtx(txn.StartTS(), 50, time.Now())
+		if err := txn.LockKeys(ctx, lockCtx, key); err != nil {
+			return err
+		}
 		t := meta.NewMeta(txn)
 		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
