@@ -123,7 +123,7 @@ func TestTLSAuto(t *testing.T) {
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -168,7 +168,7 @@ func TestTLSBasic(t *testing.T) {
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -232,7 +232,7 @@ func TestTLSVerify(t *testing.T) {
 	defer server.Close()
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -335,7 +335,7 @@ func TestErrorNoRollback(t *testing.T) {
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
@@ -479,7 +479,7 @@ func TestReloadTLS(t *testing.T) {
 	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)

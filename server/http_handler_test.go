@@ -464,7 +464,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	go func() {
-		err := server.Run()
+		err := server.Run(ts.domain)
 		require.NoError(t, err)
 	}()
 	ts.waitUntilServerOnline()
