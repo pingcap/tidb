@@ -174,25 +174,24 @@ func GetPhysID(tblInfo *model.TableInfo, idx *int) int64 {
 	return tblInfo.ID
 }
 
-func matchPartitionNames(tblID int64, partitionNames []model.CIStr, pi *model.PartitionInfo) bool {
+func matchPartitionNames(pid int64, partitionNames []model.CIStr, pi *model.PartitionInfo) bool {
 	if len(partitionNames) == 0 {
 		return true
 	}
-	found := false
 	defs := pi.Definitions
-OuterLoop:
 	for i := range defs {
 		// TODO: create a map from id to partition definition index
-		if defs[i].ID == tblID {
+		if defs[i].ID == pid {
 			for _, name := range partitionNames {
 				if defs[i].Name.L == name.L {
-					found = true
-					break OuterLoop
+					return true
 				}
 			}
+			// Only one partition can match pid
+			return false
 		}
 	}
-	return found
+	return false
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
