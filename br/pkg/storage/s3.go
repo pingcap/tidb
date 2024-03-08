@@ -307,6 +307,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		awsConfig.WithRegion(qs.Region)
 	}
 
+	awsConfig.WithLogLevel(aws.LogDebug)
+
 	if opts.S3Retryer != nil {
 		request.WithRetryer(awsConfig, opts.S3Retryer)
 	} else {
