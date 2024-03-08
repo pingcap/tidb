@@ -528,15 +528,17 @@ func TestReloadTLS(t *testing.T) {
 		SSLCert: "/tmp/server-cert-reload.pem",
 		SSLKey:  "/tmp/server-key-reload.pem",
 	}
-	server, err := server.NewServer(cfg, ts.tidbdrv)
+	server.RunInGoTestChan = make(chan struct{})
+	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	srv.SetDomain(ts.domain)
+
 	go func() {
-		err := server.Run(nil)
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	// The client provides a valid certificate.
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
@@ -545,7 +547,7 @@ func TestReloadTLS(t *testing.T) {
 	require.NoError(t, err)
 
 	// try reload a valid cert.
-	tlsCfg := server.GetTLSConfig()
+	tlsCfg := srv.GetTLSConfig()
 	cert, err := x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
 	require.NoError(t, err)
 	oldExpireTime := cert.NotAfter
@@ -569,7 +571,7 @@ func TestReloadTLS(t *testing.T) {
 	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
 
-	tlsCfg = server.GetTLSConfig()
+	tlsCfg = srv.GetTLSConfig()
 	cert, err = x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
 	require.NoError(t, err)
 	newExpireTime := cert.NotAfter
@@ -596,5 +598,5 @@ func TestReloadTLS(t *testing.T) {
 	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NotNil(t, err)
 	require.Truef(t, isTLSExpiredError(err), "real error is %+v", err)
-	server.Close()
+	srv.Close()
 }
