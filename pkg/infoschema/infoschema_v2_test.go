@@ -135,4 +135,58 @@ func TestMisc(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, resourceGroupInfo2, getResourceGroupInfo)
 	require.NoError(t, txn.Rollback())
+
+	// test create policy
+	policyInfo := internal.MockPolicyInfo(t, r.Store(), "test")
+	internal.CreatePolicy(t, r.Store(), policyInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build()
+	require.Len(t, is.AllPlacementPolicies(), 1)
+	getPolicyInfo, ok := is.PolicyByName(policyInfo.Name)
+	require.True(t, ok)
+	require.Equal(t, policyInfo, getPolicyInfo)
+	require.NoError(t, txn.Rollback())
+
+	// create another policy
+	policyInfo2 := internal.MockPolicyInfo(t, r.Store(), "test2")
+	internal.CreatePolicy(t, r.Store(), policyInfo2)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo2.ID})
+	require.NoError(t, err)
+	is = builder.Build()
+	require.Len(t, is.AllPlacementPolicies(), 2)
+	getPolicyInfo, ok = is.PolicyByName(policyInfo2.Name)
+	require.True(t, ok)
+	require.Equal(t, policyInfo2, getPolicyInfo)
+	require.NoError(t, txn.Rollback())
+
+	// test alter policy
+	policyInfo.State = model.StatePublic
+	internal.UpdatePolicy(t, r.Store(), policyInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build()
+	require.Len(t, is.AllPlacementPolicies(), 2)
+	getPolicyInfo, ok = is.PolicyByName(policyInfo.Name)
+	require.True(t, ok)
+	require.Equal(t, policyInfo, getPolicyInfo)
+	require.NoError(t, txn.Rollback())
+
+	// test drop policy
+	internal.DropPolicy(t, r.Store(), policyInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_ = applyDropPolicy(builder, policyInfo.ID)
+	is = builder.Build()
+	require.Len(t, is.AllPlacementPolicies(), 1)
+	getPolicyInfo, ok = is.PolicyByName(policyInfo2.Name)
+	require.True(t, ok)
+	require.Equal(t, policyInfo2, getPolicyInfo)
+	require.NoError(t, txn.Rollback())
 }
