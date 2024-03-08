@@ -705,17 +705,7 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 }
 
 func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if di, ok := b.infoSchema.SchemaByID(diff.SchemaID); ok {
-		return nil, ErrDatabaseExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", di.ID),
-		)
-	}
-	di, err := m.GetDatabase(diff.SchemaID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	b.infoData.addDB(diff.Version, di)
-	return applyCreateTables(b, m, diff)
+	panic("TODO")
 }
 
 func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
@@ -732,6 +722,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model
 	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo.Charset = di.Charset
 	newDBInfo.Collate = di.Collate
+	b.infoschemaV2.deleteDB(di.Name)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil
 }
@@ -749,6 +740,7 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.
 	}
 	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	b.infoschemaV2.deleteDB(di.Name)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil
 }
