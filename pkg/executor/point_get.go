@@ -160,7 +160,7 @@ type PointGetExecutor struct {
 	stats *runtimeStatsWithSnapshot
 }
 
-// GetPhysID returns the physical id used, ether the table's id or a partition's ID
+// GetPhysID returns the physical id used, either the table's id or a partition's ID
 func GetPhysID(tblInfo *model.TableInfo, idx *int) int64 {
 	if idx != nil {
 		if *idx < 0 {
@@ -172,6 +172,29 @@ func GetPhysID(tblInfo *model.TableInfo, idx *int) int64 {
 		}
 	}
 	return tblInfo.ID
+}
+
+func matchPartitionNames(tblID int64, partitionNames []model.CIStr, pi *model.PartitionInfo) bool {
+	if len(partitionNames) == 0 {
+		return true
+	}
+	found := false
+	for _, name := range partitionNames {
+		// TODO: create a map from id to partition definition index
+		for _, def := range pi.Definitions {
+			if def.ID == tblID && def.Name.L == name.L {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	return true
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -333,23 +356,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 				tblID = pid
-				if len(e.partitionNames) > 0 {
-					found := false
-					for _, name := range e.partitionNames {
-						// TODO: create a map from id to partition definition index
-						for _, def := range e.tblInfo.GetPartitionInfo().Definitions {
-							if def.ID == tblID && def.Name.L == name.L {
-								found = true
-								break
-							}
-						}
-						if found {
-							break
-						}
-					}
-					if !found {
-						return nil
-					}
+				if !matchPartitionNames(tblID, e.partitionNames, e.tblInfo.GetPartitionInfo()) {
+					return nil
 				}
 			}
 		}

@@ -216,6 +216,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	batchGetter := e.batchGetter
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
+		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
 		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
 		for i, idxVals := range e.idxVals {
@@ -296,19 +297,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					if e.singlePartID != 0 && e.singlePartID != pid {
 						continue
 					}
-					if len(e.partitionNames) > 0 {
-						found := false
-						for _, name := range e.partitionNames {
-							// TODO: create a map of partition ids -> definitions
-							for _, def := range e.tblInfo.GetPartitionInfo().Definitions {
-								if pid == def.ID && def.Name.L == name.L {
-									found = true
-								}
-							}
-						}
-						if !found {
-							continue
-						}
+					if !matchPartitionNames(pid, e.partitionNames, e.tblInfo.GetPartitionInfo()) {
+						continue
 					}
 					e.planPhysIDs = append(e.planPhysIDs, pid)
 				} else {
