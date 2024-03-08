@@ -705,6 +705,7 @@ create table log_message_1 (
 	tk.MustQuery(`select * from t where a < X'0D' order by a`).Check(testkit.Rows("\x0B", "\x0C"))
 }
 
+<<<<<<< HEAD:ddl/db_partition_test.go
 func TestPartitionRangeColumnsCollate(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -832,6 +833,38 @@ func TestDisableTablePartition(t *testing.T) {
 		require.True(t, dbterror.ErrPartitionMgmtOnNonpartitioned.Equal(err))
 		tk.MustExec("insert into t values (1),(3),(5),(100),(null)")
 	}
+=======
+	tk.MustExec(`create table t(a time) partition by range columns (a) (partition p1 values less than ('2020'))`)
+	tk.MustExec(`insert into t values ('2019')`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20'))"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a time, b time) partition by range columns (a) (partition p1 values less than ('2020'), partition p2 values less than ('20:20:10'))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL,\n" +
+			"  `b` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20'),\n" +
+			" PARTITION `p2` VALUES LESS THAN ('20:20:10'))"))
+	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a time, b time) partition by range columns (a,b) (partition p1 values less than ('2020','2020'), partition p2 values less than ('20:20:10','20:20:10'))`)
+	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL,\n" +
+			"  `b` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20','00:20:20'),\n" +
+			" PARTITION `p2` VALUES LESS THAN ('20:20:10','20:20:10'))"))
+>>>>>>> 33d6b79163e (ddl: fix partition definition for literal with non-utf8 charsets + binary column (#49229)):pkg/ddl/tests/partition/db_partition_test.go
 }
 
 func generatePartitionTableByNum(num int) string {
@@ -3796,3 +3829,498 @@ func TestIssue40135Ver2(t *testing.T) {
 	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("admin check table t40135")
 }
+<<<<<<< HEAD:ddl/db_partition_test.go
+=======
+
+func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
+	t.Skip("waiting for supporting Modify Partition Column again")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "truncWarn"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`set sql_mode = default`)
+	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
+	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
+	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustExec(`alter table t modify a varchar(5)`)
+	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+	tk.MustExec(`admin check table t`)
+}
+
+func TestRemoveKeyPartitioning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("create database RemovePartitioning")
+	tk.MustExec("use RemovePartitioning")
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), key (a,b), key (b)) partition by key (a) partitions 7`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// Fill the data with ascii strings
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (char(%d,%d,%d),char(%d,%d,%d,%d))`, i, i, i, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemovePartitioning", "t", "global", "0", "95"},
+		{"RemovePartitioning", "t", "p0", "0", "9"},
+		{"RemovePartitioning", "t", "p1", "0", "11"},
+		{"RemovePartitioning", "t", "p2", "0", "12"},
+		{"RemovePartitioning", "t", "p3", "0", "13"},
+		{"RemovePartitioning", "t", "p4", "0", "16"},
+		{"RemovePartitioning", "t", "p5", "0", "23"},
+		{"RemovePartitioning", "t", "p6", "0", "11"}})
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemovePartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 9",
+		"p1 11",
+		"p2 12",
+		"p3 13",
+		"p4 16",
+		"p5 23",
+		"p6 11"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` varchar(255) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemovePartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemovePartitioning", "t", "", "0", "95"}})
+}
+
+func TestRemoveListPartitioning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("create database RemoveListPartitioning")
+	tk.MustExec("use RemoveListPartitioning")
+	tk.MustExec(`create table t (a int, b varchar(255), key (a,b), key (b)) partition by list (a) (partition p0 values in (0), partition p1 values in (1), partition p2 values in (2), partition p3 values in (3), partition p4 values in (4))`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// Fill the data with ascii strings
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d,char(%d,%d,%d,%d))`, i%5, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "global", "0", "95"},
+		{"RemoveListPartitioning", "t", "p0", "0", "19"},
+		{"RemoveListPartitioning", "t", "p1", "0", "19"},
+		{"RemoveListPartitioning", "t", "p2", "0", "19"},
+		{"RemoveListPartitioning", "t", "p3", "0", "19"},
+		{"RemoveListPartitioning", "t", "p4", "0", "19"}})
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemoveListPartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 19",
+		"p1 19",
+		"p2 19",
+		"p3 19",
+		"p4 19"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+}
+
+func TestRemoveListColumnPartitioning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("create database RemoveListPartitioning")
+	tk.MustExec("use RemoveListPartitioning")
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), key (a,b), key (b)) partition by list columns (a) (partition p0 values in ("0"), partition p1 values in ("1"), partition p2 values in ("2"), partition p3 values in ("3"), partition p4 values in ("4"))`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// Fill the data with ascii strings
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values ("%d",char(%d,%d,%d,%d))`, i%5, i, i, i, i))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "global", "0", "95"},
+		{"RemoveListPartitioning", "t", "p0", "0", "19"},
+		{"RemoveListPartitioning", "t", "p1", "0", "19"},
+		{"RemoveListPartitioning", "t", "p2", "0", "19"},
+		{"RemoveListPartitioning", "t", "p3", "0", "19"},
+		{"RemoveListPartitioning", "t", "p4", "0", "19"}})
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemoveListPartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 19",
+		"p1 19",
+		"p2 19",
+		"p3 19",
+		"p4 19"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` varchar(255) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+}
+
+func TestRemoveListColumnsPartitioning(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("create database RemoveListPartitioning")
+	tk.MustExec("use RemoveListPartitioning")
+	tk.MustExec(`create table t (a int, b varchar(255), key (a,b), key (b)) partition by list columns (a,b) (partition p0 values in ((0,"0")), partition p1 values in ((1,"1")), partition p2 values in ((2,"2")), partition p3 values in ((3,"3")), partition p4 values in ((4,"4")))`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// Fill the data
+	for i := 32; i <= 126; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d,"%d")`, i%5, i%5))
+	}
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "global", "0", "95"},
+		{"RemoveListPartitioning", "t", "p0", "0", "19"},
+		{"RemoveListPartitioning", "t", "p1", "0", "19"},
+		{"RemoveListPartitioning", "t", "p2", "0", "19"},
+		{"RemoveListPartitioning", "t", "p3", "0", "19"},
+		{"RemoveListPartitioning", "t", "p4", "0", "19"}})
+	tk.MustQuery(`select partition_name, table_rows from information_schema.partitions where table_schema = 'RemoveListPartitioning' and table_name = 't'`).Sort().Check(testkit.Rows(""+
+		"p0 19",
+		"p1 19",
+		"p2 19",
+		"p3 19",
+		"p4 19"))
+	tk.MustExec(`alter table t remove partitioning`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`,`b`),\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// Statistics are updated asynchronously
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	// And also cached and lazy loaded
+	h.Clear()
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
+		{"RemoveListPartitioning", "t", "", "0", "95"}})
+}
+
+func TestRemovePartitioningAutoIDs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+
+	dbName := "RemovePartAutoIDs"
+	tk1.MustExec(`create schema ` + dbName)
+	tk1.MustExec(`use ` + dbName)
+	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b)) partition by hash(a) partitions 3`)
+	tk1.MustExec(`insert into t values (11,11),(2,2),(null,12)`)
+	tk1.MustExec(`insert into t values (null,18)`)
+	tk1.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows("13 11 11", "14 2 2", "15 12 12", "17 16 18"))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use ` + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use ` + dbName)
+	waitFor := func(col int, tableName, s string) {
+		for {
+			tk4 := testkit.NewTestKit(t, store)
+			tk4.MustExec(`use test`)
+			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'alter table remove partitioning'`
+			res := tk4.MustQuery(sql).Rows()
+			if len(res) == 1 && res[0][col] == s {
+				break
+			}
+			for i := range res {
+				strs := make([]string, 0, len(res[i]))
+				for j := range res[i] {
+					strs = append(strs, res[i][j].(string))
+				}
+				logutil.BgLogger().Info("ddl jobs", zap.Strings("jobs", strs))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	alterChan := make(chan error)
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into t values (null, 4)`)
+	go func() {
+		alterChan <- tk1.ExecToErr(`alter table t remove partitioning`)
+	}()
+	waitFor(4, "t", "delete only")
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into t values (null, 5)`)
+
+	tk2.MustExec(`insert into t values (null, 6)`)
+	tk3.MustExec(`insert into t values (null, 7)`)
+	tk2.MustExec(`COMMIT`)
+
+	waitFor(4, "t", "write only")
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into t values (null, 8)`)
+
+	tk3.MustExec(`insert into t values (null, 9)`)
+	tk2.MustExec(`insert into t values (null, 10)`)
+	tk3.MustExec(`COMMIT`)
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "30 29 9"))
+	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "23 22 6", "27 26 8", "32 31 10"))
+
+	waitFor(4, "t", "write reorganization")
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into t values (null, 21)`)
+
+	tk2.MustExec(`insert into t values (null, 22)`)
+	tk3.MustExec(`insert into t values (null, 23)`)
+	tk2.MustExec(`COMMIT`)
+
+	/*
+		waitFor(4, "t", "delete reorganization")
+		tk2.MustExec(`BEGIN`)
+		tk2.MustExec(`insert into t values (null, 24)`)
+
+		tk3.MustExec(`insert into t values (null, 25)`)
+		tk2.MustExec(`insert into t values (null, 26)`)
+	*/
+	tk3.MustExec(`COMMIT`)
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
+		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
+
+	//waitFor(4, "t", "public")
+	//tk2.MustExec(`commit`)
+	// TODO: Investigate and fix, but it is also related to https://github.com/pingcap/tidb/issues/46904
+	require.ErrorContains(t, <-alterChan, "[kv:1062]Duplicate entry '26' for key 't.PRIMARY'")
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
+		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
+}
+
+func TestAlterLastIntervalPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (1 day)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-01-03');`)
+	ctx := tk.Session()
+	tbl, err := domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pd := tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-02 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[2].LessThan[0])
+	tk.MustExec("alter table t last partition less than ('2024-01-04')")
+	tk.MustExec("alter table t last partition less than ('2025-01-01 00:00:00')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 732, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-02 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2024-12-31 00:00:00'", pd[730].LessThan[0])
+	require.Equal(t, "'2025-01-01 00:00:00'", pd[731].LessThan[0])
+
+	// Test for interval 2 days.
+	tk.MustExec(`create table t2 (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (2 day)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-01-05');`)
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	tk.MustExec("alter table t2 last partition less than ('2023-01-09')")
+	tk.MustExec("alter table t2 last partition less than ('2023-01-11 00:00:00')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 6, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07 00:00:00'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09 00:00:00'", pd[4].LessThan[0])
+	require.Equal(t, "'2023-01-11 00:00:00'", pd[5].LessThan[0])
+
+	// Test for day with time.
+	tk.MustExec(`create table t3 (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (2 day)
+		first partition less than ('2023-01-01 12:01:02')
+		last partition less than ('2023-01-05 12:01:02');`)
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01 12:01:02'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 12:01:02'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 12:01:02'", pd[2].LessThan[0])
+	tk.MustExec("alter table t3 last partition less than ('2023-01-09 12:01:02')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 5, len(pd))
+	require.Equal(t, "'2023-01-01 12:01:02'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 12:01:02'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 12:01:02'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07 12:01:02'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09 12:01:02'", pd[4].LessThan[0])
+
+	// Some other test.
+	tk.MustExec(`create table t4 (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (48 hour)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-01-05');`)
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 3, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	tk.MustExec("alter table t4 last partition less than ('2023-01-09 00:00:00')")
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	require.NoError(t, err)
+	pd = tbl.Meta().Partition.Definitions
+	require.Equal(t, 5, len(pd))
+	require.Equal(t, "'2023-01-01 00:00:00'", pd[0].LessThan[0])
+	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
+	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
+	require.Equal(t, "'2023-01-07 00:00:00'", pd[3].LessThan[0])
+	require.Equal(t, "'2023-01-09 00:00:00'", pd[4].LessThan[0])
+	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01 00:00:00` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-05 00:00:00` VALUES LESS THAN ('2023-01-05 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-07 00:00:00` VALUES LESS THAN ('2023-01-07 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-09 00:00:00` VALUES LESS THAN ('2023-01-09 00:00:00'))"))
+
+	tk.MustExec(`create table t5 (id int, create_time datetime)
+		partition by range columns (create_time)
+		interval (1 month)
+		first partition less than ('2023-01-01')
+		last partition less than ('2023-05-01');`)
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01 00:00:00` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-02-01 00:00:00` VALUES LESS THAN ('2023-02-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-03-01 00:00:00` VALUES LESS THAN ('2023-03-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-04-01 00:00:00` VALUES LESS THAN ('2023-04-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-05-01 00:00:00` VALUES LESS THAN ('2023-05-01 00:00:00'))"))
+
+	tk.MustExec("CREATE TABLE `t6` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'))")
+	tk.MustExec("alter table t6 last partition less than ('2023-01-04')")
+	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n" +
+		"  `id` int(11) DEFAULT NULL,\n" +
+		"  `create_time` datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-04 00:00:00` VALUES LESS THAN ('2023-01-04 00:00:00'))"))
+}
+
+// TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
+func TestExchangeValidateHandleNullValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128)) PARTITION BY HASH (id) PARTITIONS 3`)
+	tk.MustExec(`CREATE TABLE t2 (id int, c varchar(128))`)
+	tk.MustExec(`insert into t1 values(null, 'a1')`)
+	tk.MustExec(`insert into t2 values(null, 'b2')`)
+	tk.MustQuery(`select id, c from t1 partition(p0)`).Check(testkit.Rows("<nil> a1"))
+	tk.MustContainErrMsg(`alter table t1 EXCHANGE PARTITION p1 WITH TABLE t2`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t1 EXCHANGE PARTITION p0 WITH TABLE t2`)
+
+	tk.MustExec(`CREATE TABLE t3 (id int, c date) PARTITION BY HASH (year(c)) PARTITIONS 12`)
+	tk.MustExec(`CREATE TABLE t4 (id int, c date)`)
+	tk.MustExec(`insert into t3 values(1, null)`)
+	tk.MustExec(`insert into t4 values(2, null)`)
+	tk.MustQuery(`select id, c from t3 partition(p0)`).Check(testkit.Rows("1 <nil>"))
+	tk.MustContainErrMsg(`alter table t3 EXCHANGE PARTITION p1 WITH TABLE t4`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t3 EXCHANGE PARTITION p0 WITH TABLE t4`)
+
+	tk.MustExec(`CREATE TABLE t5 (id int, c varchar(128)) partition by range (id)(
+		partition p0 values less than (10), 
+		partition p1 values less than (20),
+		partition p2 values less than (maxvalue))`)
+	tk.MustExec(`CREATE TABLE t6 (id int, c varchar(128))`)
+	tk.MustExec(`insert into t5 values(null, 'a5')`)
+	tk.MustExec(`insert into t6 values(null, 'b6')`)
+	tk.MustQuery(`select id, c from t5 partition(p0)`).Check(testkit.Rows("<nil> a5"))
+	tk.MustContainErrMsg(`alter table t5 EXCHANGE PARTITION p1 WITH TABLE t6`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table t5 EXCHANGE PARTITION p2 WITH TABLE t6`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t5 EXCHANGE PARTITION p0 WITH TABLE t6`)
+	// TODO: add "partition by range columns(a, b, c)" test cases.
+}
+>>>>>>> 33d6b79163e (ddl: fix partition definition for literal with non-utf8 charsets + binary column (#49229)):pkg/ddl/tests/partition/db_partition_test.go
