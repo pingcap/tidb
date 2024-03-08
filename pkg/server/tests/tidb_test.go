@@ -104,7 +104,7 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = server2.NewTiDBDriver(ts.store)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
@@ -116,6 +116,7 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 		err := ts.server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
 	ts.WaitUntilServerOnline()
 
 	t.Cleanup(func() {
