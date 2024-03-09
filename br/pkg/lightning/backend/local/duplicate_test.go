@@ -176,7 +176,7 @@ func TestConvertToErrFoundConflictRecords(t *testing.T) {
 	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data2RowKey, data2RowValue)
 
 	newErr := local.ConvertToErrFoundConflictRecords(ctx, originalErr, tbl)
-	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '[KindInt64 2 KindInt64 6 KindString 2.csv]'")
+	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '(2, 6, \"2.csv\")'")
 
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
