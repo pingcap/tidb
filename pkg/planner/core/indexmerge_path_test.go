@@ -287,7 +287,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
 
-	check := func(sql string, params ...string) {
+	check := func(hitCache bool, sql string, params ...string) {
 		sqlWithoutParam := sql
 		var setStmt, usingStmt string
 		for i, p := range params {
@@ -306,33 +306,37 @@ func TestPlanCacheMVIndex(t *testing.T) {
 		result.Check(result1.Rows())
 		result2 := tk.MustQuery(fmt.Sprintf("execute stmt using %v", usingStmt)).Sort()
 		result.Check(result2.Rows())
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		if hitCache {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		} else {
+			require.Greater(t, len(tk.MustQuery("show warnings").Rows()), 0) // show the reason
+		}
 	}
 	randV := func(vs ...string) string {
 		return vs[rand.Intn(len(vs))]
 	}
 
 	for i := 0; i < 50; i++ {
-		check(`select * from ti where (? member of (short_link)) and (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
-		check(`select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
-		check(`select * from ti where (? member of (short_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
-		check(`select * from ti where (? member of (long_link)) AND (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
-		check(`select * from ti where (? member of (long_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
-		check(`select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
-		check(`select * from ti where (m_id = ? and m_item_id = ? and country = ?) OR (? member of (short_link) and not json_overlaps(product_sources, ?) and country = ?)`,
+		check(true, `select * from ti where (? member of (short_link)) and (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(true, `select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(true, `select * from ti where (? member of (short_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(true, `select * from ti where (? member of (long_link)) AND (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(true, `select * from ti where (? member of (long_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(true, `select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
+		check(true, `select * from ti where (m_id = ? and m_item_id = ? and country = ?) OR (? member of (short_link) and not json_overlaps(product_sources, ?) and country = ?)`,
 			fmt.Sprintf("%v", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
-		check(`select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids)`,
+		check(true, `select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids)`,
 			fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
-		check(`select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids) AND m_item_id IS NULL AND m_id = ? AND country IS NOT NULL`,
+		check(true, `select * from ti where ? member of (domains) AND ? member of (signatures) AND ? member of (f_profile_ids) AND ? member of (short_link) AND ? member of (long_link) AND ? member of (f_item_ids) AND m_item_id IS NULL AND m_id = ? AND country IS NOT NULL`,
 			fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
-		check(`select * from ti where ? member of (f_profile_ids) AND ? member of (short_link) AND json_overlaps(product_sources, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
-		check(`select * from ti where ? member of (short_link) AND ti.country = "0" AND NOT ? member of (long_link) AND ti.m_item_id = "0"`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
-		check(`select * from ti WHERE ? member of (domains) AND ? member of (signatures) AND json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
-		check(`select * from ti where ? member of (short_link) AND ? member of (long_link) OR ? member of (f_profile_ids) AND ti.m_item_id = "0" OR ti.m_item_set_id = ?`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
-		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR ? member of (f_profile_ids) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
-		check(`select * from ti WHERE ? member of (domains) OR ? member of (signatures) OR ? member of (long_link) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
-		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR (? member of (f_profile_ids))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
-		check(`select * from ti where ? member of (domains) OR ? member of (signatures) OR json_overlaps(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(true, `select * from ti where ? member of (f_profile_ids) AND ? member of (short_link) AND json_overlaps(product_sources, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
+		check(true, `select * from ti where ? member of (short_link) AND ti.country = "0" AND NOT ? member of (long_link) AND ti.m_item_id = "0"`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(true, `select * from ti where ? member of (short_link) AND ? member of (long_link) OR ? member of (f_profile_ids) AND ti.m_item_id = "0" OR ti.m_item_set_id = ?`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)))
+		check(true, `select * from ti where ? member of (domains) OR ? member of (signatures) OR (? member of (f_profile_ids))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)))
+		check(false, `select * from ti where ? member of (domains) OR ? member of (signatures) OR json_overlaps(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(false, `select * from ti where ? member of (domains) OR ? member of (signatures) OR ? member of (f_profile_ids) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(false, `select * from ti WHERE ? member of (domains) OR ? member of (signatures) OR ? member of (long_link) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
+		check(false, `select * from ti WHERE ? member of (domains) AND ? member of (signatures) AND json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
 	}
 }
 

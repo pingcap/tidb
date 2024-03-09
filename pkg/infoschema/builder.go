@@ -107,7 +107,7 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
 }
 
-func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
