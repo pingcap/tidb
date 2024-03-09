@@ -325,23 +325,24 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		count *= idx.GetIncreaseFactor(realtimeRowCount)
+		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
+		count *= increaseFactor
 
 		// handling the out-of-range part
 		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
 			histNDV := idx.NDV
-			// If this is single column of a multi-column index - use the column's NDV rather than index NDV
-			isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
+			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
 				c, ok := coll.Columns[idx.Histogram.ID]
+				// If this is single column of a multi-column index - use the column's NDV rather than index NDV
+				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && !isSingleColIdx && ok && c != nil && c.Histogram.NDV > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
 				} else {
-					// Exclude the TopN
 					histNDV -= int64(idx.TopN.Num())
 				}
 			}
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, realtimeRowCount, histNDV)
+			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, realtimeRowCount, histNDV, increaseFactor)
 		}
 
 		if debugTrace {

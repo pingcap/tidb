@@ -282,7 +282,8 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		cnt *= c.GetIncreaseFactor(realtimeRowCount)
+		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
+		cnt *= increaseFactor
 
 		// handling the out-of-range part
 		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
@@ -291,7 +292,7 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, realtimeRowCount, histNDV)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, realtimeRowCount, histNDV, increaseFactor)
 		}
 
 		if debugTrace {
