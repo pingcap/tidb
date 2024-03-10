@@ -937,8 +937,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx context.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, realtimeRowCount,
-	histNDV int64, increaseFactor float64,
+	modifyCount, histNDV int64, increaseFactor float64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
