@@ -341,7 +341,7 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	}
 	if job.Type == model.ActionReorganizePartition ||
 		job.Type == model.ActionAlterTablePartitioning ||
-		job.Type == model.ActionAlterTablePartitioning {
+		job.Type == model.ActionRemovePartitioning {
 		partInfo := &model.PartitionInfo{}
 		var pNames []string
 		err = job.DecodeArgs(&pNames, &partInfo)
