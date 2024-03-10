@@ -91,6 +91,8 @@ set tidb_enable_global_index=1;
 alter table t partition by hash(a) partitions 3;
 -- error 8214
 alter table t partition by key() partitions 3;
+-- error 1503
+alter table t partition by hash(b) partitions 3;
 set tidb_enable_global_index=0;
 -- error 1503
 alter table t partition by hash(a) partitions 3;
