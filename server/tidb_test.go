@@ -98,11 +98,9 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	ts.port = getPortFromTCPAddr(server.listener.Addr())
-	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
 	ts.server.InitGlobalConnID(ts.domain.ServerID)
@@ -111,6 +109,9 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 		err := ts.server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-RunInGoTestChan
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.waitUntilServerOnline()
 
 	t.Cleanup(func() {
