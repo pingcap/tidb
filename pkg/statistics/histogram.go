@@ -1078,17 +1078,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	} else if rowCount < upperBound {
 		// Adjust by increaseFactor if our estimate is low
 		rowCount *= increaseFactor
-		// If we still have a low estimate, but there have been modifications, set a minimum of 1
-		if rowCount < 1 && modifyCount > 0 {
-			rowCount = 1
-		}
 	}
-	// Ensure we don't return a value larger than realtimeRowCount
-	returnBound := float64(realtimeRowCount)
-	if modifyCount > 0 {
-		returnBound = min(float64(modifyCount), returnBound)
-	}
-	return min(rowCount, returnBound)
+
+	// Use modifyCount as a final bound
+	return min(rowCount, float64(modifyCount))
 }
 
 // Copy deep copies the histogram.
