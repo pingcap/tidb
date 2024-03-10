@@ -209,11 +209,11 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 	 BIGINT(64) UNSIGNED NOT NULL,
-		table_id     BIGINT(64) NOT NULL,
-		modify_count BIGINT(64) NOT NULL DEFAULT 0,
-		count 	     BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot     BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 		BIGINT(64) UNSIGNED NOT NULL,
+		table_id 		BIGINT(64) NOT NULL,
+		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
+		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
