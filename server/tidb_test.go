@@ -273,16 +273,17 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	cfg.Security.ClusterSSLCA = fileName("ca-cert-2.pem")
 	cfg.Security.ClusterSSLCert = fileName("server-cert-2.pem")
 	cfg.Security.ClusterSSLKey = fileName("server-key-2.pem")
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
-
+	<-RunInGoTestChan
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	// https connection should work.
 	ts.runTestStatusAPI(t)
 
