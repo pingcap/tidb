@@ -121,7 +121,6 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 // The Iterator must be Closed after use.
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, err error) {
 	var dirtyIter, snapIter kv.Iterator
-
 	if dirtyIter, err = txn.GetMemBuffer().Iter(k, upperBound); err != nil {
 		return nil, err
 	}
@@ -197,7 +196,7 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(txn.KVTxn.GetMemBuffer())
+	return newMemBuffer(txn.KVTxn.GetMemBuffer(), txn.IsPipelined())
 }
 
 func (txn *tikvTxn) SetOption(opt int, val any) {
