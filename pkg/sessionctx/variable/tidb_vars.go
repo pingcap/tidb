@@ -1487,7 +1487,7 @@ const (
 	DefTiDBSchemaCacheSize                            = 0
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefTiDBDMLType                                    = "STANDARD"
-	DefTiDBDistSQLParallelBuild                       = false
+	DefTiDBDistSQLParallelBuild                       = true
 )
 
 // Process global variables.
