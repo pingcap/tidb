@@ -4607,9 +4607,29 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 				return err
 			}
 			if !ck {
-				err = errors.Trace(dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning"))
-				return err
+				if ctx.GetSessionVars().EnableGlobalIndex {
+					return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
+				} else {
+					indexTp := "UNIQUE INDEX"
+					if index.Primary {
+						indexTp = "PRIMARY"
+					}
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+				}
 			}
+		}
+	}
+	if newMeta.PKIsHandle {
+		indexCols := []*model.IndexColumn{{
+			Name:   newMeta.GetPkName(),
+			Length: types.UnspecifiedLength,
+		}}
+		ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
+		if err != nil {
+			return err
+		}
+		if !ck {
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 		}
 	}
 

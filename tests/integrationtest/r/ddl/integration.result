@@ -108,6 +108,9 @@ alter table t partition by key() partitions 3;
 Error 8214 (HY000): global index is not supported yet for alter table partitioning
 set tidb_enable_global_index=0;
 alter table t partition by hash(a) partitions 3;
-Error 8214 (HY000): global index is not supported yet for alter table partitioning
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
 alter table t partition by key() partitions 3;
-Error 8214 (HY000): global index is not supported yet for alter table partitioning
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+alter table t partition by hash(b) partitions 3;
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+drop table t;
