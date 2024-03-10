@@ -4609,13 +4609,12 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 			if !ck {
 				if ctx.GetSessionVars().EnableGlobalIndex {
 					return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
-				} else {
-					indexTp := "UNIQUE INDEX"
-					if index.Primary {
-						indexTp = "PRIMARY"
-					}
-					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 				}
+				indexTp := "UNIQUE INDEX"
+				if index.Primary {
+					indexTp = "PRIMARY"
+				}
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 			}
 		}
 	}
