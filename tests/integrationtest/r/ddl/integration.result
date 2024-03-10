@@ -99,3 +99,15 @@ create table t (d int default '18446744073709551616' );
 Level	Code	Message
 Warning	1690	BIGINT value is out of range in '18446744073709551616'
 set sql_mode=DEFAULT;
+drop table if exists t;
+create table t(a int not null, b int, primary key(a), unique idx_b(b));
+set tidb_enable_global_index=1;
+alter table t partition by hash(a) partitions 3;
+Error 8214 (HY000): global index is not supported yet for alter table partitioning
+alter table t partition by key() partitions 3;
+Error 8214 (HY000): global index is not supported yet for alter table partitioning
+set tidb_enable_global_index=0;
+alter table t partition by hash(a) partitions 3;
+Error 8214 (HY000): global index is not supported yet for alter table partitioning
+alter table t partition by key() partitions 3;
+Error 8214 (HY000): global index is not supported yet for alter table partitioning

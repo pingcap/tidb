@@ -82,3 +82,17 @@ set sql_mode='';
 create table t (d int default '18446744073709551616' );
 -- disable_warnings
 set sql_mode=DEFAULT;
+
+# Test alter non-partition table to partition with global index needed. 
+drop table if exists t;
+create table t(a int not null, b int, primary key(a), unique idx_b(b));
+set tidb_enable_global_index=1;
+-- error 8214
+alter table t partition by hash(a) partitions 3;
+-- error 8214
+alter table t partition by key() partitions 3;
+set tidb_enable_global_index=0;
+-- error 8214
+alter table t partition by hash(a) partitions 3;
+-- error 8214
+alter table t partition by key() partitions 3;
