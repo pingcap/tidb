@@ -41,31 +41,18 @@ func TestDumpStatsAPI(t *testing.T) {
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
-
-<<<<<<< HEAD:server/statistics_handler_test.go
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-=======
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	server.SetDomain(dom)
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/handler/optimizor/statistics_handler_test.go
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-<<<<<<< HEAD:server/statistics_handler_test.go
+	<-RunInGoTestChan
+	client.port = getPortFromTCPAddr(server.listener.Addr())
+	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	client.waitUntilServerOnline()
-=======
-	<-server2.RunInGoTestChan
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
-	client.WaitUntilServerOnline()
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/handler/optimizor/statistics_handler_test.go
 
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)

@@ -457,30 +457,18 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
-<<<<<<< HEAD:server/http_handler_test.go
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	ts.port = getPortFromTCPAddr(server.listener.Addr())
-	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-=======
-	server2.RunInGoTestChan = make(chan struct{})
-	server, err := server2.NewServer(cfg, ts.tidbdrv)
-	require.NoError(t, err)
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/handler/tests/http_handler_test.go
 	ts.server = server
 	go func() {
 		err := server.Run(ts.domain)
 		require.NoError(t, err)
 	}()
-<<<<<<< HEAD:server/http_handler_test.go
+	<-RunInGoTestChan
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.waitUntilServerOnline()
-=======
-	<-server2.RunInGoTestChan
-	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
-	ts.WaitUntilServerOnline()
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/handler/tests/http_handler_test.go
 
 	do, err := session.GetDomain(ts.store)
 	require.NoError(t, err)
