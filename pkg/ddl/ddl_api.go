@@ -4601,7 +4601,6 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	newPartInfo := newMeta.Partition
 
 	for _, index := range newMeta.Indices {
-		logutil.BgLogger().Error("hhhhhhhhhhhhhhhhh")
 		if index.Unique {
 			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
 			if err != nil {
