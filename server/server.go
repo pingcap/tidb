@@ -50,7 +50,7 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:server/server.go
+	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -73,33 +73,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
-=======
-	"github.com/pingcap/log"
-	autoid "github.com/pingcap/tidb/pkg/autoid_service"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/plugin"
-	"github.com/pingcap/tidb/pkg/privilege/privileges"
-	servererr "github.com/pingcap/tidb/pkg/server/err"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/txninfo"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/fastrand"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/sys/linux"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
-	uatomic "go.uber.org/atomic"
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/server.go
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -364,17 +337,13 @@ func (s *Server) initHTTPListener() (err error) {
 			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}
-<<<<<<< HEAD:server/server.go
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	variable.RegisterStatistics(s)
 
-	return s, nil
-=======
-	return
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/server.go
+	return nil
 }
 
 func cleanupStaleSocket(socket string) error {
@@ -444,9 +413,6 @@ func (s *Server) Run(dom *domain.Domain) error {
 	}
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
-<<<<<<< HEAD:server/server.go
-	errChan := make(chan error)
-=======
 	errChan := make(chan error, 2)
 	err := s.initTiDBListener()
 	if err != nil {
@@ -457,7 +423,6 @@ func (s *Server) Run(dom *domain.Domain) error {
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
 	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
 	terror.RegisterFinish()
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/server.go
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
 	if RunInGoTest && !isClosed(RunInGoTestChan) {

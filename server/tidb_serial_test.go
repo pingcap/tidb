@@ -26,22 +26,11 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:server/tidb_serial_test.go
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-=======
-	"github.com/pingcap/tidb/pkg/config"
-	tidbserver "github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
-	"github.com/pingcap/tidb/pkg/server/internal/testutil"
-	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/server/tests/servertestkit"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
->>>>>>> 7f8d3944f59 (server: start to listen after init stats complete (#51472)):pkg/server/tests/tls/tls_test.go
 	"github.com/stretchr/testify/require"
 )
 
