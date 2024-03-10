@@ -246,7 +246,7 @@ func TestStatusPort(t *testing.T) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	err = server.Run(ts.Domain)
+	err = server.Run(ts.domain)
 	require.Error(t, err)
 }
 
@@ -396,7 +396,7 @@ func TestSocketForwarding(t *testing.T) {
 	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.Domain)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
@@ -433,7 +433,7 @@ func TestSocket(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	<-server2.RunInGoTestChan
+	<-RunInGoTestChan
 	defer server.Close()
 
 	confFunc := func(config *mysql.Config) {
@@ -463,13 +463,13 @@ func TestSocketAndIp(t *testing.T) {
 	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.Domain)
+	server.SetDomain(ts.domain)
 
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	<-server2.RunInGoTestChan
+	<-RunInGoTestChan
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.waitUntilServerCanConnect()
 	defer server.Close()
@@ -2515,7 +2515,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.Domain)
+	server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
