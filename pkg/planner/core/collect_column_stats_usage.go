@@ -17,6 +17,8 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/intset"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -44,6 +46,10 @@ type columnStatsUsageCollector struct {
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
 
+	// visitedPhysTblIDs all ds.physicalTableID that have been visited.
+	// It's always collected, even collectHistNeededColumns is not set.
+	visitedPhysTblIDs *intset.FastIntSet
+
 	// collectVisitedTable indicates whether to collect visited table
 	collectVisitedTable bool
 	// visitedtbls indicates the visited table
@@ -51,10 +57,12 @@ type columnStatsUsageCollector struct {
 }
 
 func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *columnStatsUsageCollector {
+	set := intset.NewFastIntSet()
 	collector := &columnStatsUsageCollector{
 		collectMode: collectMode,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
-		cols: make([]*expression.Column, 0, 8),
+		cols:              make([]*expression.Column, 0, 8),
+		visitedPhysTblIDs: &set,
 	}
 	if collectMode&collectPredicateColumns != 0 {
 		collector.predicateCols = make(map[model.TableItemID]struct{})
@@ -159,6 +167,10 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *Logica
 }
 
 func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
+	c.visitedPhysTblIDs.Insert(int(ds.physicalTableID))
+	if c.collectMode&collectHistNeededColumns == 0 {
+		return
+	}
 	if c.collectVisitedTable {
 		tblID := ds.TableInfo().ID
 		c.visitedtbls[tblID] = struct{}{}
@@ -272,26 +284,33 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 			}
 		}
 	}
-	if c.collectMode&collectHistNeededColumns != 0 {
-		// Histogram-needed columns are the columns which occur in the conditions pushed down to DataSource.
-		// We don't consider LogicalCTE because seedLogicalPlan and recursiveLogicalPlan haven't got logical optimization
-		// yet(seedLogicalPlan and recursiveLogicalPlan are optimized in DeriveStats phase). Without logical optimization,
-		// there is no condition pushed down to DataSource so no histogram-needed column can be collected.
-		switch x := lp.(type) {
-		case *DataSource:
-			c.addHistNeededColumns(x)
-		case *LogicalIndexScan:
-			c.addHistNeededColumns(x.Source)
-		case *LogicalTableScan:
-			c.addHistNeededColumns(x.Source)
-		}
+	// Histogram-needed columns are the columns which occur in the conditions pushed down to DataSource.
+	// We don't consider LogicalCTE because seedLogicalPlan and recursiveLogicalPlan haven't got logical optimization
+	// yet(seedLogicalPlan and recursiveLogicalPlan are optimized in DeriveStats phase). Without logical optimization,
+	// there is no condition pushed down to DataSource so no histogram-needed column can be collected.
+	//
+	// Since c.visitedPhysTblIDs is also collected here and needs to be collected even collectHistNeededColumns is not set,
+	// so we do the c.collectMode check in addHistNeededColumns() after collecting c.visitedPhysTblIDs.
+	switch x := lp.(type) {
+	case *DataSource:
+		c.addHistNeededColumns(x)
+	case *LogicalIndexScan:
+		c.addHistNeededColumns(x.Source)
+	case *LogicalTableScan:
+		c.addHistNeededColumns(x.Source)
 	}
 }
 
 // CollectColumnStatsUsage collects column stats usage from logical plan.
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
-// The first return value is predicate columns(nil if predicate is false) and the second return value is histogram-needed columns(nil if histNeeded is false).
-func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableItemID, []model.TableItemID) {
+// First return value: predicate columns (nil if predicate is false)
+// Second return value: histogram-needed columns (nil if histNeeded is false)
+// Third return value: ds.physicalTableID from all DataSource (always collected)
+func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) (
+	[]model.TableItemID,
+	[]model.TableItemID,
+	*intset.FastIntSet,
+) {
 	var mode uint64
 	if predicate {
 		mode |= collectPredicateColumns
@@ -304,19 +323,12 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	set2slice := func(set map[model.TableItemID]struct{}) []model.TableItemID {
-		ret := make([]model.TableItemID, 0, len(set))
-		for tblColID := range set {
-			ret = append(ret, tblColID)
-		}
-		return ret
-	}
 	var predicateCols, histNeededCols []model.TableItemID
 	if predicate {
-		predicateCols = set2slice(collector.predicateCols)
+		predicateCols = maps.Keys(collector.predicateCols)
 	}
 	if histNeeded {
-		histNeededCols = set2slice(collector.histNeededCols)
+		histNeededCols = maps.Keys(collector.histNeededCols)
 	}
-	return predicateCols, histNeededCols
+	return predicateCols, histNeededCols, collector.visitedPhysTblIDs
 }

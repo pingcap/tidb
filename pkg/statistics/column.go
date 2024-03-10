@@ -174,7 +174,7 @@ func (c *Column) IsInvalid(
 			// When we are using stats from PseudoTable(), the table ID will possibly be -1.
 			// In this case, we don't trigger stats loading.
 			if c.Info != nil && c.PhysicalID > 0 {
-				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
+				HistogramNeededItems.Insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
 		}
 	}

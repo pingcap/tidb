@@ -1709,7 +1709,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	exprCtx := b.ctx.GetExprCtx()
 	e := &aggregate.StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		GroupChecker: vecgroupchecker.NewVecGroupChecker(exprCtx, v.GroupByItems),
+		GroupChecker: vecgroupchecker.NewVecGroupChecker(exprCtx, b.ctx.GetSessionVars().EnableVectorizedExpression, v.GroupByItems),
 		AggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 
@@ -2003,13 +2003,16 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor,
+					table:      v.Table,
+					columns:    v.Columns,
+					extractor:  v.Extractor,
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),
@@ -4677,7 +4680,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
 			BaseExecutor:   base,
-			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx(), groupByItems),
+			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
 		}
 
@@ -4755,7 +4758,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	}
 	return &WindowExec{BaseExecutor: base,
 		processor:      processor,
-		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx(), groupByItems),
+		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }

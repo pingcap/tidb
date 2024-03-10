@@ -829,6 +829,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	}
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, max(1, topNLen))
 	selected := make([]bool, 0, max(histBucketsLen, topNLen))
+	vecEnabled := sctx.GetSessionVars().EnableVectorizedExpression
 
 	// 3. Calculate the TopN part selectivity.
 	// This stage is considered as the core functionality of this method, errors in this stage would make this entire method fail.
@@ -841,7 +842,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 			}
 			c.AppendDatum(0, &val)
 		}
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), filters, chunk.NewIterator4Chunk(c), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -858,7 +859,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -892,7 +893,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	c.Reset()
 	c.AppendNull(0)
 	selected = selected[:0]
-	selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), filters, chunk.NewIterator4Chunk(c), selected)
+	selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
 	if err != nil || len(selected) != 1 || !selected[0] {
 		nullSel = 0
 	} else {

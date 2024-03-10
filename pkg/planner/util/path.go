@@ -51,6 +51,19 @@ type AccessPath struct {
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
+
+	// ************************************************** special field below *********************************************************
+	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
+	// when PartialAlternativeIndexPaths is not empty, it means a special state for index merge path, and it can't have PartialIndexPaths
+	// at same time. Normal single index or table path also doesn't use this field.
+	PartialAlternativeIndexPaths [][]*AccessPath
+	// KeepIndexMergeORSourceFilter and IndexMergeORSourceFilter are only used with PartialAlternativeIndexPaths, which means for
+	// the new state/type of access path. (undetermined index merge path)
+	KeepIndexMergeORSourceFilter bool
+	// IndexMergeORSourceFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
+	IndexMergeORSourceFilter expression.Expression
+	// ********************************************************************************************************************************
+
 	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
 	// It's only valid for a IndexMerge path.
 	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
@@ -81,34 +94,45 @@ type AccessPath struct {
 // some fields like FieldType are not deep-copied.
 func (path *AccessPath) Clone() *AccessPath {
 	ret := &AccessPath{
-		Index:                    path.Index.Clone(),
-		FullIdxCols:              CloneCols(path.FullIdxCols),
-		FullIdxColLens:           slices.Clone(path.FullIdxColLens),
-		IdxCols:                  CloneCols(path.IdxCols),
-		IdxColLens:               slices.Clone(path.IdxColLens),
-		ConstCols:                slices.Clone(path.ConstCols),
-		Ranges:                   CloneRanges(path.Ranges),
-		CountAfterAccess:         path.CountAfterAccess,
-		CountAfterIndex:          path.CountAfterIndex,
-		AccessConds:              CloneExprs(path.AccessConds),
-		EqCondCount:              path.EqCondCount,
-		EqOrInCondCount:          path.EqOrInCondCount,
-		IndexFilters:             CloneExprs(path.IndexFilters),
-		TableFilters:             CloneExprs(path.TableFilters),
-		IndexMergeIsIntersection: path.IndexMergeIsIntersection,
-		PartialIndexPaths:        nil,
-		StoreType:                path.StoreType,
-		IsDNFCond:                path.IsDNFCond,
-		IsIntHandlePath:          path.IsIntHandlePath,
-		IsCommonHandlePath:       path.IsCommonHandlePath,
-		Forced:                   path.Forced,
-		ForceKeepOrder:           path.ForceKeepOrder,
-		ForceNoKeepOrder:         path.ForceNoKeepOrder,
-		IsSingleScan:             path.IsSingleScan,
-		IsUkShardIndexPath:       path.IsUkShardIndexPath,
+		Index:                        path.Index.Clone(),
+		FullIdxCols:                  CloneCols(path.FullIdxCols),
+		FullIdxColLens:               slices.Clone(path.FullIdxColLens),
+		IdxCols:                      CloneCols(path.IdxCols),
+		IdxColLens:                   slices.Clone(path.IdxColLens),
+		ConstCols:                    slices.Clone(path.ConstCols),
+		Ranges:                       CloneRanges(path.Ranges),
+		CountAfterAccess:             path.CountAfterAccess,
+		CountAfterIndex:              path.CountAfterIndex,
+		AccessConds:                  CloneExprs(path.AccessConds),
+		EqCondCount:                  path.EqCondCount,
+		EqOrInCondCount:              path.EqOrInCondCount,
+		IndexFilters:                 CloneExprs(path.IndexFilters),
+		TableFilters:                 CloneExprs(path.TableFilters),
+		IndexMergeIsIntersection:     path.IndexMergeIsIntersection,
+		PartialIndexPaths:            nil,
+		StoreType:                    path.StoreType,
+		IsDNFCond:                    path.IsDNFCond,
+		IsIntHandlePath:              path.IsIntHandlePath,
+		IsCommonHandlePath:           path.IsCommonHandlePath,
+		Forced:                       path.Forced,
+		ForceKeepOrder:               path.ForceKeepOrder,
+		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		IsSingleScan:                 path.IsSingleScan,
+		IsUkShardIndexPath:           path.IsUkShardIndexPath,
+		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+	}
+	if path.IndexMergeORSourceFilter != nil {
+		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
 	for _, partialPath := range path.PartialIndexPaths {
 		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
+	}
+	for _, onePartialAlternative := range path.PartialAlternativeIndexPaths {
+		tmp := make([]*AccessPath, 0, len(onePartialAlternative))
+		for _, oneAlternative := range onePartialAlternative {
+			tmp = append(tmp, oneAlternative.Clone())
+		}
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
 	}
 	return ret
 }

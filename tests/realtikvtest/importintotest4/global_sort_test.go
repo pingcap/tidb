@@ -98,9 +98,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
 	// merge-sort data kv
-	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	s.tk.MustExec("truncate table t")
-	result = s.tk.MustQuery(importSQL).Rows()
+	result = s.tk.MustQuery(importSQL + `, __force_merge_step`).Rows()
 	s.Len(result, 1)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",

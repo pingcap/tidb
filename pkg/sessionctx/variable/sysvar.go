@@ -2151,8 +2151,9 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableRedactLog = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: DefTiDBRedactLog, Type: TypeEnum, PossibleValues: []string{Off, On, Marker}, SetSession: func(s *SessionVars, val string) error {
+		s.EnableRedactLog = val != Off
+		s.EnableRedactNew = val
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 		return nil
 	}},
@@ -3064,6 +3065,19 @@ var defaultSysVars = []*SysVar{
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.EnableParallelSort = TiDBOptOn(s)
 			return nil
+		}},
+	{Scope: ScopeSession, Name: TiDBDMLType, Value: DefTiDBDMLType, Type: TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			lowerVal := strings.ToLower(val)
+			if strings.EqualFold(lowerVal, "standard") {
+				s.BulkDMLEnabled = false
+				return nil
+			}
+			if strings.EqualFold(lowerVal, "bulk") {
+				s.BulkDMLEnabled = true
+				return nil
+			}
+			return errors.Errorf("unsupport DML type: %s", val)
 		}},
 }
 

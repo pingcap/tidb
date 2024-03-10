@@ -301,18 +301,18 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
 func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := d.GetInfoSchemaWithInterceptor(sctx)
-	dbInfos := is.AllSchemas()
+	dbNames := is.AllSchemaNames()
 	// If there are no schema change since last time(can be weird).
 	if is.SchemaMetaVersion() == originVersion {
 		return originVersion, pendingCount
 	}
 	cnt := uint32(0)
-	for _, dbInfo := range dbInfos {
-		if util.IsMemOrSysDB(dbInfo.Name.L) {
+	for _, dbName := range dbNames {
+		if util.IsMemOrSysDB(dbName.L) {
 			continue
 		}
-		for _, tbl := range dbInfo.Tables {
-			if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
+		for _, tbl := range is.SchemaTables(dbName) {
+			if tbl.Meta().TiFlashReplica != nil && !tbl.Meta().TiFlashReplica.Available {
 				cnt++
 			}
 		}
@@ -374,7 +374,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	total := len(dbInfo.Tables)
+	tbls := is.SchemaTables(dbInfo.Name)
+	total := len(tbls)
 	succ := 0
 	skip := 0
 	fail := 0
@@ -395,7 +396,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
 
-	for _, tbl := range dbInfo.Tables {
+	for _, tbl := range tbls {
+		tbl := tbl.Meta()
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
@@ -8138,15 +8140,15 @@ func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo,
 	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
-func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]string, error) {
+func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]types.Datum, error) {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
-	valStrings := make([]string, 0, len(colTypes))
+	valDatums := make([]types.Datum, 0, len(colTypes))
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
-			valStrings = append(valStrings, partitionMaxValue)
+			valDatums = append(valDatums, types.NewStringDatum(partitionMaxValue))
 			continue
 		}
 		if d, ok := colExpr.(*ast.DefaultExpr); ok {
@@ -8192,13 +8194,9 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes 
 		if err != nil {
 			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
-		s, err := newVal.ToString()
-		if err != nil {
-			return nil, err
-		}
-		valStrings = append(valStrings, s)
+		valDatums = append(valDatums, newVal)
 	}
-	return valStrings, nil
+	return valDatums, nil
 }
 
 // LockTables uses to execute lock tables statement.

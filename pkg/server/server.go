@@ -49,6 +49,7 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -83,6 +84,8 @@ var (
 	osVersion string
 	// RunInGoTest represents whether we are run code in test.
 	RunInGoTest bool
+	// RunInGoTestChan is used to control the RunInGoTest.
+	RunInGoTestChan chan struct{}
 )
 
 func init() {
@@ -243,7 +246,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:                make(map[uint64]*clientConn),
 		ConnNumByResourceGroup: make(map[string]int),
 		internalSessions:       make(map[any]struct{}, 100),
-		health:                 uatomic.NewBool(true),
+		health:                 uatomic.NewBool(false),
 		inShutdownMode:         uatomic.NewBool(false),
 		printMDLLogTime:        time.Now(),
 	}
@@ -289,7 +292,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
+	variable.RegisterStatistics(s)
+	return s, nil
+}
 
+func (s *Server) initTiDBListener() (err error) {
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
@@ -297,7 +304,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			tcpProto = "tcp4"
 		}
 		if s.listener, err = net.Listen(tcpProto, addr); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
 		if RunInGoTest && s.cfg.Port == 0 {
@@ -307,18 +314,18 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Socket != "" {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", s.cfg.Socket))
 	}
 
 	if s.socket == nil && s.listener == nil {
 		err = errors.New("Server not configured to listen on either -socket or -host and -port")
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	if s.cfg.ProxyProtocol.Networks != "" {
@@ -330,7 +337,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			int(s.cfg.ProxyProtocol.HeaderTimeout), s.cfg.ProxyProtocol.Fallbackable)
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if s.listener != nil {
 			s.listener = ppListener
@@ -340,10 +347,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("socket", s.cfg.Socket))
 		}
 	}
+	return nil
+}
 
+func (s *Server) initHTTPListener() (err error) {
 	if s.cfg.Status.ReportStatus {
 		if err = s.listenStatusHTTPServer(); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
@@ -364,10 +374,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}
-
-	variable.RegisterStatistics(s)
-
-	return s, nil
+	return
 }
 
 func cleanupStaleSocket(socket string) error {
@@ -426,7 +433,11 @@ func (s *Server) Run(dom *domain.Domain) error {
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
-		s.startStatusHTTP()
+		err := s.startStatusHTTP()
+		if err != nil {
+			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
+			return err
+		}
 	}
 	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
 		<-dom.StatsHandle().InitStatsDone
@@ -434,13 +445,37 @@ func (s *Server) Run(dom *domain.Domain) error {
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
 	errChan := make(chan error, 2)
+	err := s.initTiDBListener()
+	if err != nil {
+		log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
+		return err
+	}
+	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
+	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
+	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
+	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
-	err := <-errChan
+	if RunInGoTest && !isClosed(RunInGoTestChan) {
+		close(RunInGoTestChan)
+	}
+	s.health.Store(true)
+	err = <-errChan
 	if err != nil {
 		return err
 	}
 	return <-errChan
+}
+
+// isClosed is to check if the channel is closed
+func isClosed(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+	}
+
+	return false
 }
 
 func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, errChan chan error) {

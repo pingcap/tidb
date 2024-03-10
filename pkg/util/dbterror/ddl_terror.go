@@ -288,6 +288,8 @@ var (
 	ErrUnsupportedConstraintCheck = ClassDDL.NewStd(mysql.ErrUnsupportedConstraintCheck)
 	// ErrDerivedMustHaveAlias returns when a sub select statement does not have a table alias.
 	ErrDerivedMustHaveAlias = ClassDDL.NewStd(mysql.ErrDerivedMustHaveAlias)
+	// ErrNullInValuesLessThan returns when a range partition LESS THAN expression includes a NULL
+	ErrNullInValuesLessThan = ClassDDL.NewStd(mysql.ErrNullInValuesLessThan)
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
 	ErrSequenceRunOut = ClassDDL.NewStd(mysql.ErrSequenceRunOut)
