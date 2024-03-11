@@ -194,17 +194,17 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
 		zap.Int("index_cnt", idxCnt), zap.Int("table_cnt", tblCnt),
-		zap.String("missing_handles", redact.Redact(rmode, fmt.Sprint(missHd))),
-		zap.String("total_handles", redact.Redact(rmode, fmt.Sprint(fullHd[:displayFullHdCnt]))),
+		zap.String("missing_handles", redact.String(rmode, fmt.Sprint(missHd))),
+		zap.String("total_handles", redact.String(rmode, fmt.Sprint(fullHd[:displayFullHdCnt]))),
 	}
 	if rmode != "ON" {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
 			for i, hd := range missHd {
-				fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), redact.Redact(rmode, GetMvccByKey(store, r.HandleEncode(hd), DecodeRowMvccData(r.Tbl)))))
+				fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), redact.String(rmode, GetMvccByKey(store, r.HandleEncode(hd), DecodeRowMvccData(r.Tbl)))))
 			}
 			for i := range missRowIdx {
-				fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), redact.Redact(rmode, GetMvccByKey(store, r.IndexEncode(&missRowIdx[i]), DecodeIndexMvccData(r.Idx)))))
+				fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), redact.String(rmode, GetMvccByKey(store, r.IndexEncode(&missRowIdx[i]), DecodeIndexMvccData(r.Idx)))))
 			}
 		}
 	}
@@ -227,8 +227,8 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 	if rmode != "ON" {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
-			fs = append(fs, zap.String("row_mvcc", redact.Redact(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
-			fs = append(fs, zap.String("index_mvcc", redact.Redact(rmode, GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx)))))
+			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
+			fs = append(fs, zap.String("index_mvcc", redact.String(rmode, GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx)))))
 		}
 	}
 	fs = append(fs, zap.Error(err))
@@ -263,9 +263,9 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 	if rmode != "ON" {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
-			fs = append(fs, zap.String("row_mvcc", redact.Redact(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
+			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
 			if idxRow != nil {
-				fs = append(fs, zap.String("index_mvcc", redact.Redact(rmode, GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx)))))
+				fs = append(fs, zap.String("index_mvcc", redact.String(rmode, GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx)))))
 			}
 		}
 	}
