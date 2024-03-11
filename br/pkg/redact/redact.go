@@ -11,12 +11,16 @@ import (
 
 // InitRedact inits the enableRedactLog
 func InitRedact(redactLog bool) {
-	errors.RedactLogEnabled.Store(redactLog)
+	mode := errors.RedactLogDisable
+	if redactLog {
+		mode = errors.RedactLogEnable
+	}
+	errors.RedactLogEnabled.Store(mode)
 }
 
 // NeedRedact returns whether to redact log
 func NeedRedact() bool {
-	return errors.RedactLogEnabled.Load()
+	return errors.RedactLogEnabled.Load() != errors.RedactLogDisable
 }
 
 // String receives string argument and return omitted information if redact log enabled
