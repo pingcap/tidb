@@ -36,7 +36,6 @@ const (
 type Batcher struct {
 	cachedTables   []TableWithRange
 	cachedTablesMu *sync.Mutex
-	rewriteRules   *RewriteRules
 
 	// autoCommitJoiner is for joining the background batch sender.
 	autoCommitJoiner chan<- struct{}
@@ -114,7 +113,6 @@ func NewBatcher(
 	outCh := DefaultOutputTableChan()
 	sendChan := make(chan SendType, 2)
 	b := &Batcher{
-		rewriteRules:       EmptyRewriteRule(),
 		sendErr:            errCh,
 		outCh:              outCh,
 		sender:             sender,
@@ -427,7 +425,6 @@ func (b *Batcher) Add(tbs TableWithRange) {
 		zap.Int("batch size", b.Len()),
 	)
 	b.cachedTables = append(b.cachedTables, tbs)
-	b.rewriteRules.Append(*tbs.RewriteRule)
 	atomic.AddInt32(&b.size, int32(len(tbs.Range)))
 	b.cachedTablesMu.Unlock()
 
