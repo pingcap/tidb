@@ -22,7 +22,7 @@ import (
 // Task is an interface defined for all type of optimizing work: exploring, implementing, deriving-stats, join-reordering and so on.
 type Task interface {
 	// task self executing logic
-	execute()
+	execute() error
 	// task self description string.
 	desc() string
 }
@@ -70,8 +70,8 @@ type TestTaskImpl struct {
 	a int64
 }
 
-func (t *TestTaskImpl) execute() {
-
+func (t *TestTaskImpl) execute() error {
+	return nil
 }
 func (t *TestTaskImpl) desc() string {
 	return strconv.Itoa(int(t.a))
