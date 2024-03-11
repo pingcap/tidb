@@ -143,7 +143,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 }
 
 // Close closes the session handle.
-func (h *sessionBindingHandle) Close() {}
+func (*sessionBindingHandle) Close() {}
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.
 type sessionBindInfoKeyType int
