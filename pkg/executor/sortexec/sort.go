@@ -31,10 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"go.uber.org/zap"
 )
 
 // SortExec represents sorting executor.
@@ -456,7 +454,6 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(e.Parallel.resultChannel, r)
-			logutil.BgLogger().Error("parallel sort panicked", zap.Error(util.GetRecoverError(r)), zap.Stack("stack"))
 		}
 
 		close(e.Parallel.resultChannel)
