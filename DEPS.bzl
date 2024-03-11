@@ -5884,13 +5884,13 @@ def go_deps():
         name = "com_github_pingcap_sysutil",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/sysutil",
-        sha256 = "0540f3dfd25706302c0f484baae0b6bb6a6382893bbf8b14720debcb9756f1d0",
-        strip_prefix = "github.com/pingcap/sysutil@v1.0.1-0.20230407040306-fb007c5aff21",
+        sha256 = "c2ffa4a6d163ca73e73831de5abaa25d47abba59c41b8a549d70935442921a56",
+        strip_prefix = "github.com/pingcap/sysutil@v1.0.1-0.20240311050922-ae81ee01f3a5",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/sysutil/com_github_pingcap_sysutil-v1.0.1-0.20230407040306-fb007c5aff21.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/sysutil/com_github_pingcap_sysutil-v1.0.1-0.20230407040306-fb007c5aff21.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/sysutil/com_github_pingcap_sysutil-v1.0.1-0.20230407040306-fb007c5aff21.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/sysutil/com_github_pingcap_sysutil-v1.0.1-0.20230407040306-fb007c5aff21.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/sysutil/com_github_pingcap_sysutil-v1.0.1-0.20240311050922-ae81ee01f3a5.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/sysutil/com_github_pingcap_sysutil-v1.0.1-0.20240311050922-ae81ee01f3a5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/sysutil/com_github_pingcap_sysutil-v1.0.1-0.20240311050922-ae81ee01f3a5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/sysutil/com_github_pingcap_sysutil-v1.0.1-0.20240311050922-ae81ee01f3a5.zip",
         ],
     )
     go_repository(
