@@ -697,14 +697,6 @@ func (t *Table) IsInitialized() bool {
 	return false
 }
 
-// HasStatsItemInKV checks whether this table has some stats in storage.(In other words, ANALYZE is triggered for it before.)
-func (t *Table) HasStatsItemInKV() bool {
-	if t.ColAndIdxExistenceMap.SomeAnalyzed() {
-		return true
-	}
-	return t.IsInitialized()
-}
-
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
 	rowcount := t.GetAnalyzeRowCount()

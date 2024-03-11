@@ -268,6 +268,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		// Update here.
 		if statsVer != statistics.Version0 {
 			table.StatsVer = int(statsVer)
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
 		}
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -335,9 +336,6 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		if tracker != nil {
 			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
 		}
-		if idx.IsAnalyzed() {
-			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, idx.LastUpdateVersion)
-		}
 		table.Indices[histID] = idx
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
@@ -366,6 +364,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		// Update here.
 		if statsVer != statistics.Version0 {
 			table.StatsVer = int(statsVer)
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
@@ -453,9 +452,6 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	if col != nil {
 		if tracker != nil {
 			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
-		}
-		if col.IsAnalyzed() {
-			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, col.LastUpdateVersion)
 		}
 		table.Columns[col.ID] = col
 	} else {
