@@ -108,6 +108,12 @@ func (t *topNSpillHelper) setInSpilling() {
 	t.spillStatus = inSpilling
 }
 
+func (t *topNSpillHelper) setNotSpilled() {
+	t.cond.L.Lock()
+	defer t.cond.L.Unlock()
+	t.spillStatus = notSpilled
+}
+
 func (t *topNSpillHelper) setNeedSpillNoLock() {
 	t.spillStatus = needSpill
 }
@@ -141,6 +147,8 @@ func (t *topNSpillHelper) spill() (err error) {
 	}
 
 	t.setInSpilling()
+	defer t.cond.Broadcast()
+	defer t.setNotSpilled()
 
 	workerNum := len(t.workers)
 	errChan := make(chan error, workerNum)

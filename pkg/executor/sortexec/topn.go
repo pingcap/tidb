@@ -269,8 +269,20 @@ func (e *TopNExec) fetchChunksFromChild(ctx context.Context) {
 	}
 }
 
-func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
+func (e *TopNExec) spillHeapInTopNExec() error {
+	e.spillHelper.setInSpilling()
+	defer e.spillHelper.cond.Broadcast()
+	defer e.spillHelper.setNotSpilled()
+
 	err := e.spillHelper.spillHeap(e.chkHeap)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
+	err := e.spillHeapInTopNExec()
 	if err != nil {
 		return err
 	}
@@ -295,6 +307,8 @@ func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
 		})
 	}
 
+	fetcherWaiter.Wait()
+	workersWaiter.Wait()
 	return nil
 }
 
@@ -322,24 +336,57 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 	e.generateTopNResults()
 }
 
-func (e *TopNExec) generateTopNResultsWithNoSpill() {
+// Return true when spill is triggered
+func (e *TopNExec) generateTopNResultsWithNoSpill() bool {
 	rowPtrNum := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < rowPtrNum; e.chkHeap.idx++ {
-		if e.chkHeap.idx%1000 == 0 {
-
+		if e.chkHeap.idx%1000 == 0 && e.spillHelper.isSpillTriggered() {
+			return true
 		}
 		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
 	}
+	return false
+}
+
+func (e *TopNExec) generateTopNResultWhenSpillTriggeredOnlyOnce() {
+
+}
+
+func (e *TopNExec) generateTopNResultWhenSpillTriggeredWithMulWayMerge() {
+
 }
 
 func (e *TopNExec) generateTopNResultsWithSpill() {
+	inDiskNum := len(e.spillHelper.sortedRowsInDisk)
+	if inDiskNum == 0 {
+		panic("inDiskNum can't be 0 when we generate result with spill triggered")
+	}
 
+	if inDiskNum == 1 {
+
+		return
+	}
 }
 
 func (e *TopNExec) generateTopNResults() {
-	if e.spillHelper.isSpillTriggered() {
+	defer func() {
+		if r := recover(); r != nil {
+			processPanicAndLog(e.resultChannel, r)
+		}
 
-	} else {
-		e.generateTopNResultsWithNoSpill()
+		close(e.resultChannel)
+	}()
+
+	if !e.spillHelper.isSpillTriggered() {
+		if !e.generateTopNResultsWithNoSpill() {
+			return
+		}
+
+		err := e.spillHeapInTopNExec()
+		if err != nil {
+			e.resultChannel <- rowWithError{err: err}
+		}
 	}
+
+	e.generateTopNResultsWithSpill()
 }
