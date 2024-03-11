@@ -4313,9 +4313,6 @@ func (s *session) isPipelinedDML() bool {
 	}
 
 	{
-		if s.sessionVars.ForeignKeyChecks {
-			return false
-		}
 		//stmtCtx.OriginalSQL
 		stmts, err := s.Parse(context.Background(), stmtCtx.OriginalSQL)
 		if err != nil || len(stmts) == 0 {
