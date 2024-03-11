@@ -171,16 +171,14 @@ func TestConvertToErrFoundConflictRecords(t *testing.T) {
 	data3IndexKey := kvPairs.Pairs[5].Key
 	data3IndexValue := kvPairs.Pairs[5].Val
 
-	ctx := context.Background()
-
 	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data2RowKey, data2RowValue)
 
-	newErr := local.ConvertToErrFoundConflictRecords(ctx, originalErr, tbl)
+	newErr := local.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '(2, 6, \"2.csv\")'")
 
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
-	newErr = local.ConvertToErrFoundConflictRecords(ctx, originalErr, tbl)
+	newErr = local.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, unique key is '[7]', primary key is '3'")
 }
 
@@ -240,15 +238,13 @@ func TestConvertToErrFoundConflictRecordsMultipleColumnsIndex(t *testing.T) {
 	data3IndexKey := kvPairs.Pairs[5].Key
 	data3IndexValue := kvPairs.Pairs[5].Val
 
-	ctx := context.Background()
-
 	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data2RowKey, data2RowValue)
 
-	newErr := local.ConvertToErrFoundConflictRecords(ctx, originalErr, tbl)
+	newErr := local.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '(2, 6, \"2.csv\", 102)'")
 
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
-	newErr = local.ConvertToErrFoundConflictRecords(ctx, originalErr, tbl)
+	newErr = local.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, unique key is '[7 103]', primary key is '3'")
 }

@@ -517,7 +517,7 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
 	if common.ErrFoundDuplicateKeys.Equal(importErr) {
-		importErr = local.ConvertToErrFoundConflictRecords(ctx, importErr, ti.encTable)
+		importErr = local.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
 	}
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
@@ -608,7 +608,7 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
 			); err != nil {
 				if common.ErrFoundDuplicateKeys.Equal(err) {
-					err = local.ConvertToErrFoundConflictRecords(ctx, err, ti.encTable)
+					err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 				}
 				importErr = multierr.Append(importErr, err)
 			}
@@ -705,7 +705,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = local.ConvertToErrFoundConflictRecords(ctx, err, ti.encTable)
+			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
 		return nil, err
 	}
@@ -717,7 +717,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = local.ConvertToErrFoundConflictRecords(ctx, err, ti.encTable)
+			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
 		return nil, err
 	}
