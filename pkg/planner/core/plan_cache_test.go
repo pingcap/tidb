@@ -1130,6 +1130,7 @@ func TestNonPreparedPlanCacheAutoStmtRetry(t *testing.T) {
 	tk1.MustExec("insert into t values(1, 1)")
 
 	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set session tidb_dml_type = standard")
 	tk2.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 	tk2.MustExec("use test")
 	tk1.MustExec("begin")

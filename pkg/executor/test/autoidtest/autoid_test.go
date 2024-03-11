@@ -517,6 +517,7 @@ func testInsertWithAutoidSchema(t *testing.T, tk *testkit.TestKit) {
 		},
 	}
 
+	tk.MustExec("set session tidb_dml_type = standard")
 	for _, tt := range tests {
 		if strings.HasPrefix(tt.insert, "retry : ") {
 			// it's the last retry insert case, change the sessionVars.

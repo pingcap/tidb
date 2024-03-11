@@ -2533,6 +2533,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, t *testing.T, key string) {
 func TestDropSchemaWithPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec("drop database if exists test_db_with_partition")
 	tk.MustExec("create database test_db_with_partition")
 	tk.MustExec("use test_db_with_partition")

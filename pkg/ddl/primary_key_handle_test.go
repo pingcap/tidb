@@ -19,6 +19,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -209,6 +210,7 @@ func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 
 	d := dom.DDL()
 
+	time.Sleep(time.Second) // sleep a while to commit keys
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)

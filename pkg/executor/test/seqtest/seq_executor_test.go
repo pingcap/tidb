@@ -76,6 +76,7 @@ func TestEarlyClose(t *testing.T) {
 	}
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
 
+	time.Sleep(time.Second)
 	// Get table ID for split.
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
@@ -1164,6 +1165,7 @@ func TestPessimisticConflictRetryAutoID(t *testing.T) {
 	err = make([]error, concurrency)
 	for i := 0; i < concurrency; i++ {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("set session tidb_dml_type = standard")
 		tk.MustExec("use test")
 		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 		tk.MustExec("set autocommit = 1")
@@ -1190,6 +1192,7 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int not null auto_increment unique key, idx int unique key, c int);")
@@ -1202,6 +1205,7 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	err = make([]error, concurrency)
 	for i := 0; i < concurrency; i++ {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("set session tidb_dml_type = standard")
 		tk.MustExec("use test")
 		go func(idx int) {
 			for i := 0; i < 10; i++ {
@@ -1219,6 +1223,7 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	var insertErr error
 	go func() {
 		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("set session tidb_dml_type = standard")
 		tk.MustExec("use test")
 		for i := 0; i < 10; i++ {
 			_, e := tk.Exec("insert into src values (null);")
@@ -1241,6 +1246,7 @@ func TestAutoRandRecoverTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover_auto_rand")

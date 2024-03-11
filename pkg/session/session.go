@@ -4408,6 +4408,48 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 			),
 		)
 	}
+
+	{
+		stmts, err := s.Parse(context.Background(), stmtCtx.OriginalSQL)
+		if err != nil || len(stmts) == 0 {
+			return false
+		}
+		var target *ast.TableRefsClause
+		stmt := stmts[0]
+		if explain, ok := stmt.(*ast.ExplainStmt); ok {
+			stmt = explain.Stmt
+		}
+		switch v := stmt.(type) {
+		case *ast.InsertStmt:
+			target = v.Table
+		case *ast.UpdateStmt:
+			target = v.TableRefs
+		case *ast.DeleteStmt:
+			target = v.TableRefs
+		}
+		if target != nil && target.TableRefs != nil && target.TableRefs.Left != nil {
+			if source, ok := target.TableRefs.Left.(*ast.TableSource); ok {
+				if table, ok := source.Source.(*ast.TableName); ok {
+					s.GetDomainInfoSchema()
+					is := s.GetDomainInfoSchema().(infoschema.InfoSchema)
+					tableInfo, err := is.TableByName(model.NewCIStr(s.sessionVars.CurrentDB), table.Name)
+					if err != nil {
+						return false
+					}
+					if tableInfo.Meta().TempTableType == model.TempTableLocal {
+						return false
+					}
+					if len(tableInfo.Meta().ForeignKeys) > 0 {
+						return false
+					}
+					referredFKs := is.GetTableReferredForeignKeys(s.sessionVars.CurrentDB, table.Name.O)
+					if len(referredFKs) > 0 {
+						return false
+					}
+				}
+			}
+		}
+	}
 	return true
 }
 
