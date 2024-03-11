@@ -71,7 +71,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 		bf.tp.SetType(mysql.TypeVarString)
 		bf.tp.SetCharset(charset.CharsetBin)
 		bf.tp.SetCollate(charset.CollationBin)
-		sig = &builtinInternalToBinarySig{bf}
+		sig = &builtinInternalToBinarySig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ToBinary)
 	default:
 		return nil, fmt.Errorf("unexpected argTp: %d", argTp)
@@ -81,6 +81,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinInternalToBinarySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinInternalToBinarySig) Clone() builtinFunc {
@@ -150,7 +151,7 @@ func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expre
 			return nil, err
 		}
 		bf.tp = c.tp
-		sig = &builtinInternalFromBinarySig{bf}
+		sig = &builtinInternalFromBinarySig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FromBinary)
 	default:
 		return nil, fmt.Errorf("unexpected argTp: %d", argTp)
@@ -160,6 +161,7 @@ func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinInternalFromBinarySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinInternalFromBinarySig) Clone() builtinFunc {

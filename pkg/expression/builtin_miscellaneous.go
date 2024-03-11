@@ -117,12 +117,13 @@ func (c *sleepFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 	bf.tp.SetFlen(21)
-	sig := &builtinSleepSig{bf}
+	sig := &builtinSleepSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinSleepSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSleepSig) Clone() builtinFunc {
@@ -172,13 +173,14 @@ func (c *lockFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinLockSig{bf}
+	sig := &builtinLockSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinLockSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLockSig) Clone() builtinFunc {
@@ -256,13 +258,14 @@ func (c *releaseLockFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinReleaseLockSig{bf}
+	sig := &builtinReleaseLockSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinReleaseLockSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinReleaseLockSig) Clone() builtinFunc {
@@ -317,30 +320,30 @@ func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	var sig builtinFunc
 	switch argTp {
 	case types.ETDecimal:
-		sig = &builtinDecimalAnyValueSig{bf}
+		sig = &builtinDecimalAnyValueSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_DecimalAnyValue)
 	case types.ETDuration:
-		sig = &builtinDurationAnyValueSig{bf}
+		sig = &builtinDurationAnyValueSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_DurationAnyValue)
 	case types.ETInt:
 		bf.tp.SetDecimal(0)
-		sig = &builtinIntAnyValueSig{bf}
+		sig = &builtinIntAnyValueSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IntAnyValue)
 	case types.ETJson:
-		sig = &builtinJSONAnyValueSig{bf}
+		sig = &builtinJSONAnyValueSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JSONAnyValue)
 	case types.ETReal:
-		sig = &builtinRealAnyValueSig{bf}
+		sig = &builtinRealAnyValueSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_RealAnyValue)
 	case types.ETString:
 		bf.tp.SetDecimal(types.UnspecifiedLength)
-		sig = &builtinStringAnyValueSig{bf}
+		sig = &builtinStringAnyValueSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StringAnyValue)
 	case types.ETDatetime, types.ETTimestamp:
 		bf.tp.SetCharset(mysql.DefaultCharset)
 		bf.tp.SetCollate(mysql.DefaultCollationName)
 		bf.tp.SetFlag(0)
-		sig = &builtinTimeAnyValueSig{bf}
+		sig = &builtinTimeAnyValueSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_TimeAnyValue)
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("ANY_VALUE")
@@ -350,6 +353,7 @@ func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinDecimalAnyValueSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDecimalAnyValueSig) Clone() builtinFunc {
@@ -366,6 +370,7 @@ func (b *builtinDecimalAnyValueSig) evalDecimal(ctx EvalContext, row chunk.Row) 
 
 type builtinDurationAnyValueSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDurationAnyValueSig) Clone() builtinFunc {
@@ -382,6 +387,7 @@ func (b *builtinDurationAnyValueSig) evalDuration(ctx EvalContext, row chunk.Row
 
 type builtinIntAnyValueSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIntAnyValueSig) Clone() builtinFunc {
@@ -398,6 +404,7 @@ func (b *builtinIntAnyValueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 
 type builtinJSONAnyValueSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
@@ -414,6 +421,7 @@ func (b *builtinJSONAnyValueSig) evalJSON(ctx EvalContext, row chunk.Row) (types
 
 type builtinRealAnyValueSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinRealAnyValueSig) Clone() builtinFunc {
@@ -430,6 +438,7 @@ func (b *builtinRealAnyValueSig) evalReal(ctx EvalContext, row chunk.Row) (float
 
 type builtinStringAnyValueSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinStringAnyValueSig) Clone() builtinFunc {
@@ -446,6 +455,7 @@ func (b *builtinStringAnyValueSig) evalString(ctx EvalContext, row chunk.Row) (s
 
 type builtinTimeAnyValueSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTimeAnyValueSig) Clone() builtinFunc {
@@ -482,13 +492,14 @@ func (c *inetAtonFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 	bf.tp.SetFlen(21)
 	bf.tp.AddFlag(mysql.UnsignedFlag)
-	sig := &builtinInetAtonSig{bf}
+	sig := &builtinInetAtonSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_InetAton)
 	return sig, nil
 }
 
 type builtinInetAtonSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinInetAtonSig) Clone() builtinFunc {
@@ -562,13 +573,14 @@ func (c *inetNtoaFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(93)
 	bf.tp.SetDecimal(0)
-	sig := &builtinInetNtoaSig{bf}
+	sig := &builtinInetNtoaSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_InetNtoa)
 	return sig, nil
 }
 
 type builtinInetNtoaSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinInetNtoaSig) Clone() builtinFunc {
@@ -615,13 +627,14 @@ func (c *inet6AtonFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.SetFlen(16)
 	types.SetBinChsClnFlag(bf.tp)
 	bf.tp.SetDecimal(0)
-	sig := &builtinInet6AtonSig{bf}
+	sig := &builtinInet6AtonSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Inet6Aton)
 	return sig, nil
 }
 
 type builtinInet6AtonSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinInet6AtonSig) Clone() builtinFunc {
@@ -690,13 +703,14 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(117)
 	bf.tp.SetDecimal(0)
-	sig := &builtinInet6NtoaSig{bf}
+	sig := &builtinInet6NtoaSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Inet6Ntoa)
 	return sig, nil
 }
 
 type builtinInet6NtoaSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinInet6NtoaSig) Clone() builtinFunc {
@@ -736,13 +750,14 @@ func (c *isFreeLockFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinFreeLockSig{bf}
+	sig := &builtinFreeLockSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinFreeLockSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFreeLockSig) Clone() builtinFunc {
@@ -791,13 +806,14 @@ func (c *isIPv4FunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinIsIPv4Sig{bf}
+	sig := &builtinIsIPv4Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4)
 	return sig, nil
 }
 
 type builtinIsIPv4Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIsIPv4Sig) Clone() builtinFunc {
@@ -859,13 +875,14 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinIsIPv4CompatSig{bf}
+	sig := &builtinIsIPv4CompatSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Compat)
 	return sig, nil
 }
 
 type builtinIsIPv4CompatSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIsIPv4CompatSig) Clone() builtinFunc {
@@ -908,13 +925,14 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinIsIPv4MappedSig{bf}
+	sig := &builtinIsIPv4MappedSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Mapped)
 	return sig, nil
 }
 
 type builtinIsIPv4MappedSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIsIPv4MappedSig) Clone() builtinFunc {
@@ -957,13 +975,14 @@ func (c *isIPv6FunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinIsIPv6Sig{bf}
+	sig := &builtinIsIPv6Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsIPv6)
 	return sig, nil
 }
 
 type builtinIsIPv6Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIsIPv6Sig) Clone() builtinFunc {
@@ -998,13 +1017,14 @@ func (c *isUsedLockFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinUsedLockSig{bf}
+	sig := &builtinUsedLockSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinUsedLockSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUsedLockSig) Clone() builtinFunc {
@@ -1050,13 +1070,14 @@ func (c *isUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinIsUUIDSig{bf}
+	sig := &builtinIsUUIDSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IsUUID)
 	return sig, nil
 }
 
 type builtinIsUUIDSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIsUUIDSig) Clone() builtinFunc {
@@ -1103,24 +1124,24 @@ func (c *nameConstFunctionClass) getFunction(ctx BuildContext, args []Expression
 	var sig builtinFunc
 	switch argTp {
 	case types.ETDecimal:
-		sig = &builtinNameConstDecimalSig{bf}
+		sig = &builtinNameConstDecimalSig{baseBuiltinFunc: bf}
 	case types.ETDuration:
-		sig = &builtinNameConstDurationSig{bf}
+		sig = &builtinNameConstDurationSig{baseBuiltinFunc: bf}
 	case types.ETInt:
 		bf.tp.SetDecimal(0)
-		sig = &builtinNameConstIntSig{bf}
+		sig = &builtinNameConstIntSig{baseBuiltinFunc: bf}
 	case types.ETJson:
-		sig = &builtinNameConstJSONSig{bf}
+		sig = &builtinNameConstJSONSig{baseBuiltinFunc: bf}
 	case types.ETReal:
-		sig = &builtinNameConstRealSig{bf}
+		sig = &builtinNameConstRealSig{baseBuiltinFunc: bf}
 	case types.ETString:
 		bf.tp.SetDecimal(types.UnspecifiedLength)
-		sig = &builtinNameConstStringSig{bf}
+		sig = &builtinNameConstStringSig{baseBuiltinFunc: bf}
 	case types.ETDatetime, types.ETTimestamp:
 		bf.tp.SetCharset(mysql.DefaultCharset)
 		bf.tp.SetCollate(mysql.DefaultCollationName)
 		bf.tp.SetFlag(0)
-		sig = &builtinNameConstTimeSig{bf}
+		sig = &builtinNameConstTimeSig{baseBuiltinFunc: bf}
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("NAME_CONST")
 	}
@@ -1129,6 +1150,7 @@ func (c *nameConstFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinNameConstDecimalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNameConstDecimalSig) Clone() builtinFunc {
@@ -1143,6 +1165,7 @@ func (b *builtinNameConstDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row)
 
 type builtinNameConstIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNameConstIntSig) Clone() builtinFunc {
@@ -1157,6 +1180,7 @@ func (b *builtinNameConstIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 
 type builtinNameConstRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNameConstRealSig) Clone() builtinFunc {
@@ -1171,6 +1195,7 @@ func (b *builtinNameConstRealSig) evalReal(ctx EvalContext, row chunk.Row) (floa
 
 type builtinNameConstStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNameConstStringSig) Clone() builtinFunc {
@@ -1185,6 +1210,7 @@ func (b *builtinNameConstStringSig) evalString(ctx EvalContext, row chunk.Row) (
 
 type builtinNameConstJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNameConstJSONSig) Clone() builtinFunc {
@@ -1199,6 +1225,7 @@ func (b *builtinNameConstJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (type
 
 type builtinNameConstDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNameConstDurationSig) Clone() builtinFunc {
@@ -1213,6 +1240,7 @@ func (b *builtinNameConstDurationSig) evalDuration(ctx EvalContext, row chunk.Ro
 
 type builtinNameConstTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNameConstTimeSig) Clone() builtinFunc {
@@ -1237,13 +1265,14 @@ func (c *releaseAllLocksFunctionClass) getFunction(ctx BuildContext, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinReleaseAllLocksSig{bf}
+	sig := &builtinReleaseAllLocksSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinReleaseAllLocksSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {
@@ -1275,13 +1304,14 @@ func (c *uuidFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
-	sig := &builtinUUIDSig{bf}
+	sig := &builtinUUIDSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UUID)
 	return sig, nil
 }
 
 type builtinUUIDSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUUIDSig) Clone() builtinFunc {
@@ -1327,13 +1357,14 @@ func (c *vitessHashFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	bf.tp.AddFlag(mysql.UnsignedFlag)
 	types.SetBinChsClnFlag(bf.tp)
 
-	sig := &builtinVitessHashSig{bf}
+	sig := &builtinVitessHashSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_VitessHash)
 	return sig, nil
 }
 
 type builtinVitessHashSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinVitessHashSig) Clone() builtinFunc {
@@ -1375,12 +1406,13 @@ func (c *uuidToBinFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.SetFlen(16)
 	types.SetBinChsClnFlag(bf.tp)
 	bf.tp.SetDecimal(0)
-	sig := &builtinUUIDToBinSig{bf}
+	sig := &builtinUUIDToBinSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinUUIDToBinSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUUIDToBinSig) Clone() builtinFunc {
@@ -1444,12 +1476,13 @@ func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(32)
 	bf.tp.SetDecimal(0)
-	sig := &builtinBinToUUIDSig{bf}
+	sig := &builtinBinToUUIDSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinBinToUUIDSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinBinToUUIDSig) Clone() builtinFunc {
@@ -1527,13 +1560,14 @@ func (c *tidbShardFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.AddFlag(mysql.UnsignedFlag)
 	types.SetBinChsClnFlag(bf.tp)
 
-	sig := &builtinTidbShardSig{bf}
+	sig := &builtinTidbShardSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TiDBShard)
 	return sig, nil
 }
 
 type builtinTidbShardSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTidbShardSig) Clone() builtinFunc {

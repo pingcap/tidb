@@ -46,6 +46,16 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+var _ contextopt.RequireOptionalEvalProps = notRequireOptionalEvalProps{}
+
+// notRequireOptionalEvalProps indicates the function does not require any optional properties.
+type notRequireOptionalEvalProps struct{}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (notRequireOptionalEvalProps) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
+	return
+}
+
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	bufAllocator columnBufferAllocator
@@ -62,10 +72,6 @@ type baseBuiltinFunc struct {
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
-}
-
-func (*baseBuiltinFunc) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
-	return
 }
 
 // metadata returns the metadata of a function.
@@ -423,6 +429,7 @@ func (*baseBuiltinFunc) Clone() builtinFunc {
 // baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.
 type baseBuiltinCastFunc struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	// inUnion indicates whether cast is in union context.
 	inUnion bool

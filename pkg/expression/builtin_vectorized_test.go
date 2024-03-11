@@ -208,6 +208,7 @@ func BenchmarkPlusIntBufAllocator(b *testing.B) {
 
 type mockBuiltinDouble struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	evalType  types.EvalType
 	enableVec bool
@@ -439,7 +440,7 @@ func genMockRowDouble(ctx BuildContext, eType types.EvalType, enableVec bool) (b
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	rowDouble := &mockBuiltinDouble{bf, eType, enableVec}
+	rowDouble := &mockBuiltinDouble{baseBuiltinFunc: bf, evalType: eType, enableVec: enableVec}
 	input := chunk.New([]*types.FieldType{tp}, 1024, 1024)
 	buf := chunk.NewColumn(types.NewFieldType(convertETType(eType)), 1024)
 	for i := 0; i < 1024; i++ {

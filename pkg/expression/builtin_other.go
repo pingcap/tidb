@@ -179,6 +179,7 @@ func (c *inFunctionClass) verifyArgs(ctx BuildContext, args []Expression) ([]Exp
 // nolint:structcheck
 type baseInSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	// nonConstArgsIdx stores the indices of non-constant args in the baseBuiltinFunc.args (the first arg is not included).
 	// It works with builtinInXXXSig.hashset to accelerate 'eval'.
 	nonConstArgsIdx []int
@@ -648,6 +649,7 @@ func (b *builtinInDurationSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 // builtinInJSONSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinInJSONSig) Clone() builtinFunc {
@@ -695,12 +697,13 @@ func (c *rowFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 	if err != nil {
 		return nil, err
 	}
-	sig = &builtinRowSig{bf}
+	sig = &builtinRowSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinRowSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinRowSig) Clone() builtinFunc {
@@ -733,15 +736,15 @@ func (c *setVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetFlenUnderLimit(args[1].GetType().GetFlen())
 	switch argTp {
 	case types.ETString:
-		sig = &builtinSetStringVarSig{bf}
+		sig = &builtinSetStringVarSig{baseBuiltinFunc: bf}
 	case types.ETReal:
-		sig = &builtinSetRealVarSig{bf}
+		sig = &builtinSetRealVarSig{baseBuiltinFunc: bf}
 	case types.ETDecimal:
-		sig = &builtinSetDecimalVarSig{bf}
+		sig = &builtinSetDecimalVarSig{baseBuiltinFunc: bf}
 	case types.ETInt:
-		sig = &builtinSetIntVarSig{bf}
+		sig = &builtinSetIntVarSig{baseBuiltinFunc: bf}
 	case types.ETDatetime:
-		sig = &builtinSetTimeVarSig{bf}
+		sig = &builtinSetTimeVarSig{baseBuiltinFunc: bf}
 	default:
 		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 	}
@@ -750,6 +753,7 @@ func (c *setVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinSetStringVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSetStringVarSig) Clone() builtinFunc {
@@ -780,6 +784,7 @@ func (b *builtinSetStringVarSig) evalString(ctx EvalContext, row chunk.Row) (res
 
 type builtinSetRealVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSetRealVarSig) Clone() builtinFunc {
@@ -808,6 +813,7 @@ func (b *builtinSetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (res flo
 
 type builtinSetDecimalVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSetDecimalVarSig) Clone() builtinFunc {
@@ -835,6 +841,7 @@ func (b *builtinSetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 
 type builtinSetIntVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSetIntVarSig) Clone() builtinFunc {
@@ -862,6 +869,7 @@ func (b *builtinSetIntVarSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 
 type builtinSetTimeVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSetTimeVarSig) Clone() builtinFunc {
@@ -938,12 +946,13 @@ func (c *getStringVarFunctionClass) getFunction(ctx BuildContext, args []Express
 		bf.tp.SetCharset(c.tp.GetCharset())
 		bf.tp.SetCollate(c.tp.GetCollate())
 	}
-	sig = &builtinGetStringVarSig{bf}
+	sig = &builtinGetStringVarSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinGetStringVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinGetStringVarSig) Clone() builtinFunc {
@@ -990,12 +999,13 @@ func (c *getIntVarFunctionClass) getFunction(ctx BuildContext, args []Expression
 	}
 	bf.tp.SetFlen(c.tp.GetFlen())
 	bf.tp.SetFlag(c.tp.GetFlag())
-	sig = &builtinGetIntVarSig{bf}
+	sig = &builtinGetIntVarSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinGetIntVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinGetIntVarSig) Clone() builtinFunc {
@@ -1030,12 +1040,13 @@ func (c *getRealVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	bf.tp.SetFlen(c.tp.GetFlen())
-	sig = &builtinGetRealVarSig{bf}
+	sig = &builtinGetRealVarSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinGetRealVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinGetRealVarSig) Clone() builtinFunc {
@@ -1074,12 +1085,13 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx BuildContext, args []Expres
 		return nil, err
 	}
 	bf.tp.SetFlenUnderLimit(c.tp.GetFlen())
-	sig = &builtinGetDecimalVarSig{bf}
+	sig = &builtinGetDecimalVarSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinGetDecimalVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
@@ -1126,12 +1138,13 @@ func (c *getTimeVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	} else {
 		bf.setDecimalAndFlenForDate()
 	}
-	sig = &builtinGetTimeVarSig{bf}
+	sig = &builtinGetTimeVarSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinGetTimeVarSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinGetTimeVarSig) Clone() builtinFunc {
@@ -1170,25 +1183,26 @@ func (c *valuesFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 	switch c.tp.EvalType() {
 	case types.ETInt:
-		sig = &builtinValuesIntSig{bf, c.offset}
+		sig = &builtinValuesIntSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETReal:
-		sig = &builtinValuesRealSig{bf, c.offset}
+		sig = &builtinValuesRealSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETDecimal:
-		sig = &builtinValuesDecimalSig{bf, c.offset}
+		sig = &builtinValuesDecimalSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETString:
-		sig = &builtinValuesStringSig{bf, c.offset}
+		sig = &builtinValuesStringSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinValuesTimeSig{bf, c.offset}
+		sig = &builtinValuesTimeSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETDuration:
-		sig = &builtinValuesDurationSig{bf, c.offset}
+		sig = &builtinValuesDurationSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETJson:
-		sig = &builtinValuesJSONSig{bf, c.offset}
+		sig = &builtinValuesJSONSig{baseBuiltinFunc: bf, offset: c.offset}
 	}
 	return sig, nil
 }
 
 type builtinValuesIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	offset int
 }
@@ -1230,6 +1244,7 @@ func (b *builtinValuesIntSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 
 type builtinValuesRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	offset int
 }
@@ -1261,6 +1276,7 @@ func (b *builtinValuesRealSig) evalReal(ctx EvalContext, _ chunk.Row) (float64, 
 
 type builtinValuesDecimalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	offset int
 }
@@ -1289,6 +1305,7 @@ func (b *builtinValuesDecimalSig) evalDecimal(ctx EvalContext, _ chunk.Row) (*ty
 
 type builtinValuesStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	offset int
 }
@@ -1326,6 +1343,7 @@ func (b *builtinValuesStringSig) evalString(ctx EvalContext, _ chunk.Row) (strin
 
 type builtinValuesTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	offset int
 }
@@ -1354,6 +1372,7 @@ func (b *builtinValuesTimeSig) evalTime(ctx EvalContext, _ chunk.Row) (types.Tim
 
 type builtinValuesDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	offset int
 }
@@ -1383,6 +1402,7 @@ func (b *builtinValuesDurationSig) evalDuration(ctx EvalContext, _ chunk.Row) (t
 
 type builtinValuesJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	offset int
 }
@@ -1422,12 +1442,13 @@ func (c *bitCountFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.tp.SetFlen(2)
-	sig := &builtinBitCountSig{bf}
+	sig := &builtinBitCountSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinBitCountSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinBitCountSig) Clone() builtinFunc {
@@ -1465,12 +1486,13 @@ func (c *getParamFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.tp.SetFlen(mysql.MaxFieldVarCharLength)
-	sig := &builtinGetParamStringSig{bf}
+	sig := &builtinGetParamStringSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinGetParamStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinGetParamStringSig) Clone() builtinFunc {

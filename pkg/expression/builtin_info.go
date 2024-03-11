@@ -102,12 +102,13 @@ func (c *databaseFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinDatabaseSig{bf}
+	sig := &builtinDatabaseSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinDatabaseSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDatabaseSig) Clone() builtinFunc {
@@ -136,12 +137,13 @@ func (c *foundRowsFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.AddFlag(mysql.UnsignedFlag)
-	sig := &builtinFoundRowsSig{bf}
+	sig := &builtinFoundRowsSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinFoundRowsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFoundRowsSig) Clone() builtinFunc {
@@ -189,11 +191,6 @@ func (b *builtinCurrentUserSig) Clone() builtinFunc {
 	return newSig
 }
 
-// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (b *builtinCurrentUserSig) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
-	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
-}
-
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 func (b *builtinCurrentUserSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
@@ -233,11 +230,6 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 	newSig := &builtinCurrentRoleSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
-}
-
-// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (b *builtinCurrentRoleSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
 }
 
 // evalString evals a builtinCurrentUserSig.
@@ -280,12 +272,13 @@ func (c *currentResourceGroupFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinCurrentResourceGroupSig{bf}
+	sig := &builtinCurrentResourceGroupSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCurrentResourceGroupSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCurrentResourceGroupSig) Clone() builtinFunc {
@@ -343,11 +336,6 @@ func (b *builtinUserSig) Clone() builtinFunc {
 	return newSig
 }
 
-// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (b *builtinUserSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
-}
-
 // evalString evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
@@ -374,12 +362,13 @@ func (c *connectionIDFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 	bf.tp.AddFlag(mysql.UnsignedFlag)
-	sig := &builtinConnectionIDSig{bf}
+	sig := &builtinConnectionIDSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinConnectionIDSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinConnectionIDSig) Clone() builtinFunc {
@@ -416,10 +405,10 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx BuildContext, args []Express
 	bf.tp.AddFlag(mysql.UnsignedFlag)
 
 	if len(args) == 1 {
-		sig = &builtinLastInsertIDWithIDSig{bf}
+		sig = &builtinLastInsertIDWithIDSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LastInsertIDWithID)
 	} else {
-		sig = &builtinLastInsertIDSig{bf}
+		sig = &builtinLastInsertIDSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LastInsertID)
 	}
 	return sig, err
@@ -427,6 +416,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinLastInsertIDSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLastInsertIDSig) Clone() builtinFunc {
@@ -444,6 +434,7 @@ func (b *builtinLastInsertIDSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 
 type builtinLastInsertIDWithIDSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLastInsertIDWithIDSig) Clone() builtinFunc {
@@ -477,12 +468,13 @@ func (c *versionFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinVersionSig{bf}
+	sig := &builtinVersionSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinVersionSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinVersionSig) Clone() builtinFunc {
@@ -510,12 +502,13 @@ func (c *tidbVersionFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.tp.SetFlen(len(printer.GetTiDBInfo()))
-	sig := &builtinTiDBVersionSig{bf}
+	sig := &builtinTiDBVersionSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBVersionSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBVersionSig) Clone() builtinFunc {
@@ -542,12 +535,13 @@ func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBIsDDLOwnerSig{bf}
+	sig := &builtinTiDBIsDDLOwnerSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBIsDDLOwnerSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) Clone() builtinFunc {
@@ -590,12 +584,13 @@ func (c *benchmarkFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinBenchmarkSig{bf, constLoopCount}
+	sig := &builtinBenchmarkSig{baseBuiltinFunc: bf, constLoopCount: constLoopCount}
 	return sig, nil
 }
 
 type builtinBenchmarkSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	constLoopCount int64
 }
 
@@ -710,12 +705,13 @@ func (c *charsetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
-	sig := &builtinCharsetSig{bf}
+	sig := &builtinCharsetSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCharsetSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCharsetSig) Clone() builtinFunc {
@@ -740,13 +736,14 @@ func (c *coercibilityFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinCoercibilitySig{bf}
+	sig := &builtinCoercibilitySig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
 	return sig, nil
 }
 
 type builtinCoercibilitySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (c *builtinCoercibilitySig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
@@ -779,12 +776,13 @@ func (c *collationFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
-	sig := &builtinCollationSig{bf}
+	sig := &builtinCollationSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCollationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCollationSig) Clone() builtinFunc {
@@ -809,13 +807,14 @@ func (c *rowCountFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	sig = &builtinRowCountSig{bf}
+	sig = &builtinRowCountSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_RowCount)
 	return sig, nil
 }
 
 type builtinRowCountSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinRowCountSig) Clone() builtinFunc {
@@ -843,12 +842,13 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBDecodeKeySig{bf}
+	sig := &builtinTiDBDecodeKeySig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
@@ -905,12 +905,13 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBDecodeSQLDigestsSig{bf}
+	sig := &builtinTiDBDecodeSQLDigestsSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBDecodeSQLDigestsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBDecodeSQLDigestsSig) Clone() builtinFunc {
@@ -1023,12 +1024,13 @@ func (c *tidbEncodeSQLDigestFunctionClass) getFunction(ctx BuildContext, args []
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBEncodeSQLDigestSig{bf}
+	sig := &builtinTiDBEncodeSQLDigestSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBEncodeSQLDigestSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBEncodeSQLDigestSig) Clone() builtinFunc {
@@ -1061,15 +1063,16 @@ func (c *tidbDecodePlanFunctionClass) getFunction(ctx BuildContext, args []Expre
 		return nil, err
 	}
 	if c.funcName == ast.TiDBDecodePlan {
-		return &builtinTiDBDecodePlanSig{bf}, nil
+		return &builtinTiDBDecodePlanSig{baseBuiltinFunc: bf}, nil
 	} else if c.funcName == ast.TiDBDecodeBinaryPlan {
-		return &builtinTiDBDecodeBinaryPlanSig{bf}, nil
+		return &builtinTiDBDecodeBinaryPlanSig{baseBuiltinFunc: bf}, nil
 	}
 	return nil, errors.New("unknown decode plan function")
 }
 
 type builtinTiDBDecodePlanSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBDecodePlanSig) Clone() builtinFunc {
@@ -1092,6 +1095,7 @@ func (b *builtinTiDBDecodePlanSig) evalString(ctx EvalContext, row chunk.Row) (s
 
 type builtinTiDBDecodeBinaryPlanSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBDecodeBinaryPlanSig) Clone() builtinFunc {
@@ -1126,13 +1130,14 @@ func (c *nextValFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinNextValSig{bf}
+	sig := &builtinNextValSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(10)
 	return sig, nil
 }
 
 type builtinNextValSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNextValSig) Clone() builtinFunc {
@@ -1182,13 +1187,14 @@ func (c *lastValFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinLastValSig{bf}
+	sig := &builtinLastValSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(10)
 	return sig, nil
 }
 
 type builtinLastValSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLastValSig) Clone() builtinFunc {
@@ -1232,13 +1238,14 @@ func (c *setValFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinSetValSig{bf}
+	sig := &builtinSetValSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(args[1].GetType().GetFlen())
 	return sig, nil
 }
 
 type builtinSetValSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSetValSig) Clone() builtinFunc {
@@ -1297,12 +1304,13 @@ func (c *formatBytesFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
-	sig := &builtinFormatBytesSig{bf}
+	sig := &builtinFormatBytesSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinFormatBytesSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFormatBytesSig) Clone() builtinFunc {
@@ -1336,12 +1344,13 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx BuildContext, args []Expre
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
-	sig := &builtinFormatNanoTimeSig{bf}
+	sig := &builtinFormatNanoTimeSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinFormatNanoTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFormatNanoTimeSig) Clone() builtinFunc {

@@ -108,7 +108,7 @@ func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 	bf.tp.SetFlen(c.flen)
-	sig := &extensionFuncSig{bf, c.funcDef}
+	sig := &extensionFuncSig{baseBuiltinFunc: bf, FunctionDef: c.funcDef}
 	return sig, nil
 }
 
@@ -144,6 +144,7 @@ var _ extension.FunctionContext = extensionFnContext{}
 
 type extensionFuncSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	extension.FunctionDef
 }
 

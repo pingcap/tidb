@@ -281,7 +281,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 	if args[0].GetType().Hybrid() {
-		sig = &builtinCastStringAsStringSig{bf}
+		sig = &builtinCastStringAsStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
 	}
@@ -305,28 +305,28 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 				bf.tp.SetFlen(args[0].GetType().GetFlen())
 			}
 		}
-		sig = &builtinCastIntAsStringSig{bf}
+		sig = &builtinCastIntAsStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
 	case types.ETReal:
-		sig = &builtinCastRealAsStringSig{bf}
+		sig = &builtinCastRealAsStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsString)
 	case types.ETDecimal:
-		sig = &builtinCastDecimalAsStringSig{bf}
+		sig = &builtinCastDecimalAsStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsString)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinCastTimeAsStringSig{bf}
+		sig = &builtinCastTimeAsStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsString)
 	case types.ETDuration:
-		sig = &builtinCastDurationAsStringSig{bf}
+		sig = &builtinCastDurationAsStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsString)
 	case types.ETJson:
-		sig = &builtinCastJSONAsStringSig{bf}
+		sig = &builtinCastJSONAsStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
 	case types.ETString:
 		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
 		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName)
-		sig = &builtinCastStringAsStringSig{bf}
+		sig = &builtinCastStringAsStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
 		panic("unsupported types.EvalType in castAsStringFunctionClass")
@@ -351,25 +351,25 @@ func (c *castAsTimeFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
-		sig = &builtinCastIntAsTimeSig{bf}
+		sig = &builtinCastIntAsTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsTime)
 	case types.ETReal:
-		sig = &builtinCastRealAsTimeSig{bf}
+		sig = &builtinCastRealAsTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsTime)
 	case types.ETDecimal:
-		sig = &builtinCastDecimalAsTimeSig{bf}
+		sig = &builtinCastDecimalAsTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsTime)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinCastTimeAsTimeSig{bf}
+		sig = &builtinCastTimeAsTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsTime)
 	case types.ETDuration:
-		sig = &builtinCastDurationAsTimeSig{bf}
+		sig = &builtinCastDurationAsTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsTime)
 	case types.ETJson:
-		sig = &builtinCastJSONAsTimeSig{bf}
+		sig = &builtinCastJSONAsTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsTime)
 	case types.ETString:
-		sig = &builtinCastStringAsTimeSig{bf}
+		sig = &builtinCastStringAsTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsTime)
 	default:
 		panic("unsupported types.EvalType in castAsTimeFunctionClass")
@@ -394,25 +394,25 @@ func (c *castAsDurationFunctionClass) getFunction(ctx BuildContext, args []Expre
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
-		sig = &builtinCastIntAsDurationSig{bf}
+		sig = &builtinCastIntAsDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsDuration)
 	case types.ETReal:
-		sig = &builtinCastRealAsDurationSig{bf}
+		sig = &builtinCastRealAsDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsDuration)
 	case types.ETDecimal:
-		sig = &builtinCastDecimalAsDurationSig{bf}
+		sig = &builtinCastDecimalAsDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDuration)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinCastTimeAsDurationSig{bf}
+		sig = &builtinCastTimeAsDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsDuration)
 	case types.ETDuration:
-		sig = &builtinCastDurationAsDurationSig{bf}
+		sig = &builtinCastDurationAsDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsDuration)
 	case types.ETJson:
-		sig = &builtinCastJSONAsDurationSig{bf}
+		sig = &builtinCastJSONAsDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsDuration)
 	case types.ETString:
-		sig = &builtinCastStringAsDurationSig{bf}
+		sig = &builtinCastStringAsDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsDuration)
 	default:
 		panic("unsupported types.EvalType in castAsDurationFunctionClass")
@@ -458,12 +458,13 @@ func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	sig = &castJSONAsArrayFunctionSig{bf}
+	sig = &castJSONAsArrayFunctionSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type castJSONAsArrayFunctionSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *castJSONAsArrayFunctionSig) Clone() builtinFunc {
@@ -594,25 +595,25 @@ func (c *castAsJSONFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
-		sig = &builtinCastIntAsJSONSig{bf}
+		sig = &builtinCastIntAsJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsJson)
 	case types.ETReal:
-		sig = &builtinCastRealAsJSONSig{bf}
+		sig = &builtinCastRealAsJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsJson)
 	case types.ETDecimal:
-		sig = &builtinCastDecimalAsJSONSig{bf}
+		sig = &builtinCastDecimalAsJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsJson)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinCastTimeAsJSONSig{bf}
+		sig = &builtinCastTimeAsJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsJson)
 	case types.ETDuration:
-		sig = &builtinCastDurationAsJSONSig{bf}
+		sig = &builtinCastDurationAsJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsJson)
 	case types.ETJson:
-		sig = &builtinCastJSONAsJSONSig{bf}
+		sig = &builtinCastJSONAsJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
 	case types.ETString:
-		sig = &builtinCastStringAsJSONSig{bf}
+		sig = &builtinCastStringAsJSONSig{baseBuiltinFunc: bf}
 		sig.getRetTp().AddFlag(mysql.ParseToJSONFlag)
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsJson)
 	default:
@@ -708,6 +709,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row)
 
 type builtinCastIntAsStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastIntAsStringSig) Clone() builtinFunc {
@@ -739,6 +741,7 @@ func (b *builtinCastIntAsStringSig) evalString(ctx EvalContext, row chunk.Row) (
 
 type builtinCastIntAsTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastIntAsTimeSig) Clone() builtinFunc {
@@ -771,6 +774,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res 
 
 type builtinCastIntAsDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastIntAsDurationSig) Clone() builtinFunc {
@@ -797,6 +801,7 @@ func (b *builtinCastIntAsDurationSig) evalDuration(ctx EvalContext, row chunk.Ro
 
 type builtinCastIntAsJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastIntAsJSONSig) Clone() builtinFunc {
@@ -822,6 +827,7 @@ func (b *builtinCastIntAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 
 type builtinCastRealAsJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastRealAsJSONSig) Clone() builtinFunc {
@@ -838,6 +844,7 @@ func (b *builtinCastRealAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastDecimalAsJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastDecimalAsJSONSig) Clone() builtinFunc {
@@ -861,6 +868,7 @@ func (b *builtinCastDecimalAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (
 
 type builtinCastStringAsJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastStringAsJSONSig) Clone() builtinFunc {
@@ -900,6 +908,7 @@ func (b *builtinCastStringAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 
 type builtinCastDurationAsJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastDurationAsJSONSig) Clone() builtinFunc {
@@ -919,6 +928,7 @@ func (b *builtinCastDurationAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) 
 
 type builtinCastTimeAsJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastTimeAsJSONSig) Clone() builtinFunc {
@@ -1025,6 +1035,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 
 type builtinCastRealAsStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
@@ -1055,6 +1066,7 @@ func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 
 type builtinCastRealAsTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastRealAsTimeSig) Clone() builtinFunc {
@@ -1086,6 +1098,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (typ
 
 type builtinCastRealAsDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastRealAsDurationSig) Clone() builtinFunc {
@@ -1180,6 +1193,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (re
 
 type builtinCastDecimalAsStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastDecimalAsStringSig) Clone() builtinFunc {
@@ -1239,6 +1253,7 @@ func (b *builtinCastDecimalAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (
 
 type builtinCastDecimalAsTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastDecimalAsTimeSig) Clone() builtinFunc {
@@ -1265,6 +1280,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 
 type builtinCastDecimalAsDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastDecimalAsDurationSig) Clone() builtinFunc {
@@ -1290,6 +1306,7 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(ctx EvalContext, row chun
 
 type builtinCastStringAsStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastStringAsStringSig) Clone() builtinFunc {
@@ -1462,6 +1479,7 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.R
 
 type builtinCastStringAsTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastStringAsTimeSig) Clone() builtinFunc {
@@ -1491,6 +1509,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (r
 
 type builtinCastStringAsDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastStringAsDurationSig) Clone() builtinFunc {
@@ -1514,6 +1533,7 @@ func (b *builtinCastStringAsDurationSig) evalDuration(ctx EvalContext, row chunk
 
 type builtinCastTimeAsTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastTimeAsTimeSig) Clone() builtinFunc {
@@ -1607,6 +1627,7 @@ func (b *builtinCastTimeAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 
 type builtinCastTimeAsStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastTimeAsStringSig) Clone() builtinFunc {
@@ -1629,6 +1650,7 @@ func (b *builtinCastTimeAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 
 type builtinCastTimeAsDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastTimeAsDurationSig) Clone() builtinFunc {
@@ -1652,6 +1674,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 
 type builtinCastDurationAsDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastDurationAsDurationSig) Clone() builtinFunc {
@@ -1746,6 +1769,7 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(ctx EvalContext, row chunk
 
 type builtinCastDurationAsStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastDurationAsStringSig) Clone() builtinFunc {
@@ -1781,6 +1805,7 @@ func padZeroForBinaryType(s string, tp *types.FieldType, ctx EvalContext) (strin
 
 type builtinCastDurationAsTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastDurationAsTimeSig) Clone() builtinFunc {
@@ -1809,6 +1834,7 @@ func (b *builtinCastDurationAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) 
 
 type builtinCastJSONAsJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastJSONAsJSONSig) Clone() builtinFunc {
@@ -1888,6 +1914,7 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 
 type builtinCastJSONAsStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastJSONAsStringSig) Clone() builtinFunc {
@@ -1910,6 +1937,7 @@ func (b *builtinCastJSONAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 
 type builtinCastJSONAsTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastJSONAsTimeSig) Clone() builtinFunc {
@@ -1970,6 +1998,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 
 type builtinCastJSONAsDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCastJSONAsDurationSig) Clone() builtinFunc {

@@ -52,6 +52,7 @@ func (c *ilikeFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 
 type builtinIlikeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	// pattern is not serialized with builtinIlikeSig, treat them as a cache to accelerate
 	// the evaluation of builtinIlikeSig.
 	patternCache builtinFuncCache[collate.WildcardPattern]

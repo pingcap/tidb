@@ -92,6 +92,7 @@ type jsonTypeFunctionClass struct {
 
 type builtinJSONTypeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONTypeSig) Clone() builtinFunc {
@@ -113,7 +114,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(51) // flen of JSON_TYPE is length of UNSIGNED INTEGER.
 	bf.tp.AddFlag(mysql.BinaryFlag)
-	sig := &builtinJSONTypeSig{bf}
+	sig := &builtinJSONTypeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
 	return sig, nil
 }
@@ -133,6 +134,7 @@ type jsonExtractFunctionClass struct {
 
 type builtinJSONExtractSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONExtractSig) Clone() builtinFunc {
@@ -164,7 +166,7 @@ func (c *jsonExtractFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONExtractSig{bf}
+	sig := &builtinJSONExtractSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonExtractSig)
 	return sig, nil
 }
@@ -200,6 +202,7 @@ type jsonUnquoteFunctionClass struct {
 
 type builtinJSONUnquoteSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
@@ -229,7 +232,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	bf.tp.SetFlen(args[0].GetType().GetFlen())
 	bf.tp.AddFlag(mysql.BinaryFlag)
 	DisableParseJSONFlag4Expr(args[0])
-	sig := &builtinJSONUnquoteSig{bf}
+	sig := &builtinJSONUnquoteSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig, nil
 }
@@ -255,6 +258,7 @@ type jsonSetFunctionClass struct {
 
 type builtinJSONSetSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONSetSig) Clone() builtinFunc {
@@ -282,7 +286,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	for i := 2; i < len(args); i += 2 {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	sig := &builtinJSONSetSig{bf}
+	sig := &builtinJSONSetSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
 	return sig, nil
 }
@@ -298,6 +302,7 @@ type jsonInsertFunctionClass struct {
 
 type builtinJSONInsertSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONInsertSig) Clone() builtinFunc {
@@ -325,7 +330,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	for i := 2; i < len(args); i += 2 {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	sig := &builtinJSONInsertSig{bf}
+	sig := &builtinJSONInsertSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
 	return sig, nil
 }
@@ -341,6 +346,7 @@ type jsonReplaceFunctionClass struct {
 
 type builtinJSONReplaceSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONReplaceSig) Clone() builtinFunc {
@@ -368,7 +374,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	for i := 2; i < len(args); i += 2 {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	sig := &builtinJSONReplaceSig{bf}
+	sig := &builtinJSONReplaceSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
 	return sig, nil
 }
@@ -384,6 +390,7 @@ type jsonRemoveFunctionClass struct {
 
 type builtinJSONRemoveSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONRemoveSig) Clone() builtinFunc {
@@ -405,7 +412,7 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONRemoveSig{bf}
+	sig := &builtinJSONRemoveSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonRemoveSig)
 	return sig, nil
 }
@@ -454,6 +461,7 @@ func (c *jsonMergeFunctionClass) verifyArgs(args []Expression) error {
 
 type builtinJSONMergeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONMergeSig) Clone() builtinFunc {
@@ -474,7 +482,7 @@ func (c *jsonMergeFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONMergeSig{bf}
+	sig := &builtinJSONMergeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergeSig)
 	return sig, nil
 }
@@ -505,6 +513,7 @@ type jsonObjectFunctionClass struct {
 
 type builtinJSONObjectSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONObjectSig) Clone() builtinFunc {
@@ -534,7 +543,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	for i := 1; i < len(args); i += 2 {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	sig := &builtinJSONObjectSig{bf}
+	sig := &builtinJSONObjectSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
 	return sig, nil
 }
@@ -581,6 +590,7 @@ type jsonArrayFunctionClass struct {
 
 type builtinJSONArraySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONArraySig) Clone() builtinFunc {
@@ -604,7 +614,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx BuildContext, args []Expression
 	for i := range args {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	sig := &builtinJSONArraySig{bf}
+	sig := &builtinJSONArraySig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
 	return sig, nil
 }
@@ -634,6 +644,7 @@ type jsonContainsPathFunctionClass struct {
 
 type builtinJSONContainsPathSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
@@ -664,7 +675,7 @@ func (c *jsonContainsPathFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONContainsPathSig{bf}
+	sig := &builtinJSONContainsPathSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonContainsPathSig)
 	return sig, nil
 }
@@ -750,6 +761,7 @@ type jsonMemberOfFunctionClass struct {
 
 type builtinJSONMemberOfSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONMemberOfSig) Clone() builtinFunc {
@@ -778,7 +790,7 @@ func (c *jsonMemberOfFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 	DisableParseJSONFlag4Expr(args[0])
-	sig := &builtinJSONMemberOfSig{bf}
+	sig := &builtinJSONMemberOfSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMemberOfSig)
 	return sig, nil
 }
@@ -813,6 +825,7 @@ type jsonContainsFunctionClass struct {
 
 type builtinJSONContainsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONContainsSig) Clone() builtinFunc {
@@ -847,7 +860,7 @@ func (c *jsonContainsFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONContainsSig{bf}
+	sig := &builtinJSONContainsSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonContainsSig)
 	return sig, nil
 }
@@ -893,6 +906,7 @@ type jsonOverlapsFunctionClass struct {
 
 type builtinJSONOverlapsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONOverlapsSig) Clone() builtinFunc {
@@ -924,7 +938,7 @@ func (c *jsonOverlapsFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONOverlapsSig{bf}
+	sig := &builtinJSONOverlapsSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
@@ -960,21 +974,21 @@ func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, args []Expression
 		if err != nil {
 			return nil, err
 		}
-		sig = &builtinJSONValidJSONSig{bf}
+		sig = &builtinJSONValidJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidJsonSig)
 	case types.ETString:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
 		if err != nil {
 			return nil, err
 		}
-		sig = &builtinJSONValidStringSig{bf}
+		sig = &builtinJSONValidStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
 	default:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argType)
 		if err != nil {
 			return nil, err
 		}
-		sig = &builtinJSONValidOthersSig{bf}
+		sig = &builtinJSONValidOthersSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidOthersSig)
 	}
 	return sig, nil
@@ -982,6 +996,7 @@ func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinJSONValidJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
@@ -999,6 +1014,7 @@ func (b *builtinJSONValidJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val i
 
 type builtinJSONValidStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONValidStringSig) Clone() builtinFunc {
@@ -1024,6 +1040,7 @@ func (b *builtinJSONValidStringSig) evalInt(ctx EvalContext, row chunk.Row) (res
 
 type builtinJSONValidOthersSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
@@ -1044,6 +1061,7 @@ type jsonArrayAppendFunctionClass struct {
 
 type builtinJSONArrayAppendSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (c *jsonArrayAppendFunctionClass) verifyArgs(args []Expression) error {
@@ -1069,7 +1087,7 @@ func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, args []Expr
 	for i := 2; i < len(args); i += 2 {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	sig := &builtinJSONArrayAppendSig{bf}
+	sig := &builtinJSONArrayAppendSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArrayAppendSig)
 	return sig, nil
 }
@@ -1144,6 +1162,7 @@ type jsonArrayInsertFunctionClass struct {
 
 type builtinJSONArrayInsertSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -1166,7 +1185,7 @@ func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expr
 	for i := 2; i < len(args); i += 2 {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	sig := &builtinJSONArrayInsertSig{bf}
+	sig := &builtinJSONArrayInsertSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArrayInsertSig)
 	return sig, nil
 }
@@ -1243,13 +1262,14 @@ func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONMergePatchSig{bf}
+	sig := &builtinJSONMergePatchSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergePatchSig)
 	return sig, nil
 }
 
 type builtinJSONMergePatchSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONMergePatchSig) Clone() builtinFunc {
@@ -1312,7 +1332,7 @@ func (c *jsonMergePreserveFunctionClass) getFunction(ctx BuildContext, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONMergeSig{bf}
+	sig := &builtinJSONMergeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergePreserveSig)
 	return sig, nil
 }
@@ -1323,6 +1343,7 @@ type jsonPrettyFunctionClass struct {
 
 type builtinJSONSPrettySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONSPrettySig) Clone() builtinFunc {
@@ -1342,7 +1363,7 @@ func (c *jsonPrettyFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	}
 	bf.tp.AddFlag(mysql.BinaryFlag)
 	bf.tp.SetFlen(mysql.MaxBlobWidth * 4)
-	sig := &builtinJSONSPrettySig{bf}
+	sig := &builtinJSONSPrettySig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonPrettySig)
 	return sig, nil
 }
@@ -1370,6 +1391,7 @@ type jsonQuoteFunctionClass struct {
 
 type builtinJSONQuoteSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONQuoteSig) Clone() builtinFunc {
@@ -1399,7 +1421,7 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx BuildContext, args []Expression
 	DisableParseJSONFlag4Expr(args[0])
 	bf.tp.AddFlag(mysql.BinaryFlag)
 	bf.tp.SetFlen(args[0].GetType().GetFlen()*6 + 2)
-	sig := &builtinJSONQuoteSig{bf}
+	sig := &builtinJSONQuoteSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonQuoteSig)
 	return sig, nil
 }
@@ -1418,6 +1440,7 @@ type jsonSearchFunctionClass struct {
 
 type builtinJSONSearchSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONSearchSig) Clone() builtinFunc {
@@ -1450,7 +1473,7 @@ func (c *jsonSearchFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONSearchSig{bf}
+	sig := &builtinJSONSearchSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSearchSig)
 	return sig, nil
 }
@@ -1521,6 +1544,7 @@ type jsonStorageFreeFunctionClass struct {
 
 type builtinJSONStorageFreeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONStorageFreeSig) Clone() builtinFunc {
@@ -1538,7 +1562,7 @@ func (c *jsonStorageFreeFunctionClass) getFunction(ctx BuildContext, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONStorageFreeSig{bf}
+	sig := &builtinJSONStorageFreeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonStorageFreeSig)
 	return sig, nil
 }
@@ -1558,6 +1582,7 @@ type jsonStorageSizeFunctionClass struct {
 
 type builtinJSONStorageSizeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONStorageSizeSig) Clone() builtinFunc {
@@ -1575,7 +1600,7 @@ func (c *jsonStorageSizeFunctionClass) getFunction(ctx BuildContext, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONStorageSizeSig{bf}
+	sig := &builtinJSONStorageSizeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonStorageSizeSig)
 	return sig, nil
 }
@@ -1596,6 +1621,7 @@ type jsonDepthFunctionClass struct {
 
 type builtinJSONDepthSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONDepthSig) Clone() builtinFunc {
@@ -1613,7 +1639,7 @@ func (c *jsonDepthFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONDepthSig{bf}
+	sig := &builtinJSONDepthSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonDepthSig)
 	return sig, nil
 }
@@ -1660,10 +1686,10 @@ func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	var sig builtinFunc
 	switch len(args) {
 	case 1:
-		sig = &builtinJSONKeysSig{bf}
+		sig = &builtinJSONKeysSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonKeysSig)
 	case 2:
-		sig = &builtinJSONKeys2ArgsSig{bf}
+		sig = &builtinJSONKeys2ArgsSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonKeys2ArgsSig)
 	}
 	return sig, nil
@@ -1671,6 +1697,7 @@ func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinJSONKeysSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONKeysSig) Clone() builtinFunc {
@@ -1692,6 +1719,7 @@ func (b *builtinJSONKeysSig) evalJSON(ctx EvalContext, row chunk.Row) (res types
 
 type builtinJSONKeys2ArgsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONKeys2ArgsSig) Clone() builtinFunc {
@@ -1736,6 +1764,7 @@ type jsonLengthFunctionClass struct {
 
 type builtinJSONLengthSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinJSONLengthSig) Clone() builtinFunc {
@@ -1759,7 +1788,7 @@ func (c *jsonLengthFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinJSONLengthSig{bf}
+	sig := &builtinJSONLengthSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonLengthSig)
 	return sig, nil
 }

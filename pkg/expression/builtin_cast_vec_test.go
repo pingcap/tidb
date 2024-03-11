@@ -163,7 +163,7 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	cast := &builtinCastRealAsTimeSig{baseFunc}
+	cast := &builtinCastRealAsTimeSig{baseBuiltinFunc: baseFunc}
 
 	inputChunk, expect := genCastRealAsTime()
 	inputs := []*chunk.Chunk{

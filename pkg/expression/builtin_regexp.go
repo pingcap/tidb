@@ -67,6 +67,8 @@ var validMatchType = set.NewStringSet(
 
 type regexpBaseFuncSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
+
 	memorizedRegexp builtinFuncCache[regexpMemorizedSig]
 }
 

@@ -130,17 +130,18 @@ func (c *aesDecryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		if len(args) != 3 {
 			return nil, ErrIncorrectParameterCount.GenWithStackByArgs("aes_decrypt")
 		}
-		sig := &builtinAesDecryptIVSig{bf, mode}
+		sig := &builtinAesDecryptIVSig{baseBuiltinFunc: bf, aesModeAttr: mode}
 		sig.setPbCode(tipb.ScalarFuncSig_AesDecryptIV)
 		return sig, nil
 	}
-	sig := &builtinAesDecryptSig{bf, mode}
+	sig := &builtinAesDecryptSig{baseBuiltinFunc: bf, aesModeAttr: mode}
 	sig.setPbCode(tipb.ScalarFuncSig_AesDecrypt)
 	return sig, nil
 }
 
 type builtinAesDecryptSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	*aesModeAttr
 }
 
@@ -185,6 +186,7 @@ func (b *builtinAesDecryptSig) evalString(ctx EvalContext, row chunk.Row) (strin
 
 type builtinAesDecryptIVSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	*aesModeAttr
 }
 
@@ -265,17 +267,18 @@ func (c *aesEncryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		if len(args) != 3 {
 			return nil, ErrIncorrectParameterCount.GenWithStackByArgs("aes_encrypt")
 		}
-		sig := &builtinAesEncryptIVSig{bf, mode}
+		sig := &builtinAesEncryptIVSig{baseBuiltinFunc: bf, aesModeAttr: mode}
 		sig.setPbCode(tipb.ScalarFuncSig_AesEncryptIV)
 		return sig, nil
 	}
-	sig := &builtinAesEncryptSig{bf, mode}
+	sig := &builtinAesEncryptSig{baseBuiltinFunc: bf, aesModeAttr: mode}
 	sig.setPbCode(tipb.ScalarFuncSig_AesEncrypt)
 	return sig, nil
 }
 
 type builtinAesEncryptSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	*aesModeAttr
 }
 
@@ -320,6 +323,7 @@ func (b *builtinAesEncryptSig) evalString(ctx EvalContext, row chunk.Row) (strin
 
 type builtinAesEncryptIVSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	*aesModeAttr
 }
 
@@ -387,13 +391,14 @@ func (c *decodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 
 	bf.tp.SetFlen(args[0].GetType().GetFlen())
-	sig := &builtinDecodeSig{bf}
+	sig := &builtinDecodeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Decode)
 	return sig, nil
 }
 
 type builtinDecodeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDecodeSig) Clone() builtinFunc {
@@ -450,13 +455,14 @@ func (c *encodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 
 	bf.tp.SetFlen(args[0].GetType().GetFlen())
-	sig := &builtinEncodeSig{bf}
+	sig := &builtinEncodeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Encode)
 	return sig, nil
 }
 
 type builtinEncodeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinEncodeSig) Clone() builtinFunc {
@@ -511,13 +517,14 @@ func (c *passwordFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.tp.SetFlen(mysql.PWDHashLen + 1)
-	sig := &builtinPasswordSig{bf}
+	sig := &builtinPasswordSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Password)
 	return sig, nil
 }
 
 type builtinPasswordSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinPasswordSig) Clone() builtinFunc {
@@ -560,12 +567,13 @@ func (c *randomBytesFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	}
 	bf.tp.SetFlen(1024) // Max allowed random bytes
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinRandomBytesSig{bf}
+	sig := &builtinRandomBytesSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinRandomBytesSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinRandomBytesSig) Clone() builtinFunc {
@@ -610,13 +618,14 @@ func (c *md5FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(32)
-	sig := &builtinMD5Sig{bf}
+	sig := &builtinMD5Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MD5)
 	return sig, nil
 }
 
 type builtinMD5Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinMD5Sig) Clone() builtinFunc {
@@ -653,13 +662,14 @@ func (c *sha1FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(40)
-	sig := &builtinSHA1Sig{bf}
+	sig := &builtinSHA1Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SHA1)
 	return sig, nil
 }
 
 type builtinSHA1Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSHA1Sig) Clone() builtinFunc {
@@ -700,13 +710,14 @@ func (c *sha2FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(128) // sha512
-	sig := &builtinSHA2Sig{bf}
+	sig := &builtinSHA2Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SHA2)
 	return sig, nil
 }
 
 type builtinSHA2Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSHA2Sig) Clone() builtinFunc {
@@ -731,12 +742,13 @@ func (c *sm3FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(40)
-	sig := &builtinSM3Sig{bf}
+	sig := &builtinSM3Sig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinSM3Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSM3Sig) Clone() builtinFunc {
@@ -851,13 +863,14 @@ func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 	bf.tp.SetFlen(compressBound)
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinCompressSig{bf}
+	sig := &builtinCompressSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Compress)
 	return sig, nil
 }
 
 type builtinCompressSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCompressSig) Clone() builtinFunc {
@@ -917,13 +930,14 @@ func (c *uncompressFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	}
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinUncompressSig{bf}
+	sig := &builtinUncompressSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Uncompress)
 	return sig, nil
 }
 
 type builtinUncompressSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUncompressSig) Clone() builtinFunc {
@@ -974,13 +988,14 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx BuildContext, args []E
 		return nil, err
 	}
 	bf.tp.SetFlen(10)
-	sig := &builtinUncompressedLengthSig{bf}
+	sig := &builtinUncompressedLengthSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UncompressedLength)
 	return sig, nil
 }
 
 type builtinUncompressedLengthSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUncompressedLengthSig) Clone() builtinFunc {
@@ -1021,12 +1036,13 @@ func (c *validatePasswordStrengthFunctionClass) getFunction(ctx BuildContext, ar
 		return nil, err
 	}
 	bf.tp.SetFlen(21)
-	sig := &builtinValidatePasswordStrengthSig{bf}
+	sig := &builtinValidatePasswordStrengthSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinValidatePasswordStrengthSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {

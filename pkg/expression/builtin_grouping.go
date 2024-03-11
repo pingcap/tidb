@@ -50,7 +50,7 @@ func (c *groupingImplFunctionClass) getFunction(ctx BuildContext, args []Express
 	// grouping(x,y,z) is a singed UInt64 (while MySQL is Int64 which is unreasonable)
 	bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 	// default filled meta is invalid for grouping evaluation, so the initialized flag is false.
-	sig := &BuiltinGroupingImplSig{bf, 0, []map[uint64]struct{}{}, false}
+	sig := &BuiltinGroupingImplSig{baseBuiltinFunc: bf, mode: 0, groupingMarks: []map[uint64]struct{}{}, isMetaInited: false}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
 }
@@ -62,6 +62,7 @@ func (c *groupingImplFunctionClass) getFunction(ctx BuildContext, args []Express
 // BuiltinGroupingImplSig receives.
 type BuiltinGroupingImplSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	// TODO these are two temporary fields for tests
 	mode          tipb.GroupingMode

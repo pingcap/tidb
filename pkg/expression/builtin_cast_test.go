@@ -653,19 +653,19 @@ func TestCastFuncSig(t *testing.T) {
 		require.NoError(t, err)
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsStringSig{stringFunc}
+			sig = &builtinCastRealAsStringSig{baseBuiltinFunc: stringFunc}
 		case 1:
-			sig = &builtinCastDecimalAsStringSig{stringFunc}
+			sig = &builtinCastDecimalAsStringSig{baseBuiltinFunc: stringFunc}
 		case 2:
-			sig = &builtinCastIntAsStringSig{stringFunc}
+			sig = &builtinCastIntAsStringSig{baseBuiltinFunc: stringFunc}
 		case 3:
-			sig = &builtinCastTimeAsStringSig{stringFunc}
+			sig = &builtinCastTimeAsStringSig{baseBuiltinFunc: stringFunc}
 		case 4:
-			sig = &builtinCastDurationAsStringSig{stringFunc}
+			sig = &builtinCastDurationAsStringSig{baseBuiltinFunc: stringFunc}
 		case 5:
-			sig = &builtinCastJSONAsStringSig{stringFunc}
+			sig = &builtinCastJSONAsStringSig{baseBuiltinFunc: stringFunc}
 		case 6:
-			sig = &builtinCastStringAsStringSig{stringFunc}
+			sig = &builtinCastStringAsStringSig{baseBuiltinFunc: stringFunc}
 		}
 		res, isNull, err := sig.evalString(ctx, c.row.ToRow())
 		require.False(t, isNull)
@@ -739,20 +739,20 @@ func TestCastFuncSig(t *testing.T) {
 		require.NoError(t, err)
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsStringSig{stringFunc}
+			sig = &builtinCastRealAsStringSig{baseBuiltinFunc: stringFunc}
 		case 1:
-			sig = &builtinCastDecimalAsStringSig{stringFunc}
+			sig = &builtinCastDecimalAsStringSig{baseBuiltinFunc: stringFunc}
 		case 2:
-			sig = &builtinCastIntAsStringSig{stringFunc}
+			sig = &builtinCastIntAsStringSig{baseBuiltinFunc: stringFunc}
 		case 3:
-			sig = &builtinCastTimeAsStringSig{stringFunc}
+			sig = &builtinCastTimeAsStringSig{baseBuiltinFunc: stringFunc}
 		case 4:
-			sig = &builtinCastDurationAsStringSig{stringFunc}
+			sig = &builtinCastDurationAsStringSig{baseBuiltinFunc: stringFunc}
 		case 5:
 			stringFunc.tp.SetCharset(charset.CharsetUTF8)
-			sig = &builtinCastStringAsStringSig{stringFunc}
+			sig = &builtinCastStringAsStringSig{baseBuiltinFunc: stringFunc}
 		case 6:
-			sig = &builtinCastJSONAsStringSig{stringFunc}
+			sig = &builtinCastJSONAsStringSig{baseBuiltinFunc: stringFunc}
 		}
 		res, isNull, err := sig.evalString(ctx, c.row.ToRow())
 		require.False(t, isNull)
@@ -816,19 +816,19 @@ func TestCastFuncSig(t *testing.T) {
 		require.NoError(t, err)
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsTimeSig{timeFunc}
+			sig = &builtinCastRealAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 1:
-			sig = &builtinCastDecimalAsTimeSig{timeFunc}
+			sig = &builtinCastDecimalAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 2:
-			sig = &builtinCastIntAsTimeSig{timeFunc}
+			sig = &builtinCastIntAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 3:
-			sig = &builtinCastStringAsTimeSig{timeFunc}
+			sig = &builtinCastStringAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 4:
-			sig = &builtinCastDurationAsTimeSig{timeFunc}
+			sig = &builtinCastDurationAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 5:
-			sig = &builtinCastJSONAsTimeSig{timeFunc}
+			sig = &builtinCastJSONAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 6:
-			sig = &builtinCastTimeAsTimeSig{timeFunc}
+			sig = &builtinCastTimeAsTimeSig{baseBuiltinFunc: timeFunc}
 		}
 		res, isNull, err := sig.evalTime(ctx, c.row.ToRow())
 		require.NoError(t, err)
@@ -900,17 +900,17 @@ func TestCastFuncSig(t *testing.T) {
 		require.NoError(t, err)
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsTimeSig{timeFunc}
+			sig = &builtinCastRealAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 1:
-			sig = &builtinCastDecimalAsTimeSig{timeFunc}
+			sig = &builtinCastDecimalAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 2:
-			sig = &builtinCastIntAsTimeSig{timeFunc}
+			sig = &builtinCastIntAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 3:
-			sig = &builtinCastStringAsTimeSig{timeFunc}
+			sig = &builtinCastStringAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 4:
-			sig = &builtinCastDurationAsTimeSig{timeFunc}
+			sig = &builtinCastDurationAsTimeSig{baseBuiltinFunc: timeFunc}
 		case 5:
-			sig = &builtinCastTimeAsTimeSig{timeFunc}
+			sig = &builtinCastTimeAsTimeSig{baseBuiltinFunc: timeFunc}
 		}
 		res, isNull, err := sig.evalTime(ctx, c.row.ToRow())
 		require.Equal(t, false, isNull)
@@ -981,19 +981,19 @@ func TestCastFuncSig(t *testing.T) {
 		require.NoError(t, err)
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsDurationSig{durationFunc}
+			sig = &builtinCastRealAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 1:
-			sig = &builtinCastDecimalAsDurationSig{durationFunc}
+			sig = &builtinCastDecimalAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 2:
-			sig = &builtinCastIntAsDurationSig{durationFunc}
+			sig = &builtinCastIntAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 3:
-			sig = &builtinCastStringAsDurationSig{durationFunc}
+			sig = &builtinCastStringAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 4:
-			sig = &builtinCastTimeAsDurationSig{durationFunc}
+			sig = &builtinCastTimeAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 5:
-			sig = &builtinCastJSONAsDurationSig{durationFunc}
+			sig = &builtinCastJSONAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 6:
-			sig = &builtinCastDurationAsDurationSig{durationFunc}
+			sig = &builtinCastDurationAsDurationSig{baseBuiltinFunc: durationFunc}
 		}
 		res, isNull, err := sig.evalDuration(ctx, c.row.ToRow())
 		require.False(t, isNull)
@@ -1058,17 +1058,17 @@ func TestCastFuncSig(t *testing.T) {
 		require.NoError(t, err)
 		switch i {
 		case 0:
-			sig = &builtinCastRealAsDurationSig{durationFunc}
+			sig = &builtinCastRealAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 1:
-			sig = &builtinCastDecimalAsDurationSig{durationFunc}
+			sig = &builtinCastDecimalAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 2:
-			sig = &builtinCastIntAsDurationSig{durationFunc}
+			sig = &builtinCastIntAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 3:
-			sig = &builtinCastStringAsDurationSig{durationFunc}
+			sig = &builtinCastStringAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 4:
-			sig = &builtinCastTimeAsDurationSig{durationFunc}
+			sig = &builtinCastTimeAsDurationSig{baseBuiltinFunc: durationFunc}
 		case 5:
-			sig = &builtinCastDurationAsDurationSig{durationFunc}
+			sig = &builtinCastDurationAsDurationSig{baseBuiltinFunc: durationFunc}
 		}
 		res, isNull, err := sig.evalDuration(ctx, c.row.ToRow())
 		require.False(t, isNull)
@@ -1088,7 +1088,7 @@ func TestCastFuncSig(t *testing.T) {
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)})
 	bf, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeVarString))
 	require.NoError(t, err)
-	sig = &builtinCastRealAsStringSig{bf}
+	sig = &builtinCastRealAsStringSig{baseBuiltinFunc: bf}
 	sRes, isNull, err := sig.evalString(ctx, row.ToRow())
 	require.Equal(t, "", sRes)
 	require.Equal(t, true, isNull)
@@ -1632,7 +1632,7 @@ func TestCastBinaryStringAsJSONSig(t *testing.T) {
 		tp.SetDecimal(types.DefaultFsp)
 		jsonFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
 		require.NoError(t, err)
-		sig := &builtinCastStringAsJSONSig{jsonFunc}
+		sig := &builtinCastStringAsJSONSig{baseBuiltinFunc: jsonFunc}
 
 		row := chunk.MutRowFromDatums(
 			[]types.Datum{types.NewCollationStringDatum(tt.str, charset.CollationBin)},

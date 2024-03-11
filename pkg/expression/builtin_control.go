@@ -351,26 +351,26 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	switch tp {
 	case types.ETInt:
 		bf.tp.SetDecimal(0)
-		sig = &builtinCaseWhenIntSig{bf}
+		sig = &builtinCaseWhenIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenInt)
 	case types.ETReal:
-		sig = &builtinCaseWhenRealSig{bf}
+		sig = &builtinCaseWhenRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenReal)
 	case types.ETDecimal:
-		sig = &builtinCaseWhenDecimalSig{bf}
+		sig = &builtinCaseWhenDecimalSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDecimal)
 	case types.ETString:
 		bf.tp.SetDecimal(types.UnspecifiedLength)
-		sig = &builtinCaseWhenStringSig{bf}
+		sig = &builtinCaseWhenStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenString)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinCaseWhenTimeSig{bf}
+		sig = &builtinCaseWhenTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenTime)
 	case types.ETDuration:
-		sig = &builtinCaseWhenDurationSig{bf}
+		sig = &builtinCaseWhenDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDuration)
 	case types.ETJson:
-		sig = &builtinCaseWhenJSONSig{bf}
+		sig = &builtinCaseWhenJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenJson)
 	}
 	return sig, nil
@@ -378,6 +378,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinCaseWhenIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCaseWhenIntSig) Clone() builtinFunc {
@@ -414,6 +415,7 @@ func (b *builtinCaseWhenIntSig) evalInt(ctx EvalContext, row chunk.Row) (ret int
 
 type builtinCaseWhenRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCaseWhenRealSig) Clone() builtinFunc {
@@ -450,6 +452,7 @@ func (b *builtinCaseWhenRealSig) evalReal(ctx EvalContext, row chunk.Row) (ret f
 
 type builtinCaseWhenDecimalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCaseWhenDecimalSig) Clone() builtinFunc {
@@ -486,6 +489,7 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) 
 
 type builtinCaseWhenStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCaseWhenStringSig) Clone() builtinFunc {
@@ -522,6 +526,7 @@ func (b *builtinCaseWhenStringSig) evalString(ctx EvalContext, row chunk.Row) (r
 
 type builtinCaseWhenTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCaseWhenTimeSig) Clone() builtinFunc {
@@ -558,6 +563,7 @@ func (b *builtinCaseWhenTimeSig) evalTime(ctx EvalContext, row chunk.Row) (ret t
 
 type builtinCaseWhenDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCaseWhenDurationSig) Clone() builtinFunc {
@@ -594,6 +600,7 @@ func (b *builtinCaseWhenDurationSig) evalDuration(ctx EvalContext, row chunk.Row
 
 type builtinCaseWhenJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCaseWhenJSONSig) Clone() builtinFunc {
@@ -653,25 +660,25 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	bf.tp = retTp
 	switch evalTps {
 	case types.ETInt:
-		sig = &builtinIfIntSig{bf}
+		sig = &builtinIfIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfInt)
 	case types.ETReal:
-		sig = &builtinIfRealSig{bf}
+		sig = &builtinIfRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfReal)
 	case types.ETDecimal:
-		sig = &builtinIfDecimalSig{bf}
+		sig = &builtinIfDecimalSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDecimal)
 	case types.ETString:
-		sig = &builtinIfStringSig{bf}
+		sig = &builtinIfStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfString)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinIfTimeSig{bf}
+		sig = &builtinIfTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfTime)
 	case types.ETDuration:
-		sig = &builtinIfDurationSig{bf}
+		sig = &builtinIfDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfDuration)
 	case types.ETJson:
-		sig = &builtinIfJSONSig{bf}
+		sig = &builtinIfJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
 	}
 	return sig, nil
@@ -679,6 +686,7 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 
 type builtinIfIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfIntSig) Clone() builtinFunc {
@@ -700,6 +708,7 @@ func (b *builtinIfIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, is
 
 type builtinIfRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfRealSig) Clone() builtinFunc {
@@ -721,6 +730,7 @@ func (b *builtinIfRealSig) evalReal(ctx EvalContext, row chunk.Row) (val float64
 
 type builtinIfDecimalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfDecimalSig) Clone() builtinFunc {
@@ -742,6 +752,7 @@ func (b *builtinIfDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (val *
 
 type builtinIfStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfStringSig) Clone() builtinFunc {
@@ -763,6 +774,7 @@ func (b *builtinIfStringSig) evalString(ctx EvalContext, row chunk.Row) (val str
 
 type builtinIfTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfTimeSig) Clone() builtinFunc {
@@ -784,6 +796,7 @@ func (b *builtinIfTimeSig) evalTime(ctx EvalContext, row chunk.Row) (ret types.T
 
 type builtinIfDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfDurationSig) Clone() builtinFunc {
@@ -805,6 +818,7 @@ func (b *builtinIfDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (ret
 
 type builtinIfJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfJSONSig) Clone() builtinFunc {
@@ -853,25 +867,25 @@ func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp = retTp
 	switch evalTps {
 	case types.ETInt:
-		sig = &builtinIfNullIntSig{bf}
+		sig = &builtinIfNullIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
 	case types.ETReal:
-		sig = &builtinIfNullRealSig{bf}
+		sig = &builtinIfNullRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
 	case types.ETDecimal:
-		sig = &builtinIfNullDecimalSig{bf}
+		sig = &builtinIfNullDecimalSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
 	case types.ETString:
-		sig = &builtinIfNullStringSig{bf}
+		sig = &builtinIfNullStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
 	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinIfNullTimeSig{bf}
+		sig = &builtinIfNullTimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullTime)
 	case types.ETDuration:
-		sig = &builtinIfNullDurationSig{bf}
+		sig = &builtinIfNullDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullDuration)
 	case types.ETJson:
-		sig = &builtinIfNullJSONSig{bf}
+		sig = &builtinIfNullJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
 	}
 	return sig, nil
@@ -879,6 +893,7 @@ func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinIfNullIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfNullIntSig) Clone() builtinFunc {
@@ -898,6 +913,7 @@ func (b *builtinIfNullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 
 type builtinIfNullRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfNullRealSig) Clone() builtinFunc {
@@ -917,6 +933,7 @@ func (b *builtinIfNullRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64
 
 type builtinIfNullDecimalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfNullDecimalSig) Clone() builtinFunc {
@@ -936,6 +953,7 @@ func (b *builtinIfNullDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 
 type builtinIfNullStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfNullStringSig) Clone() builtinFunc {
@@ -955,6 +973,7 @@ func (b *builtinIfNullStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 
 type builtinIfNullTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfNullTimeSig) Clone() builtinFunc {
@@ -974,6 +993,7 @@ func (b *builtinIfNullTimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 
 type builtinIfNullDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfNullDurationSig) Clone() builtinFunc {
@@ -993,6 +1013,7 @@ func (b *builtinIfNullDurationSig) evalDuration(ctx EvalContext, row chunk.Row) 
 
 type builtinIfNullJSONSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinIfNullJSONSig) Clone() builtinFunc {

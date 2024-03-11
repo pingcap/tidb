@@ -48,7 +48,7 @@ func createGroupingFunc(args []Expression) (*BuiltinGroupingImplSig, error) {
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &BuiltinGroupingImplSig{bf, 0, []map[uint64]struct{}{}, false}
+	sig := &BuiltinGroupingImplSig{baseBuiltinFunc: bf, mode: 0, groupingMarks: []map[uint64]struct{}{}, isMetaInited: false}
 	sig.setPbCode(tipb.ScalarFuncSig_GroupingSig)
 	return sig, nil
 }

@@ -48,474 +48,474 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_CastIntAsReal:
 		f = &builtinCastIntAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastIntAsString:
-		f = &builtinCastIntAsStringSig{base}
+		f = &builtinCastIntAsStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastIntAsDecimal:
 		f = &builtinCastIntAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastIntAsTime:
-		f = &builtinCastIntAsTimeSig{base}
+		f = &builtinCastIntAsTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastIntAsDuration:
-		f = &builtinCastIntAsDurationSig{base}
+		f = &builtinCastIntAsDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastIntAsJson:
-		f = &builtinCastIntAsJSONSig{base}
+		f = &builtinCastIntAsJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastRealAsInt:
 		f = &builtinCastRealAsIntSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastRealAsReal:
 		f = &builtinCastRealAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastRealAsString:
-		f = &builtinCastRealAsStringSig{base}
+		f = &builtinCastRealAsStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastRealAsDecimal:
 		f = &builtinCastRealAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastRealAsTime:
-		f = &builtinCastRealAsTimeSig{base}
+		f = &builtinCastRealAsTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastRealAsDuration:
-		f = &builtinCastRealAsDurationSig{base}
+		f = &builtinCastRealAsDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastRealAsJson:
-		f = &builtinCastRealAsJSONSig{base}
+		f = &builtinCastRealAsJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastDecimalAsInt:
 		f = &builtinCastDecimalAsIntSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDecimalAsReal:
 		f = &builtinCastDecimalAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDecimalAsString:
-		f = &builtinCastDecimalAsStringSig{base}
+		f = &builtinCastDecimalAsStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastDecimalAsDecimal:
 		f = &builtinCastDecimalAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDecimalAsTime:
-		f = &builtinCastDecimalAsTimeSig{base}
+		f = &builtinCastDecimalAsTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastDecimalAsDuration:
-		f = &builtinCastDecimalAsDurationSig{base}
+		f = &builtinCastDecimalAsDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastDecimalAsJson:
-		f = &builtinCastDecimalAsJSONSig{base}
+		f = &builtinCastDecimalAsJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastStringAsInt:
 		f = &builtinCastStringAsIntSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastStringAsReal:
 		f = &builtinCastStringAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastStringAsString:
-		f = &builtinCastStringAsStringSig{base}
+		f = &builtinCastStringAsStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastStringAsDecimal:
 		f = &builtinCastStringAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastStringAsTime:
-		f = &builtinCastStringAsTimeSig{base}
+		f = &builtinCastStringAsTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastStringAsDuration:
-		f = &builtinCastStringAsDurationSig{base}
+		f = &builtinCastStringAsDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastStringAsJson:
-		f = &builtinCastStringAsJSONSig{base}
+		f = &builtinCastStringAsJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastTimeAsInt:
 		f = &builtinCastTimeAsIntSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastTimeAsReal:
 		f = &builtinCastTimeAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastTimeAsString:
-		f = &builtinCastTimeAsStringSig{base}
+		f = &builtinCastTimeAsStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastTimeAsDecimal:
 		f = &builtinCastTimeAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastTimeAsTime:
-		f = &builtinCastTimeAsTimeSig{base}
+		f = &builtinCastTimeAsTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastTimeAsDuration:
-		f = &builtinCastTimeAsDurationSig{base}
+		f = &builtinCastTimeAsDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastTimeAsJson:
-		f = &builtinCastTimeAsJSONSig{base}
+		f = &builtinCastTimeAsJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastDurationAsInt:
 		f = &builtinCastDurationAsIntSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDurationAsReal:
 		f = &builtinCastDurationAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDurationAsString:
-		f = &builtinCastDurationAsStringSig{base}
+		f = &builtinCastDurationAsStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastDurationAsDecimal:
 		f = &builtinCastDurationAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDurationAsTime:
-		f = &builtinCastDurationAsTimeSig{base}
+		f = &builtinCastDurationAsTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastDurationAsDuration:
-		f = &builtinCastDurationAsDurationSig{base}
+		f = &builtinCastDurationAsDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastDurationAsJson:
-		f = &builtinCastDurationAsJSONSig{base}
+		f = &builtinCastDurationAsJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastJsonAsInt:
 		f = &builtinCastJSONAsIntSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastJsonAsReal:
 		f = &builtinCastJSONAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastJsonAsString:
-		f = &builtinCastJSONAsStringSig{base}
+		f = &builtinCastJSONAsStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastJsonAsDecimal:
 		f = &builtinCastJSONAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastJsonAsTime:
-		f = &builtinCastJSONAsTimeSig{base}
+		f = &builtinCastJSONAsTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastJsonAsDuration:
-		f = &builtinCastJSONAsDurationSig{base}
+		f = &builtinCastJSONAsDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CastJsonAsJson:
-		f = &builtinCastJSONAsJSONSig{base}
+		f = &builtinCastJSONAsJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CoalesceInt:
-		f = &builtinCoalesceIntSig{base}
+		f = &builtinCoalesceIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CoalesceReal:
-		f = &builtinCoalesceRealSig{base}
+		f = &builtinCoalesceRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CoalesceDecimal:
-		f = &builtinCoalesceDecimalSig{base}
+		f = &builtinCoalesceDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CoalesceString:
-		f = &builtinCoalesceStringSig{base}
+		f = &builtinCoalesceStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CoalesceTime:
-		f = &builtinCoalesceTimeSig{base}
+		f = &builtinCoalesceTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CoalesceDuration:
-		f = &builtinCoalesceDurationSig{base}
+		f = &builtinCoalesceDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CoalesceJson:
-		f = &builtinCoalesceJSONSig{base}
+		f = &builtinCoalesceJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LTInt:
-		f = &builtinLTIntSig{base}
+		f = &builtinLTIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LTReal:
-		f = &builtinLTRealSig{base}
+		f = &builtinLTRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LTDecimal:
-		f = &builtinLTDecimalSig{base}
+		f = &builtinLTDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LTString:
-		f = &builtinLTStringSig{base}
+		f = &builtinLTStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LTTime:
-		f = &builtinLTTimeSig{base}
+		f = &builtinLTTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LTDuration:
-		f = &builtinLTDurationSig{base}
+		f = &builtinLTDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LTJson:
-		f = &builtinLTJSONSig{base}
+		f = &builtinLTJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LEInt:
-		f = &builtinLEIntSig{base}
+		f = &builtinLEIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LEReal:
-		f = &builtinLERealSig{base}
+		f = &builtinLERealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LEDecimal:
-		f = &builtinLEDecimalSig{base}
+		f = &builtinLEDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LEString:
-		f = &builtinLEStringSig{base}
+		f = &builtinLEStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LETime:
-		f = &builtinLETimeSig{base}
+		f = &builtinLETimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LEDuration:
-		f = &builtinLEDurationSig{base}
+		f = &builtinLEDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LEJson:
-		f = &builtinLEJSONSig{base}
+		f = &builtinLEJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GTInt:
-		f = &builtinGTIntSig{base}
+		f = &builtinGTIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GTReal:
-		f = &builtinGTRealSig{base}
+		f = &builtinGTRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GTDecimal:
-		f = &builtinGTDecimalSig{base}
+		f = &builtinGTDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GTString:
-		f = &builtinGTStringSig{base}
+		f = &builtinGTStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GTTime:
-		f = &builtinGTTimeSig{base}
+		f = &builtinGTTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GTDuration:
-		f = &builtinGTDurationSig{base}
+		f = &builtinGTDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GTJson:
-		f = &builtinGTJSONSig{base}
+		f = &builtinGTJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GreatestInt:
-		f = &builtinGreatestIntSig{base}
+		f = &builtinGreatestIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GreatestReal:
-		f = &builtinGreatestRealSig{base}
+		f = &builtinGreatestRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GreatestDecimal:
-		f = &builtinGreatestDecimalSig{base}
+		f = &builtinGreatestDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GreatestString:
-		f = &builtinGreatestStringSig{base}
+		f = &builtinGreatestStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GreatestTime:
-		f = &builtinGreatestTimeSig{base, false}
+		f = &builtinGreatestTimeSig{baseBuiltinFunc: base, cmpAsDate: false}
 	case tipb.ScalarFuncSig_GreatestDate:
-		f = &builtinGreatestTimeSig{base, true}
+		f = &builtinGreatestTimeSig{baseBuiltinFunc: base, cmpAsDate: true}
 	case tipb.ScalarFuncSig_GreatestCmpStringAsTime:
-		f = &builtinGreatestCmpStringAsTimeSig{base, false}
+		f = &builtinGreatestCmpStringAsTimeSig{baseBuiltinFunc: base, cmpAsDate: false}
 	case tipb.ScalarFuncSig_GreatestCmpStringAsDate:
-		f = &builtinGreatestCmpStringAsTimeSig{base, true}
+		f = &builtinGreatestCmpStringAsTimeSig{baseBuiltinFunc: base, cmpAsDate: true}
 	case tipb.ScalarFuncSig_GreatestDuration:
-		f = &builtinGreatestDurationSig{base}
+		f = &builtinGreatestDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LeastInt:
-		f = &builtinLeastIntSig{base}
+		f = &builtinLeastIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LeastReal:
-		f = &builtinLeastRealSig{base}
+		f = &builtinLeastRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LeastDecimal:
-		f = &builtinLeastDecimalSig{base}
+		f = &builtinLeastDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LeastString:
-		f = &builtinLeastStringSig{base}
+		f = &builtinLeastStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LeastTime:
-		f = &builtinLeastTimeSig{base, false}
+		f = &builtinLeastTimeSig{baseBuiltinFunc: base, cmpAsDate: false}
 	case tipb.ScalarFuncSig_LeastDate:
-		f = &builtinLeastTimeSig{base, true}
+		f = &builtinLeastTimeSig{baseBuiltinFunc: base, cmpAsDate: true}
 	case tipb.ScalarFuncSig_LeastCmpStringAsTime:
-		f = &builtinLeastCmpStringAsTimeSig{base, false}
+		f = &builtinLeastCmpStringAsTimeSig{baseBuiltinFunc: base, cmpAsDate: false}
 	case tipb.ScalarFuncSig_LeastCmpStringAsDate:
-		f = &builtinLeastCmpStringAsTimeSig{base, true}
+		f = &builtinLeastCmpStringAsTimeSig{baseBuiltinFunc: base, cmpAsDate: true}
 	case tipb.ScalarFuncSig_LeastDuration:
-		f = &builtinLeastDurationSig{base}
+		f = &builtinLeastDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IntervalInt:
-		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
+		f = &builtinIntervalIntSig{baseBuiltinFunc: base, hasNullable: false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
 	case tipb.ScalarFuncSig_IntervalReal:
-		f = &builtinIntervalRealSig{base, false}
+		f = &builtinIntervalRealSig{baseBuiltinFunc: base, hasNullable: false}
 	case tipb.ScalarFuncSig_GEInt:
-		f = &builtinGEIntSig{base}
+		f = &builtinGEIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GEReal:
-		f = &builtinGERealSig{base}
+		f = &builtinGERealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GEDecimal:
-		f = &builtinGEDecimalSig{base}
+		f = &builtinGEDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GEString:
-		f = &builtinGEStringSig{base}
+		f = &builtinGEStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GETime:
-		f = &builtinGETimeSig{base}
+		f = &builtinGETimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GEDuration:
-		f = &builtinGEDurationSig{base}
+		f = &builtinGEDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GEJson:
-		f = &builtinGEJSONSig{base}
+		f = &builtinGEJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_EQInt:
-		f = &builtinEQIntSig{base}
+		f = &builtinEQIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_EQReal:
-		f = &builtinEQRealSig{base}
+		f = &builtinEQRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_EQDecimal:
-		f = &builtinEQDecimalSig{base}
+		f = &builtinEQDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_EQString:
-		f = &builtinEQStringSig{base}
+		f = &builtinEQStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_EQTime:
-		f = &builtinEQTimeSig{base}
+		f = &builtinEQTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_EQDuration:
-		f = &builtinEQDurationSig{base}
+		f = &builtinEQDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_EQJson:
-		f = &builtinEQJSONSig{base}
+		f = &builtinEQJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NEInt:
-		f = &builtinNEIntSig{base}
+		f = &builtinNEIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NEReal:
-		f = &builtinNERealSig{base}
+		f = &builtinNERealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NEDecimal:
-		f = &builtinNEDecimalSig{base}
+		f = &builtinNEDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NEString:
-		f = &builtinNEStringSig{base}
+		f = &builtinNEStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NETime:
-		f = &builtinNETimeSig{base}
+		f = &builtinNETimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NEDuration:
-		f = &builtinNEDurationSig{base}
+		f = &builtinNEDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NEJson:
-		f = &builtinNEJSONSig{base}
+		f = &builtinNEJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NullEQInt:
-		f = &builtinNullEQIntSig{base}
+		f = &builtinNullEQIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NullEQReal:
-		f = &builtinNullEQRealSig{base}
+		f = &builtinNullEQRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NullEQDecimal:
-		f = &builtinNullEQDecimalSig{base}
+		f = &builtinNullEQDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NullEQString:
-		f = &builtinNullEQStringSig{base}
+		f = &builtinNullEQStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NullEQTime:
-		f = &builtinNullEQTimeSig{base}
+		f = &builtinNullEQTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NullEQDuration:
-		f = &builtinNullEQDurationSig{base}
+		f = &builtinNullEQDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NullEQJson:
-		f = &builtinNullEQJSONSig{base}
+		f = &builtinNullEQJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_PlusReal:
-		f = &builtinArithmeticPlusRealSig{base}
+		f = &builtinArithmeticPlusRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_PlusDecimal:
-		f = &builtinArithmeticPlusDecimalSig{base}
+		f = &builtinArithmeticPlusDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_PlusInt:
-		f = &builtinArithmeticPlusIntSig{base}
+		f = &builtinArithmeticPlusIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MinusReal:
-		f = &builtinArithmeticMinusRealSig{base}
+		f = &builtinArithmeticMinusRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MinusDecimal:
-		f = &builtinArithmeticMinusDecimalSig{base}
+		f = &builtinArithmeticMinusDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MinusInt:
-		f = &builtinArithmeticMinusIntSig{base}
+		f = &builtinArithmeticMinusIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MultiplyReal:
-		f = &builtinArithmeticMultiplyRealSig{base}
+		f = &builtinArithmeticMultiplyRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MultiplyDecimal:
-		f = &builtinArithmeticMultiplyDecimalSig{base}
+		f = &builtinArithmeticMultiplyDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MultiplyInt:
-		f = &builtinArithmeticMultiplyIntSig{base}
+		f = &builtinArithmeticMultiplyIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DivideReal:
-		f = &builtinArithmeticDivideRealSig{base}
+		f = &builtinArithmeticDivideRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DivideDecimal:
-		f = &builtinArithmeticDivideDecimalSig{base}
+		f = &builtinArithmeticDivideDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IntDivideInt:
-		f = &builtinArithmeticIntDivideIntSig{base}
+		f = &builtinArithmeticIntDivideIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IntDivideDecimal:
-		f = &builtinArithmeticIntDivideDecimalSig{base}
+		f = &builtinArithmeticIntDivideDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ModReal:
-		f = &builtinArithmeticModRealSig{base}
+		f = &builtinArithmeticModRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ModDecimal:
-		f = &builtinArithmeticModDecimalSig{base}
+		f = &builtinArithmeticModDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ModIntUnsignedUnsigned:
-		f = &builtinArithmeticModIntUnsignedUnsignedSig{base}
+		f = &builtinArithmeticModIntUnsignedUnsignedSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ModIntUnsignedSigned:
-		f = &builtinArithmeticModIntUnsignedSignedSig{base}
+		f = &builtinArithmeticModIntUnsignedSignedSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ModIntSignedUnsigned:
-		f = &builtinArithmeticModIntSignedUnsignedSig{base}
+		f = &builtinArithmeticModIntSignedUnsignedSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ModIntSignedSigned:
-		f = &builtinArithmeticModIntSignedSignedSig{base}
+		f = &builtinArithmeticModIntSignedSignedSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MultiplyIntUnsigned:
-		f = &builtinArithmeticMultiplyIntUnsignedSig{base}
+		f = &builtinArithmeticMultiplyIntUnsignedSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AbsInt:
-		f = &builtinAbsIntSig{base}
+		f = &builtinAbsIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AbsUInt:
-		f = &builtinAbsUIntSig{base}
+		f = &builtinAbsUIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AbsReal:
-		f = &builtinAbsRealSig{base}
+		f = &builtinAbsRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AbsDecimal:
-		f = &builtinAbsDecSig{base}
+		f = &builtinAbsDecSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CeilIntToDec:
-		f = &builtinCeilIntToDecSig{base}
+		f = &builtinCeilIntToDecSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CeilIntToInt:
-		f = &builtinCeilIntToIntSig{base}
+		f = &builtinCeilIntToIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CeilDecToInt:
-		f = &builtinCeilDecToIntSig{base}
+		f = &builtinCeilDecToIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CeilDecToDec:
-		f = &builtinCeilDecToDecSig{base}
+		f = &builtinCeilDecToDecSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CeilReal:
-		f = &builtinCeilRealSig{base}
+		f = &builtinCeilRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FloorIntToDec:
-		f = &builtinFloorIntToDecSig{base}
+		f = &builtinFloorIntToDecSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FloorIntToInt:
-		f = &builtinFloorIntToIntSig{base}
+		f = &builtinFloorIntToIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FloorDecToInt:
-		f = &builtinFloorDecToIntSig{base}
+		f = &builtinFloorDecToIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FloorDecToDec:
-		f = &builtinFloorDecToDecSig{base}
+		f = &builtinFloorDecToDecSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FloorReal:
-		f = &builtinFloorRealSig{base}
+		f = &builtinFloorRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RoundReal:
-		f = &builtinRoundRealSig{base}
+		f = &builtinRoundRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RoundInt:
-		f = &builtinRoundIntSig{base}
+		f = &builtinRoundIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RoundDec:
-		f = &builtinRoundDecSig{base}
+		f = &builtinRoundDecSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RoundWithFracReal:
-		f = &builtinRoundWithFracRealSig{base}
+		f = &builtinRoundWithFracRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RoundWithFracInt:
-		f = &builtinRoundWithFracIntSig{base}
+		f = &builtinRoundWithFracIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RoundWithFracDec:
-		f = &builtinRoundWithFracDecSig{base}
+		f = &builtinRoundWithFracDecSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Log1Arg:
-		f = &builtinLog1ArgSig{base}
+		f = &builtinLog1ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Log2Args:
-		f = &builtinLog2ArgsSig{base}
+		f = &builtinLog2ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Log2:
-		f = &builtinLog2Sig{base}
+		f = &builtinLog2Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Log10:
-		f = &builtinLog10Sig{base}
+		f = &builtinLog10Sig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_Rand:
 	case tipb.ScalarFuncSig_RandWithSeedFirstGen:
-		f = &builtinRandWithSeedFirstGenSig{base}
+		f = &builtinRandWithSeedFirstGenSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Pow:
-		f = &builtinPowSig{base}
+		f = &builtinPowSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Conv:
-		f = &builtinConvSig{base}
+		f = &builtinConvSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CRC32:
-		f = &builtinCRC32Sig{base}
+		f = &builtinCRC32Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Sign:
-		f = &builtinSignSig{base}
+		f = &builtinSignSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Sqrt:
-		f = &builtinSqrtSig{base}
+		f = &builtinSqrtSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Acos:
-		f = &builtinAcosSig{base}
+		f = &builtinAcosSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Asin:
-		f = &builtinAsinSig{base}
+		f = &builtinAsinSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Atan1Arg:
-		f = &builtinAtan1ArgSig{base}
+		f = &builtinAtan1ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Atan2Args:
-		f = &builtinAtan2ArgsSig{base}
+		f = &builtinAtan2ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Cos:
-		f = &builtinCosSig{base}
+		f = &builtinCosSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Cot:
-		f = &builtinCotSig{base}
+		f = &builtinCotSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Degrees:
-		f = &builtinDegreesSig{base}
+		f = &builtinDegreesSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Exp:
-		f = &builtinExpSig{base}
+		f = &builtinExpSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_PI:
-		f = &builtinPISig{base}
+		f = &builtinPISig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Radians:
-		f = &builtinRadiansSig{base}
+		f = &builtinRadiansSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Sin:
-		f = &builtinSinSig{base}
+		f = &builtinSinSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Tan:
-		f = &builtinTanSig{base}
+		f = &builtinTanSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TruncateInt:
-		f = &builtinTruncateIntSig{base}
+		f = &builtinTruncateIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TruncateReal:
-		f = &builtinTruncateRealSig{base}
+		f = &builtinTruncateRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TruncateDecimal:
-		f = &builtinTruncateDecimalSig{base}
+		f = &builtinTruncateDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TruncateUint:
-		f = &builtinTruncateUintSig{base}
+		f = &builtinTruncateUintSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LogicalAnd:
-		f = &builtinLogicAndSig{base}
+		f = &builtinLogicAndSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LogicalOr:
-		f = &builtinLogicOrSig{base}
+		f = &builtinLogicOrSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LogicalXor:
-		f = &builtinLogicXorSig{base}
+		f = &builtinLogicXorSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnaryNotInt:
-		f = &builtinUnaryNotIntSig{base}
+		f = &builtinUnaryNotIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnaryNotDecimal:
-		f = &builtinUnaryNotDecimalSig{base}
+		f = &builtinUnaryNotDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnaryNotReal:
-		f = &builtinUnaryNotRealSig{base}
+		f = &builtinUnaryNotRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnaryMinusInt:
-		f = &builtinUnaryMinusIntSig{base}
+		f = &builtinUnaryMinusIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnaryMinusReal:
-		f = &builtinUnaryMinusRealSig{base}
+		f = &builtinUnaryMinusRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnaryMinusDecimal:
-		f = &builtinUnaryMinusDecimalSig{base, false}
+		f = &builtinUnaryMinusDecimalSig{baseBuiltinFunc: base, constantArgOverflow: false}
 	case tipb.ScalarFuncSig_DecimalIsNull:
-		f = &builtinDecimalIsNullSig{base}
+		f = &builtinDecimalIsNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DurationIsNull:
-		f = &builtinDurationIsNullSig{base}
+		f = &builtinDurationIsNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RealIsNull:
-		f = &builtinRealIsNullSig{base}
+		f = &builtinRealIsNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_StringIsNull:
-		f = &builtinStringIsNullSig{base}
+		f = &builtinStringIsNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TimeIsNull:
-		f = &builtinTimeIsNullSig{base}
+		f = &builtinTimeIsNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IntIsNull:
-		f = &builtinIntIsNullSig{base}
+		f = &builtinIntIsNullSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_JsonIsNull:
 	case tipb.ScalarFuncSig_BitAndSig:
-		f = &builtinBitAndSig{base}
+		f = &builtinBitAndSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_BitOrSig:
-		f = &builtinBitOrSig{base}
+		f = &builtinBitOrSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_BitXorSig:
-		f = &builtinBitXorSig{base}
+		f = &builtinBitXorSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_BitNegSig:
-		f = &builtinBitNegSig{base}
+		f = &builtinBitNegSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IntIsTrue:
-		f = &builtinIntIsTrueSig{base, false}
+		f = &builtinIntIsTrueSig{baseBuiltinFunc: base, keepNull: false}
 	case tipb.ScalarFuncSig_RealIsTrue:
-		f = &builtinRealIsTrueSig{base, false}
+		f = &builtinRealIsTrueSig{baseBuiltinFunc: base, keepNull: false}
 	case tipb.ScalarFuncSig_DecimalIsTrue:
-		f = &builtinDecimalIsTrueSig{base, false}
+		f = &builtinDecimalIsTrueSig{baseBuiltinFunc: base, keepNull: false}
 	case tipb.ScalarFuncSig_IntIsFalse:
-		f = &builtinIntIsFalseSig{base, false}
+		f = &builtinIntIsFalseSig{baseBuiltinFunc: base, keepNull: false}
 	case tipb.ScalarFuncSig_RealIsFalse:
-		f = &builtinRealIsFalseSig{base, false}
+		f = &builtinRealIsFalseSig{baseBuiltinFunc: base, keepNull: false}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
-		f = &builtinDecimalIsFalseSig{base, false}
+		f = &builtinDecimalIsFalseSig{baseBuiltinFunc: base, keepNull: false}
 	case tipb.ScalarFuncSig_IntIsTrueWithNull:
-		f = &builtinIntIsTrueSig{base, true}
+		f = &builtinIntIsTrueSig{baseBuiltinFunc: base, keepNull: true}
 	case tipb.ScalarFuncSig_RealIsTrueWithNull:
-		f = &builtinRealIsTrueSig{base, true}
+		f = &builtinRealIsTrueSig{baseBuiltinFunc: base, keepNull: true}
 	case tipb.ScalarFuncSig_DecimalIsTrueWithNull:
-		f = &builtinDecimalIsTrueSig{base, true}
+		f = &builtinDecimalIsTrueSig{baseBuiltinFunc: base, keepNull: true}
 	case tipb.ScalarFuncSig_IntIsFalseWithNull:
-		f = &builtinIntIsFalseSig{base, true}
+		f = &builtinIntIsFalseSig{baseBuiltinFunc: base, keepNull: true}
 	case tipb.ScalarFuncSig_RealIsFalseWithNull:
-		f = &builtinRealIsFalseSig{base, true}
+		f = &builtinRealIsFalseSig{baseBuiltinFunc: base, keepNull: true}
 	case tipb.ScalarFuncSig_DecimalIsFalseWithNull:
-		f = &builtinDecimalIsFalseSig{base, true}
+		f = &builtinDecimalIsFalseSig{baseBuiltinFunc: base, keepNull: true}
 	case tipb.ScalarFuncSig_LeftShift:
-		f = &builtinLeftShiftSig{base}
+		f = &builtinLeftShiftSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RightShift:
-		f = &builtinRightShiftSig{base}
+		f = &builtinRightShiftSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_BitCount:
-		f = &builtinBitCountSig{base}
+		f = &builtinBitCountSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GetParamString:
-		f = &builtinGetParamStringSig{base}
+		f = &builtinGetParamStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GetVar:
-		f = &builtinGetStringVarSig{base}
+		f = &builtinGetStringVarSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_RowSig:
 	case tipb.ScalarFuncSig_SetVar:
-		f = &builtinSetStringVarSig{base}
+		f = &builtinSetStringVarSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesDecimal:
-	// 	f = &builtinValuesDecimalSig{base}
+	// 	f = &builtinValuesDecimalSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesDuration:
-	// 	f = &builtinValuesDurationSig{base}
+	// 	f = &builtinValuesDurationSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesInt:
-	// 	f = &builtinValuesIntSig{base}
+	// 	f = &builtinValuesIntSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesJSON:
-	// 	f = &builtinValuesJSONSig{base}
+	// 	f = &builtinValuesJSONSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesReal:
-	// 	f = &builtinValuesRealSig{base}
+	// 	f = &builtinValuesRealSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesString:
-	// 	f = &builtinValuesStringSig{base}
+	// 	f = &builtinValuesStringSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesTime:
-	// 	f = &builtinValuesTimeSig{base}
+	// 	f = &builtinValuesTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_InReal:
@@ -531,125 +531,125 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_InJson:
 		f = &builtinInJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullInt:
-		f = &builtinIfNullIntSig{base}
+		f = &builtinIfNullIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullReal:
-		f = &builtinIfNullRealSig{base}
+		f = &builtinIfNullRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullDecimal:
-		f = &builtinIfNullDecimalSig{base}
+		f = &builtinIfNullDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullString:
-		f = &builtinIfNullStringSig{base}
+		f = &builtinIfNullStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullTime:
-		f = &builtinIfNullTimeSig{base}
+		f = &builtinIfNullTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullDuration:
-		f = &builtinIfNullDurationSig{base}
+		f = &builtinIfNullDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfInt:
-		f = &builtinIfIntSig{base}
+		f = &builtinIfIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfReal:
-		f = &builtinIfRealSig{base}
+		f = &builtinIfRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfDecimal:
-		f = &builtinIfDecimalSig{base}
+		f = &builtinIfDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfString:
-		f = &builtinIfStringSig{base}
+		f = &builtinIfStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfTime:
-		f = &builtinIfTimeSig{base}
+		f = &builtinIfTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfDuration:
-		f = &builtinIfDurationSig{base}
+		f = &builtinIfDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfNullJson:
-		f = &builtinIfNullJSONSig{base}
+		f = &builtinIfNullJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IfJson:
-		f = &builtinIfJSONSig{base}
+		f = &builtinIfJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CaseWhenInt:
-		f = &builtinCaseWhenIntSig{base}
+		f = &builtinCaseWhenIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CaseWhenReal:
-		f = &builtinCaseWhenRealSig{base}
+		f = &builtinCaseWhenRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CaseWhenDecimal:
-		f = &builtinCaseWhenDecimalSig{base}
+		f = &builtinCaseWhenDecimalSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CaseWhenString:
-		f = &builtinCaseWhenStringSig{base}
+		f = &builtinCaseWhenStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CaseWhenTime:
-		f = &builtinCaseWhenTimeSig{base}
+		f = &builtinCaseWhenTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CaseWhenDuration:
-		f = &builtinCaseWhenDurationSig{base}
+		f = &builtinCaseWhenDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CaseWhenJson:
-		f = &builtinCaseWhenJSONSig{base}
+		f = &builtinCaseWhenJSONSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AesDecrypt:
-	// 	f = &builtinAesDecryptSig{base}
+	// 	f = &builtinAesDecryptSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AesEncrypt:
-	// 	f = &builtinAesEncryptSig{base}
+	// 	f = &builtinAesEncryptSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Compress:
-		f = &builtinCompressSig{base}
+		f = &builtinCompressSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MD5:
-		f = &builtinMD5Sig{base}
+		f = &builtinMD5Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Password:
-		f = &builtinPasswordSig{base}
+		f = &builtinPasswordSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RandomBytes:
-		f = &builtinRandomBytesSig{base}
+		f = &builtinRandomBytesSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SHA1:
-		f = &builtinSHA1Sig{base}
+		f = &builtinSHA1Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SHA2:
-		f = &builtinSHA2Sig{base}
+		f = &builtinSHA2Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Uncompress:
-		f = &builtinUncompressSig{base}
+		f = &builtinUncompressSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UncompressedLength:
-		f = &builtinUncompressedLengthSig{base}
+		f = &builtinUncompressedLengthSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Database:
-		f = &builtinDatabaseSig{base}
+		f = &builtinDatabaseSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FoundRows:
-		f = &builtinFoundRowsSig{base}
+		f = &builtinFoundRowsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CurrentUser:
 		f = &builtinCurrentUserSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_User:
 		f = &builtinUserSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ConnectionID:
-		f = &builtinConnectionIDSig{base}
+		f = &builtinConnectionIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LastInsertID:
-		f = &builtinLastInsertIDSig{base}
+		f = &builtinLastInsertIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LastInsertIDWithID:
-		f = &builtinLastInsertIDWithIDSig{base}
+		f = &builtinLastInsertIDWithIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Version:
-		f = &builtinVersionSig{base}
+		f = &builtinVersionSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TiDBVersion:
-		f = &builtinTiDBVersionSig{base}
+		f = &builtinTiDBVersionSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RowCount:
-		f = &builtinRowCountSig{base}
+		f = &builtinRowCountSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Sleep:
-		f = &builtinSleepSig{base}
+		f = &builtinSleepSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Lock:
-		f = &builtinLockSig{base}
+		f = &builtinLockSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ReleaseLock:
-		f = &builtinReleaseLockSig{base}
+		f = &builtinReleaseLockSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DecimalAnyValue:
-		f = &builtinDecimalAnyValueSig{base}
+		f = &builtinDecimalAnyValueSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DurationAnyValue:
-		f = &builtinDurationAnyValueSig{base}
+		f = &builtinDurationAnyValueSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IntAnyValue:
-		f = &builtinIntAnyValueSig{base}
+		f = &builtinIntAnyValueSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JSONAnyValue:
-		f = &builtinJSONAnyValueSig{base}
+		f = &builtinJSONAnyValueSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RealAnyValue:
-		f = &builtinRealAnyValueSig{base}
+		f = &builtinRealAnyValueSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_StringAnyValue:
-		f = &builtinStringAnyValueSig{base}
+		f = &builtinStringAnyValueSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TimeAnyValue:
-		f = &builtinTimeAnyValueSig{base}
+		f = &builtinTimeAnyValueSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_InetAton:
-		f = &builtinInetAtonSig{base}
+		f = &builtinInetAtonSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_InetNtoa:
-		f = &builtinInetNtoaSig{base}
+		f = &builtinInetNtoaSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Inet6Aton:
-		f = &builtinInet6AtonSig{base}
+		f = &builtinInet6AtonSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Inet6Ntoa:
-		f = &builtinInet6NtoaSig{base}
+		f = &builtinInet6NtoaSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IsIPv4:
-		f = &builtinIsIPv4Sig{base}
+		f = &builtinIsIPv4Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IsIPv4Compat:
-		f = &builtinIsIPv4CompatSig{base}
+		f = &builtinIsIPv4CompatSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IsIPv4Mapped:
-		f = &builtinIsIPv4MappedSig{base}
+		f = &builtinIsIPv4MappedSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IsIPv6:
-		f = &builtinIsIPv6Sig{base}
+		f = &builtinIsIPv6Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UUID:
-		f = &builtinUUIDSig{base}
+		f = &builtinUUIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IlikeSig:
@@ -667,413 +667,413 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_RegexpReplaceSig:
 		f = &builtinRegexpReplaceFuncSig{regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_JsonExtractSig:
-		f = &builtinJSONExtractSig{base}
+		f = &builtinJSONExtractSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonUnquoteSig:
-		f = &builtinJSONUnquoteSig{base}
+		f = &builtinJSONUnquoteSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonTypeSig:
-		f = &builtinJSONTypeSig{base}
+		f = &builtinJSONTypeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonSetSig:
-		f = &builtinJSONSetSig{base}
+		f = &builtinJSONSetSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonInsertSig:
-		f = &builtinJSONInsertSig{base}
+		f = &builtinJSONInsertSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonReplaceSig:
-		f = &builtinJSONReplaceSig{base}
+		f = &builtinJSONReplaceSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonRemoveSig:
-		f = &builtinJSONRemoveSig{base}
+		f = &builtinJSONRemoveSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonMergeSig:
-		f = &builtinJSONMergeSig{base}
+		f = &builtinJSONMergeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonObjectSig:
-		f = &builtinJSONObjectSig{base}
+		f = &builtinJSONObjectSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonArraySig:
-		f = &builtinJSONArraySig{base}
+		f = &builtinJSONArraySig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonValidJsonSig:
-		f = &builtinJSONValidJSONSig{base}
+		f = &builtinJSONValidJSONSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonContainsSig:
-		f = &builtinJSONContainsSig{base}
+		f = &builtinJSONContainsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonArrayAppendSig:
-		f = &builtinJSONArrayAppendSig{base}
+		f = &builtinJSONArrayAppendSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonArrayInsertSig:
-		f = &builtinJSONArrayInsertSig{base}
+		f = &builtinJSONArrayInsertSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_JsonMergePatchSig:
 	case tipb.ScalarFuncSig_JsonMergePreserveSig:
-		f = &builtinJSONMergeSig{base}
+		f = &builtinJSONMergeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonContainsPathSig:
-		f = &builtinJSONContainsPathSig{base}
+		f = &builtinJSONContainsPathSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_JsonPrettySig:
 	case tipb.ScalarFuncSig_JsonQuoteSig:
-		f = &builtinJSONQuoteSig{base}
+		f = &builtinJSONQuoteSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonSearchSig:
-		f = &builtinJSONSearchSig{base}
+		f = &builtinJSONSearchSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonStorageSizeSig:
-		f = &builtinJSONStorageSizeSig{base}
+		f = &builtinJSONStorageSizeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonDepthSig:
-		f = &builtinJSONDepthSig{base}
+		f = &builtinJSONDepthSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonKeysSig:
-		f = &builtinJSONKeysSig{base}
+		f = &builtinJSONKeysSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonLengthSig:
-		f = &builtinJSONLengthSig{base}
+		f = &builtinJSONLengthSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonKeys2ArgsSig:
-		f = &builtinJSONKeys2ArgsSig{base}
+		f = &builtinJSONKeys2ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonValidStringSig:
-		f = &builtinJSONValidStringSig{base}
+		f = &builtinJSONValidStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonValidOthersSig:
-		f = &builtinJSONValidOthersSig{base}
+		f = &builtinJSONValidOthersSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_JsonMemberOfSig:
-		f = &builtinJSONMemberOfSig{base}
+		f = &builtinJSONMemberOfSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DateFormatSig:
-		f = &builtinDateFormatSig{base}
+		f = &builtinDateFormatSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_DateLiteral:
-	// 	f = &builtinDateLiteralSig{base}
+	// 	f = &builtinDateLiteralSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DateDiff:
-		f = &builtinDateDiffSig{base}
+		f = &builtinDateDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NullTimeDiff:
-		f = &builtinNullTimeDiffSig{base}
+		f = &builtinNullTimeDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TimeStringTimeDiff:
-		f = &builtinTimeStringTimeDiffSig{base}
+		f = &builtinTimeStringTimeDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DurationStringTimeDiff:
-		f = &builtinDurationStringTimeDiffSig{base}
+		f = &builtinDurationStringTimeDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DurationDurationTimeDiff:
-		f = &builtinDurationDurationTimeDiffSig{base}
+		f = &builtinDurationDurationTimeDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_StringTimeTimeDiff:
-		f = &builtinStringTimeTimeDiffSig{base}
+		f = &builtinStringTimeTimeDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_StringDurationTimeDiff:
-		f = &builtinStringDurationTimeDiffSig{base}
+		f = &builtinStringDurationTimeDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_StringStringTimeDiff:
-		f = &builtinStringStringTimeDiffSig{base}
+		f = &builtinStringStringTimeDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TimeTimeTimeDiff:
-		f = &builtinTimeTimeTimeDiffSig{base}
+		f = &builtinTimeTimeTimeDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Date:
-		f = &builtinDateSig{base}
+		f = &builtinDateSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Hour:
-		f = &builtinHourSig{base}
+		f = &builtinHourSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Minute:
-		f = &builtinMinuteSig{base}
+		f = &builtinMinuteSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Second:
-		f = &builtinSecondSig{base}
+		f = &builtinSecondSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MicroSecond:
-		f = &builtinMicroSecondSig{base}
+		f = &builtinMicroSecondSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Month:
-		f = &builtinMonthSig{base}
+		f = &builtinMonthSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MonthName:
-		f = &builtinMonthNameSig{base}
+		f = &builtinMonthNameSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NowWithArg:
-		f = &builtinNowWithArgSig{base}
+		f = &builtinNowWithArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_NowWithoutArg:
-		f = &builtinNowWithoutArgSig{base}
+		f = &builtinNowWithoutArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DayName:
-		f = &builtinDayNameSig{base}
+		f = &builtinDayNameSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DayOfMonth:
-		f = &builtinDayOfMonthSig{base}
+		f = &builtinDayOfMonthSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DayOfWeek:
-		f = &builtinDayOfWeekSig{base}
+		f = &builtinDayOfWeekSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DayOfYear:
-		f = &builtinDayOfYearSig{base}
+		f = &builtinDayOfYearSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_WeekWithMode:
-		f = &builtinWeekWithModeSig{base}
+		f = &builtinWeekWithModeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_WeekWithoutMode:
-		f = &builtinWeekWithoutModeSig{base}
+		f = &builtinWeekWithoutModeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_WeekDay:
-		f = &builtinWeekDaySig{base}
+		f = &builtinWeekDaySig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_WeekOfYear:
-		f = &builtinWeekOfYearSig{base}
+		f = &builtinWeekOfYearSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Year:
-		f = &builtinYearSig{base}
+		f = &builtinYearSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_YearWeekWithMode:
-		f = &builtinYearWeekWithModeSig{base}
+		f = &builtinYearWeekWithModeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_YearWeekWithoutMode:
-		f = &builtinYearWeekWithoutModeSig{base}
+		f = &builtinYearWeekWithoutModeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GetFormat:
-		f = &builtinGetFormatSig{base}
+		f = &builtinGetFormatSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SysDateWithFsp:
-		f = &builtinSysDateWithFspSig{base}
+		f = &builtinSysDateWithFspSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SysDateWithoutFsp:
-		f = &builtinSysDateWithoutFspSig{base}
+		f = &builtinSysDateWithoutFspSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CurrentDate:
-		f = &builtinCurrentDateSig{base}
+		f = &builtinCurrentDateSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CurrentTime0Arg:
-		f = &builtinCurrentTime0ArgSig{base}
+		f = &builtinCurrentTime0ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CurrentTime1Arg:
-		f = &builtinCurrentTime1ArgSig{base}
+		f = &builtinCurrentTime1ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Time:
-		f = &builtinTimeSig{base}
+		f = &builtinTimeSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_TimeLiteral:
-	// 	f = &builtinTimeLiteralSig{base}
+	// 	f = &builtinTimeLiteralSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UTCDate:
-		f = &builtinUTCDateSig{base}
+		f = &builtinUTCDateSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UTCTimestampWithArg:
-		f = &builtinUTCTimestampWithArgSig{base}
+		f = &builtinUTCTimestampWithArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UTCTimestampWithoutArg:
-		f = &builtinUTCTimestampWithoutArgSig{base}
+		f = &builtinUTCTimestampWithoutArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddDatetimeAndDuration:
-		f = &builtinAddDatetimeAndDurationSig{base}
+		f = &builtinAddDatetimeAndDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddDatetimeAndString:
-		f = &builtinAddDatetimeAndStringSig{base}
+		f = &builtinAddDatetimeAndStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddTimeDateTimeNull:
-		f = &builtinAddTimeDateTimeNullSig{base}
+		f = &builtinAddTimeDateTimeNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddStringAndDuration:
-		f = &builtinAddStringAndDurationSig{base}
+		f = &builtinAddStringAndDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddStringAndString:
-		f = &builtinAddStringAndStringSig{base}
+		f = &builtinAddStringAndStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddTimeStringNull:
-		f = &builtinAddTimeStringNullSig{base}
+		f = &builtinAddTimeStringNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddDurationAndDuration:
-		f = &builtinAddDurationAndDurationSig{base}
+		f = &builtinAddDurationAndDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddDurationAndString:
-		f = &builtinAddDurationAndStringSig{base}
+		f = &builtinAddDurationAndStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddTimeDurationNull:
-		f = &builtinAddTimeDurationNullSig{base}
+		f = &builtinAddTimeDurationNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddDateAndDuration:
-		f = &builtinAddDateAndDurationSig{base}
+		f = &builtinAddDateAndDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_AddDateAndString:
-		f = &builtinAddDateAndStringSig{base}
+		f = &builtinAddDateAndStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubDatetimeAndDuration:
-		f = &builtinSubDatetimeAndDurationSig{base}
+		f = &builtinSubDatetimeAndDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubDatetimeAndString:
-		f = &builtinSubDatetimeAndStringSig{base}
+		f = &builtinSubDatetimeAndStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubTimeDateTimeNull:
-		f = &builtinSubTimeDateTimeNullSig{base}
+		f = &builtinSubTimeDateTimeNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubStringAndDuration:
-		f = &builtinSubStringAndDurationSig{base}
+		f = &builtinSubStringAndDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubStringAndString:
-		f = &builtinSubStringAndStringSig{base}
+		f = &builtinSubStringAndStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubTimeStringNull:
-		f = &builtinSubTimeStringNullSig{base}
+		f = &builtinSubTimeStringNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubDurationAndDuration:
-		f = &builtinSubDurationAndDurationSig{base}
+		f = &builtinSubDurationAndDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubDurationAndString:
-		f = &builtinSubDurationAndStringSig{base}
+		f = &builtinSubDurationAndStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubTimeDurationNull:
-		f = &builtinSubTimeDurationNullSig{base}
+		f = &builtinSubTimeDurationNullSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubDateAndDuration:
-		f = &builtinSubDateAndDurationSig{base}
+		f = &builtinSubDateAndDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubDateAndString:
-		f = &builtinSubDateAndStringSig{base}
+		f = &builtinSubDateAndStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnixTimestampCurrent:
-		f = &builtinUnixTimestampCurrentSig{base}
+		f = &builtinUnixTimestampCurrentSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnixTimestampInt:
-		f = &builtinUnixTimestampIntSig{base}
+		f = &builtinUnixTimestampIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnixTimestampDec:
-		f = &builtinUnixTimestampDecSig{base}
+		f = &builtinUnixTimestampDecSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ConvertTz:
-	// 	f = &builtinConvertTzSig{base}
+	// 	f = &builtinConvertTzSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MakeDate:
-		f = &builtinMakeDateSig{base}
+		f = &builtinMakeDateSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_MakeTime:
-		f = &builtinMakeTimeSig{base}
+		f = &builtinMakeTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_PeriodAdd:
-		f = &builtinPeriodAddSig{base}
+		f = &builtinPeriodAddSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_PeriodDiff:
-		f = &builtinPeriodDiffSig{base}
+		f = &builtinPeriodDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Quarter:
-		f = &builtinQuarterSig{base}
+		f = &builtinQuarterSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SecToTime:
-		f = &builtinSecToTimeSig{base}
+		f = &builtinSecToTimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TimeToSec:
-		f = &builtinTimeToSecSig{base}
+		f = &builtinTimeToSecSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TimestampAdd:
-		f = &builtinTimestampAddSig{base}
+		f = &builtinTimestampAddSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ToDays:
-		f = &builtinToDaysSig{base}
+		f = &builtinToDaysSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ToSeconds:
-		f = &builtinToSecondsSig{base}
+		f = &builtinToSecondsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UTCTimeWithArg:
-		f = &builtinUTCTimeWithArgSig{base}
+		f = &builtinUTCTimeWithArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UTCTimeWithoutArg:
-		f = &builtinUTCTimeWithoutArgSig{base}
+		f = &builtinUTCTimeWithoutArgSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_Timestamp1Arg:
-	// 	f = &builtinTimestamp1ArgSig{base}
+	// 	f = &builtinTimestamp1ArgSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_Timestamp2Args:
-	// 	f = &builtinTimestamp2ArgsSig{base}
+	// 	f = &builtinTimestamp2ArgsSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_TimestampLiteral:
-	// 	f = &builtinTimestampLiteralSig{base}
+	// 	f = &builtinTimestampLiteralSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LastDay:
-		f = &builtinLastDaySig{base}
+		f = &builtinLastDaySig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_StrToDateDate:
-		f = &builtinStrToDateDateSig{base}
+		f = &builtinStrToDateDateSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_StrToDateDatetime:
-		f = &builtinStrToDateDatetimeSig{base}
+		f = &builtinStrToDateDatetimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_StrToDateDuration:
-		f = &builtinStrToDateDurationSig{base}
+		f = &builtinStrToDateDurationSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FromUnixTime1Arg:
-		f = &builtinFromUnixTime1ArgSig{base}
+		f = &builtinFromUnixTime1ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FromUnixTime2Arg:
-		f = &builtinFromUnixTime2ArgSig{base}
+		f = &builtinFromUnixTime2ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ExtractDatetimeFromString:
-		f = &builtinExtractDatetimeFromStringSig{base}
+		f = &builtinExtractDatetimeFromStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ExtractDatetime:
-		f = &builtinExtractDatetimeSig{base}
+		f = &builtinExtractDatetimeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ExtractDuration:
-		f = &builtinExtractDurationSig{base}
+		f = &builtinExtractDurationSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AddDateStringString:
-	// 	f = &builtinAddDateStringStringSig{base}
+	// 	f = &builtinAddDateStringStringSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AddDateStringInt:
-	// 	f = &builtinAddDateStringIntSig{base}
+	// 	f = &builtinAddDateStringIntSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AddDateStringDecimal:
-	// 	f = &builtinAddDateStringDecimalSig{base}
+	// 	f = &builtinAddDateStringDecimalSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AddDateIntString:
-	// 	f = &builtinAddDateIntStringSig{base}
+	// 	f = &builtinAddDateIntStringSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AddDateIntInt:
-	// 	f = &builtinAddDateIntIntSig{base}
+	// 	f = &builtinAddDateIntIntSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AddDateDatetimeString:
-	// 	f = &builtinAddDateDatetimeStringSig{base}
+	// 	f = &builtinAddDateDatetimeStringSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_AddDateDatetimeInt:
-	// 	f = &builtinAddDateDatetimeIntSig{base}
+	// 	f = &builtinAddDateDatetimeIntSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_SubDateStringString:
-	// 	f = &builtinSubDateStringStringSig{base}
+	// 	f = &builtinSubDateStringStringSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_SubDateStringInt:
-	// 	f = &builtinSubDateStringIntSig{base}
+	// 	f = &builtinSubDateStringIntSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_SubDateStringDecimal:
-	// 	f = &builtinSubDateStringDecimalSig{base}
+	// 	f = &builtinSubDateStringDecimalSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_SubDateIntString:
-	// 	f = &builtinSubDateIntStringSig{base}
+	// 	f = &builtinSubDateIntStringSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_SubDateIntInt:
-	// 	f = &builtinSubDateIntIntSig{base}
+	// 	f = &builtinSubDateIntIntSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_SubDateDatetimeString:
-	// 	f = &builtinSubDateDatetimeStringSig{base}
+	// 	f = &builtinSubDateDatetimeStringSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_SubDateDatetimeInt:
-	// 	f = &builtinSubDateDatetimeIntSig{base}
+	// 	f = &builtinSubDateDatetimeIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FromDays:
-		f = &builtinFromDaysSig{base}
+		f = &builtinFromDaysSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TimeFormat:
-		f = &builtinTimeFormatSig{base}
+		f = &builtinTimeFormatSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_TimestampDiff:
-		f = &builtinTimestampDiffSig{base}
+		f = &builtinTimestampDiffSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_BitLength:
-		f = &builtinBitLengthSig{base}
+		f = &builtinBitLengthSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Bin:
-		f = &builtinBinSig{base}
+		f = &builtinBinSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ASCII:
-		f = &builtinASCIISig{base}
+		f = &builtinASCIISig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Char:
-		f = &builtinCharSig{base}
+		f = &builtinCharSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CharLengthUTF8:
-		f = &builtinCharLengthUTF8Sig{base}
+		f = &builtinCharLengthUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CharLength:
-		f = &builtinCharLengthBinarySig{base}
+		f = &builtinCharLengthBinarySig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Concat:
-		f = &builtinConcatSig{base, maxAllowedPacket}
+		f = &builtinConcatSig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_ConcatWS:
-		f = &builtinConcatWSSig{base, maxAllowedPacket}
+		f = &builtinConcatWSSig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_Convert:
-		f = &builtinConvertSig{base}
+		f = &builtinConvertSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Elt:
-		f = &builtinEltSig{base}
+		f = &builtinEltSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ExportSet3Arg:
-		f = &builtinExportSet3ArgSig{base}
+		f = &builtinExportSet3ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ExportSet4Arg:
-		f = &builtinExportSet4ArgSig{base}
+		f = &builtinExportSet4ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ExportSet5Arg:
-		f = &builtinExportSet5ArgSig{base}
+		f = &builtinExportSet5ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FieldInt:
-		f = &builtinFieldIntSig{base}
+		f = &builtinFieldIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FieldReal:
-		f = &builtinFieldRealSig{base}
+		f = &builtinFieldRealSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FieldString:
-		f = &builtinFieldStringSig{base}
+		f = &builtinFieldStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FindInSet:
-		f = &builtinFindInSetSig{base}
+		f = &builtinFindInSetSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Format:
-		f = &builtinFormatSig{base}
+		f = &builtinFormatSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FormatWithLocale:
-		f = &builtinFormatWithLocaleSig{base}
+		f = &builtinFormatWithLocaleSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FromBase64:
-		f = &builtinFromBase64Sig{base, maxAllowedPacket}
+		f = &builtinFromBase64Sig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_HexIntArg:
-		f = &builtinHexIntArgSig{base}
+		f = &builtinHexIntArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_HexStrArg:
-		f = &builtinHexStrArgSig{base}
+		f = &builtinHexStrArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_InsertUTF8:
-		f = &builtinInsertUTF8Sig{base, maxAllowedPacket}
+		f = &builtinInsertUTF8Sig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_Insert:
-		f = &builtinInsertSig{base, maxAllowedPacket}
+		f = &builtinInsertSig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_InstrUTF8:
-		f = &builtinInstrUTF8Sig{base}
+		f = &builtinInstrUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Instr:
-		f = &builtinInstrSig{base}
+		f = &builtinInstrSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LTrim:
-		f = &builtinLTrimSig{base}
+		f = &builtinLTrimSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LeftUTF8:
-		f = &builtinLeftUTF8Sig{base}
+		f = &builtinLeftUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Left:
-		f = &builtinLeftSig{base}
+		f = &builtinLeftSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Length:
-		f = &builtinLengthSig{base}
+		f = &builtinLengthSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Locate2ArgsUTF8:
-		f = &builtinLocate2ArgsUTF8Sig{base}
+		f = &builtinLocate2ArgsUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Locate3ArgsUTF8:
-		f = &builtinLocate3ArgsUTF8Sig{base}
+		f = &builtinLocate3ArgsUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Locate2Args:
-		f = &builtinLocate2ArgsSig{base}
+		f = &builtinLocate2ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Locate3Args:
-		f = &builtinLocate3ArgsSig{base}
+		f = &builtinLocate3ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Lower:
-		f = &builtinLowerSig{base}
+		f = &builtinLowerSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LowerUTF8:
-		f = &builtinLowerUTF8Sig{base}
+		f = &builtinLowerUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LpadUTF8:
-		f = &builtinLpadUTF8Sig{base, maxAllowedPacket}
+		f = &builtinLpadUTF8Sig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_Lpad:
-		f = &builtinLpadSig{base, maxAllowedPacket}
+		f = &builtinLpadSig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_MakeSet:
-		f = &builtinMakeSetSig{base}
+		f = &builtinMakeSetSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_OctInt:
-		f = &builtinOctIntSig{base}
+		f = &builtinOctIntSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_OctString:
-		f = &builtinOctStringSig{base}
+		f = &builtinOctStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Ord:
-		f = &builtinOrdSig{base}
+		f = &builtinOrdSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Quote:
-		f = &builtinQuoteSig{base}
+		f = &builtinQuoteSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RTrim:
-		f = &builtinRTrimSig{base}
+		f = &builtinRTrimSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Repeat:
-		f = &builtinRepeatSig{base, maxAllowedPacket}
+		f = &builtinRepeatSig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_Replace:
-		f = &builtinReplaceSig{base}
+		f = &builtinReplaceSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ReverseUTF8:
-		f = &builtinReverseUTF8Sig{base}
+		f = &builtinReverseUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Reverse:
-		f = &builtinReverseSig{base}
+		f = &builtinReverseSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RightUTF8:
-		f = &builtinRightUTF8Sig{base}
+		f = &builtinRightUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Right:
-		f = &builtinRightSig{base}
+		f = &builtinRightSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RpadUTF8:
-		f = &builtinRpadUTF8Sig{base, maxAllowedPacket}
+		f = &builtinRpadUTF8Sig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_Rpad:
-		f = &builtinRpadSig{base, maxAllowedPacket}
+		f = &builtinRpadSig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_Space:
-		f = &builtinSpaceSig{base, maxAllowedPacket}
+		f = &builtinSpaceSig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_Strcmp:
-		f = &builtinStrcmpSig{base}
+		f = &builtinStrcmpSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Substring2ArgsUTF8:
-		f = &builtinSubstring2ArgsUTF8Sig{base}
+		f = &builtinSubstring2ArgsUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Substring3ArgsUTF8:
-		f = &builtinSubstring3ArgsUTF8Sig{base}
+		f = &builtinSubstring3ArgsUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Substring2Args:
-		f = &builtinSubstring2ArgsSig{base}
+		f = &builtinSubstring2ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Substring3Args:
-		f = &builtinSubstring3ArgsSig{base}
+		f = &builtinSubstring3ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_SubstringIndex:
-		f = &builtinSubstringIndexSig{base}
+		f = &builtinSubstringIndexSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ToBase64:
-		f = &builtinToBase64Sig{base, maxAllowedPacket}
+		f = &builtinToBase64Sig{baseBuiltinFunc: base, maxAllowedPacket: maxAllowedPacket}
 	case tipb.ScalarFuncSig_Trim1Arg:
-		f = &builtinTrim1ArgSig{base}
+		f = &builtinTrim1ArgSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Trim2Args:
-		f = &builtinTrim2ArgsSig{base}
+		f = &builtinTrim2ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Trim3Args:
-		f = &builtinTrim3ArgsSig{base}
+		f = &builtinTrim3ArgsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UnHex:
-		f = &builtinUnHexSig{base}
+		f = &builtinUnHexSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Upper:
-		f = &builtinUpperSig{base}
+		f = &builtinUpperSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_UpperUTF8:
-		f = &builtinUpperUTF8Sig{base}
+		f = &builtinUpperUTF8Sig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ToBinary:
-		f = &builtinInternalToBinarySig{base}
+		f = &builtinInternalToBinarySig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_FromBinary:
-		f = &builtinInternalFromBinarySig{base}
+		f = &builtinInternalFromBinarySig{baseBuiltinFunc: base}
 
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)

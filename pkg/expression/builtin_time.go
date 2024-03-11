@@ -252,13 +252,14 @@ func (c *dateFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDate()
-	sig := &builtinDateSig{bf}
+	sig := &builtinDateSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Date)
 	return sig, nil
 }
 
 type builtinDateSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDateSig) Clone() builtinFunc {
@@ -313,12 +314,13 @@ func (c *dateLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDate()
-	sig := &builtinDateLiteralSig{bf, tm}
+	sig := &builtinDateLiteralSig{baseBuiltinFunc: bf, literal: tm}
 	return sig, nil
 }
 
 type builtinDateLiteralSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	literal types.Time
 }
 
@@ -353,13 +355,14 @@ func (c *dateDiffFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinDateDiffSig{bf}
+	sig := &builtinDateDiffSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DateDiff)
 	return sig, nil
 }
 
 type builtinDateDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDateDiffSig) Clone() builtinFunc {
@@ -432,37 +435,37 @@ func (c *timeDiffFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	case types.ETDuration:
 		switch arg1Tp {
 		case types.ETDuration:
-			sig = &builtinDurationDurationTimeDiffSig{bf}
+			sig = &builtinDurationDurationTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_DurationDurationTimeDiff)
 		case types.ETDatetime, types.ETTimestamp:
-			sig = &builtinNullTimeDiffSig{bf}
+			sig = &builtinNullTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullTimeDiff)
 		default:
-			sig = &builtinDurationStringTimeDiffSig{bf}
+			sig = &builtinDurationStringTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_DurationStringTimeDiff)
 		}
 	case types.ETDatetime, types.ETTimestamp:
 		switch arg1Tp {
 		case types.ETDuration:
-			sig = &builtinNullTimeDiffSig{bf}
+			sig = &builtinNullTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_NullTimeDiff)
 		case types.ETDatetime, types.ETTimestamp:
-			sig = &builtinTimeTimeTimeDiffSig{bf}
+			sig = &builtinTimeTimeTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_TimeTimeTimeDiff)
 		default:
-			sig = &builtinTimeStringTimeDiffSig{bf}
+			sig = &builtinTimeStringTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_TimeStringTimeDiff)
 		}
 	default:
 		switch arg1Tp {
 		case types.ETDuration:
-			sig = &builtinStringDurationTimeDiffSig{bf}
+			sig = &builtinStringDurationTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_StringDurationTimeDiff)
 		case types.ETDatetime, types.ETTimestamp:
-			sig = &builtinStringTimeTimeDiffSig{bf}
+			sig = &builtinStringTimeTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_StringTimeTimeDiff)
 		default:
-			sig = &builtinStringStringTimeDiffSig{bf}
+			sig = &builtinStringStringTimeDiffSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_StringStringTimeDiff)
 		}
 	}
@@ -471,6 +474,7 @@ func (c *timeDiffFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinDurationDurationTimeDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDurationDurationTimeDiffSig) Clone() builtinFunc {
@@ -498,6 +502,7 @@ func (b *builtinDurationDurationTimeDiffSig) evalDuration(ctx EvalContext, row c
 
 type builtinTimeTimeTimeDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTimeTimeTimeDiffSig) Clone() builtinFunc {
@@ -526,6 +531,7 @@ func (b *builtinTimeTimeTimeDiffSig) evalDuration(ctx EvalContext, row chunk.Row
 
 type builtinDurationStringTimeDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDurationStringTimeDiffSig) Clone() builtinFunc {
@@ -559,6 +565,7 @@ func (b *builtinDurationStringTimeDiffSig) evalDuration(ctx EvalContext, row chu
 
 type builtinStringDurationTimeDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinStringDurationTimeDiffSig) Clone() builtinFunc {
@@ -617,6 +624,7 @@ func calculateDurationTimeDiff(ctx EvalContext, lhs, rhs types.Duration) (d type
 
 type builtinTimeStringTimeDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTimeStringTimeDiffSig) Clone() builtinFunc {
@@ -650,6 +658,7 @@ func (b *builtinTimeStringTimeDiffSig) evalDuration(ctx EvalContext, row chunk.R
 
 type builtinStringTimeTimeDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinStringTimeTimeDiffSig) Clone() builtinFunc {
@@ -683,6 +692,7 @@ func (b *builtinStringTimeTimeDiffSig) evalDuration(ctx EvalContext, row chunk.R
 
 type builtinStringStringTimeDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinStringStringTimeDiffSig) Clone() builtinFunc {
@@ -731,6 +741,7 @@ func (b *builtinStringStringTimeDiffSig) evalDuration(ctx EvalContext, row chunk
 
 type builtinNullTimeDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNullTimeDiffSig) Clone() builtinFunc {
@@ -772,13 +783,14 @@ func (c *dateFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	}
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
 	bf.tp.SetFlen((args[1].GetType().GetFlen() + 1) / 2 * 11)
-	sig := &builtinDateFormatSig{bf}
+	sig := &builtinDateFormatSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DateFormatSig)
 	return sig, nil
 }
 
 type builtinDateFormatSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDateFormatSig) Clone() builtinFunc {
@@ -834,13 +846,14 @@ func (c *fromDaysFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDate()
-	sig := &builtinFromDaysSig{bf}
+	sig := &builtinFromDaysSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FromDays)
 	return sig, nil
 }
 
 type builtinFromDaysSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFromDaysSig) Clone() builtinFunc {
@@ -878,13 +891,14 @@ func (c *hourFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	}
 	bf.tp.SetFlen(3)
 	bf.tp.SetDecimal(0)
-	sig := &builtinHourSig{bf}
+	sig := &builtinHourSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Hour)
 	return sig, nil
 }
 
 type builtinHourSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinHourSig) Clone() builtinFunc {
@@ -918,13 +932,14 @@ func (c *minuteFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 	bf.tp.SetFlen(2)
 	bf.tp.SetDecimal(0)
-	sig := &builtinMinuteSig{bf}
+	sig := &builtinMinuteSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Minute)
 	return sig, nil
 }
 
 type builtinMinuteSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinMinuteSig) Clone() builtinFunc {
@@ -958,13 +973,14 @@ func (c *secondFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 	bf.tp.SetFlen(2)
 	bf.tp.SetDecimal(0)
-	sig := &builtinSecondSig{bf}
+	sig := &builtinSecondSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Second)
 	return sig, nil
 }
 
 type builtinSecondSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSecondSig) Clone() builtinFunc {
@@ -998,13 +1014,14 @@ func (c *microSecondFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	}
 	bf.tp.SetFlen(6)
 	bf.tp.SetDecimal(0)
-	sig := &builtinMicroSecondSig{bf}
+	sig := &builtinMicroSecondSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MicroSecond)
 	return sig, nil
 }
 
 type builtinMicroSecondSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinMicroSecondSig) Clone() builtinFunc {
@@ -1038,13 +1055,14 @@ func (c *monthFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	}
 	bf.tp.SetFlen(2)
 	bf.tp.SetDecimal(0)
-	sig := &builtinMonthSig{bf}
+	sig := &builtinMonthSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Month)
 	return sig, nil
 }
 
 type builtinMonthSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinMonthSig) Clone() builtinFunc {
@@ -1082,13 +1100,14 @@ func (c *monthNameFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(10)
-	sig := &builtinMonthNameSig{bf}
+	sig := &builtinMonthNameSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MonthName)
 	return sig, nil
 }
 
 type builtinMonthNameSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinMonthNameSig) Clone() builtinFunc {
@@ -1127,13 +1146,14 @@ func (c *dayNameFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(10)
-	sig := &builtinDayNameSig{bf}
+	sig := &builtinDayNameSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DayName)
 	return sig, nil
 }
 
 type builtinDayNameSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDayNameSig) Clone() builtinFunc {
@@ -1196,13 +1216,14 @@ func (c *dayOfMonthFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	bf.tp.SetFlen(2)
-	sig := &builtinDayOfMonthSig{bf}
+	sig := &builtinDayOfMonthSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DayOfMonth)
 	return sig, nil
 }
 
 type builtinDayOfMonthSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDayOfMonthSig) Clone() builtinFunc {
@@ -1234,13 +1255,14 @@ func (c *dayOfWeekFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(1)
-	sig := &builtinDayOfWeekSig{bf}
+	sig := &builtinDayOfWeekSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DayOfWeek)
 	return sig, nil
 }
 
 type builtinDayOfWeekSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDayOfWeekSig) Clone() builtinFunc {
@@ -1276,13 +1298,14 @@ func (c *dayOfYearFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(3)
-	sig := &builtinDayOfYearSig{bf}
+	sig := &builtinDayOfYearSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DayOfYear)
 	return sig, nil
 }
 
 type builtinDayOfYearSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinDayOfYearSig) Clone() builtinFunc {
@@ -1328,10 +1351,10 @@ func (c *weekFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 	var sig builtinFunc
 	if len(args) == 2 {
-		sig = &builtinWeekWithModeSig{bf}
+		sig = &builtinWeekWithModeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_WeekWithMode)
 	} else {
-		sig = &builtinWeekWithoutModeSig{bf}
+		sig = &builtinWeekWithoutModeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_WeekWithoutMode)
 	}
 	return sig, nil
@@ -1339,6 +1362,7 @@ func (c *weekFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinWeekWithModeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinWeekWithModeSig) Clone() builtinFunc {
@@ -1371,6 +1395,7 @@ func (b *builtinWeekWithModeSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 
 type builtinWeekWithoutModeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinWeekWithoutModeSig) Clone() builtinFunc {
@@ -1419,13 +1444,14 @@ func (c *weekDayFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 	bf.tp.SetFlen(1)
 
-	sig := &builtinWeekDaySig{bf}
+	sig := &builtinWeekDaySig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_WeekDay)
 	return sig, nil
 }
 
 type builtinWeekDaySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinWeekDaySig) Clone() builtinFunc {
@@ -1462,13 +1488,14 @@ func (c *weekOfYearFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	}
 	bf.tp.SetFlen(2)
 	bf.tp.SetDecimal(0)
-	sig := &builtinWeekOfYearSig{bf}
+	sig := &builtinWeekOfYearSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_WeekOfYear)
 	return sig, nil
 }
 
 type builtinWeekOfYearSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinWeekOfYearSig) Clone() builtinFunc {
@@ -1508,13 +1535,14 @@ func (c *yearFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	}
 	bf.tp.SetFlen(4)
 	bf.tp.SetDecimal(0)
-	sig := &builtinYearSig{bf}
+	sig := &builtinYearSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Year)
 	return sig, nil
 }
 
 type builtinYearSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinYearSig) Clone() builtinFunc {
@@ -1557,10 +1585,10 @@ func (c *yearWeekFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 	var sig builtinFunc
 	if len(args) == 2 {
-		sig = &builtinYearWeekWithModeSig{bf}
+		sig = &builtinYearWeekWithModeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_YearWeekWithMode)
 	} else {
-		sig = &builtinYearWeekWithoutModeSig{bf}
+		sig = &builtinYearWeekWithoutModeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_YearWeekWithoutMode)
 	}
 	return sig, nil
@@ -1568,6 +1596,7 @@ func (c *yearWeekFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinYearWeekWithModeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinYearWeekWithModeSig) Clone() builtinFunc {
@@ -1605,6 +1634,7 @@ func (b *builtinYearWeekWithModeSig) evalInt(ctx EvalContext, row chunk.Row) (in
 
 type builtinYearWeekWithoutModeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinYearWeekWithoutModeSig) Clone() builtinFunc {
@@ -1672,7 +1702,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 	}
 
 	if len(args) > 1 {
-		sig = &builtinFromUnixTime2ArgSig{bf}
+		sig = &builtinFromUnixTime2ArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FromUnixTime2Arg)
 		return sig, nil
 	}
@@ -1686,7 +1716,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 	}
 	bf.setDecimalAndFlenForDatetime(fsp)
 
-	sig = &builtinFromUnixTime1ArgSig{bf}
+	sig = &builtinFromUnixTime1ArgSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FromUnixTime1Arg)
 	return sig, nil
 }
@@ -1751,6 +1781,7 @@ func fieldString(fieldType byte) bool {
 
 type builtinFromUnixTime1ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFromUnixTime1ArgSig) Clone() builtinFunc {
@@ -1771,6 +1802,7 @@ func (b *builtinFromUnixTime1ArgSig) evalTime(ctx EvalContext, row chunk.Row) (r
 
 type builtinFromUnixTime2ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFromUnixTime2ArgSig) Clone() builtinFunc {
@@ -1811,13 +1843,14 @@ func (c *getFormatFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(17)
-	sig := &builtinGetFormatSig{bf}
+	sig := &builtinGetFormatSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_GetFormat)
 	return sig, nil
 }
 
 type builtinGetFormatSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinGetFormatSig) Clone() builtinFunc {
@@ -1882,7 +1915,7 @@ func (c *strToDateFunctionClass) getFunction(ctx BuildContext, args []Expression
 			return nil, err
 		}
 		bf.setDecimalAndFlenForDate()
-		sig = &builtinStrToDateDateSig{bf}
+		sig = &builtinStrToDateDateSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StrToDateDate)
 	case mysql.TypeDatetime:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString, types.ETString)
@@ -1890,7 +1923,7 @@ func (c *strToDateFunctionClass) getFunction(ctx BuildContext, args []Expression
 			return nil, err
 		}
 		bf.setDecimalAndFlenForDatetime(fsp)
-		sig = &builtinStrToDateDatetimeSig{bf}
+		sig = &builtinStrToDateDatetimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StrToDateDatetime)
 	case mysql.TypeDuration:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, types.ETString, types.ETString)
@@ -1898,7 +1931,7 @@ func (c *strToDateFunctionClass) getFunction(ctx BuildContext, args []Expression
 			return nil, err
 		}
 		bf.setDecimalAndFlenForTime(fsp)
-		sig = &builtinStrToDateDurationSig{bf}
+		sig = &builtinStrToDateDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StrToDateDuration)
 	}
 	return sig, nil
@@ -1906,6 +1939,7 @@ func (c *strToDateFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinStrToDateDateSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinStrToDateDateSig) Clone() builtinFunc {
@@ -1939,6 +1973,7 @@ func (b *builtinStrToDateDateSig) evalTime(ctx EvalContext, row chunk.Row) (type
 
 type builtinStrToDateDatetimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinStrToDateDatetimeSig) Clone() builtinFunc {
@@ -1972,6 +2007,7 @@ func (b *builtinStrToDateDatetimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 
 type builtinStrToDateDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinStrToDateDurationSig) Clone() builtinFunc {
@@ -2029,10 +2065,10 @@ func (c *sysDateFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 	var sig builtinFunc
 	if len(args) == 1 {
-		sig = &builtinSysDateWithFspSig{bf}
+		sig = &builtinSysDateWithFspSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_SysDateWithFsp)
 	} else {
-		sig = &builtinSysDateWithoutFspSig{bf}
+		sig = &builtinSysDateWithoutFspSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_SysDateWithoutFsp)
 	}
 	return sig, nil
@@ -2040,6 +2076,7 @@ func (c *sysDateFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinSysDateWithFspSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSysDateWithFspSig) Clone() builtinFunc {
@@ -2067,6 +2104,7 @@ func (b *builtinSysDateWithFspSig) evalTime(ctx EvalContext, row chunk.Row) (val
 
 type builtinSysDateWithoutFspSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
@@ -2100,12 +2138,13 @@ func (c *currentDateFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDate()
-	sig := &builtinCurrentDateSig{bf}
+	sig := &builtinCurrentDateSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCurrentDateSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCurrentDateSig) Clone() builtinFunc {
@@ -2153,17 +2192,18 @@ func (c *currentTimeFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	// 2. hour is in the 2-digit range.
 	bf.tp.SetFlen(bf.tp.GetFlen() - 2)
 	if len(args) == 0 {
-		sig = &builtinCurrentTime0ArgSig{bf}
+		sig = &builtinCurrentTime0ArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CurrentTime0Arg)
 		return sig, nil
 	}
-	sig = &builtinCurrentTime1ArgSig{bf}
+	sig = &builtinCurrentTime1ArgSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_CurrentTime1Arg)
 	return sig, nil
 }
 
 type builtinCurrentTime0ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCurrentTime0ArgSig) Clone() builtinFunc {
@@ -2188,6 +2228,7 @@ func (b *builtinCurrentTime0ArgSig) evalDuration(ctx EvalContext, row chunk.Row)
 
 type builtinCurrentTime1ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCurrentTime1ArgSig) Clone() builtinFunc {
@@ -2233,13 +2274,14 @@ func (c *timeFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		return nil, err
 	}
 	bf.setDecimalAndFlenForTime(fsp)
-	sig := &builtinTimeSig{bf}
+	sig := &builtinTimeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Time)
 	return sig, nil
 }
 
 type builtinTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTimeSig) Clone() builtinFunc {
@@ -2304,12 +2346,13 @@ func (c *timeLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.setDecimalAndFlenForTime(duration.Fsp)
-	sig := &builtinTimeLiteralSig{bf, duration}
+	sig := &builtinTimeLiteralSig{baseBuiltinFunc: bf, duration: duration}
 	return sig, nil
 }
 
 type builtinTimeLiteralSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	duration types.Duration
 }
 
@@ -2338,12 +2381,13 @@ func (c *utcDateFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDate()
-	sig := &builtinUTCDateSig{bf}
+	sig := &builtinUTCDateSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinUTCDateSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUTCDateSig) Clone() builtinFunc {
@@ -2388,10 +2432,10 @@ func (c *utcTimestampFunctionClass) getFunction(ctx BuildContext, args []Express
 	bf.setDecimalAndFlenForDatetime(fsp)
 	var sig builtinFunc
 	if len(args) == 1 {
-		sig = &builtinUTCTimestampWithArgSig{bf}
+		sig = &builtinUTCTimestampWithArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UTCTimestampWithArg)
 	} else {
-		sig = &builtinUTCTimestampWithoutArgSig{bf}
+		sig = &builtinUTCTimestampWithoutArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UTCTimestampWithoutArg)
 	}
 	return sig, nil
@@ -2411,6 +2455,7 @@ func evalUTCTimestampWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error)
 
 type builtinUTCTimestampWithArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUTCTimestampWithArgSig) Clone() builtinFunc {
@@ -2440,6 +2485,7 @@ func (b *builtinUTCTimestampWithArgSig) evalTime(ctx EvalContext, row chunk.Row)
 
 type builtinUTCTimestampWithoutArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUTCTimestampWithoutArgSig) Clone() builtinFunc {
@@ -2480,10 +2526,10 @@ func (c *nowFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 
 	var sig builtinFunc
 	if len(args) == 1 {
-		sig = &builtinNowWithArgSig{bf}
+		sig = &builtinNowWithArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_NowWithArg)
 	} else {
-		sig = &builtinNowWithoutArgSig{bf}
+		sig = &builtinNowWithoutArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_NowWithoutArg)
 	}
 	return sig, nil
@@ -2532,6 +2578,7 @@ func evalNowWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error) {
 
 type builtinNowWithArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNowWithArgSig) Clone() builtinFunc {
@@ -2563,6 +2610,7 @@ func (b *builtinNowWithArgSig) evalTime(ctx EvalContext, row chunk.Row) (types.T
 
 type builtinNowWithoutArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinNowWithoutArgSig) Clone() builtinFunc {
@@ -2612,14 +2660,14 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 			if err != nil {
 				return nil, err
 			}
-			sig = &builtinExtractDatetimeSig{bf}
+			sig = &builtinExtractDatetimeSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
 		} else if args[1].GetType().EvalType() == types.ETDuration {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDuration)
 			if err != nil {
 				return nil, err
 			}
-			sig = &builtinExtractDurationSig{bf}
+			sig = &builtinExtractDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_ExtractDuration)
 		} else {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
@@ -2627,7 +2675,7 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 				return nil, err
 			}
 			bf.args[1].GetType().SetDecimal(int(types.MaxFsp))
-			sig = &builtinExtractDatetimeFromStringSig{bf}
+			sig = &builtinExtractDatetimeFromStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetimeFromString)
 		}
 	} else if isClockUnit {
@@ -2636,7 +2684,7 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		if err != nil {
 			return nil, err
 		}
-		sig = &builtinExtractDurationSig{bf}
+		sig = &builtinExtractDurationSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ExtractDuration)
 	} else {
 		// Date units interpret the second argument as datetime.
@@ -2644,7 +2692,7 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		if err != nil {
 			return nil, err
 		}
-		sig = &builtinExtractDatetimeSig{bf}
+		sig = &builtinExtractDatetimeSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
 	}
 	return sig, nil
@@ -2652,6 +2700,7 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinExtractDatetimeFromStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinExtractDatetimeFromStringSig) Clone() builtinFunc {
@@ -2696,6 +2745,7 @@ func (b *builtinExtractDatetimeFromStringSig) evalInt(ctx EvalContext, row chunk
 
 type builtinExtractDatetimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinExtractDatetimeSig) Clone() builtinFunc {
@@ -2721,6 +2771,7 @@ func (b *builtinExtractDatetimeSig) evalInt(ctx EvalContext, row chunk.Row) (int
 
 type builtinExtractDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinExtractDurationSig) Clone() builtinFunc {
@@ -3919,6 +3970,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinAddSubDateAsStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	baseDateArithmetical
 	getDate        funcGetDateForDateAddSub
 	vecGetDate     funcVecGetDateForDateAddSub
@@ -3971,6 +4023,7 @@ func (b *builtinAddSubDateAsStringSig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinAddSubDateDatetimeAnySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	baseDateArithmetical
 	getInterval    funcGetIntervalForDateAddSub
 	vecGetInterval funcVecGetIntervalForDateAddSub
@@ -4010,6 +4063,7 @@ func (b *builtinAddSubDateDatetimeAnySig) evalTime(ctx EvalContext, row chunk.Ro
 
 type builtinAddSubDateDurationAnySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	baseDateArithmetical
 	getInterval    funcGetIntervalForDateAddSub
 	vecGetInterval funcVecGetIntervalForDateAddSub
@@ -4086,13 +4140,14 @@ func (c *timestampDiffFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTimestampDiffSig{bf}
+	sig := &builtinTimestampDiffSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimestampDiff)
 	return sig, nil
 }
 
 type builtinTimestampDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTimestampDiffSig) Clone() builtinFunc {
@@ -4190,13 +4245,13 @@ func (c *unixTimestampFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 	var sig builtinFunc
 	if len(args) == 0 {
-		sig = &builtinUnixTimestampCurrentSig{bf}
+		sig = &builtinUnixTimestampCurrentSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnixTimestampCurrent)
 	} else if retTp == types.ETInt {
-		sig = &builtinUnixTimestampIntSig{bf}
+		sig = &builtinUnixTimestampIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnixTimestampInt)
 	} else if retTp == types.ETDecimal {
-		sig = &builtinUnixTimestampDecSig{bf}
+		sig = &builtinUnixTimestampDecSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnixTimestampDec)
 	}
 	return sig, nil
@@ -4237,6 +4292,7 @@ func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) (*types.MyDecimal, err
 
 type builtinUnixTimestampCurrentSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUnixTimestampCurrentSig) Clone() builtinFunc {
@@ -4265,6 +4321,7 @@ func (b *builtinUnixTimestampCurrentSig) evalInt(ctx EvalContext, row chunk.Row)
 
 type builtinUnixTimestampIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUnixTimestampIntSig) Clone() builtinFunc {
@@ -4303,6 +4360,7 @@ func (b *builtinUnixTimestampIntSig) evalInt(ctx EvalContext, row chunk.Row) (in
 
 type builtinUnixTimestampDecSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUnixTimestampDecSig) Clone() builtinFunc {
@@ -4364,10 +4422,10 @@ func (c *timestampFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.setDecimalAndFlenForDatetime(fsp)
 	var sig builtinFunc
 	if argLen == 2 {
-		sig = &builtinTimestamp2ArgsSig{bf, isFloat}
+		sig = &builtinTimestamp2ArgsSig{baseBuiltinFunc: bf, isFloat: isFloat}
 		sig.setPbCode(tipb.ScalarFuncSig_Timestamp2Args)
 	} else {
-		sig = &builtinTimestamp1ArgSig{bf, isFloat}
+		sig = &builtinTimestamp1ArgSig{baseBuiltinFunc: bf, isFloat: isFloat}
 		sig.setPbCode(tipb.ScalarFuncSig_Timestamp1Arg)
 	}
 	return sig, nil
@@ -4375,6 +4433,7 @@ func (c *timestampFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinTimestamp1ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	isFloat bool
 }
@@ -4407,6 +4466,7 @@ func (b *builtinTimestamp1ArgSig) evalTime(ctx EvalContext, row chunk.Row) (type
 
 type builtinTimestamp2ArgsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	isFloat bool
 }
@@ -4489,12 +4549,14 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx BuildContext, args []Exp
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDatetime(tm.Fsp())
-	sig := &builtinTimestampLiteralSig{bf, tm}
+	sig := &builtinTimestampLiteralSig{baseBuiltinFunc: bf, tm: tm}
 	return sig, nil
 }
 
 type builtinTimestampLiteralSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
+
 	tm types.Time
 }
 
@@ -4676,13 +4738,13 @@ func (c *addTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
-			sig = &builtinAddDatetimeAndDurationSig{bf}
+			sig = &builtinAddDatetimeAndDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddDatetimeAndDuration)
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			sig = &builtinAddTimeDateTimeNullSig{bf}
+			sig = &builtinAddTimeDateTimeNullSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddTimeDateTimeNull)
 		default:
-			sig = &builtinAddDatetimeAndStringSig{bf}
+			sig = &builtinAddDatetimeAndStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddDatetimeAndString)
 		}
 	case mysql.TypeDate:
@@ -4691,37 +4753,37 @@ func (c *addTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		bf.tp.SetCollate(collate)
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
-			sig = &builtinAddDateAndDurationSig{bf}
+			sig = &builtinAddDateAndDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddDateAndDuration)
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			sig = &builtinAddTimeStringNullSig{bf}
+			sig = &builtinAddTimeStringNullSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddTimeStringNull)
 		default:
-			sig = &builtinAddDateAndStringSig{bf}
+			sig = &builtinAddDateAndStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddDateAndString)
 		}
 	case mysql.TypeDuration:
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
-			sig = &builtinAddDurationAndDurationSig{bf}
+			sig = &builtinAddDurationAndDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddDurationAndDuration)
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			sig = &builtinAddTimeDurationNullSig{bf}
+			sig = &builtinAddTimeDurationNullSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddTimeDurationNull)
 		default:
-			sig = &builtinAddDurationAndStringSig{bf}
+			sig = &builtinAddDurationAndStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddDurationAndString)
 		}
 	default:
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
-			sig = &builtinAddStringAndDurationSig{bf}
+			sig = &builtinAddStringAndDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddStringAndDuration)
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			sig = &builtinAddTimeStringNullSig{bf}
+			sig = &builtinAddTimeStringNullSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddTimeStringNull)
 		default:
-			sig = &builtinAddStringAndStringSig{bf}
+			sig = &builtinAddStringAndStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_AddStringAndString)
 		}
 	}
@@ -4730,6 +4792,7 @@ func (c *addTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinAddTimeDateTimeNullSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddTimeDateTimeNullSig) Clone() builtinFunc {
@@ -4746,6 +4809,7 @@ func (b *builtinAddTimeDateTimeNullSig) evalTime(ctx EvalContext, row chunk.Row)
 
 type builtinAddDatetimeAndDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddDatetimeAndDurationSig) Clone() builtinFunc {
@@ -4771,6 +4835,7 @@ func (b *builtinAddDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 
 type builtinAddDatetimeAndStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddDatetimeAndStringSig) Clone() builtinFunc {
@@ -4808,6 +4873,7 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 
 type builtinAddTimeDurationNullSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddTimeDurationNullSig) Clone() builtinFunc {
@@ -4824,6 +4890,7 @@ func (b *builtinAddTimeDurationNullSig) evalDuration(ctx EvalContext, row chunk.
 
 type builtinAddDurationAndDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddDurationAndDurationSig) Clone() builtinFunc {
@@ -4852,6 +4919,7 @@ func (b *builtinAddDurationAndDurationSig) evalDuration(ctx EvalContext, row chu
 
 type builtinAddDurationAndStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddDurationAndStringSig) Clone() builtinFunc {
@@ -4892,6 +4960,7 @@ func (b *builtinAddDurationAndStringSig) evalDuration(ctx EvalContext, row chunk
 
 type builtinAddTimeStringNullSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddTimeStringNullSig) Clone() builtinFunc {
@@ -4908,6 +4977,7 @@ func (b *builtinAddTimeStringNullSig) evalString(ctx EvalContext, row chunk.Row)
 
 type builtinAddStringAndDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddStringAndDurationSig) Clone() builtinFunc {
@@ -4949,6 +5019,7 @@ func (b *builtinAddStringAndDurationSig) evalString(ctx EvalContext, row chunk.R
 
 type builtinAddStringAndStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddStringAndStringSig) Clone() builtinFunc {
@@ -5012,6 +5083,7 @@ func (b *builtinAddStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinAddDateAndDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddDateAndDurationSig) Clone() builtinFunc {
@@ -5037,6 +5109,7 @@ func (b *builtinAddDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinAddDateAndStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinAddDateAndStringSig) Clone() builtinFunc {
@@ -5126,6 +5199,7 @@ func (c *convertTzFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinConvertTzSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	timezoneRegex *regexp.Regexp
 }
 
@@ -5215,13 +5289,14 @@ func (c *makeDateFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDate()
-	sig := &builtinMakeDateSig{bf}
+	sig := &builtinMakeDateSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MakeDate)
 	return sig, nil
 }
 
 type builtinMakeDateSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinMakeDateSig) Clone() builtinFunc {
@@ -5288,13 +5363,14 @@ func (c *makeTimeFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.setDecimalAndFlenForTime(decimal)
-	sig := &builtinMakeTimeSig{bf}
+	sig := &builtinMakeTimeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MakeTime)
 	return sig, nil
 }
 
 type builtinMakeTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinMakeTimeSig) Clone() builtinFunc {
@@ -5374,7 +5450,7 @@ func (c *periodAddFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(6)
-	sig := &builtinPeriodAddSig{bf}
+	sig := &builtinPeriodAddSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
@@ -5418,6 +5494,7 @@ func month2Period(month uint64) uint64 {
 
 type builtinPeriodAddSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinPeriodAddSig) Clone() builtinFunc {
@@ -5461,12 +5538,13 @@ func (c *periodDiffFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	bf.tp.SetFlen(6)
-	sig := &builtinPeriodDiffSig{bf}
+	sig := &builtinPeriodDiffSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinPeriodDiffSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinPeriodDiffSig) Clone() builtinFunc {
@@ -5514,13 +5592,14 @@ func (c *quarterFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 	bf.tp.SetFlen(1)
 
-	sig := &builtinQuarterSig{bf}
+	sig := &builtinQuarterSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Quarter)
 	return sig, nil
 }
 
 type builtinQuarterSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinQuarterSig) Clone() builtinFunc {
@@ -5566,13 +5645,14 @@ func (c *secToTimeFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.setDecimalAndFlenForTime(retFsp)
-	sig := &builtinSecToTimeSig{bf}
+	sig := &builtinSecToTimeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SecToTime)
 	return sig, nil
 }
 
 type builtinSecToTimeSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSecToTimeSig) Clone() builtinFunc {
@@ -5645,13 +5725,13 @@ func (c *subTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
-			sig = &builtinSubDatetimeAndDurationSig{bf}
+			sig = &builtinSubDatetimeAndDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubDatetimeAndDuration)
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			sig = &builtinSubTimeDateTimeNullSig{bf}
+			sig = &builtinSubTimeDateTimeNullSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubTimeDateTimeNull)
 		default:
-			sig = &builtinSubDatetimeAndStringSig{bf}
+			sig = &builtinSubDatetimeAndStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubDatetimeAndString)
 		}
 	case mysql.TypeDate:
@@ -5660,37 +5740,37 @@ func (c *subTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		bf.tp.SetCollate(collate)
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
-			sig = &builtinSubDateAndDurationSig{bf}
+			sig = &builtinSubDateAndDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubDateAndDuration)
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			sig = &builtinSubTimeStringNullSig{bf}
+			sig = &builtinSubTimeStringNullSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubTimeStringNull)
 		default:
-			sig = &builtinSubDateAndStringSig{bf}
+			sig = &builtinSubDateAndStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubDateAndString)
 		}
 	case mysql.TypeDuration:
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
-			sig = &builtinSubDurationAndDurationSig{bf}
+			sig = &builtinSubDurationAndDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubDurationAndDuration)
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			sig = &builtinSubTimeDurationNullSig{bf}
+			sig = &builtinSubTimeDurationNullSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubTimeDurationNull)
 		default:
-			sig = &builtinSubDurationAndStringSig{bf}
+			sig = &builtinSubDurationAndStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubDurationAndString)
 		}
 	default:
 		switch tp2.GetType() {
 		case mysql.TypeDuration:
-			sig = &builtinSubStringAndDurationSig{bf}
+			sig = &builtinSubStringAndDurationSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubStringAndDuration)
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
-			sig = &builtinSubTimeStringNullSig{bf}
+			sig = &builtinSubTimeStringNullSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubTimeStringNull)
 		default:
-			sig = &builtinSubStringAndStringSig{bf}
+			sig = &builtinSubStringAndStringSig{baseBuiltinFunc: bf}
 			sig.setPbCode(tipb.ScalarFuncSig_SubStringAndString)
 		}
 	}
@@ -5699,6 +5779,7 @@ func (c *subTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinSubDatetimeAndDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubDatetimeAndDurationSig) Clone() builtinFunc {
@@ -5725,6 +5806,7 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 
 type builtinSubDatetimeAndStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubDatetimeAndStringSig) Clone() builtinFunc {
@@ -5762,6 +5844,7 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 
 type builtinSubTimeDateTimeNullSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubTimeDateTimeNullSig) Clone() builtinFunc {
@@ -5778,6 +5861,7 @@ func (b *builtinSubTimeDateTimeNullSig) evalTime(ctx EvalContext, row chunk.Row)
 
 type builtinSubStringAndDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubStringAndDurationSig) Clone() builtinFunc {
@@ -5819,6 +5903,7 @@ func (b *builtinSubStringAndDurationSig) evalString(ctx EvalContext, row chunk.R
 
 type builtinSubStringAndStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubStringAndStringSig) Clone() builtinFunc {
@@ -5872,6 +5957,7 @@ func (b *builtinSubStringAndStringSig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinSubTimeStringNullSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubTimeStringNullSig) Clone() builtinFunc {
@@ -5888,6 +5974,7 @@ func (b *builtinSubTimeStringNullSig) evalString(ctx EvalContext, row chunk.Row)
 
 type builtinSubDurationAndDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubDurationAndDurationSig) Clone() builtinFunc {
@@ -5916,6 +6003,7 @@ func (b *builtinSubDurationAndDurationSig) evalDuration(ctx EvalContext, row chu
 
 type builtinSubDurationAndStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubDurationAndStringSig) Clone() builtinFunc {
@@ -5953,6 +6041,7 @@ func (b *builtinSubDurationAndStringSig) evalDuration(ctx EvalContext, row chunk
 
 type builtinSubTimeDurationNullSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubTimeDurationNullSig) Clone() builtinFunc {
@@ -5969,6 +6058,7 @@ func (b *builtinSubTimeDurationNullSig) evalDuration(ctx EvalContext, row chunk.
 
 type builtinSubDateAndDurationSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubDateAndDurationSig) Clone() builtinFunc {
@@ -5994,6 +6084,7 @@ func (b *builtinSubDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinSubDateAndStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubDateAndStringSig) Clone() builtinFunc {
@@ -6046,13 +6137,14 @@ func (c *timeFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	}
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
 	bf.tp.SetFlen((args[1].GetType().GetFlen() + 1) / 2 * 11)
-	sig := &builtinTimeFormatSig{bf}
+	sig := &builtinTimeFormatSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimeFormat)
 	return sig, nil
 }
 
 type builtinTimeFormatSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTimeFormatSig) Clone() builtinFunc {
@@ -6098,13 +6190,14 @@ func (c *timeToSecFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(10)
-	sig := &builtinTimeToSecSig{bf}
+	sig := &builtinTimeToSecSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimeToSec)
 	return sig, nil
 }
 
 type builtinTimeToSecSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTimeToSecSig) Clone() builtinFunc {
@@ -6155,13 +6248,14 @@ func (c *timestampAddFunctionClass) getFunction(ctx BuildContext, args []Express
 	}
 
 	bf.tp.SetFlen(flen)
-	sig := &builtinTimestampAddSig{bf}
+	sig := &builtinTimestampAddSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimestampAdd)
 	return sig, nil
 }
 
 type builtinTimestampAddSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTimestampAddSig) Clone() builtinFunc {
@@ -6315,13 +6409,14 @@ func (c *toDaysFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinToDaysSig{bf}
+	sig := &builtinToDaysSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_ToDays)
 	return sig, nil
 }
 
 type builtinToDaysSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinToDaysSig) Clone() builtinFunc {
@@ -6360,13 +6455,14 @@ func (c *toSecondsFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinToSecondsSig{bf}
+	sig := &builtinToSecondsSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_ToSeconds)
 	return sig, nil
 }
 
 type builtinToSecondsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinToSecondsSig) Clone() builtinFunc {
@@ -6419,10 +6515,10 @@ func (c *utcTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 	var sig builtinFunc
 	if len(args) == 1 {
-		sig = &builtinUTCTimeWithArgSig{bf}
+		sig = &builtinUTCTimeWithArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UTCTimeWithArg)
 	} else {
-		sig = &builtinUTCTimeWithoutArgSig{bf}
+		sig = &builtinUTCTimeWithoutArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UTCTimeWithoutArg)
 	}
 	return sig, nil
@@ -6430,6 +6526,7 @@ func (c *utcTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinUTCTimeWithoutArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUTCTimeWithoutArgSig) Clone() builtinFunc {
@@ -6451,6 +6548,7 @@ func (b *builtinUTCTimeWithoutArgSig) evalDuration(ctx EvalContext, row chunk.Ro
 
 type builtinUTCTimeWithArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUTCTimeWithArgSig) Clone() builtinFunc {
@@ -6493,13 +6591,14 @@ func (c *lastDayFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDate()
-	sig := &builtinLastDaySig{bf}
+	sig := &builtinLastDaySig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LastDay)
 	return sig, nil
 }
 
 type builtinLastDaySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLastDaySig) Clone() builtinFunc {
@@ -6558,12 +6657,13 @@ func (c *tidbParseTsoFunctionClass) getFunction(ctx BuildContext, args []Express
 	bf.tp.SetType(mysql.TypeDatetime)
 	bf.tp.SetFlen(mysql.MaxDateWidth)
 	bf.tp.SetDecimal(types.DefaultFsp)
-	sig := &builtinTidbParseTsoSig{bf}
+	sig := &builtinTidbParseTsoSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTidbParseTsoSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTidbParseTsoSig) Clone() builtinFunc {
@@ -6602,12 +6702,13 @@ func (c *tidbParseTsoLogicalFunctionClass) getFunction(ctx BuildContext, args []
 		return nil, err
 	}
 
-	sig := &builtinTidbParseTsoLogicalSig{bf}
+	sig := &builtinTidbParseTsoLogicalSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTidbParseTsoLogicalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTidbParseTsoLogicalSig) Clone() builtinFunc {
@@ -6642,12 +6743,13 @@ func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDatetime(3)
-	sig := &builtinTiDBBoundedStalenessSig{bf}
+	sig := &builtinTiDBBoundedStalenessSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBBoundedStalenessSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBBoundedStalenessSig) Clone() builtinFunc {
@@ -6781,12 +6883,13 @@ func (c *tidbCurrentTsoFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBCurrentTsoSig{bf}
+	sig := &builtinTiDBCurrentTsoSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBCurrentTsoSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {

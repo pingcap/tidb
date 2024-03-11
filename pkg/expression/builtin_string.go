@@ -199,13 +199,14 @@ func (c *lengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	bf.tp.SetFlen(10)
-	sig := &builtinLengthSig{bf}
+	sig := &builtinLengthSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Length)
 	return sig, nil
 }
 
 type builtinLengthSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLengthSig) Clone() builtinFunc {
@@ -237,13 +238,14 @@ func (c *asciiFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 	bf.tp.SetFlen(3)
-	sig := &builtinASCIISig{bf}
+	sig := &builtinASCIISig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_ASCII)
 	return sig, nil
 }
 
 type builtinASCIISig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinASCIISig) Clone() builtinFunc {
@@ -297,13 +299,14 @@ func (c *concatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
-	sig := &builtinConcatSig{bf, maxAllowedPacket}
+	sig := &builtinConcatSig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Concat)
 	return sig, nil
 }
 
 type builtinConcatSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -374,13 +377,14 @@ func (c *concatWSFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
-	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
+	sig := &builtinConcatWSSig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_ConcatWS)
 	return sig, nil
 }
 
 type builtinConcatWSSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -453,17 +457,18 @@ func (c *leftFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
-		sig := &builtinLeftSig{bf}
+		sig := &builtinLeftSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Left)
 		return sig, nil
 	}
-	sig := &builtinLeftUTF8Sig{bf}
+	sig := &builtinLeftUTF8Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LeftUTF8)
 	return sig, nil
 }
 
 type builtinLeftSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLeftSig) Clone() builtinFunc {
@@ -494,6 +499,7 @@ func (b *builtinLeftSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 
 type builtinLeftUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLeftUTF8Sig) Clone() builtinFunc {
@@ -538,17 +544,18 @@ func (c *rightFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(argType) {
-		sig := &builtinRightSig{bf}
+		sig := &builtinRightSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Right)
 		return sig, nil
 	}
-	sig := &builtinRightUTF8Sig{bf}
+	sig := &builtinRightUTF8Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_RightUTF8)
 	return sig, nil
 }
 
 type builtinRightSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinRightSig) Clone() builtinFunc {
@@ -579,6 +586,7 @@ func (b *builtinRightSig) evalString(ctx EvalContext, row chunk.Row) (string, bo
 
 type builtinRightUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinRightUTF8Sig) Clone() builtinFunc {
@@ -623,13 +631,14 @@ func (c *repeatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
-	sig := &builtinRepeatSig{bf, maxAllowedPacket}
+	sig := &builtinRepeatSig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Repeat)
 	return sig, nil
 }
 
 type builtinRepeatSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -684,10 +693,10 @@ func (c *lowerFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	SetBinFlagOrBinStr(argTp, bf.tp)
 	var sig builtinFunc
 	if types.IsBinaryStr(argTp) {
-		sig = &builtinLowerSig{bf}
+		sig = &builtinLowerSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Lower)
 	} else {
-		sig = &builtinLowerUTF8Sig{bf}
+		sig = &builtinLowerUTF8Sig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LowerUTF8)
 	}
 	return sig, nil
@@ -695,6 +704,7 @@ func (c *lowerFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 
 type builtinLowerUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLowerUTF8Sig) Clone() builtinFunc {
@@ -716,6 +726,7 @@ func (b *builtinLowerUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (d stri
 
 type builtinLowerSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLowerSig) Clone() builtinFunc {
@@ -753,10 +764,10 @@ func (c *reverseFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	addBinFlag(bf.tp)
 	var sig builtinFunc
 	if types.IsBinaryStr(argTp) || types.IsTypeBit(argTp) {
-		sig = &builtinReverseSig{bf}
+		sig = &builtinReverseSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {
-		sig = &builtinReverseUTF8Sig{bf}
+		sig = &builtinReverseUTF8Sig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ReverseUTF8)
 	}
 	return sig, nil
@@ -764,6 +775,7 @@ func (c *reverseFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinReverseSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinReverseSig) Clone() builtinFunc {
@@ -785,6 +797,7 @@ func (b *builtinReverseSig) evalString(ctx EvalContext, row chunk.Row) (string, 
 
 type builtinReverseUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinReverseUTF8Sig) Clone() builtinFunc {
@@ -821,13 +834,14 @@ func (c *spaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
-	sig := &builtinSpaceSig{bf, maxAllowedPacket}
+	sig := &builtinSpaceSig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Space)
 	return sig, nil
 }
 
 type builtinSpaceSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -876,10 +890,10 @@ func (c *upperFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	SetBinFlagOrBinStr(argTp, bf.tp)
 	var sig builtinFunc
 	if types.IsBinaryStr(argTp) {
-		sig = &builtinUpperSig{bf}
+		sig = &builtinUpperSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Upper)
 	} else {
-		sig = &builtinUpperUTF8Sig{bf}
+		sig = &builtinUpperUTF8Sig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
 	}
 	return sig, nil
@@ -887,6 +901,7 @@ func (c *upperFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 
 type builtinUpperUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
@@ -908,6 +923,7 @@ func (b *builtinUpperUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (d stri
 
 type builtinUpperSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUpperSig) Clone() builtinFunc {
@@ -941,13 +957,14 @@ func (c *strcmpFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 	bf.tp.SetFlen(2)
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinStrcmpSig{bf}
+	sig := &builtinStrcmpSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Strcmp)
 	return sig, nil
 }
 
 type builtinStrcmpSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinStrcmpSig) Clone() builtinFunc {
@@ -993,7 +1010,7 @@ func (c *replaceFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	for _, a := range args {
 		SetBinFlagOrBinStr(a.GetType(), bf.tp)
 	}
-	sig := &builtinReplaceSig{bf}
+	sig := &builtinReplaceSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Replace)
 	return sig, nil
 }
@@ -1011,6 +1028,7 @@ func (c *replaceFunctionClass) fixLength(args []Expression) int {
 
 type builtinReplaceSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinReplaceSig) Clone() builtinFunc {
@@ -1089,13 +1107,14 @@ func (c *convertFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
-	sig := &builtinConvertSig{bf}
+	sig := &builtinConvertSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Convert)
 	return sig, nil
 }
 
 type builtinConvertSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinConvertSig) Clone() builtinFunc {
@@ -1159,16 +1178,16 @@ func (c *substringFunctionClass) getFunction(ctx BuildContext, args []Expression
 	var sig builtinFunc
 	switch {
 	case len(args) == 3 && types.IsBinaryStr(argType):
-		sig = &builtinSubstring3ArgsSig{bf}
+		sig = &builtinSubstring3ArgsSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Substring3Args)
 	case len(args) == 3:
-		sig = &builtinSubstring3ArgsUTF8Sig{bf}
+		sig = &builtinSubstring3ArgsUTF8Sig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Substring3ArgsUTF8)
 	case len(args) == 2 && types.IsBinaryStr(argType):
-		sig = &builtinSubstring2ArgsSig{bf}
+		sig = &builtinSubstring2ArgsSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Substring2Args)
 	case len(args) == 2:
-		sig = &builtinSubstring2ArgsUTF8Sig{bf}
+		sig = &builtinSubstring2ArgsUTF8Sig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Substring2ArgsUTF8)
 	default:
 		// Should never happens.
@@ -1179,6 +1198,7 @@ func (c *substringFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinSubstring2ArgsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubstring2ArgsSig) Clone() builtinFunc {
@@ -1212,6 +1232,7 @@ func (b *builtinSubstring2ArgsSig) evalString(ctx EvalContext, row chunk.Row) (s
 
 type builtinSubstring2ArgsUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubstring2ArgsUTF8Sig) Clone() builtinFunc {
@@ -1246,6 +1267,7 @@ func (b *builtinSubstring2ArgsUTF8Sig) evalString(ctx EvalContext, row chunk.Row
 
 type builtinSubstring3ArgsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubstring3ArgsSig) Clone() builtinFunc {
@@ -1289,6 +1311,7 @@ func (b *builtinSubstring3ArgsSig) evalString(ctx EvalContext, row chunk.Row) (s
 
 type builtinSubstring3ArgsUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubstring3ArgsUTF8Sig) Clone() builtinFunc {
@@ -1346,13 +1369,14 @@ func (c *substringIndexFunctionClass) getFunction(ctx BuildContext, args []Expre
 	argType := args[0].GetType()
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
-	sig := &builtinSubstringIndexSig{bf}
+	sig := &builtinSubstringIndexSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SubstringIndex)
 	return sig, nil
 }
 
 type builtinSubstringIndexSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinSubstringIndexSig) Clone() builtinFunc {
@@ -1432,16 +1456,16 @@ func (c *locateFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	useBinary := bf.collation == charset.CollationBin
 	switch {
 	case hasStartPos && useBinary:
-		sig = &builtinLocate3ArgsSig{bf}
+		sig = &builtinLocate3ArgsSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3Args)
 	case hasStartPos:
-		sig = &builtinLocate3ArgsUTF8Sig{bf}
+		sig = &builtinLocate3ArgsUTF8Sig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3ArgsUTF8)
 	case useBinary:
-		sig = &builtinLocate2ArgsSig{bf}
+		sig = &builtinLocate2ArgsSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate2Args)
 	default:
-		sig = &builtinLocate2ArgsUTF8Sig{bf}
+		sig = &builtinLocate2ArgsUTF8Sig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate2ArgsUTF8)
 	}
 	return sig, nil
@@ -1449,6 +1473,7 @@ func (c *locateFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinLocate2ArgsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLocate2ArgsSig) Clone() builtinFunc {
@@ -1481,6 +1506,7 @@ func (b *builtinLocate2ArgsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 
 type builtinLocate2ArgsUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLocate2ArgsUTF8Sig) Clone() builtinFunc {
@@ -1509,6 +1535,7 @@ func (b *builtinLocate2ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 
 type builtinLocate3ArgsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLocate3ArgsSig) Clone() builtinFunc {
@@ -1550,6 +1577,7 @@ func (b *builtinLocate3ArgsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 
 type builtinLocate3ArgsUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLocate3ArgsUTF8Sig) Clone() builtinFunc {
@@ -1613,7 +1641,7 @@ func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		argFieldTp := args[0].GetType()
 		// Use UTF8MB4 as default.
 		bf.tp.SetFlen(argFieldTp.GetFlen() * 4 * 2)
-		sig := &builtinHexStrArgSig{bf}
+		sig := &builtinHexStrArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
@@ -1625,7 +1653,7 @@ func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
-		sig := &builtinHexIntArgSig{bf}
+		sig := &builtinHexIntArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexIntArg)
 		return sig, nil
 	default:
@@ -1635,6 +1663,7 @@ func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 
 type builtinHexStrArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinHexStrArgSig) Clone() builtinFunc {
@@ -1655,6 +1684,7 @@ func (b *builtinHexStrArgSig) evalString(ctx EvalContext, row chunk.Row) (string
 
 type builtinHexIntArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinHexIntArgSig) Clone() builtinFunc {
@@ -1708,13 +1738,14 @@ func (c *unhexFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	}
 	bf.tp.SetFlen(retFlen)
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinUnHexSig{bf}
+	sig := &builtinUnHexSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UnHex)
 	return sig, nil
 }
 
 type builtinUnHexSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinUnHexSig) Clone() builtinFunc {
@@ -1766,7 +1797,7 @@ func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		argType := args[0].GetType()
 		bf.tp.SetFlen(argType.GetFlen())
 		SetBinFlagOrBinStr(argType, bf.tp)
-		sig := &builtinTrim1ArgSig{bf}
+		sig := &builtinTrim1ArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Trim1Arg)
 		return sig, nil
 
@@ -1777,7 +1808,7 @@ func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		}
 		argType := args[0].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
-		sig := &builtinTrim2ArgsSig{bf}
+		sig := &builtinTrim2ArgsSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Trim2Args)
 		return sig, nil
 
@@ -1789,7 +1820,7 @@ func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		argType := args[0].GetType()
 		bf.tp.SetFlen(argType.GetFlen())
 		SetBinFlagOrBinStr(argType, bf.tp)
-		sig := &builtinTrim3ArgsSig{bf}
+		sig := &builtinTrim3ArgsSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Trim3Args)
 		return sig, nil
 
@@ -1800,6 +1831,7 @@ func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinTrim1ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTrim1ArgSig) Clone() builtinFunc {
@@ -1820,6 +1852,7 @@ func (b *builtinTrim1ArgSig) evalString(ctx EvalContext, row chunk.Row) (d strin
 
 type builtinTrim2ArgsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTrim2ArgsSig) Clone() builtinFunc {
@@ -1848,6 +1881,7 @@ func (b *builtinTrim2ArgsSig) evalString(ctx EvalContext, row chunk.Row) (d stri
 
 type builtinTrim3ArgsSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTrim3ArgsSig) Clone() builtinFunc {
@@ -1905,13 +1939,14 @@ func (c *lTrimFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	argType := args[0].GetType()
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
-	sig := &builtinLTrimSig{bf}
+	sig := &builtinLTrimSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LTrim)
 	return sig, nil
 }
 
 type builtinLTrimSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLTrimSig) Clone() builtinFunc {
@@ -1945,13 +1980,14 @@ func (c *rTrimFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	argType := args[0].GetType()
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
-	sig := &builtinRTrimSig{bf}
+	sig := &builtinRTrimSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_RTrim)
 	return sig, nil
 }
 
 type builtinRTrimSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinRTrimSig) Clone() builtinFunc {
@@ -2021,20 +2057,21 @@ func (c *lpadFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinLpadSig{bf, maxAllowedPacket}
+		sig := &builtinLpadSig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Lpad)
 		return sig, nil
 	}
 	if bf.tp.SetFlen(bf.tp.GetFlen() * 4); bf.tp.GetFlen() > mysql.MaxBlobWidth {
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
-	sig := &builtinLpadUTF8Sig{bf, maxAllowedPacket}
+	sig := &builtinLpadUTF8Sig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_LpadUTF8)
 	return sig, nil
 }
 
 type builtinLpadSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -2083,6 +2120,7 @@ func (b *builtinLpadSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 
 type builtinLpadUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -2146,20 +2184,21 @@ func (c *rpadFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinRpadSig{bf, maxAllowedPacket}
+		sig := &builtinRpadSig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Rpad)
 		return sig, nil
 	}
 	if bf.tp.SetFlen(bf.tp.GetFlen() * 4); bf.tp.GetFlen() > mysql.MaxBlobWidth {
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
-	sig := &builtinRpadUTF8Sig{bf, maxAllowedPacket}
+	sig := &builtinRpadUTF8Sig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_RpadUTF8)
 	return sig, nil
 }
 
 type builtinRpadSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -2207,6 +2246,7 @@ func (b *builtinRpadSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 
 type builtinRpadUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -2266,13 +2306,14 @@ func (c *bitLengthFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(10)
-	sig := &builtinBitLengthSig{bf}
+	sig := &builtinBitLengthSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitLength)
 	return sig, nil
 }
 
 type builtinBitLengthSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinBitLengthSig) Clone() builtinFunc {
@@ -2333,13 +2374,14 @@ func (c *charFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	}
 	bf.tp.SetFlen(4 * (len(args) - 1))
 
-	sig := &builtinCharSig{bf}
+	sig := &builtinCharSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Char)
 	return sig, nil
 }
 
 type builtinCharSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCharSig) Clone() builtinFunc {
@@ -2403,17 +2445,18 @@ func (c *charLengthFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	if types.IsBinaryStr(args[0].GetType()) {
-		sig := &builtinCharLengthBinarySig{bf}
+		sig := &builtinCharLengthBinarySig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CharLength)
 		return sig, nil
 	}
-	sig := &builtinCharLengthUTF8Sig{bf}
+	sig := &builtinCharLengthUTF8Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_CharLengthUTF8)
 	return sig, nil
 }
 
 type builtinCharLengthBinarySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCharLengthBinarySig) Clone() builtinFunc {
@@ -2434,6 +2477,7 @@ func (b *builtinCharLengthBinarySig) evalInt(ctx EvalContext, row chunk.Row) (in
 
 type builtinCharLengthUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinCharLengthUTF8Sig) Clone() builtinFunc {
@@ -2465,13 +2509,14 @@ func (c *findInSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(3)
-	sig := &builtinFindInSetSig{bf}
+	sig := &builtinFindInSetSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FindInSet)
 	return sig, nil
 }
 
 type builtinFindInSetSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFindInSetSig) Clone() builtinFunc {
@@ -2540,13 +2585,13 @@ func (c *fieldFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	var sig builtinFunc
 	switch argTp {
 	case types.ETReal:
-		sig = &builtinFieldRealSig{bf}
+		sig = &builtinFieldRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FieldReal)
 	case types.ETInt:
-		sig = &builtinFieldIntSig{bf}
+		sig = &builtinFieldIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FieldInt)
 	case types.ETString:
-		sig = &builtinFieldStringSig{bf}
+		sig = &builtinFieldStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FieldString)
 	}
 	return sig, nil
@@ -2554,6 +2599,7 @@ func (c *fieldFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 
 type builtinFieldIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFieldIntSig) Clone() builtinFunc {
@@ -2583,6 +2629,7 @@ func (b *builtinFieldIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 
 type builtinFieldRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFieldRealSig) Clone() builtinFunc {
@@ -2612,6 +2659,7 @@ func (b *builtinFieldRealSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 
 type builtinFieldStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFieldStringSig) Clone() builtinFunc {
@@ -2684,13 +2732,14 @@ func (c *makeSetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if bf.tp.GetFlen() > mysql.MaxBlobWidth {
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
-	sig := &builtinMakeSetSig{bf}
+	sig := &builtinMakeSetSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MakeSet)
 	return sig, nil
 }
 
 type builtinMakeSetSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinMakeSetSig) Clone() builtinFunc {
@@ -2744,7 +2793,7 @@ func (c *octFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 
 		bf.tp.SetFlen(64)
 		bf.tp.SetDecimal(types.UnspecifiedLength)
-		sig = &builtinOctIntSig{bf}
+		sig = &builtinOctIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctInt)
 	} else {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
@@ -2756,7 +2805,7 @@ func (c *octFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		bf.tp.SetCollate(collate)
 		bf.tp.SetFlen(64)
 		bf.tp.SetDecimal(types.UnspecifiedLength)
-		sig = &builtinOctStringSig{bf}
+		sig = &builtinOctStringSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctString)
 	}
 
@@ -2765,6 +2814,7 @@ func (c *octFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 
 type builtinOctIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinOctIntSig) Clone() builtinFunc {
@@ -2786,6 +2836,7 @@ func (b *builtinOctIntSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 
 type builtinOctStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinOctStringSig) Clone() builtinFunc {
@@ -2838,13 +2889,14 @@ func (c *ordFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		return nil, err
 	}
 	bf.tp.SetFlen(10)
-	sig := &builtinOrdSig{bf}
+	sig := &builtinOrdSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Ord)
 	return sig, nil
 }
 
 type builtinOrdSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinOrdSig) Clone() builtinFunc {
@@ -2900,13 +2952,14 @@ func (c *quoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if bf.tp.GetFlen() > mysql.MaxBlobWidth {
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
-	sig := &builtinQuoteSig{bf}
+	sig := &builtinQuoteSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Quote)
 	return sig, nil
 }
 
 type builtinQuoteSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinQuoteSig) Clone() builtinFunc {
@@ -2970,13 +3023,14 @@ func (c *binFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
-	sig := &builtinBinSig{bf}
+	sig := &builtinBinSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Bin)
 	return sig, nil
 }
 
 type builtinBinSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinBinSig) Clone() builtinFunc {
@@ -3021,13 +3075,14 @@ func (c *eltFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 			bf.tp.SetFlen(argType.GetFlen())
 		}
 	}
-	sig := &builtinEltSig{bf}
+	sig := &builtinEltSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Elt)
 	return sig, nil
 }
 
 type builtinEltSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinEltSig) Clone() builtinFunc {
@@ -3085,13 +3140,13 @@ func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.SetFlen((l*64 + sepL*63) * 4)
 	switch len(args) {
 	case 3:
-		sig = &builtinExportSet3ArgSig{bf}
+		sig = &builtinExportSet3ArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ExportSet3Arg)
 	case 4:
-		sig = &builtinExportSet4ArgSig{bf}
+		sig = &builtinExportSet4ArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ExportSet4Arg)
 	case 5:
-		sig = &builtinExportSet5ArgSig{bf}
+		sig = &builtinExportSet5ArgSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ExportSet5Arg)
 	}
 	return sig, nil
@@ -3116,6 +3171,7 @@ func exportSet(bits int64, on, off, separator string, numberOfBits int64) string
 
 type builtinExportSet3ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinExportSet3ArgSig) Clone() builtinFunc {
@@ -3147,6 +3203,7 @@ func (b *builtinExportSet3ArgSig) evalString(ctx EvalContext, row chunk.Row) (st
 
 type builtinExportSet4ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinExportSet4ArgSig) Clone() builtinFunc {
@@ -3183,6 +3240,7 @@ func (b *builtinExportSet4ArgSig) evalString(ctx EvalContext, row chunk.Row) (st
 
 type builtinExportSet5ArgSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinExportSet5ArgSig) Clone() builtinFunc {
@@ -3254,10 +3312,10 @@ func (c *formatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	var sig builtinFunc
 	if len(args) == 3 {
-		sig = &builtinFormatWithLocaleSig{bf}
+		sig = &builtinFormatWithLocaleSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FormatWithLocale)
 	} else {
-		sig = &builtinFormatSig{bf}
+		sig = &builtinFormatSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Format)
 	}
 	return sig, nil
@@ -3355,6 +3413,7 @@ func roundFormatArgs(xStr string, maxNumDecimals int) string {
 
 type builtinFormatWithLocaleSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFormatWithLocaleSig) Clone() builtinFunc {
@@ -3387,6 +3446,7 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 
 type builtinFormatSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinFormatSig) Clone() builtinFunc {
@@ -3430,7 +3490,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
+	sig := &builtinFromBase64Sig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_FromBase64)
 	return sig, nil
 }
@@ -3449,6 +3509,7 @@ func base64NeededDecodedLength(n int) int {
 
 type builtinFromBase64Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -3508,13 +3569,14 @@ func (c *toBase64FunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
-	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
+	sig := &builtinToBase64Sig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_ToBase64)
 	return sig, nil
 }
 
 type builtinToBase64Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -3607,10 +3669,10 @@ func (c *insertFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 	maxAllowedPacket := ctx.GetMaxAllowedPacket()
 	if types.IsBinaryStr(bf.tp) {
-		sig = &builtinInsertSig{bf, maxAllowedPacket}
+		sig = &builtinInsertSig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
 	} else {
-		sig = &builtinInsertUTF8Sig{bf, maxAllowedPacket}
+		sig = &builtinInsertUTF8Sig{baseBuiltinFunc: bf, maxAllowedPacket: maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_InsertUTF8)
 	}
 	return sig, nil
@@ -3618,6 +3680,7 @@ func (c *insertFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinInsertSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -3668,6 +3731,7 @@ func (b *builtinInsertSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 
 type builtinInsertUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 	maxAllowedPacket uint64
 }
 
@@ -3732,16 +3796,19 @@ func (c *instrFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	}
 	bf.tp.SetFlen(11)
 	if bf.collation == charset.CollationBin {
-		sig := &builtinInstrSig{bf}
+		sig := &builtinInstrSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Instr)
 		return sig, nil
 	}
-	sig := &builtinInstrUTF8Sig{bf}
+	sig := &builtinInstrUTF8Sig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_InstrUTF8)
 	return sig, nil
 }
 
-type builtinInstrUTF8Sig struct{ baseBuiltinFunc }
+type builtinInstrUTF8Sig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (b *builtinInstrUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinInstrUTF8Sig{}
@@ -3749,7 +3816,10 @@ func (b *builtinInstrUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinInstrSig struct{ baseBuiltinFunc }
+type builtinInstrSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (b *builtinInstrSig) Clone() builtinFunc {
 	newSig := &builtinInstrSig{}
@@ -3816,12 +3886,13 @@ func (c *loadFileFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
-	sig := &builtinLoadFileSig{bf}
+	sig := &builtinLoadFileSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinLoadFileSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinLoadFileSig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
@@ -3918,16 +3989,17 @@ func (c *weightStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	types.SetBinChsClnFlag(bf.tp)
 	var sig builtinFunc
 	if padding == weightStringPaddingNull {
-		sig = &builtinWeightStringNullSig{bf}
+		sig = &builtinWeightStringNullSig{baseBuiltinFunc: bf}
 	} else {
 		maxAllowedPacket := ctx.GetMaxAllowedPacket()
-		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
+		sig = &builtinWeightStringSig{baseBuiltinFunc: bf, padding: padding, length: length, maxAllowedPacket: maxAllowedPacket}
 	}
 	return sig, nil
 }
 
 type builtinWeightStringNullSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinWeightStringNullSig) Clone() builtinFunc {
@@ -3944,6 +4016,7 @@ func (b *builtinWeightStringNullSig) evalString(ctx EvalContext, row chunk.Row) 
 
 type builtinWeightStringSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 
 	padding          weightStringPadding
 	length           int
@@ -4030,15 +4103,16 @@ func (c *translateFunctionClass) getFunction(ctx BuildContext, args []Expression
 	bf.tp.SetFlen(argType.GetFlen())
 	SetBinFlagOrBinStr(argType, bf.tp)
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinTranslateBinarySig{bf}
+		sig := &builtinTranslateBinarySig{baseBuiltinFunc: bf}
 		return sig, nil
 	}
-	sig := &builtinTranslateUTF8Sig{bf}
+	sig := &builtinTranslateUTF8Sig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTranslateBinarySig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTranslateBinarySig) Clone() builtinFunc {
@@ -4082,6 +4156,7 @@ func (b *builtinTranslateBinarySig) evalString(ctx EvalContext, row chunk.Row) (
 
 type builtinTranslateUTF8Sig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (b *builtinTranslateUTF8Sig) Clone() builtinFunc {

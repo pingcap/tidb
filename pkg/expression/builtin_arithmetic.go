@@ -177,7 +177,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 			return nil, err
 		}
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0], args[1], true, false)
-		sig := &builtinArithmeticPlusRealSig{bf}
+		sig := &builtinArithmeticPlusRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
@@ -186,7 +186,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 			return nil, err
 		}
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0], args[1], false, false)
-		sig := &builtinArithmeticPlusDecimalSig{bf}
+		sig := &builtinArithmeticPlusDecimalSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig, nil
 	}
@@ -197,13 +197,14 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag()) {
 		bf.tp.AddFlag(mysql.UnsignedFlag)
 	}
-	sig := &builtinArithmeticPlusIntSig{bf}
+	sig := &builtinArithmeticPlusIntSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
 	return sig, nil
 }
 
 type builtinArithmeticPlusIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticPlusIntSig) Clone() builtinFunc {
@@ -256,6 +257,7 @@ func (s *builtinArithmeticPlusIntSig) evalInt(ctx EvalContext, row chunk.Row) (v
 
 type builtinArithmeticPlusDecimalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticPlusDecimalSig) Clone() builtinFunc {
@@ -286,6 +288,7 @@ func (s *builtinArithmeticPlusDecimalSig) evalDecimal(ctx EvalContext, row chunk
 
 type builtinArithmeticPlusRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticPlusRealSig) Clone() builtinFunc {
@@ -327,7 +330,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 			return nil, err
 		}
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0], args[1], true, false)
-		sig := &builtinArithmeticMinusRealSig{bf}
+		sig := &builtinArithmeticMinusRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
@@ -336,7 +339,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 			return nil, err
 		}
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0], args[1], false, false)
-		sig := &builtinArithmeticMinusDecimalSig{bf}
+		sig := &builtinArithmeticMinusDecimalSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig, nil
 	}
@@ -354,6 +357,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 
 type builtinArithmeticMinusRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticMinusRealSig) Clone() builtinFunc {
@@ -379,6 +383,7 @@ func (s *builtinArithmeticMinusRealSig) evalReal(ctx EvalContext, row chunk.Row)
 
 type builtinArithmeticMinusDecimalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticMinusDecimalSig) Clone() builtinFunc {
@@ -409,6 +414,7 @@ func (s *builtinArithmeticMinusDecimalSig) evalDecimal(ctx EvalContext, row chun
 
 type builtinArithmeticMinusIntSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticMinusIntSig) Clone() builtinFunc {
@@ -511,7 +517,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 			return nil, err
 		}
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0], args[1], true, true)
-		sig := &builtinArithmeticMultiplyRealSig{bf}
+		sig := &builtinArithmeticMultiplyRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
@@ -520,7 +526,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 			return nil, err
 		}
 		setFlenDecimal4RealOrDecimal(bf.tp, args[0], args[1], false, true)
-		sig := &builtinArithmeticMultiplyDecimalSig{bf}
+		sig := &builtinArithmeticMultiplyDecimalSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig, nil
 	}
@@ -530,16 +536,19 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx BuildContext, args []E
 	}
 	if mysql.HasUnsignedFlag(lhsTp.GetFlag()) || mysql.HasUnsignedFlag(rhsTp.GetFlag()) {
 		bf.tp.AddFlag(mysql.UnsignedFlag)
-		sig := &builtinArithmeticMultiplyIntUnsignedSig{bf}
+		sig := &builtinArithmeticMultiplyIntUnsignedSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyIntUnsigned)
 		return sig, nil
 	}
-	sig := &builtinArithmeticMultiplyIntSig{bf}
+	sig := &builtinArithmeticMultiplyIntSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 	return sig, nil
 }
 
-type builtinArithmeticMultiplyRealSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyRealSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (s *builtinArithmeticMultiplyRealSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticMultiplyRealSig{}
@@ -547,7 +556,10 @@ func (s *builtinArithmeticMultiplyRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyDecimalSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyDecimalSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (s *builtinArithmeticMultiplyDecimalSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticMultiplyDecimalSig{}
@@ -555,7 +567,10 @@ func (s *builtinArithmeticMultiplyDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyIntUnsignedSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyIntUnsignedSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (s *builtinArithmeticMultiplyIntUnsignedSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticMultiplyIntUnsignedSig{}
@@ -563,7 +578,10 @@ func (s *builtinArithmeticMultiplyIntUnsignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticMultiplyIntSig struct{ baseBuiltinFunc }
+type builtinArithmeticMultiplyIntSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (s *builtinArithmeticMultiplyIntSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticMultiplyIntSig{}
@@ -657,7 +675,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 			return nil, err
 		}
 		c.setType4DivReal(bf.tp)
-		sig := &builtinArithmeticDivideRealSig{bf}
+		sig := &builtinArithmeticDivideRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_DivideReal)
 		return sig, nil
 	}
@@ -666,12 +684,15 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 		return nil, err
 	}
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
-	sig := &builtinArithmeticDivideDecimalSig{bf}
+	sig := &builtinArithmeticDivideDecimalSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
 	return sig, nil
 }
 
-type builtinArithmeticDivideRealSig struct{ baseBuiltinFunc }
+type builtinArithmeticDivideRealSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (s *builtinArithmeticDivideRealSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticDivideRealSig{}
@@ -679,7 +700,10 @@ func (s *builtinArithmeticDivideRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticDivideDecimalSig struct{ baseBuiltinFunc }
+type builtinArithmeticDivideDecimalSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (s *builtinArithmeticDivideDecimalSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticDivideDecimalSig{}
@@ -753,7 +777,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx BuildContext, args []
 		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) || mysql.HasUnsignedFlag(rhsTp.GetFlag()) {
 			bf.tp.AddFlag(mysql.UnsignedFlag)
 		}
-		sig := &builtinArithmeticIntDivideIntSig{bf}
+		sig := &builtinArithmeticIntDivideIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
 		return sig, nil
 	}
@@ -764,12 +788,15 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx BuildContext, args []
 	if mysql.HasUnsignedFlag(lhsTp.GetFlag()) || mysql.HasUnsignedFlag(rhsTp.GetFlag()) {
 		bf.tp.AddFlag(mysql.UnsignedFlag)
 	}
-	sig := &builtinArithmeticIntDivideDecimalSig{bf}
+	sig := &builtinArithmeticIntDivideDecimalSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IntDivideDecimal)
 	return sig, nil
 }
 
-type builtinArithmeticIntDivideIntSig struct{ baseBuiltinFunc }
+type builtinArithmeticIntDivideIntSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (s *builtinArithmeticIntDivideIntSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticIntDivideIntSig{}
@@ -777,7 +804,10 @@ func (s *builtinArithmeticIntDivideIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticIntDivideDecimalSig struct{ baseBuiltinFunc }
+type builtinArithmeticIntDivideDecimalSig struct {
+	baseBuiltinFunc
+	notRequireOptionalEvalProps
+}
 
 func (s *builtinArithmeticIntDivideDecimalSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticIntDivideDecimalSig{}
@@ -913,7 +943,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, args []Expres
 		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) {
 			bf.tp.AddFlag(mysql.UnsignedFlag)
 		}
-		sig := &builtinArithmeticModRealSig{bf}
+		sig := &builtinArithmeticModRealSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModReal)
 		return sig, nil
 	} else if lhsEvalTp == types.ETDecimal || rhsEvalTp == types.ETDecimal {
@@ -925,7 +955,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, args []Expres
 		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) {
 			bf.tp.AddFlag(mysql.UnsignedFlag)
 		}
-		sig := &builtinArithmeticModDecimalSig{bf}
+		sig := &builtinArithmeticModDecimalSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModDecimal)
 		return sig, nil
 	}
@@ -940,19 +970,19 @@ func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, args []Expres
 	isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().GetFlag())
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
-		sig := &builtinArithmeticModIntUnsignedUnsignedSig{bf}
+		sig := &builtinArithmeticModIntUnsignedUnsignedSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModIntUnsignedUnsigned)
 		return sig, nil
 	case isLHSUnsigned && !isRHSUnsigned:
-		sig := &builtinArithmeticModIntUnsignedSignedSig{bf}
+		sig := &builtinArithmeticModIntUnsignedSignedSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModIntUnsignedSigned)
 		return sig, nil
 	case !isLHSUnsigned && isRHSUnsigned:
-		sig := &builtinArithmeticModIntSignedUnsignedSig{bf}
+		sig := &builtinArithmeticModIntSignedUnsignedSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModIntSignedUnsigned)
 		return sig, nil
 	default:
-		sig := &builtinArithmeticModIntSignedSignedSig{bf}
+		sig := &builtinArithmeticModIntSignedSignedSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModIntSignedSigned)
 		return sig, nil
 	}
@@ -960,6 +990,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 type builtinArithmeticModRealSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticModRealSig) Clone() builtinFunc {
@@ -992,6 +1023,7 @@ func (s *builtinArithmeticModRealSig) evalReal(ctx EvalContext, row chunk.Row) (
 
 type builtinArithmeticModDecimalSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticModDecimalSig) Clone() builtinFunc {
@@ -1019,6 +1051,7 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(ctx EvalContext, row chunk.
 
 type builtinArithmeticModIntUnsignedUnsignedSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticModIntUnsignedUnsignedSig) Clone() builtinFunc {
@@ -1053,6 +1086,7 @@ func (s *builtinArithmeticModIntUnsignedUnsignedSig) evalInt(ctx EvalContext, ro
 
 type builtinArithmeticModIntUnsignedSignedSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticModIntUnsignedSignedSig) Clone() builtinFunc {
@@ -1092,6 +1126,7 @@ func (s *builtinArithmeticModIntUnsignedSignedSig) evalInt(ctx EvalContext, row 
 
 type builtinArithmeticModIntSignedUnsignedSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticModIntSignedUnsignedSig) Clone() builtinFunc {
@@ -1131,6 +1166,7 @@ func (s *builtinArithmeticModIntSignedUnsignedSig) evalInt(ctx EvalContext, row 
 
 type builtinArithmeticModIntSignedSignedSig struct {
 	baseBuiltinFunc
+	notRequireOptionalEvalProps
 }
 
 func (s *builtinArithmeticModIntSignedSignedSig) Clone() builtinFunc {
