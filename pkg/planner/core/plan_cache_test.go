@@ -1012,9 +1012,9 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t1 order by a",                              // order by
 		"select * from t3 where full_name = 'a b'",                 // generated column
 		"select * from t3 where a > 1 and full_name = 'a b'",
-		"select * from t1 where a in (1, 2)",                       // Partitioned
-		"select * from t2 where a in (1, 2) and b in (1, 2, 3)",    // Partitioned
-		"select * from t1 where a in (1, 2) and b < 15",            // Partitioned
+		"select * from t1 where a in (1, 2)",                    // Partitioned
+		"select * from t2 where a in (1, 2) and b in (1, 2, 3)", // Partitioned
+		"select * from t1 where a in (1, 2) and b < 15",         // Partitioned
 	}
 
 	unsupported := []string{
