@@ -283,7 +283,7 @@ func TestTLSVerify(t *testing.T) {
 		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-
+	<-server.RunInGoTestChan
 	cli.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.RunTestTLSConnection(t, nil)
