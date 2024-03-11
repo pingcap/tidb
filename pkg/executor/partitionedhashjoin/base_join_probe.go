@@ -49,6 +49,7 @@ type JoinProbe interface {
 	ScanRowTable(joinResult *util.HashjoinWorkerResult) (result *util.HashjoinWorkerResult)
 	IsScanRowTableDone() bool
 	NeedScanRowTable() bool
+	InitForScanRowTable()
 }
 
 type offsetAndLength struct {
@@ -69,7 +70,8 @@ type rowIndexInfo struct {
 }
 
 type baseJoinProbe struct {
-	ctx *PartitionedHashJoinCtx
+	ctx    *PartitionedHashJoinCtx
+	workID uint
 
 	currentChunk       *chunk.Chunk
 	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
@@ -281,9 +283,10 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 	}
 }
 
-func NewJoinProbe(ctx *PartitionedHashJoinCtx, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType) JoinProbe {
+func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType) JoinProbe {
 	base := baseJoinProbe{
 		ctx:                   ctx,
+		workID:                workID,
 		keyIndex:              keyIndex,
 		columnTypes:           probeColumnTypes,
 		maxChunkSize:          ctx.SessCtx.GetSessionVars().MaxChunkSize,
