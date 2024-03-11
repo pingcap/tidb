@@ -4311,7 +4311,7 @@ func (s *session) isPipelinedDML() bool {
 		// we enforce that pipelined DML must lazily check key.
 		return false
 	}
-	
+
 	{
 		if s.sessionVars.ForeignKeyChecks {
 			return false
