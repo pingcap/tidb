@@ -933,7 +933,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	if !kv.ErrWriteConflict.Equal(oldErr) {
 		return nil
 	}
-	if errors.RedactLogEnabled.Load() {
+	if errors.RedactLogEnabled.Load() == errors.RedactLogEnable {
 		return nil
 	}
 	originErr := errors.Cause(oldErr)
