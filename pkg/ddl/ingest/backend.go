@@ -118,8 +118,8 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 			if len(tErr.Args()) != 4 {
 				return err
 			}
-			valueStr := tErr.Args()[1]
-			indexName := tErr.Args()[2]
+			indexName := tErr.Args()[1]
+			valueStr := tErr.Args()[2]
 
 			return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(valueStr, indexName))
 		}
@@ -173,8 +173,8 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 				if len(tErr.Args()) != 4 {
 					return err
 				}
-				valueStr := tErr.Args()[1]
-				indexName := tErr.Args()[2]
+				indexName := tErr.Args()[1]
+				valueStr := tErr.Args()[2]
 
 				return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(valueStr, indexName))
 			}
