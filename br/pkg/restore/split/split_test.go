@@ -228,7 +228,7 @@ func TestWaitForScatterRegions(t *testing.T) {
 	}
 	mockPDCli.getOperatorResps[4] = []*pdpb.GetOperatorResponse{
 		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
+		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_TIMEOUT},
 		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
 	}
 	mockPDCli.getOperatorResps[5] = []*pdpb.GetOperatorResponse{
@@ -248,10 +248,14 @@ func TestWaitForScatterRegions(t *testing.T) {
 	left, err := client.WaitForScatterRegion(ctx, regions)
 	require.NoError(t, err)
 	require.Equal(t, 0, left)
-	for i := 1; i <= 4; i++ {
+	for i := 1; i <= 3; i++ {
 		require.Equal(t, 0, mockPDCli.scattered[uint64(i)])
 	}
+	// OperatorStatus_TIMEOUT should trigger rescatter once
+	require.Equal(t, 1, mockPDCli.scattered[uint64(4)])
+	// 3 * OperatorStatus_CANCEL should trigger 3 * rescatter
 	require.Equal(t, 3, mockPDCli.scattered[uint64(5)])
+	// OperatorStatus_REPLACE should trigger rescatter once
 	require.Equal(t, 1, mockPDCli.scattered[uint64(6)])
 	checkGetOperatorRespsDrained()
 
@@ -306,7 +310,7 @@ func TestWaitForScatterRegions(t *testing.T) {
 		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
 	}
 	left, err = client.WaitForScatterRegion(ctx, regions)
-	require.ErrorContains(t, err, "wait for scatter region timeout, print the first unfinished region id:4")
+	require.ErrorContains(t, err, "wait for scatter region timeout, print the first unfinished region: id:4")
 	require.Equal(t, 1, left)
 	checkGetOperatorRespsDrained()
 	checkNoRetry()
