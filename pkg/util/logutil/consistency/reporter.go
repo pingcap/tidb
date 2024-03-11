@@ -189,10 +189,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 	rmode := r.Sctx.GetSessionVars().EnableRedactNew
 
 	const maxFullHandleCnt = 50
-	displayFullHdCnt := len(fullHd)
-	if displayFullHdCnt > maxFullHandleCnt {
-		displayFullHdCnt = maxFullHandleCnt
-	}
+	displayFullHdCnt := min(len(fullHd), maxFullHandleCnt)
 	fs := []zap.Field{
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
