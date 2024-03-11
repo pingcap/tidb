@@ -271,7 +271,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
 	prometheus.MustRegister(DistTaskGauge)
-	prometheus.MustRegister(DistTaskStarttimeGauge)
+	prometheus.MustRegister(DistTaskStartTimeGauge)
+	prometheus.MustRegister(DistTaskUsedSlotsGauge)
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
