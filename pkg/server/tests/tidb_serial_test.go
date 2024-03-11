@@ -163,19 +163,18 @@ func TestTLSAuto(t *testing.T) {
 	err := os.MkdirAll(cfg.TempStoragePath, 0700)
 	require.NoError(t, err)
 	server.RunInGoTestChan = make(chan struct{})
-	svr, err := server.NewServer(cfg, ts.tidbdrv)
+	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	svr.SetDomain(ts.domain)
+	srv.SetDomain(ts.domain)
 	go func() {
-		err := svr.Run(nil)
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
 	<-server.RunInGoTestChan
-	cli.Port = testutil.GetPortFromTCPAddr(svr.ListenAddr())
+	cli.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	err = cli.RunTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
 	require.NoError(t, err)
-
-	svr.Close()
+	srv.Close()
 }
 
 func TestTLSBasic(t *testing.T) {
@@ -213,7 +212,6 @@ func TestTLSBasic(t *testing.T) {
 	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	srv.SetDomain(ts.domain)
-
 	go func() {
 		err := srv.Run(nil)
 		require.NoError(t, err)
@@ -385,7 +383,6 @@ func TestErrorNoRollback(t *testing.T) {
 	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
 	srv.SetDomain(ts.domain)
-
 	go func() {
 		err := srv.Run(nil)
 		require.NoError(t, err)

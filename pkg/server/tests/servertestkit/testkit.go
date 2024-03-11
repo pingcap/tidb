@@ -69,10 +69,9 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	ts.Domain, err = session.BootstrapSession(ts.Store)
 	require.NoError(t, err)
 	ts.Tidbdrv = srv.NewTiDBDriver(ts.Store)
-
+	srv.RunInGoTestChan = make(chan struct{})
 	server, err := srv.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
-
 	ts.Server = server
 	ts.Server.SetDomain(ts.Domain)
 	ts.Domain.InfoSyncer().SetSessionManager(ts.Server)
