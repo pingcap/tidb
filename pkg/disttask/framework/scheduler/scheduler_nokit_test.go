@@ -49,10 +49,7 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	taskMgr := mock.NewMockTaskManager(ctrl)
-
 	schExt := schmock.NewMockExtension(ctrl)
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "dispatcher")
 	task := proto.Task{
 		TaskBase: proto.TaskBase{
 			ID:    1,
