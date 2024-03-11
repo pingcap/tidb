@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	mockScheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	schmock "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -229,7 +228,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 	cloneTask = task
 
 	sch = createScheduler(&cloneTask, false, taskMgr, ctrl)
-	schExt := mockScheduler.NewMockExtension(ctrl)
+	schExt := schmock.NewMockExtension(ctrl)
 	sch.Extension = schExt
 	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
@@ -250,7 +249,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 	task.State = proto.TaskStatePausing
 	cloneTask = task
 	sch = createScheduler(&cloneTask, false, taskMgr, ctrl)
-	schExt = mockScheduler.NewMockExtension(ctrl)
+	schExt = schmock.NewMockExtension(ctrl)
 	sch.Extension = schExt
 	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), cloneTask.ID).DoAndReturn(func(_ context.Context, _ int64) (*proto.TaskBase, error) {
 		return &cloneTask.TaskBase, nil
