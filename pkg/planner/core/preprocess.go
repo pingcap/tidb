@@ -1789,26 +1789,45 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 }
 
 func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+	logTable := tbl.Meta().Name.L == "sbtest1"
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
 	if is.SchemaMetaVersion() == 0 {
+		if logTable {
+			logutil.BgLogger().Info("schema version is 0, skip lock")
+		}
 		return tbl, nil
 	}
 	skipLock := false
 	if sctx.GetSessionVars().SnapshotInfoschema != nil {
+		if logTable {
+			logutil.BgLogger().Info("snapshot infoschema is not nil, skip lock")
+		}
 		return tbl, nil
 	}
 	if sctx.GetSessionVars().TxnCtx.IsStaleness {
+		if logTable {
+			logutil.BgLogger().Info("staleness read, skip lock")
+		}
 		return tbl, nil
 	}
 	if tbl.Meta().TempTableType == model.TempTableLocal {
+		if logTable {
+			logutil.BgLogger().Info("local temporary table, skip lock")
+		}
 		// Don't attach, don't lock.
 		return tbl, nil
 	} else if tbl.Meta().TempTableType == model.TempTableGlobal {
+		if logTable {
+			logutil.BgLogger().Info("global temporary table, try to skip lock")
+		}
 		skipLock = true
 	}
 	if IsAutoCommitTxn(sctx.GetSessionVars()) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
+		if logTable {
+			logutil.BgLogger().Info("read only auto commit txn, skip lock")
+		}
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
@@ -1816,6 +1835,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
 				// Already attach.
+				if logTable {
+					logutil.BgLogger().Info("already attach, skip lock")
+				}
 				return tbl, nil
 			}
 		}
@@ -1835,6 +1857,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		if err != nil {
 			if !skipLock {
 				sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
+			}
+			if logTable {
+				logutil.BgLogger().Info("find table meet error, skip log", zap.String("db", dbName.L), zap.String("table", tableInfo.Name.L), zap.Error(err))
 			}
 			return nil, err
 		}
