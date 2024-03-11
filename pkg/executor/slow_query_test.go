@@ -17,6 +17,7 @@ package executor
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"os"
@@ -719,11 +720,21 @@ func checkGoroutineExists(keyword string) bool {
 
 func prepareLogs(t *testing.T, logData []string, fileNames []string) {
 	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(data))
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
+		if strings.HasSuffix(file, ".gz") {
+			f, err := os.Create(file)
+			require.NoError(t, err)
+			gz := gzip.NewWriter(f)
+			_, err = gz.Write([]byte(data))
+			require.NoError(t, err)
+			require.NoError(t, gz.Close())
+			require.NoError(t, f.Close())
+		} else {
+			f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			require.NoError(t, err)
+			_, err = f.Write([]byte(data))
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+		}
 	}
 
 	for i, log := range logData {

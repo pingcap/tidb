@@ -16,6 +16,7 @@ package executor
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -169,10 +170,11 @@ type parsedSlowLog struct {
 	err  error
 }
 
-func (e *slowQueryRetriever) getNextFile() *os.File {
+func (e *slowQueryRetriever) getNextFile() *logFile {
 	if e.fileIdx >= len(e.files) {
 		return nil
 	}
+	ret := &e.files[e.fileIdx]
 	file := e.files[e.fileIdx].file
 	e.fileIdx++
 	if e.stats != nil {
@@ -183,7 +185,7 @@ func (e *slowQueryRetriever) getNextFile() *os.File {
 			e.stats.readFileNum++
 		}
 	}
-	return file
+	return ret
 }
 
 func (e *slowQueryRetriever) getPreviousFile() *os.File {
@@ -202,14 +204,31 @@ func (e *slowQueryRetriever) getPreviousFile() *os.File {
 	return file
 }
 
-func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
-	defer e.wg.Done()
+func (e *slowQueryRetriever) getNextReader() (*bufio.Reader, error) {
 	file := e.getNextFile()
 	if file == nil {
+		return nil, nil
+	}
+	var reader *bufio.Reader
+	if !file.compressed {
+		reader = bufio.NewReader(file.file)
+	} else {
+		gr, err := gzip.NewReader(file.file)
+		if err != nil {
+			return nil, err
+		}
+		reader = bufio.NewReader(gr)
+	}
+	return reader, nil
+}
+
+func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	defer e.wg.Done()
+	reader, _ := e.getNextReader()
+	if reader == nil {
 		close(e.taskList)
 		return
 	}
-	reader := bufio.NewReader(file)
 	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
 }
 
@@ -303,12 +322,12 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 			if err != nil {
 				if err == io.EOF {
 					e.fileLine = 0
-					file := e.getNextFile()
-					if file == nil {
-						return [][]string{log}, nil
+					newReader, err := e.getNextReader()
+					if newReader == nil || err != nil {
+						return [][]string{log}, err
 					}
 					offset.length = len(log)
-					reader.Reset(file)
+					reader.Reset(newReader)
 					continue
 				}
 				return [][]string{log}, err
@@ -330,9 +349,9 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, rea
 	// reader maybe change when read previous file.
 	inputReader := reader
 	defer func() {
-		file := e.getNextFile()
-		if file != nil {
-			inputReader.Reset(file)
+		newReader, _ := e.getNextReader()
+		if newReader != nil {
+			inputReader.Reset(newReader)
 		}
 	}()
 	var line string
@@ -826,6 +845,7 @@ func ParseTime(s string) (time.Time, error) {
 type logFile struct {
 	file       *os.File  // The opened file handle
 	start, end time.Time // The start/end time of the log file
+	compressed bool      // The file is compressed or not
 }
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
@@ -873,6 +893,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		if !strings.HasPrefix(path, prefix) {
 			return nil
 		}
+		compressed := strings.HasSuffix(path, ".gz")
 		if isCtxDone(ctx) {
 			return ctx.Err()
 		}
@@ -888,7 +909,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			}
 		}()
 		// Get the file start time.
-		fileStartTime, err := e.getFileStartTime(ctx, file)
+		fileStartTime, err := e.getFileStartTime(ctx, file, compressed)
 		if err != nil {
 			return handleErr(err)
 		}
@@ -904,30 +925,36 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			return nil
 		}
 
-		// Get the file end time.
-		fileEndTime, err := e.getFileEndTime(ctx, file)
-		if err != nil {
-			return handleErr(err)
-		}
-		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
-		inTimeRanges := false
-		for _, tr := range e.checker.timeRanges {
-			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
-				inTimeRanges = true
-				break
+		// If we want to get the end time from a compressed file, we need uncompress the whole file which is very slow
+		// and consume a lot of memeory. So we assume the end time equals to inf.
+		fileEndTime := time.Unix(1<<63-1, 0)
+		if !compressed {
+			// Get the file end time.
+			fileEndTime, err = e.getFileEndTime(ctx, file)
+			if err != nil {
+				return handleErr(err)
 			}
-		}
-		if !inTimeRanges {
-			return nil
+			end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
+			inTimeRanges := false
+			for _, tr := range e.checker.timeRanges {
+				if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+					inTimeRanges = true
+					break
+				}
+			}
+			if !inTimeRanges {
+				return nil
+			}
 		}
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {
 			return handleErr(err)
 		}
 		logFiles = append(logFiles, logFile{
-			file:  file,
-			start: fileStartTime,
-			end:   fileEndTime,
+			file:       file,
+			start:      fileStartTime,
+			end:        fileEndTime,
+			compressed: compressed,
 		})
 		skip = true
 		return nil
@@ -945,13 +972,22 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	return logFiles, err
 }
 
-func (*slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File) (time.Time, error) {
+func (*slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File, compressed bool) (time.Time, error) {
 	var t time.Time
 	_, err := file.Seek(0, io.SeekStart)
 	if err != nil {
 		return t, err
 	}
-	reader := bufio.NewReader(file)
+	var reader *bufio.Reader
+	if !compressed {
+		reader = bufio.NewReader(file)
+	} else {
+		gr, err := gzip.NewReader(file)
+		if err != nil {
+			return t, err
+		}
+		reader = bufio.NewReader(gr)
+	}
 	maxNum := 128
 	for {
 		lineByte, err := getOneLine(reader)
