@@ -15,6 +15,7 @@
 package redact
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -40,4 +41,17 @@ func Redact(mode string, input string) string {
 	default:
 		return ""
 	}
+}
+
+type redactStringer struct {
+	mode     string
+	stringer fmt.Stringer
+}
+
+func (s *redactStringer) String() string {
+	return Redact(s.mode, s.stringer.String())
+}
+
+func RedactStringer(mode string, input fmt.Stringer) fmt.Stringer {
+	return &redactStringer{mode, input}
 }
