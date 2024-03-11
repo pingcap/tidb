@@ -4313,6 +4313,9 @@ func (s *session) isPipelinedDML() bool {
 	}
 	
 	{
+		if s.sessionVars.ForeignKeyChecks {
+			return false
+		}
 		//stmtCtx.OriginalSQL
 		stmts, err := s.Parse(context.Background(), stmtCtx.OriginalSQL)
 		if err != nil || len(stmts) == 0 {
@@ -4339,6 +4342,9 @@ func (s *session) isPipelinedDML() bool {
 						return false
 					}
 					if tableInfo.Meta().TempTableType == model.TempTableLocal {
+						return false
+					}
+					if len(tableInfo.Meta().ForeignKeys) > 0 {
 						return false
 					}
 				}
