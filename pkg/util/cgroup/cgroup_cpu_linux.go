@@ -74,27 +74,17 @@ func inContainer(path string) bool {
 		return false
 	}
 
-	// seems there is no standard way to detect if the process is running in a container
-	// possible ways, see https://www.baeldung.com/linux/is-process-running-inside-container:
-	// 	- check existence of /.dockerenv (not always there)
-	// 	- check whether self pid is same as scheduled pid in /proc/self/sched (not always there)
-	// 	- check keywords inside /proc/self/cgroup (for cgroup V1)
-	// 	- check keywords inside /proc/self/mountinfo (for cgroup V2)
-	//
-	// but there might be false positive when check keywords only.
-	containsKeywords := strings.Contains(string(v), "docker") ||
-		strings.Contains(string(v), "kubepods") ||
-		strings.Contains(string(v), "containerd")
 	// For cgroup V1, check /proc/self/cgroup
 	if path == procPathCGroup {
-		return containsKeywords
+		if strings.Contains(string(v), "docker") ||
+			strings.Contains(string(v), "kubepods") ||
+			strings.Contains(string(v), "containerd") {
+			return true
+		}
 	}
 
 	// For cgroup V2, check /proc/self/mountinfo
 	if path == procPathMountInfo {
-		if !containsKeywords {
-			return false
-		}
 		lines := strings.Split(string(v), "\n")
 		for _, line := range lines {
 			v := strings.Split(line, " ")
