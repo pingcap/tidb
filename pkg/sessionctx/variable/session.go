@@ -1580,8 +1580,8 @@ type SessionVars struct {
 	// overwritten if this value is not 0.
 	TxnEntrySizeLimit uint64
 
-	// DistSQLParallel indicates whether to build distsql task in parallel mode. If it is true, the region-cache-miss tasks will be built
-	// in the coprocessor's sender goroutine and won't block the region-cache-hit to be processed.
+	// DistSQLParallelBuild indicates whether to build distsql task in parallel mode.
+	// If it is true, the distsql tasks will be built in sender thread, so that the slow build won't block the tasks being sent to stores.
 	DistSQLParallelBuild bool
 }
 

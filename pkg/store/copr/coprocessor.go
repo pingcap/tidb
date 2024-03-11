@@ -138,7 +138,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	reqType := "null"
 	if req.ClosestReplicaReadAdjuster != nil {
 		// When closest replica read is enabled, we build the tasks in unparalleled mode.
-		// TODO: support parallel build in closest replica read mode.
+		// TODO: support parallel build in closest adaptive read mode.
 		if err := taskBuilder.Build(); err != nil {
 			return nil, copErrorResponse{err}
 		}
