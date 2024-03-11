@@ -1825,9 +1825,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		skipLock = true
 	}
 	if IsAutoCommitTxn(sctx.GetSessionVars()) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
-		if logTable {
-			logutil.BgLogger().Info("read only auto commit txn, skip lock")
-		}
+		// if logTable {
+		// 	logutil.BgLogger().Info("read only auto commit txn, skip lock")
+		// }
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
@@ -1881,6 +1881,12 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 					}
 				}
 				if !found {
+					if logTable {
+						logutil.BgLogger().Info("public index added",
+							zap.String("index", idx.Name.L),
+							zap.Int64("currentVer", is.SchemaMetaVersion()),
+							zap.Int64("domainSchemaVer", domainSchemaVer))
+					}
 					if copyTableInfo == nil {
 						copyTableInfo = tbl.Meta().Clone()
 					}
