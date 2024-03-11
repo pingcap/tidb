@@ -56,7 +56,6 @@ go_library(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
-        "//pkg/types",
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/compress",

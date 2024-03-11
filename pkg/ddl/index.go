@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
@@ -1595,7 +1594,7 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 }
 
 func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
-	valueStr, err := local.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
+	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
 	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
 	if err != nil {
 		logutil.BgLogger().Warn("decode index key value / column value failed", zap.String("index", indexName),

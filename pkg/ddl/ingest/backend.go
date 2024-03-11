@@ -113,10 +113,10 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		if common.ErrFoundIndexConflictRecords.Equal(err) {
 			tErr, ok := errors.Cause(err).(*terror.Error)
 			if !ok {
-				return err
+				return errors.Trace(tikv.ErrKeyExists)
 			}
 			if len(tErr.Args()) != 4 {
-				return err
+				return errors.Trace(tikv.ErrKeyExists)
 			}
 			indexName := tErr.Args()[1]
 			valueStr := tErr.Args()[2]
@@ -168,10 +168,10 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			if common.ErrFoundIndexConflictRecords.Equal(err) {
 				tErr, ok := errors.Cause(err).(*terror.Error)
 				if !ok {
-					return err
+					return errors.Trace(tikv.ErrKeyExists)
 				}
 				if len(tErr.Args()) != 4 {
-					return err
+					return errors.Trace(tikv.ErrKeyExists)
 				}
 				indexName := tErr.Args()[1]
 				valueStr := tErr.Args()[2]

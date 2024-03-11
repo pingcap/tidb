@@ -23,7 +23,6 @@ import (
 	"io"
 	"math"
 	"sync"
-	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
@@ -49,8 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -645,33 +642,6 @@ func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error
 	return NewErrFoundIndexConflictRecords(key, value, tbl, idxInfo)
 }
 
-// GenIndexValueFromIndex generate index value from index.
-func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) ([]string, error) {
-	idxColLen := len(idxInfo.Columns)
-	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
-	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	valueStr := make([]string, 0, idxColLen)
-	for i, val := range values[:idxColLen] {
-		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		str, err := d.ToString()
-		if err != nil {
-			str = string(val)
-		}
-		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
-			str = tidbutil.FmtNonASCIIPrintableCharToHex(str)
-		}
-		valueStr = append(valueStr, str)
-	}
-
-	return valueStr, nil
-}
-
 // NewErrFoundIndexConflictRecords generate an error ErrFoundIndexConflictRecords
 // according to key and value.
 func NewErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, idxInfo *model.IndexInfo) error {
@@ -689,7 +659,7 @@ func NewErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, 
 		return errors.Trace(err)
 	}
 
-	valueStr, err := GenIndexValueFromIndex(key, value, tbl.Meta(), idxInfo)
+	valueStr, err := tables.GenIndexValueFromIndex(key, value, tbl.Meta(), idxInfo)
 	indexName := fmt.Sprintf("%s.%s", tbl.Meta().Name.String(), idxInfo.Name.String())
 	if err != nil {
 		log.L().Warn("decode index key value / column value failed", zap.String("index", indexName),
@@ -1126,10 +1096,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl
 	}
 	err = duplicateManager.CollectDuplicateRowsFromTiKV(ctx, local.importClientFactory, algorithm)
 	if err != nil {
-		if !common.ErrFoundDataConflictRecords.Equal(err) && !common.ErrFoundIndexConflictRecords.Equal(err) {
-			return false, errors.Trace(err)
-		}
-		return true, errors.Trace(err)
+		return common.ErrFoundDataConflictRecords.Equal(err) || common.ErrFoundIndexConflictRecords.Equal(err), errors.Trace(err)
 	}
 	return duplicateManager.HasDuplicate(), nil
 }
