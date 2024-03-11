@@ -15,11 +15,23 @@
 package memo
 
 import (
+	"strconv"
 	"testing"
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
 )
+
+type TestTaskImpl struct {
+	a int64
+}
+
+func (t *TestTaskImpl) execute() error {
+	return nil
+}
+func (t *TestTaskImpl) desc() string {
+	return strconv.Itoa(int(t.a))
+}
 
 func TestTaskStack(t *testing.T) {
 	newSS := newTaskStack()

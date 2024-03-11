@@ -15,7 +15,6 @@
 package memo
 
 import (
-	"strconv"
 	"sync"
 )
 
@@ -64,15 +63,4 @@ func (ts *TaskStack) Push(one Task) {
 
 func (ts *TaskStack) Empty() bool {
 	return ts.Len() == 0
-}
-
-type TestTaskImpl struct {
-	a int64
-}
-
-func (t *TestTaskImpl) execute() error {
-	return nil
-}
-func (t *TestTaskImpl) desc() string {
-	return strconv.Itoa(int(t.a))
 }
