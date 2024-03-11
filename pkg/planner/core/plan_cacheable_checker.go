@@ -622,10 +622,11 @@ func getMaxParamLimit(sctx PlanContext) int {
 func enablePlanCacheForGeneratedCols(sctx PlanContext) bool {
 	// disable this by default since it's not well tested.
 	// TODO: complete its test and enable it by default.
+	defaultVal := true
 	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().GetOptimizerFixControlMap() == nil {
-		return false
+		return defaultVal
 	}
-	return fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45798, false)
+	return fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45798, defaultVal)
 }
 
 // checkTableCacheable checks whether a query accessing this table is cacheable.
