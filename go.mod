@@ -136,7 +136,7 @@ require (
 	golang.org/x/term v0.18.0
 	golang.org/x/text v0.14.0
 	golang.org/x/time v0.5.0
-	golang.org/x/tools v0.19.0
+	golang.org/x/tools v0.18.0
 	google.golang.org/api v0.162.0
 	google.golang.org/grpc v1.62.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -318,7 +318,7 @@ replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
-	github.com/tikv/client-go/v2 => github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20240311043235-b0fa05c8ae36
+	github.com/tikv/client-go/v2 => github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20240311101527-ccc092a8ffa0
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
