@@ -4311,6 +4311,41 @@ func (s *session) isPipelinedDML() bool {
 		// we enforce that pipelined DML must lazily check key.
 		return false
 	}
+	
+	{
+		//stmtCtx.OriginalSQL
+		stmts, err := s.Parse(context.Background(), stmtCtx.OriginalSQL)
+		if err != nil || len(stmts) == 0 {
+			return false
+		}
+		var target *ast.TableRefsClause
+		stmt := stmts[0]
+		switch v := stmt.(type) {
+		case *ast.InsertStmt:
+			target = v.Table
+		case *ast.UpdateStmt:
+			target = v.TableRefs
+		case *ast.DeleteStmt:
+			target = v.TableRefs
+		}
+		//is.TableByName()
+		if target != nil && target.TableRefs != nil && target.TableRefs.Left != nil {
+			if source, ok := target.TableRefs.Left.(*ast.TableSource); ok {
+				if table, ok := source.Source.(*ast.TableName); ok {
+					s.GetDomainInfoSchema()
+					is := s.GetDomainInfoSchema().(infoschema.InfoSchema)
+					tableInfo, err := is.TableByName(model.NewCIStr(s.sessionVars.CurrentDB), table.Name)
+					if err != nil {
+						return false
+					}
+					if tableInfo.Meta().TempTableType == model.TempTableLocal {
+						return false
+					}
+				}
+			}
+		}
+	}
+
 	return s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
 		!config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() && s.sessionVars.BinlogClient == nil
 }
