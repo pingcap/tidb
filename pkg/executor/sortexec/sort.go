@@ -323,10 +323,16 @@ func (e *SortExec) generateResultWhenSpillTriggeredOnlyOnce() error {
 	return nil
 }
 
-func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
-	inDiskNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
+func generateResultWithMulWayMerge(
+	sortedRowsInDisk []*chunk.DataInDiskByChunks,
+	resultChannel chan<- rowWithError,
+	finishCh <-chan struct{},
+	lessRow func(chunk.Row, chunk.Row) int,
+	limit int64,
+	outputRowNum int64) error {
+	inDiskNum := len(sortedRowsInDisk)
 	multiWayMerge := &multiWayMergeImpl{
-		lessRowFunction: e.lessRow,
+		lessRowFunction: lessRow,
 		elements:        make([]rowWithPartition, 0, inDiskNum),
 	}
 
@@ -334,7 +340,7 @@ func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
 
 	// Init multiWayMerge
 	for i := 0; i < inDiskNum; i++ {
-		chk, err := e.Parallel.spillHelper.sortedRowsInDisk[i].GetChunk(0)
+		chk, err := sortedRowsInDisk[i].GetChunk(0)
 		if err != nil {
 			return err
 		}
@@ -351,18 +357,23 @@ func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
 
 	// multi-way merge the data in disk
 	for multiWayMerge.Len() > 0 {
+		if limit != -1 && outputRowNum >= limit {
+			return nil
+		}
+
 		elem := multiWayMerge.elements[0]
 		select {
-		case <-e.finishCh:
+		case <-finishCh:
 			return nil
-		case e.Parallel.resultChannel <- rowWithError{row: elem.row}:
+		case resultChannel <- rowWithError{row: elem.row}:
+			outputRowNum++
 		}
 
 		partitionID := elem.partitionID
 		newRow := cursors[partitionID].next()
 		if newRow.IsEmpty() {
 			// Try to fetch more data from the disk
-			success, err := reloadCursor(cursors[partitionID], e.Parallel.spillHelper.sortedRowsInDisk[partitionID])
+			success, err := reloadCursor(cursors[partitionID], sortedRowsInDisk[partitionID])
 			if err != nil {
 				return err
 			}
@@ -396,7 +407,13 @@ func (e *SortExec) generateResultWhenSpillTriggered() error {
 	if inDiskNum == 1 {
 		return e.generateResultWhenSpillTriggeredOnlyOnce()
 	}
-	return e.generateResultWhenSpillTriggeredWithMulWayMerge()
+	return generateResultWithMulWayMerge(
+		e.Parallel.spillHelper.sortedRowsInDisk,
+		e.Parallel.resultChannel,
+		e.finishCh,
+		e.lessRow,
+		-1,
+		0)
 }
 
 // Return true when spill is triggered

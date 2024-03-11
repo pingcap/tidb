@@ -17,10 +17,12 @@ package sortexec
 import (
 	"container/heap"
 	"context"
+	"math/rand"
 	"slices"
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -269,7 +271,8 @@ func (e *TopNExec) fetchChunksFromChild(ctx context.Context) {
 	}
 }
 
-func (e *TopNExec) spillHeapInTopNExec() error {
+// Spill the heap which is in TopN executor
+func (e *TopNExec) spillTopNExecHeap() error {
 	e.spillHelper.setInSpilling()
 	defer e.spillHelper.cond.Broadcast()
 	defer e.spillHelper.setNotSpilled()
@@ -282,7 +285,7 @@ func (e *TopNExec) spillHeapInTopNExec() error {
 }
 
 func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
-	err := e.spillHeapInTopNExec()
+	err := e.spillTopNExecHeap()
 	if err != nil {
 		return err
 	}
@@ -348,24 +351,42 @@ func (e *TopNExec) generateTopNResultsWithNoSpill() bool {
 	return false
 }
 
-func (e *TopNExec) generateTopNResultWhenSpillTriggeredOnlyOnce() {
-
-}
-
-func (e *TopNExec) generateTopNResultWhenSpillTriggeredWithMulWayMerge() {
-
-}
-
-func (e *TopNExec) generateTopNResultsWithSpill() {
+func (e *TopNExec) generateTopNResultsWithSpill() error {
 	inDiskNum := len(e.spillHelper.sortedRowsInDisk)
 	if inDiskNum == 0 {
 		panic("inDiskNum can't be 0 when we generate result with spill triggered")
 	}
 
 	if inDiskNum == 1 {
+		inDisk := e.spillHelper.sortedRowsInDisk[0]
+		chunkNum := inDisk.NumChunks()
+		for i := 0; i < chunkNum; i++ {
+			chk, err := inDisk.GetChunk(i)
+			if err != nil {
+				return err
+			}
 
-		return
+			injectTopNRandomFail(1)
+
+			rowNum := chk.NumRows()
+			for j := 0; j < rowNum; j++ {
+				select {
+				case <-e.finishCh:
+					return nil
+				case e.resultChannel <- rowWithError{row: chk.GetRow(j)}:
+				}
+			}
+		}
+		return nil
 	}
+	return generateResultWithMulWayMerge(
+		e.spillHelper.sortedRowsInDisk,
+		e.resultChannel,
+		e.finishCh,
+		e.lessRow,
+		int64(e.Limit.Offset+e.Limit.Count),
+		int64(e.Limit.Offset),
+	)
 }
 
 func (e *TopNExec) generateTopNResults() {
@@ -382,11 +403,22 @@ func (e *TopNExec) generateTopNResults() {
 			return
 		}
 
-		err := e.spillHeapInTopNExec()
+		err := e.spillTopNExecHeap()
 		if err != nil {
 			e.resultChannel <- rowWithError{err: err}
 		}
 	}
 
 	e.generateTopNResultsWithSpill()
+}
+
+func injectTopNRandomFail(triggerFactor int32) {
+	failpoint.Inject("TopNRandomFail", func(val failpoint.Value) {
+		if val.(bool) {
+			randNum := rand.Int31n(10000)
+			if randNum < triggerFactor {
+				panic("panic is triggered by random fail")
+			}
+		}
+	})
 }
