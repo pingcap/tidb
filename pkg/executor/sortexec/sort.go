@@ -300,14 +300,13 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *SortExec) generateResultWhenSpillTriggeredOnlyOnce() {
+func (e *SortExec) generateResultWhenSpillTriggeredOnlyOnce() error {
 	inDisk := e.Parallel.spillHelper.sortedRowsInDisk[0]
 	chunkNum := inDisk.NumChunks()
 	for i := 0; i < chunkNum; i++ {
 		chk, err := inDisk.GetChunk(i)
 		if err != nil {
-			e.Parallel.resultChannel <- rowWithError{err: err}
-			return
+			return err
 		}
 
 		injectParallelSortRandomFail(1)
@@ -316,11 +315,12 @@ func (e *SortExec) generateResultWhenSpillTriggeredOnlyOnce() {
 		for j := 0; j < rowNum; j++ {
 			select {
 			case <-e.finishCh:
-				return
+				return nil
 			case e.Parallel.resultChannel <- rowWithError{row: chk.GetRow(j)}:
 			}
 		}
 	}
+	return nil
 }
 
 func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
@@ -364,7 +364,6 @@ func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
 			// Try to fetch more data from the disk
 			success, err := reloadCursor(cursors[partitionID], e.Parallel.spillHelper.sortedRowsInDisk[partitionID])
 			if err != nil {
-				e.Parallel.resultChannel <- rowWithError{err: err}
 				return err
 			}
 
@@ -377,9 +376,7 @@ func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
 			// Get new row
 			newRow = cursors[partitionID].begin()
 			if newRow.IsEmpty() {
-				err := errors.New("Get an empty row")
-				e.Parallel.resultChannel <- rowWithError{err: err}
-				return err
+				return errors.New("Get an empty row")
 			}
 		}
 		multiWayMerge.elements[0].row = newRow
@@ -390,17 +387,16 @@ func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
 	return nil
 }
 
-func (e *SortExec) generateResultWhenSpillTriggered() {
+func (e *SortExec) generateResultWhenSpillTriggered() error {
 	inDiskNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
 	if inDiskNum == 0 {
 		panic("inDiskNum can't be 0 when we generate result with spill triggered")
 	}
 
 	if inDiskNum == 1 {
-		e.generateResultWhenSpillTriggeredOnlyOnce()
-		return
+		return e.generateResultWhenSpillTriggeredOnlyOnce()
 	}
-	e.generateResultWhenSpillTriggeredWithMulWayMerge()
+	return e.generateResultWhenSpillTriggeredWithMulWayMerge()
 }
 
 // Return true when spill is triggered
@@ -468,22 +464,26 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 		e.Parallel.merger = nil
 	}()
 
-	if e.Parallel.spillHelper.isSpillTriggered() {
-		e.generateResultWhenSpillTriggered()
-		return
-	}
+	if !e.Parallel.spillHelper.isSpillTriggered() {
+		spillTriggered := e.generateResultInMemory()
+		if !spillTriggered {
+			return
+		}
 
-	spillTriggered := e.generateResultInMemory()
-	if spillTriggered {
 		err := e.spillSortedRowsInMemory()
 		if err != nil {
 			e.Parallel.resultChannel <- rowWithError{err: err}
 			return
 		}
-		e.generateResultWhenSpillTriggered()
+	}
+
+	err := e.generateResultWhenSpillTriggered()
+	if err != nil {
+		e.Parallel.resultChannel <- rowWithError{err: err}
 	}
 }
 
+// Sort rows that are in memory
 func (e *SortExec) spillSortedRowsInMemory() error {
 	return e.Parallel.spillHelper.spillImpl(e.Parallel.merger)
 }
