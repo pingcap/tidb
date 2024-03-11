@@ -19,6 +19,10 @@ import (
 	"strings"
 )
 
+var (
+	_ fmt.Stringer = (*redactStringer)(nil)
+)
+
 // Redact will redact the input string according to 'mode'. Check 'tidb_redact_log': https://github.com/pingcap/tidb/blob/acf9e3128693a5a13f31027f05f4de41edf8d7b2/pkg/sessionctx/variable/sysvar.go#L2154.
 func Redact(mode string, input string) string {
 	switch mode {
@@ -52,7 +56,7 @@ func (s *redactStringer) String() string {
 	return Redact(s.mode, s.stringer.String())
 }
 
-// RedactStringer will redact the input stringer according to 'mode', similar to Redact.
-func RedactStringer(mode string, input fmt.Stringer) fmt.Stringer {
+// Stringer will redact the input stringer according to 'mode', similar to Redact.
+func Stringer(mode string, input fmt.Stringer) *redactStringer {
 	return &redactStringer{mode, input}
 }

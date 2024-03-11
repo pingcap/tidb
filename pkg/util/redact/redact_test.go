@@ -41,6 +41,6 @@ func TestRedact(t *testing.T) {
 		{"MARKER", "f›xcv", "‹f››xcv›"},
 	} {
 		require.Equal(t, c.output, Redact(c.mode, c.input))
-		require.Equal(t, c.output, RedactStringer(c.mode, &testStringer{c.input}))
+		require.Equal(t, c.output, Stringer(c.mode, &testStringer{c.input}))
 	}
 }

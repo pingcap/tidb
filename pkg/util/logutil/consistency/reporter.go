@@ -220,9 +220,9 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
 		zap.String("col", colName),
-		zap.Stringer("row_id", redact.RedactStringer(rmode, handle)),
-		zap.Stringer("idxDatum", redact.RedactStringer(rmode, idxDat)),
-		zap.Stringer("rowDatum", redact.RedactStringer(rmode, tblDat)),
+		zap.Stringer("row_id", redact.Stringer(rmode, handle)),
+		zap.Stringer("idxDatum", redact.Stringer(rmode, idxDat)),
+		zap.Stringer("rowDatum", redact.Stringer(rmode, tblDat)),
 	}
 	if rmode != "ON" {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
@@ -256,9 +256,9 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 	fs := []zap.Field{
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
-		zap.Stringer("row_id", redact.RedactStringer(rmode, handle)),
-		zap.Stringer("index", redact.RedactStringer(rmode, idxRow)),
-		zap.Stringer("row", redact.RedactStringer(rmode, tblRow)),
+		zap.Stringer("row_id", redact.Stringer(rmode, handle)),
+		zap.Stringer("index", redact.Stringer(rmode, idxRow)),
+		zap.Stringer("row", redact.Stringer(rmode, tblRow)),
 	}
 	if rmode != "ON" {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
