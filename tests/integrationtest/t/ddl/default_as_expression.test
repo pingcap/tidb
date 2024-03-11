@@ -383,3 +383,27 @@ SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema=
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+
+# test auto_increment
+-- error 1067
+create table t0 (c int(10), c1 int auto_increment default (str_to_date('1980-01-01','%Y-%m-%d')));
+CREATE TABLE t0 (id int, c int);
+insert into t0(id) values (1);
+-- error 1067
+alter table t0 modify column c int auto_increment default (str_to_date('1980-01-01','%Y-%m-%d'));
+-- error 8200
+ALTER TABLE t0 MODIFY COLUMN c INT PRIMARY KEY DEFAULT(str_to_date('1980-01-01','%Y-%m-%d'));
+ALTER TABLE t0 ALTER COLUMN c SET DEFAULT(str_to_date('1980-01-01','%Y-%m-%d'));
+insert into t0(id) values (2);
+drop table t0;
+
+# test generated column
+CREATE TABLE t1 (i INT, b int DEFAULT (str_to_date('1980-01-01','%Y-%m-%d')), c INT GENERATED ALWAYS AS (b+2));
+SHOW COLUMNS FROM t1;
+show create table t1;
+INSERT INTO t1(i) VALUES (1);
+INSERT INTO t1(i, b) VALUES (2, DEFAULT);
+INSERT INTO t1(i, b) VALUES (3, 123);
+INSERT INTO t1(i, b) VALUES (NULL, NULL);
+SELECT * FROM t1;
+drop table t1;
