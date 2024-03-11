@@ -4307,7 +4307,7 @@ func (s *session) isPipelinedDML() bool {
 	if s.isInternal() {
 		return false
 	}
-	if !s.GetSessionVars().LazyCheckKeyNotExists() {
+	if s.GetSessionVars().ConstraintCheckInPlace {
 		// we enforce that pipelined DML must lazily check key.
 		return false
 	}
