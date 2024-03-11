@@ -56,7 +56,7 @@ func (s *redactStringer) String() string {
 	return String(s.mode, s.stringer.String())
 }
 
-// Stringer will redact the input stringer according to 'mode', similar to Redact.
+// Stringer will redact the input stringer according to 'mode', similar to String().
 func Stringer(mode string, input fmt.Stringer) *redactStringer {
 	return &redactStringer{mode, input}
 }
