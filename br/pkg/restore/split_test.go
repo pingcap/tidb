@@ -807,6 +807,10 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 	return result, nil
 }
 
+func (f *fakeSplitClient) WaitForScatterRegion(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
+}
+
 func TestGetRewriteTableID(t *testing.T) {
 	var tableID int64 = 76
 	var oldTableID int64 = 80
