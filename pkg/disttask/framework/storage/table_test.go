@@ -299,7 +299,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	require.NoError(t, err)
 	checkAfterSwitchStep(t, startTime, task1, subtasks1, proto.StepOne)
 
-	// mock another dispatcher inserted some subtasks
+	// mock another scheduler inserted some subtasks
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks", `1*return(true)`)
 	task2, subtasks2 := prepare("key2")
 	go func() {

@@ -303,6 +303,9 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		if tracker != nil {
 			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
 		}
+		if idx.IsAnalyzed() {
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, idx.LastUpdateVersion)
+		}
 		table.Indices[histID] = idx
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
@@ -413,6 +416,9 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	if col != nil {
 		if tracker != nil {
 			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
+		}
+		if col.IsAnalyzed() {
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, col.LastUpdateVersion)
 		}
 		table.Columns[col.ID] = col
 	} else {
@@ -562,9 +568,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		IsHandle:   c.IsHandle,
 		StatsVer:   statsVer,
 	}
-	if colHist.StatsAvailable() {
-		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok = statsCache.Get(col.TableID)
@@ -572,8 +575,12 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	tbl = tbl.Copy()
-	if statsVer != statistics.Version0 {
-		tbl.StatsVer = int(statsVer)
+	if colHist.StatsAvailable() {
+		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+		if statsVer != statistics.Version0 {
+			tbl.StatsVer = int(statsVer)
+		}
 	}
 	tbl.Columns[c.ID] = colHist
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
@@ -629,6 +636,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 		tbl.StatsVer = int(idxHist.StatsVer)
 	}
 	tbl.Indices[idx.ID] = idxHist
+	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
