@@ -168,6 +168,10 @@ type TableIDWithFiles struct {
 	TableID int64
 
 	Files []*backuppb.File
+	// Rules is the rewrite rules for the specify table.
+	// because these rules belongs to the *one table*.
+	// we can hold them here.
+	RewriteRules *RewriteRules
 }
 
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
@@ -208,7 +212,6 @@ type TiKVRestorer interface {
 	// RestoreSSTFiles import the files to the TiKV.
 	RestoreSSTFiles(ctx context.Context,
 		tableIDWithFiles []TableIDWithFiles,
-		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error
 }
 
@@ -420,7 +423,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
 			eg.Go(func() error {
-				e := b.client.RestoreSSTFiles(ectx, files, r.result.RewriteRules, b.updateCh)
+				e := b.client.RestoreSSTFiles(ectx, files, b.updateCh)
 				if e != nil {
 					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()

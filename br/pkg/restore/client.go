@@ -1469,7 +1469,6 @@ func (rc *Client) WrapLogFilesIterWithCheckpoint(
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
 	tableIDWithFiles []TableIDWithFiles,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 ) (err error) {
 	start := time.Now()
@@ -1504,6 +1503,7 @@ LOOPFORTABLE:
 	for _, tableIDWithFile := range tableIDWithFiles {
 		tableID := tableIDWithFile.TableID
 		files := tableIDWithFile.Files
+		rules := tableIDWithFile.RewriteRules
 		fileCount += len(files)
 		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
 			filesReplica := rangeFiles
@@ -1526,7 +1526,7 @@ LOOPFORTABLE:
 								zap.Duration("take", time.Since(fileStart)))
 							updateCh.Inc()
 						}()
-						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
+						return rc.fileImporter.ImportSSTFiles(ectx, fs, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 					}(filesGroup); importErr != nil {
 						return errors.Trace(importErr)
 					}

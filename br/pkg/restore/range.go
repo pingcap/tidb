@@ -81,6 +81,11 @@ func (r *RewriteRules) Append(other RewriteRules) {
 	r.Data = append(r.Data, other.Data...)
 }
 
+// EmptyRewriteRule make a map of new, empty rewrite rules.
+func EmptyRewriteRulesMap() map[int64]*RewriteRules {
+	return make(map[int64]*RewriteRules)
+}
+
 // EmptyRewriteRule make a new, empty rewrite rule.
 func EmptyRewriteRule() *RewriteRules {
 	return &RewriteRules{
