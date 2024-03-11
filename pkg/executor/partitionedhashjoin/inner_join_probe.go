@@ -85,6 +85,10 @@ func (j *innerJoinProbe) ScanRowTable(*util.HashjoinWorkerResult) *util.Hashjoin
 	panic("should not reach here")
 }
 
+func (j *innerJoinProbe) InitForScanRowTable() {
+	panic("should not reach here")
+}
+
 func (j *innerJoinProbe) IsScanRowTableDone() bool {
 	panic("should not reach here")
 }
