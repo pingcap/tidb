@@ -703,11 +703,15 @@ func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionIn
 			// if scatter has progress, we should not increase the retry counter
 			backoffer.Stat.ReduceRetry()
 		}
+		var scatterErr error
 		if len(needRescatter) > 0 {
-			c.ScatterRegions(ctx, needRescatter)
+			scatterErr = c.ScatterRegions(ctx, needRescatter)
 		}
 
-		regions = retryRegions
+		regions = notScattered
+		if scatterErr != nil {
+			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter regions failed: %s", scatterErr)
+		}
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "wait for scatter region failed")
 	}, backoffer)
 
@@ -717,6 +721,7 @@ func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionIn
 			regions[0].Region.String(),
 		)
 	}
+	return len(regions), retErr
 }
 
 // IsScatterRegionFinished checks whether the scatter region operator is
