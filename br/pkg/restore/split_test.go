@@ -249,11 +249,10 @@ func TestScanEmptyRegion(t *testing.T) {
 	ranges := initRanges()
 	// make ranges has only one
 	ranges = ranges[0:1]
-	rewriteRules := initRewriteRules()
 	regionSplitter := NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -375,11 +374,10 @@ func runWaitScatter(t *testing.T, client *TestClient) {
 
 func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	ranges := initRanges()
-	rewriteRules := initRewriteRules()
 	regionSplitter := NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -426,7 +424,7 @@ func TestRawSplit(t *testing.T) {
 	ctx := context.Background()
 
 	regionSplitter := NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges, nil, 1, true, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, true, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
@@ -644,7 +642,7 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, up
 	return nil
 }
 
-func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []TableIDWithFiles, rewriteRules *RewriteRules, updateCh glue.Progress) error {
+func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []TableIDWithFiles, updateCh glue.Progress) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

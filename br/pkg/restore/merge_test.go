@@ -208,7 +208,7 @@ func TestMergeRanges(t *testing.T) {
 		for _, f := range cs.files {
 			files = append(files, fb.build(f[0], f[1], f[2], f[3], f[4])...)
 		}
-		rngs, stat, err := restore.MergeFileRanges(files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+		rngs, stat, err := restore.MergeFileRanges(files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 		require.NoErrorf(t, err, "%+v", cs)
 		require.Equalf(t, cs.stat.TotalRegions, stat.TotalRegions, "%+v", cs)
 		require.Equalf(t, cs.stat.MergedRegions, stat.MergedRegions, "%+v", cs)
@@ -231,7 +231,7 @@ func TestMergeRawKVRanges(t *testing.T) {
 	// RawKV does not have write cf
 	files = files[1:]
 	_, stat, err := restore.MergeFileRanges(
-		files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	require.NoError(t, err)
 	require.Equal(t, 1, stat.TotalRegions)
 	require.Equal(t, 1, stat.MergedRegions)
@@ -244,7 +244,7 @@ func TestInvalidRanges(t *testing.T) {
 	files[0].Name = "invalid.sst"
 	files[0].Cf = "invalid"
 	_, _, err := restore.MergeFileRanges(
-		files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	require.Error(t, err)
 	require.Equal(t, berrors.ErrRestoreInvalidBackup, errors.Cause(err))
 }
@@ -265,7 +265,7 @@ func benchmarkMergeRanges(b *testing.B, filesCount int) {
 	}
 	var err error
 	for i := 0; i < b.N; i++ {
-		_, _, err = restore.MergeFileRanges(files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+		_, _, err = restore.MergeFileRanges(files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 		if err != nil {
 			b.Error(err)
 		}
