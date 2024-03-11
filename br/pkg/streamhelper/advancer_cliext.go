@@ -161,23 +161,19 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 			zap.Int("remained", len(taskCh)))
 		defer log.Info("Finish collecting remaining events in the channel.", zap.String("category", "log backup advancer"))
 		for {
+			if taskCh == nil && pauseCh == nil {
+				return
+			}
+
 			select {
 			case resp, ok := <-taskCh:
-				if !ok {
-					return
-				}
-				if !handleResponse(resp) {
-					return
+				if !ok || !handleResponse(resp) {
+					taskCh = nil
 				}
 			case resp, ok := <-pauseCh:
-				if !ok {
-					return
+				if !ok || !handleResponse(resp) {
+					pauseCh = nil
 				}
-				if !handleResponse(resp) {
-					return
-				}
-			default:
-				return
 			}
 		}
 	}

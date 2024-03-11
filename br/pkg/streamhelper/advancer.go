@@ -560,7 +560,7 @@ func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, erro
 
 	now, err := c.env.FetchCurrentTS(ctx)
 	if err != nil {
-		return true, err
+		return false, err
 	}
 
 	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(c.lastCheckpoint.TS))
