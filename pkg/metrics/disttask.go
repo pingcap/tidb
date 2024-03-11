@@ -69,7 +69,7 @@ func InitDistTaskMetrics() {
 }
 
 // UpdateMetricsForAddTask update metrics when a task is added
-func UpdateMetricsForAddTask(task *proto.Task) {
+func UpdateMetricsForAddTask(task *proto.TaskBase) {
 	DistTaskGauge.WithLabelValues(task.Type.String(), WaitingStatus).Inc()
 	DistTaskStarttimeGauge.WithLabelValues(task.Type.String(), WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 }

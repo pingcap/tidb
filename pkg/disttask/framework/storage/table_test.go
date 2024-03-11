@@ -349,6 +349,11 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 func TestGetTopUnfinishedTasks(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
+	bak := proto.MaxConcurrentTask
+	t.Cleanup(func() {
+		proto.MaxConcurrentTask = bak
+	})
+	proto.MaxConcurrentTask = 4
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 	taskStates := []proto.TaskState{
 		proto.TaskStateSucceed,
@@ -1107,7 +1112,7 @@ func TestSubtasksState(t *testing.T) {
 	require.Greater(t, endTime, ts)
 }
 
-func checkBasicTaskEq(t *testing.T, expectedTask, task *proto.Task) {
+func checkBasicTaskEq(t *testing.T, expectedTask, task *proto.TaskBase) {
 	require.Equal(t, expectedTask.ID, task.ID)
 	require.Equal(t, expectedTask.Key, task.Key)
 	require.Equal(t, expectedTask.Type, task.Type)
@@ -1158,16 +1163,16 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 	taskExecInfos, err := tm.GetTaskExecInfoByExecID(ctx, ":4000")
 	require.NoError(t, err)
 	require.Len(t, taskExecInfos, 1)
-	checkBasicTaskEq(t, tasks[0], taskExecInfos[0].Task)
+	checkBasicTaskEq(t, &tasks[0].TaskBase, taskExecInfos[0].TaskBase)
 	require.Equal(t, 4, taskExecInfos[0].SubtaskConcurrency)
 	// :4001
 	taskExecInfos, err = tm.GetTaskExecInfoByExecID(ctx, ":4001")
 	require.NoError(t, err)
 	require.Len(t, taskExecInfos, 3)
-	checkBasicTaskEq(t, tasks[0], taskExecInfos[0].Task)
+	checkBasicTaskEq(t, &tasks[0].TaskBase, taskExecInfos[0].TaskBase)
 	require.Equal(t, 4, taskExecInfos[0].SubtaskConcurrency)
-	checkBasicTaskEq(t, tasks[2], taskExecInfos[1].Task)
+	checkBasicTaskEq(t, &tasks[2].TaskBase, taskExecInfos[1].TaskBase)
 	require.Equal(t, 6, taskExecInfos[1].SubtaskConcurrency)
-	checkBasicTaskEq(t, tasks[3], taskExecInfos[2].Task)
+	checkBasicTaskEq(t, &tasks[3].TaskBase, taskExecInfos[2].TaskBase)
 	require.Equal(t, 8, taskExecInfos[2].SubtaskConcurrency)
 }

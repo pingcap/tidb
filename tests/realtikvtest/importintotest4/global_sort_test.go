@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -97,9 +98,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
 	// merge-sort data kv
-	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	s.tk.MustExec("truncate table t")
-	result = s.tk.MustQuery(importSQL).Rows()
+	result = s.tk.MustQuery(importSQL + `, __force_merge_step`).Rows()
 	s.Len(result, 1)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
@@ -117,7 +117,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.Eventually(func() bool {
 		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
 		s.NoError(err2)
-		return task.State == "failed"
+		return task.State == proto.TaskStateReverted
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
 	<-scheduler.WaitCleanUpFinished

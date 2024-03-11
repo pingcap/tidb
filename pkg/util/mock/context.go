@@ -22,6 +22,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -55,6 +58,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
+	*exprctximpl.ExprCtxExtendedImpl
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -202,9 +206,19 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
 }
 
+// GetExprCtx returns the expression context of the session.
+func (c *Context) GetExprCtx() exprctx.BuildContext {
+	return c
+}
+
 // GetTableCtx returns the table.MutateContext
 func (c *Context) GetTableCtx() tbctx.MutateContext {
 	return c.tblctx
+}
+
+// GetDistSQLCtx returns the distsql context of the session
+func (c *Context) GetDistSQLCtx() distsqlctx.DistSQLContext {
+	return c
 }
 
 // Txn implements sessionctx.Context Txn interface.
@@ -514,7 +528,8 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
-	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx)
+	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
+	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC

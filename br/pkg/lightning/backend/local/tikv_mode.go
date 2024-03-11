@@ -16,10 +16,10 @@ package local
 
 import (
 	"context"
+	"crypto/tls"
 
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -35,13 +35,13 @@ type TiKVModeSwitcher interface {
 
 // TiKVModeSwitcher is used to switch TiKV nodes between Import and Normal mode.
 type switcher struct {
-	tls       *common.TLS
+	tls       *tls.Config
 	pdHTTPCli pdhttp.Client
 	logger    *zap.Logger
 }
 
 // NewTiKVModeSwitcher creates a new TiKVModeSwitcher.
-func NewTiKVModeSwitcher(tls *common.TLS, pdHTTPCli pdhttp.Client, logger *zap.Logger) TiKVModeSwitcher {
+func NewTiKVModeSwitcher(tls *tls.Config, pdHTTPCli pdhttp.Client, logger *zap.Logger) TiKVModeSwitcher {
 	return &switcher{
 		tls:       tls,
 		pdHTTPCli: pdHTTPCli,

@@ -110,15 +110,16 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		return
 	}
 
-	if recoverFn != nil {
-		recoverFn()
-	}
 	logutil.BgLogger().Error("panic in the recoverable goroutine",
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+
+	if recoverFn != nil {
+		recoverFn()
+	}
 	if quit {
 		// Wait for metrics to be pushed.
 		time.Sleep(time.Second * 15)

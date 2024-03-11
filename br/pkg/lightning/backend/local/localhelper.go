@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -465,35 +464,14 @@ func (local *Backend) waitForScatterRegions(ctx context.Context, regions []*spli
 }
 
 func (local *Backend) checkRegionScatteredOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
-	resp, err := local.splitCli.GetOperator(ctx, regionInfo.Region.GetId())
+	ok, rescatter, err := local.splitCli.IsScatterRegionFinished(ctx, regionInfo.Region.GetId())
 	if err != nil {
-		return false, err
+		return false, errors.Trace(err)
 	}
-	// Heartbeat may not be sent to PD
-	if respErr := resp.GetHeader().GetError(); respErr != nil {
-		// TODO: why this is OK?
-		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
-			return true, nil
-		}
-		return false, errors.Errorf(
-			"failed to get region operator, error type: %s, error message: %s",
-			respErr.GetType().String(), respErr.GetMessage())
+	if !rescatter {
+		return ok, nil
 	}
-	// If the current operator of the region is not 'scatter-region', we could assume
-	// that 'scatter-operator' has finished.
-	if string(resp.GetDesc()) != "scatter-region" {
-		return true, nil
-	}
-	switch resp.GetStatus() {
-	case pdpb.OperatorStatus_RUNNING:
-		return false, nil
-	case pdpb.OperatorStatus_SUCCESS:
-		return true, nil
-	default:
-		log.FromContext(ctx).Debug("scatter-region operator status is abnormal, will scatter region again",
-			logutil.Region(regionInfo.Region), zap.Stringer("status", resp.GetStatus()))
-		return false, local.ScatterRegion(ctx, regionInfo)
-	}
+	return false, local.ScatterRegion(ctx, regionInfo)
 }
 
 func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {

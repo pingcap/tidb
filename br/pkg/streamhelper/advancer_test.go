@@ -258,7 +258,7 @@ func TestClearCache(t *testing.T) {
 	c.splitAndScatter("0012", "0034", "0048")
 
 	clearedCache := make(map[uint64]bool)
-	c.onGetClient = func(u uint64) error {
+	c.onClearCache = func(u uint64) error {
 		// make store u cache cleared
 		clearedCache[u] = true
 		return nil
@@ -270,7 +270,7 @@ func TestClearCache(t *testing.T) {
 		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
 			// mark this store cache cleared
 			failedStoreID = s.GetID()
-			if hasFailed {
+			if !hasFailed {
 				hasFailed = true
 				return errors.New("failed to get checkpoint")
 			}
@@ -287,7 +287,7 @@ func TestClearCache(t *testing.T) {
 	shouldFinishInTime(t, time.Second, "ticking", func() {
 		err = adv.OnTick(ctx)
 	})
-	req.NoError(err)
+	req.Error(err)
 	req.True(failedStoreID > 0, "failed to mark the cluster: ")
 	req.Equal(clearedCache[failedStoreID], true)
 }

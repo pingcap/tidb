@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -628,7 +629,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		colSize[col.ID] = int64(newLen - oldLen)
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
-	return nil
+	return memBuffer.MayFlush()
 }
 
 func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
@@ -1122,6 +1123,9 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		colSize[col.ID] = int64(size) - 1
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
+	if err = memBuffer.MayFlush(); err != nil {
+		return nil, err
+	}
 	return recordID, nil
 }
 
@@ -1399,7 +1403,10 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		colSize[col.ID] = -int64(size - 1)
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, -1, 1, colSize)
-	return err
+	if err != nil {
+		return err
+	}
+	return memBuffer.MayFlush()
 }
 
 func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, row []types.Datum, colIDs []int64) error {
@@ -1671,7 +1678,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 		return colVal, errors.New("Miss column")
 	}
 	if defaultVals[col.Offset].IsNull() {
-		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
+		colVal, err = table.GetColOriginDefaultValue(ctx.GetExprCtx(), col.ToInfo())
 		if err != nil {
 			return colVal, err
 		}
@@ -2300,7 +2307,7 @@ func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []
 }
 
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfo.
-func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
+func SetPBColumnsDefaultValue(ctx expression.BuildContext, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
 		// For virtual columns, we set their default values to NULL so that TiKV will return NULL properly,
 		// They real values will be computed later.

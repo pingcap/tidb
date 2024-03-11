@@ -30,10 +30,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/errctx"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
@@ -177,6 +180,11 @@ func (*MemBuf) Staging() kv.StagingHandle {
 // If the changes are not published by `Release`, they will be discarded.
 func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
+// MayFlush implements the kv.MemBuffer interface.
+func (*MemBuf) MayFlush() error {
+	return nil
+}
+
 // Size returns sum of keys and values length.
 func (mb *MemBuf) Size() int {
 	return mb.size
@@ -264,15 +272,27 @@ func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
 	return nil
 }
 
+type planCtxImpl struct {
+	*Session
+	*planctximpl.PlanCtxExtendedImpl
+}
+
+type exprCtxImpl struct {
+	*Session
+	*exprctximpl.ExprCtxExtendedImpl
+}
+
 // Session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
 type Session struct {
 	sessionctx.Context
 	planctx.EmptyPlanContextExtended
-	txn    transaction
-	Vars   *variable.SessionVars
-	tblctx *tbctximpl.TableContextImpl
+	txn     transaction
+	Vars    *variable.SessionVars
+	exprCtx *exprCtxImpl
+	planctx *planCtxImpl
+	tblctx  *tbctximpl.TableContextImpl
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]any
 }
@@ -333,7 +353,15 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
-	s.tblctx = tbctximpl.NewTableContextImpl(s)
+	s.exprCtx = &exprCtxImpl{
+		Session:             s,
+		ExprCtxExtendedImpl: exprctximpl.NewExprExtendedImpl(s),
+	}
+	s.planctx = &planCtxImpl{
+		Session:             s,
+		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
+	}
+	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprCtx)
 	s.txn.kvPairs = &Pairs{}
 
 	return s
@@ -363,7 +391,12 @@ func (se *Session) GetSessionVars() *variable.SessionVars {
 
 // GetPlanCtx returns the PlanContext.
 func (se *Session) GetPlanCtx() planctx.PlanContext {
-	return se
+	return se.planctx
+}
+
+// GetExprCtx returns the expression context of the session.
+func (se *Session) GetExprCtx() exprctx.BuildContext {
+	return se.exprCtx
 }
 
 // GetTableCtx returns the table.MutateContext

@@ -422,10 +422,11 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	numOuterChks := task.outerResult.NumChunks()
 	if imw.outerMergeCtx.filter != nil {
 		task.outerMatch = make([][]bool, numOuterChks)
+		exprCtx := imw.ctx.GetExprCtx()
 		for i := 0; i < numOuterChks; i++ {
 			chk := task.outerResult.GetChunk(i)
 			task.outerMatch[i] = make([]bool, chk.NumRows())
-			task.outerMatch[i], err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), task.outerMatch[i])
+			task.outerMatch[i], err = expression.VectorizedFilter(exprCtx, imw.ctx.GetSessionVars().EnableVectorizedExpression, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), task.outerMatch[i])
 			if err != nil {
 				return err
 			}
@@ -449,13 +450,14 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.
 	if imw.outerMergeCtx.needOuterSort {
+		exprCtx := imw.ctx.GetExprCtx()
 		slices.SortFunc(task.outerOrderIdx, func(idxI, idxJ chunk.RowPtr) int {
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
 			var c int64
 			var err error
 			for _, keyOff := range imw.keyOff2KeyOffOrderByIdx {
 				joinKey := imw.outerMergeCtx.joinKeys[keyOff]
-				c, _, err = imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
+				c, _, err = imw.outerMergeCtx.compareFuncs[keyOff](exprCtx, joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
 				if c != 0 {
 					break
@@ -628,8 +630,9 @@ func (imw *innerMergeWorker) fetchInnerRowsWithSameKey(ctx context.Context, task
 }
 
 func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) {
+	exprCtx := imw.ctx.GetExprCtx()
 	for _, keyOff := range imw.innerMergeCtx.keyOff2KeyOffOrderByIdx {
-		cmp, _, err := imw.innerMergeCtx.compareFuncs[keyOff](imw.ctx, imw.outerMergeCtx.joinKeys[keyOff], imw.innerMergeCtx.joinKeys[keyOff], outerRow, innerRow)
+		cmp, _, err := imw.innerMergeCtx.compareFuncs[keyOff](exprCtx, imw.outerMergeCtx.joinKeys[keyOff], imw.innerMergeCtx.joinKeys[keyOff], outerRow, innerRow)
 		if err != nil || cmp != 0 {
 			return int(cmp), err
 		}

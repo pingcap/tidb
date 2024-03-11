@@ -321,7 +321,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
-		maxExecutionTime := getMaxExecutionTime(sctx)
+		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
@@ -517,19 +517,13 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 	}
 
-	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
-	if err = a.openExecutor(ctx, e); err != nil {
-		terror.Log(exec.Close(e))
-		return nil, err
-	}
-
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
 	cmd := byte(cmd32)
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.getSQLForProcessInfo()
-		maxExecutionTime := getMaxExecutionTime(sctx)
+		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
@@ -539,6 +533,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+	}
+
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
+	if err = a.openExecutor(ctx, e); err != nil {
+		terror.Log(exec.Close(e))
+		return nil, err
 	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
@@ -808,14 +808,6 @@ func isNoResultPlan(p plannercore.Plan) bool {
 	return false
 }
 
-// getMaxExecutionTime get the max execution timeout value.
-func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
-	if sctx.GetSessionVars().StmtCtx.HasMaxExecutionTime {
-		return sctx.GetSessionVars().StmtCtx.MaxExecutionTime
-	}
-	return sctx.GetSessionVars().MaxExecutionTime
-}
-
 type chunkRowRecordSet struct {
 	rows     []chunk.Row
 	idx      int
@@ -971,10 +963,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
-			stmtText := a.OriginText()
-			if sctx.GetSessionVars().EnableRedactLog {
-				stmtText = parser.Normalize(stmtText)
-			}
+			stmtText := parser.Normalize(a.OriginText(), sctx.GetSessionVars().EnableRedactNew)
 			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
 				"Note this may not be a uniqueness violation.",
 				zap.Error(err),

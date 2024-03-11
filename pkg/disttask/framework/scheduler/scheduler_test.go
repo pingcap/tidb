@@ -56,7 +56,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
 	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(task *proto.TaskBase) proto.Step {
 			switch task.Step {
 			case proto.StepInit:
 				return proto.StepOne

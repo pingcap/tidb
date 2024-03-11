@@ -18,26 +18,26 @@ import "container/heap"
 
 // AnalysisPriorityQueue is a priority queue for TableAnalysisJobs.
 type AnalysisPriorityQueue struct {
-	inner *analysisInnerQueue
+	inner *AnalysisInnerQueue
 }
 
 // NewAnalysisPriorityQueue creates a new AnalysisPriorityQueue.
 func NewAnalysisPriorityQueue() *AnalysisPriorityQueue {
 	q := &AnalysisPriorityQueue{
-		inner: &analysisInnerQueue{},
+		inner: &AnalysisInnerQueue{},
 	}
 	heap.Init(q.inner)
 	return q
 }
 
 // Push adds a job to the priority queue with the given weight.
-func (apq *AnalysisPriorityQueue) Push(job *TableAnalysisJob) {
+func (apq *AnalysisPriorityQueue) Push(job AnalysisJob) {
 	heap.Push(apq.inner, job)
 }
 
 // Pop removes the highest priority job from the queue.
-func (apq *AnalysisPriorityQueue) Pop() *TableAnalysisJob {
-	return heap.Pop(apq.inner).(*TableAnalysisJob)
+func (apq *AnalysisPriorityQueue) Pop() AnalysisJob {
+	return heap.Pop(apq.inner).(AnalysisJob)
 }
 
 // Len returns the number of jobs in the queue.
@@ -45,28 +45,29 @@ func (apq *AnalysisPriorityQueue) Len() int {
 	return apq.inner.Len()
 }
 
-// An analysisInnerQueue implements heap.Interface and holds TableAnalysisJobs.
-type analysisInnerQueue []*TableAnalysisJob
+// An AnalysisInnerQueue implements heap.Interface and holds TableAnalysisJobs.
+// Exported for testing purposes. You should not use this directly.
+type AnalysisInnerQueue []AnalysisJob
 
 // Implement the sort.Interface methods for the priority queue.
 
-func (aq analysisInnerQueue) Len() int { return len(aq) }
-func (aq analysisInnerQueue) Less(i, j int) bool {
+func (aq AnalysisInnerQueue) Len() int { return len(aq) }
+func (aq AnalysisInnerQueue) Less(i, j int) bool {
 	// We want Pop to give us the highest, not lowest, priority, so we use greater than here.
-	return aq[i].Weight > aq[j].Weight
+	return aq[i].GetWeight() > aq[j].GetWeight()
 }
-func (aq analysisInnerQueue) Swap(i, j int) {
+func (aq AnalysisInnerQueue) Swap(i, j int) {
 	aq[i], aq[j] = aq[j], aq[i]
 }
 
 // Push adds an item to the priority queue.
-func (aq *analysisInnerQueue) Push(x any) {
-	item := x.(*TableAnalysisJob)
+func (aq *AnalysisInnerQueue) Push(x any) {
+	item := x.(AnalysisJob)
 	*aq = append(*aq, item)
 }
 
 // Pop removes the highest priority item from the queue.
-func (aq *analysisInnerQueue) Pop() any {
+func (aq *AnalysisInnerQueue) Pop() any {
 	old := *aq
 	n := len(old)
 	item := old[n-1]

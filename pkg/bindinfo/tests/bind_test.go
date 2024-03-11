@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
@@ -858,4 +859,254 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) left join `test` . `t3` on `t2` . `b` = `t3` . `b`")
 
 	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+}
+
+func TestNormalizeStmtForBinding(t *testing.T) {
+	tests := []struct {
+		sql        string
+		normalized string
+		digest     string
+	}{
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+	}
+	for _, test := range tests {
+		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, test.sql)
+		n, digest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		require.Equal(t, test.normalized, n)
+		require.Equal(t, test.digest, digest)
+	}
+}
+
+func showBinding(tk *testkit.TestKit, showStmt string) [][]any {
+	rows := tk.MustQuery(showStmt).Sort().Rows()
+	result := make([][]any, len(rows))
+	for i, r := range rows {
+		result[i] = append(result[i], r[:4]...)
+		result[i] = append(result[i], r[8:10]...)
+	}
+	return result
+}
+
+func removeAllBindings(tk *testkit.TestKit, global bool) {
+	scope := "session"
+	if global {
+		scope = "global"
+	}
+	res := showBinding(tk, fmt.Sprintf("show %v bindings", scope))
+	for _, r := range res {
+		if r[4] == "builtin" {
+			continue
+		}
+		tk.MustExec(fmt.Sprintf("drop %v binding for sql digest '%v'", scope, r[5]))
+	}
+	tk.MustQuery(fmt.Sprintf("show %v bindings", scope)).Check(testkit.Rows()) // empty
+}
+
+func testFuzzyBindingHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for _, db := range []string{"db1", "db2", "db3"} {
+		tk.MustExec(`create database ` + db)
+		tk.MustExec(`use ` + db)
+		tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	}
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+
+	for _, c := range []struct {
+		binding   string
+		qTemplate string
+	}{
+		// use index
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1 where a=1`,
+			`select * from %st1 where a=1000`},
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1 where d<1`,
+			`select * from %st1 where d<10000`},
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1, *.t2 where t1.d<1`,
+			`select * from %st1, t2 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1, *.t2 where t1.d<1`,
+			`select * from t1, %st2 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from *.t1, *.t2 where t1.d<1`,
+			`select * from %st1, t2 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from *.t1, *.t2 where t1.d<1`,
+			`select * from t1, %st2 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from *.t1, *.t2, *.t3 where t1.d<1`,
+			`select * from %st1, t2, t3 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from *.t1, *.t2, *.t3 where t1.d<1`,
+			`select * from t1, t2, %st3 where t1.d<100`},
+
+		// ignore index
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b=1`,
+			`select * from %st1 where b=1000`},
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b>1`,
+			`select * from %st1 where b>1000`},
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b in (1,2)`,
+			`select * from %st1 where b in (1)`},
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b in (1,2)`,
+			`select * from %st1 where b in (1,2,3,4,5)`},
+
+		// order index hint
+		{`create global binding using select /*+ order_index(t1, a) */ a from *.t1 where a<10 order by a limit 10`,
+			`select a from %st1 where a<10000 order by a limit 10`},
+		{`create global binding using select /*+ order_index(t1, b) */ b from *.t1 where b>10 order by b limit 1111`,
+			`select b from %st1 where b>2 order by b limit 10`},
+
+		// no order index hint
+		{`create global binding using select /*+ no_order_index(t1, c) */ c from *.t1 where c<10 order by c limit 10`,
+			`select c from %st1 where c<10000 order by c limit 10`},
+		{`create global binding using select /*+ no_order_index(t1, d) */ d from *.t1 where d>10 order by d limit 1111`,
+			`select d from %st1 where d>2 order by d limit 10`},
+
+		// agg hint
+		{`create global binding using select /*+ hash_agg() */ count(*) from *.t1 group by a`,
+			`select count(*) from %st1 group by a`},
+		{`create global binding using select /*+ stream_agg() */ count(*) from *.t1 group by b`,
+			`select count(*) from %st1 group by b`},
+
+		// to_cop hint
+		{`create global binding using select /*+ agg_to_cop() */ sum(a) from *.t1`,
+			`select sum(a) from %st1`},
+		{`create global binding using select /*+ limit_to_cop() */ a from *.t1 limit 10`,
+			`select a from %st1 limit 101`},
+
+		// index merge hint
+		{`create global binding using select /*+ use_index_merge(t1, c, d) */ * from *.t1 where c=1 or d=1`,
+			`select * from %st1 where c=1000 or d=1000`},
+		{`create global binding using select /*+ no_index_merge() */ * from *.t1 where a=1 or b=1`,
+			`select * from %st1 where a=1000 or b=1000`},
+
+		// join type hint
+		{`create global binding using select /*+ hash_join(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create global binding using select /*+ hash_join(t2) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ hash_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ hash_join_build(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ hash_join_probe(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ merge_join(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create global binding using select /*+ merge_join(t2) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ merge_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ inl_join(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create global binding using select /*+ inl_join(t2) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ inl_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+
+		// no join type hint
+		{`create global binding using select /*+ no_hash_join(t1) */ * from *.t1, *.t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create global binding using select /*+ no_hash_join(t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ no_hash_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ no_merge_join(t1) */ * from *.t1, *.t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create global binding using select /*+ no_merge_join(t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ no_merge_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ no_index_join(t1) */ * from *.t1, *.t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create global binding using select /*+ no_index_join(t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ no_index_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+
+		// join order hint
+		{`create global binding using select /*+ leading(t2) */ * from *.t1, *.t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create global binding using select /*+ leading(t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ leading(t2, t1) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ leading(t1, t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ leading(t1) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ leading(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ leading(t2,t3) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ leading(t2,t3,t1) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+	} {
+		removeAllBindings(tk, true)
+		tk.MustExec(c.binding)
+		for _, currentDB := range []string{"db1", "db2", "db3"} {
+			tk.MustExec(`use ` + currentDB)
+			for _, db := range []string{"db1.", "db2.", "db3.", ""} {
+				query := fmt.Sprintf(c.qTemplate, db)
+				tk.MustExec(query)
+				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+				tk.MustExec(query)
+				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			}
+		}
+	}
+}
+
+func TestFuzzyBindingHints(t *testing.T) {
+	testFuzzyBindingHints(t)
+}
+
+func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for _, db := range []string{"db1", "db2", "db3"} {
+		tk.MustExec(`create database ` + db)
+		tk.MustExec(`use ` + db)
+		tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	}
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+
+	for _, c := range []struct {
+		binding   string
+		qTemplate string
+	}{
+		// use index
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1 where a=1`,
+			`select * from %st1 where a=1000`},
+
+		// ignore index
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b=1`,
+			`select * from %st1 where b=1000`},
+
+		// order index hint
+		{`create global binding using select /*+ order_index(t1, a) */ a from *.t1 where a<10 order by a limit 10`,
+			`select a from %st1 where a<10000 order by a limit 10`},
+	} {
+		removeAllBindings(tk, true)
+		tk.MustExec(c.binding)
+		for _, currentDB := range []string{"db1", "db2", "db3"} {
+			tk.MustExec(`use ` + currentDB)
+			for _, db := range []string{"db1.", "db2.", "db3.", ""} {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil", `return()`))
+				query := fmt.Sprintf(c.qTemplate, db)
+				tk.MustExec(query)
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil"))
+				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+				tk.MustExec(query)
+				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			}
+		}
+	}
 }

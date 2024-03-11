@@ -187,6 +187,12 @@ set role r_stats_meta;
 select count(*)>0 from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';
 count(*)>0
 1
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where upper(TABLE_NAME)='STATS_META';
+count(*)>0
+1
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where lower(TABLE_NAME)='stats_meta';
+count(*)>0
+1
 drop table if exists e, e2;
 CREATE TABLE e ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30)) PARTITION BY RANGE (id) (
 PARTITION p0 VALUES LESS THAN (50),

@@ -164,10 +164,10 @@ func TestPartitionPruningForEQ(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pt := tbl.(table.PartitionedTable)
-	query, err := expression.ParseSimpleExpr(tk.Session(), "a = '2020-01-01 00:00:00'", expression.WithTableInfo("", tbl.Meta()))
+	query, err := expression.ParseSimpleExpr(tk.Session().GetExprCtx(), "a = '2020-01-01 00:00:00'", expression.WithTableInfo("", tbl.Meta()))
 	require.NoError(t, err)
 	dbName := model.NewCIStr(tk.Session().GetSessionVars().CurrentDB)
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(tk.Session(), dbName, tbl.Meta().Name, tbl.Meta().Cols(), tbl.Meta())
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(tk.Session().GetExprCtx(), dbName, tbl.Meta().Name, tbl.Meta().Cols(), tbl.Meta())
 	require.NoError(t, err)
 	// Even the partition is not monotonous, EQ condition should be prune!
 	// select * from t where a = '2020-01-01 00:00:00'
@@ -2180,4 +2180,69 @@ func TestIssue41458(t *testing.T) {
 		op := fields[0]
 		require.Equalf(t, expectedRes[i], op, fmt.Sprintf("Mismatch at index %d.", i))
 	}
+}
+
+func TestIssue48257(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	tk.MustExec("use test")
+
+	// 1. test sync load
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("insert into t value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableFullScan",
+		"└─TableFullScan 2.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("set tidb_opt_objective='determinate'")
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("set tidb_opt_objective='moderate'")
+
+	// 2. test async load
+	tk.MustExec("set tidb_stats_load_sync_wait = 0")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustExec("analyze table t1")
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
+	))
+	tk.MustExec("insert into t1 value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableFullScan",
+		"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false",
+	))
+	tk.MustExec("set tidb_opt_objective='determinate'")
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	require.NoError(t, h.LoadNeededHistograms())
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
+	))
 }

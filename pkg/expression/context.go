@@ -31,31 +31,46 @@ type EvalContext = context.EvalContext
 // BuildContext is used to build an expression
 type BuildContext = context.BuildContext
 
+// OptionalEvalPropKey is an alias of context.OptionalEvalPropKey
+type OptionalEvalPropKey = context.OptionalEvalPropKey
+
+// OptionalEvalPropProvider is an alias of context.OptionalEvalPropProvider
+type OptionalEvalPropProvider = context.OptionalEvalPropProvider
+
+// OptionalEvalPropKeySet is an alias of context.OptionalEvalPropKeySet
+type OptionalEvalPropKeySet = context.OptionalEvalPropKeySet
+
+// OptionalEvalPropDesc is an alias of context.OptionalEvalPropDesc
+type OptionalEvalPropDesc = context.OptionalEvalPropDesc
+
 func sqlMode(ctx EvalContext) mysql.SQLMode {
-	return ctx.GetSessionVars().SQLMode
+	return ctx.SQLMode()
 }
 
 func typeCtx(ctx EvalContext) types.Context {
-	return ctx.GetSessionVars().StmtCtx.TypeCtx()
+	return ctx.TypeCtx()
 }
 
 func errCtx(ctx EvalContext) errctx.Context {
-	return ctx.GetSessionVars().StmtCtx.ErrCtx()
+	return ctx.ErrCtx()
 }
 
-func location(ctx EvalContext) *time.Location {
-	vars := ctx.GetSessionVars()
-	sc := vars.StmtCtx
-	tc := sc.TypeCtx()
-	intest.Assert(vars.Location() == sc.TimeZone())
-	intest.Assert(sc.TimeZone() == tc.Location())
-	return tc.Location()
+func location(ctx EvalContext) (loc *time.Location) {
+	loc = ctx.Location()
+	intest.AssertFunc(func() bool {
+		vars := ctx.GetSessionVars()
+		tc := ctx.TypeCtx()
+		intest.Assert(tc.Location() == loc)
+		intest.Assert(vars.Location() == loc)
+		return true
+	})
+	return
 }
 
 func warningCount(ctx EvalContext) int {
-	return int(ctx.GetSessionVars().StmtCtx.WarningCount())
+	return ctx.WarningCount()
 }
 
 func truncateWarnings(ctx EvalContext, start int) []stmtctx.SQLWarn {
-	return ctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
+	return ctx.TruncateWarnings(start)
 }

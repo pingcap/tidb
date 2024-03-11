@@ -121,7 +121,6 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 // The Iterator must be Closed after use.
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, err error) {
 	var dirtyIter, snapIter kv.Iterator
-
 	if dirtyIter, err = txn.GetMemBuffer().Iter(k, upperBound); err != nil {
 		return nil, err
 	}
@@ -197,7 +196,7 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(txn.KVTxn.GetMemBuffer())
+	return newMemBuffer(txn.KVTxn.GetMemBuffer(), txn.IsPipelined())
 }
 
 func (txn *tikvTxn) SetOption(opt int, val any) {
@@ -333,7 +332,10 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
-	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	if txn.IsPipelined() {
+		return genKeyExistsError("UNKNOWN", key.String(), errors.New("currently pipelined dml doesn't extract value from key exists error"))
+	}
+	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().GetMemDB().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}

@@ -73,6 +73,10 @@ func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.
 	return res, derr.ToTiDBErr(err)
 }
 
+func (c *tikvClient) SetEventListener(listener tikv.ClientEventListener) {
+	c.c.SetEventListener(listener)
+}
+
 // Store wraps tikv.KVStore and provides coprocessor utilities.
 type Store struct {
 	*kvStore

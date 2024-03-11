@@ -188,6 +188,9 @@ type MemBuffer interface {
 
 	// RemoveFromBuffer removes the entry from the buffer. It's used for testing.
 	RemoveFromBuffer(Key)
+
+	// MayFlush will be called in pipelined txn
+	MayFlush() error
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
@@ -218,8 +221,6 @@ type Transaction interface {
 	SetMemoryFootprintChangeHook(func(uint64))
 	// Len returns the number of entries in the DB.
 	Len() int
-	// Reset reset the Transaction to initial states.
-	Reset()
 	// Commit commits the transaction operations to KV store.
 	Commit(context.Context) error
 	// Rollback undoes the transaction operations to KV store.
@@ -278,6 +279,8 @@ type Transaction interface {
 
 	// UpdateMemBufferFlags updates the flags of a node in the mem buffer.
 	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
+	// IsPipelined returns whether the transaction is used for pipelined DML.
+	IsPipelined() bool
 }
 
 // AssertionProto is an interface defined for the assertion protocol.

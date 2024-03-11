@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -66,8 +67,6 @@ type PlanCache interface {
 type Context interface {
 	SessionStatesHandler
 	contextutil.ValueStoreContext
-	exprctx.EvalContext
-	exprctx.BuildContext
 	tablelock.TableLockContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
@@ -99,13 +98,19 @@ type Context interface {
 
 	GetSessionVars() *variable.SessionVars
 
+	// GetExprCtx returns the expression context of the session.
+	GetExprCtx() exprctx.BuildContext
+
 	// GetTableCtx returns the table.MutateContext
 	GetTableCtx() tbctx.MutateContext
 
-	GetSessionManager() util.SessionManager
-
 	// GetPlanCtx gets the plan context of the current session.
 	GetPlanCtx() planctx.PlanContext
+
+	// GetDistSQLCtx gets the distsql ctx of the current session
+	GetDistSQLCtx() distsqlctx.DistSQLContext
+
+	GetSessionManager() util.SessionManager
 
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.

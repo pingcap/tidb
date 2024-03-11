@@ -465,7 +465,7 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 	return &partitionRangeSplitter{
 		byItems:      byItems,
 		numWorkers:   concurrency,
-		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx, byItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx.GetExprCtx(), ctx.GetSessionVars().EnableVectorizedExpression, byItems),
 		idx:          0,
 	}
 }
