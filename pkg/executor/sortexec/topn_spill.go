@@ -98,7 +98,7 @@ func (t *topNSpillHelper) isSpillNeeded() bool {
 
 func (t *topNSpillHelper) isSpillTriggered() bool {
 	t.cond.L.Lock()
- 	defer t.cond.L.Unlock()
+	defer t.cond.L.Unlock()
 	return len(t.sortedRowsInDisk) > 0
 }
 
@@ -177,6 +177,10 @@ func (t *topNSpillHelper) spill() (err error) {
 }
 
 func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
+	if chkHeap.Len() <= 0 {
+		return nil
+	}
+
 	if !chkHeap.isRowPtrsInit {
 		chkHeap.initPtrsImpl()
 	}

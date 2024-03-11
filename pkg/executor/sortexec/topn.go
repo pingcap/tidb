@@ -102,7 +102,10 @@ func (e *TopNExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.，
 func (e *TopNExec) Close() error {
 	close(e.finishCh)
-	// <-e.Parallel.resultChannel // TODO do we need this?
+	if e.fetched.CompareAndSwap(false, true) {
+		close(e.Parallel.resultChannel)
+		return nil
+	}
 
 	if e.chunkChannel != nil {
 		for range e.chunkChannel {
@@ -110,7 +113,10 @@ func (e *TopNExec) Close() error {
 		}
 	}
 
-	return nil // TODO
+	e.chkHeap = nil
+	e.spillHelper = nil
+	e.spillAction = nil
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -313,11 +319,27 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 		}
 	}
 
-	// TODO we may send result rows in spill mode
-	// TODO spill restore
-	// Send result rows
+	e.generateTopNResults()
+}
+
+func (e *TopNExec) generateTopNResultsWithNoSpill() {
 	rowPtrNum := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < rowPtrNum; e.chkHeap.idx++ {
+		if e.chkHeap.idx%1000 == 0 {
+
+		}
 		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
+	}
+}
+
+func (e *TopNExec) generateTopNResultsWithSpill() {
+
+}
+
+func (e *TopNExec) generateTopNResults() {
+	if e.spillHelper.isSpillTriggered() {
+
+	} else {
+		e.generateTopNResultsWithNoSpill()
 	}
 }
