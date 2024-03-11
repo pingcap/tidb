@@ -553,7 +553,6 @@ func EscapeGlobQuestionMark(s string) string {
 	for _, c := range s {
 		if c == '?' {
 			buf.WriteByte('\\')
-			continue
 		}
 		buf.WriteRune(c)
 	}
