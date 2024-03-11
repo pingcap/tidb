@@ -733,7 +733,7 @@ func (rc *Client) GetTSWithRetry(ctx context.Context) (uint64, error) {
 			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
 		}
 		return getTSErr
-	}, utils.NewPDReqBackofferExt())
+	}, utils.NewPDReqBackoffer())
 
 	if err != nil {
 		log.Error("failed to get TS", zap.Error(err))
@@ -747,7 +747,7 @@ func (rc *Client) ResetTS(ctx context.Context, pdCtrl *pdutil.PdController) erro
 	log.Info("reset pd timestamp", zap.Uint64("ts", restoreTS))
 	return utils.WithRetry(ctx, func() error {
 		return pdCtrl.ResetTS(ctx, restoreTS)
-	}, utils.NewPDReqBackofferExt())
+	}, utils.NewPDReqBackoffer())
 }
 
 // GetPlacementRules return the current placement rules.
@@ -760,7 +760,7 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pd
 		i++
 		placementRules, err = pdutil.GetPlacementRules(ctx, pdAddrs[idx], rc.tlsConf)
 		return errors.Trace(err)
-	}, utils.NewPDReqBackofferExt())
+	}, utils.NewPDReqBackoffer())
 	return placementRules, errors.Trace(errRetry)
 }
 
