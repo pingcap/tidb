@@ -191,6 +191,9 @@ type MemBuffer interface {
 
 	// MayFlush will be called in pipelined txn
 	MayFlush() error
+
+	// GetLocal checks if the key exists in the buffer in local memory.
+	GetLocal(context.Context, []byte) ([]byte, error)
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.

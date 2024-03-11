@@ -4307,6 +4307,10 @@ func (s *session) isPipelinedDML() bool {
 	if s.isInternal() {
 		return false
 	}
+	if !s.GetSessionVars().LazyCheckKeyNotExists() {
+		// we enforce that pipelined DML must lazily check key.
+		return false
+	}
 	return s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
 		!config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() && s.sessionVars.BinlogClient == nil
 }

@@ -157,6 +157,11 @@ func (m *memBuffer) MayFlush() error {
 	return err
 }
 
+// GetLocal implements kv.MemBuffer interface
+func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
+	return m.MemBuffer.GetLocal(ctx, key)
+}
+
 type tikvGetter struct {
 	tikv.Getter
 }

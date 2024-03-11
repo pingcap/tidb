@@ -185,6 +185,11 @@ func (*MemBuf) MayFlush() error {
 	return nil
 }
 
+// GetLocal implements the kv.MemBuffer interface.
+func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
+	return mb.Get(ctx, key)
+}
+
 // Size returns sum of keys and values length.
 func (mb *MemBuf) Size() int {
 	return mb.size
