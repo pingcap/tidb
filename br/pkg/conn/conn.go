@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/opentracing/opentracing-go"
@@ -372,6 +373,13 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 		}
 		configAddr := fmt.Sprintf("%s/config", addr.String())
 
+		// we don't need wait too much time to get tikv config.
+		// because we will fall back to use default config when cannot connect to tikv.
+		state := utils.InitialRetryState(
+			16,
+			time.Millisecond*10,
+			time.Second,
+		)
 		err = utils.WithRetry(ctx, func() error {
 			resp, e := cli.Get(configAddr)
 			if e != nil {
@@ -383,7 +391,7 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 			}
 			_ = resp.Body.Close()
 			return nil
-		}, utils.NewPDReqBackoffer())
+		}, &state)
 		if err != nil {
 			// if one store failed, break and return error
 			return err

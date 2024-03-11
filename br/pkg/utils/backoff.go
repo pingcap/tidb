@@ -31,9 +31,9 @@ const (
 	backupSSTWaitInterval    = 2 * time.Second
 	backupSSTMaxWaitInterval = 3 * time.Second
 
-	resetTSRetryTime       = 16
-	resetTSWaitInterval    = 50 * time.Millisecond
-	resetTSMaxWaitInterval = 500 * time.Millisecond
+	resetTSRetryTime       = 32
+	resetTSWaitInterval    = 1 * time.Second
+	resetTSMaxWaitInterval = 16 * time.Second
 
 	resetTSRetryTimeExt       = 600
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
