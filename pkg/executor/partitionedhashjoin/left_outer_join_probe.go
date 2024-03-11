@@ -15,8 +15,6 @@
 package partitionedhashjoin
 
 import (
-	"unsafe"
-
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -26,11 +24,10 @@ type leftOuterJoinProbe struct {
 	innerJoinProbe
 	isNotMatchedRows []bool
 	// used in scanHT when use left table as build side
-	hashTableToScan       int
-	scanStartIndex        int
-	scanEndIndex          int
-	currentScanIndex      int
-	currentRowTobeChecked unsafe.Pointer
+	scanStartIndex uint64
+	scanEndIndex   uint64
+	currentRowIter *rowIter
+	endRowIter     *rowIter
 }
 
 func (j *leftOuterJoinProbe) setChunkForProbe(chunk *chunk.Chunk) (err error) {
@@ -55,7 +52,7 @@ func (j *leftOuterJoinProbe) isScanRowTableDone() bool {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
-	return j.currentScanIndex >= j.scanEndIndex
+	return j.currentRowIter.equals(j.endRowIter)
 }
 
 func (j *leftOuterJoinProbe) scanRowTable(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
@@ -66,29 +63,22 @@ func (j *leftOuterJoinProbe) scanRowTable(joinResult *util.HashjoinWorkerResult)
 	if joinResult.Chk.IsFull() {
 		return joinResult
 	}
-	buildRows := j.ctx.joinHashTable.tables[j.hashTableToScan].hashTable
-	if j.currentScanIndex == -1 {
-		j.currentScanIndex = j.scanStartIndex
-		j.currentRowTobeChecked = buildRows[j.currentScanIndex]
+	if j.currentRowIter == nil {
+		j.currentRowIter = j.ctx.joinHashTable.createRowIter(j.scanStartIndex)
+		j.endRowIter = j.ctx.joinHashTable.createRowIter(j.scanEndIndex)
 	}
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
 	remainCap := joinResult.Chk.RequiredRows() - joinResult.Chk.NumRows()
-	for insertedRows < remainCap && j.currentScanIndex < j.scanEndIndex {
-		if j.currentRowTobeChecked != nil {
-			if !meta.isCurrentRowUsed(j.currentRowTobeChecked) {
-				// append build side of this row
-				j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: j.currentRowTobeChecked, rowData: nil, currentColumnIndex: 0}, -1, 0)
-				joinResult.Chk.IncNumVirtualRows()
-				insertedRows++
-			}
-			j.currentRowTobeChecked = getNextRowAddress(j.currentRowTobeChecked)
-		} else {
-			j.currentScanIndex++
-			if j.currentScanIndex < j.scanEndIndex {
-				j.currentRowTobeChecked = buildRows[j.currentScanIndex]
-			}
+	for insertedRows < remainCap && !j.currentRowIter.equals(j.endRowIter) {
+		currentRow := j.currentRowIter.getValue()
+		if !meta.isCurrentRowUsed(currentRow) {
+			// append build side of this row
+			j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: currentRow, rowData: nil, currentColumnIndex: 0}, -1, 0)
+			joinResult.Chk.IncNumVirtualRows()
+			insertedRows++
 		}
+		j.currentRowIter.next()
 	}
 	// append probe side in batch
 	colOffset := len(j.lUsed)
