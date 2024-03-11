@@ -20,7 +20,8 @@ func InitRedact(redactLog bool) {
 
 // NeedRedact returns whether to redact log
 func NeedRedact() bool {
-	return errors.RedactLogEnabled.Load() != errors.RedactLogDisable
+	mode := errors.RedactLogEnabled.Load()
+	return mode != errors.RedactLogDisable && mode != ""
 }
 
 // String receives string argument and return omitted information if redact log enabled
