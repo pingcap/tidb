@@ -85,6 +85,7 @@ func NewCluster() (*Cluster, error) {
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
 	server.RunInGoTest = true
+	server.RunInGoTestChan = make(chan struct{})
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
 	// let tidb random select a port
@@ -104,6 +105,7 @@ func (mock *Cluster) Start() error {
 			panic(err1)
 		}
 	}()
+	<-server.RunInGoTestChan
 	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
@@ -178,7 +180,8 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	}
 	if retry == retryTime {
 		log.Panic("failed to connect HTTP status in every 10 ms",
-			zap.Int("retryTime", retryTime))
+			zap.Int("retryTime", retryTime),
+			zap.String("url", statusURL))
 	}
 	return strings.SplitAfter(dsn, "/")[0]
 }

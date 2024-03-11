@@ -162,19 +162,19 @@ func TestTLSAuto(t *testing.T) {
 	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
 	err := os.MkdirAll(cfg.TempStoragePath, 0700)
 	require.NoError(t, err)
-	server, err := server.NewServer(cfg, ts.tidbdrv)
+	server.RunInGoTestChan = make(chan struct{})
+	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	srv.SetDomain(ts.domain)
 	go func() {
-		err := server.Run(nil)
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	err = cli.RunTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
 	require.NoError(t, err)
-
-	server.Close()
+	srv.Close()
 }
 
 func TestTLSBasic(t *testing.T) {
@@ -208,15 +208,16 @@ func TestTLSBasic(t *testing.T) {
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
-	server, err := server.NewServer(cfg, ts.tidbdrv)
+	server.RunInGoTestChan = make(chan struct{})
+	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	srv.SetDomain(ts.domain)
 	go func() {
-		err := server.Run(nil)
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	err = cli.RunTestTLSConnection(t, connOverrider) // We should establish connection successfully.
 	require.NoError(t, err)
 	cli.RunTestRegression(t, connOverrider, "TLSRegression")
@@ -230,7 +231,7 @@ func TestTLSBasic(t *testing.T) {
 
 	// Test SSL/TLS session vars
 	var v *variable.SessionVars
-	stats, err := server.Stats(v)
+	stats, err := srv.Stats(v)
 	require.NoError(t, err)
 	_, hasKey := stats["Ssl_server_not_after"]
 	require.True(t, hasKey)
@@ -239,7 +240,7 @@ func TestTLSBasic(t *testing.T) {
 	require.Equal(t, serverCert.NotAfter.Format("Jan _2 15:04:05 2006 MST"), stats["Ssl_server_not_after"])
 	require.Equal(t, serverCert.NotBefore.Format("Jan _2 15:04:05 2006 MST"), stats["Ssl_server_not_before"])
 
-	server.Close()
+	srv.Close()
 }
 
 func TestTLSVerify(t *testing.T) {
@@ -272,16 +273,18 @@ func TestTLSVerify(t *testing.T) {
 		SSLCert: fileName("server-cert.pem"),
 		SSLKey:  fileName("server-key.pem"),
 	}
-	server, err := server.NewServer(cfg, ts.tidbdrv)
+	server.RunInGoTestChan = make(chan struct{})
+	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.domain)
-	defer server.Close()
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	srv.SetDomain(ts.domain)
+	defer srv.Close()
+
 	go func() {
-		err := server.Run(nil)
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.RunTestTLSConnection(t, nil)
 	require.NoError(t, err)
@@ -377,16 +380,17 @@ func TestErrorNoRollback(t *testing.T) {
 		SSLCert: "/tmp/server-cert-rollback.pem",
 		SSLKey:  "/tmp/server-key-rollback.pem",
 	}
-	server, err := server.NewServer(cfg, ts.tidbdrv)
+	server.RunInGoTestChan = make(chan struct{})
+	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	srv.SetDomain(ts.domain)
 	go func() {
-		err := server.Run(nil)
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-	defer server.Close()
-	time.Sleep(time.Millisecond * 100)
+	defer srv.Close()
+	<-server.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
 	}
@@ -395,11 +399,11 @@ func TestErrorNoRollback(t *testing.T) {
 	os.Remove("/tmp/server-key-rollback.pem")
 	err = cli.RunReloadTLS(t, connOverrider, false)
 	require.Error(t, err)
-	tlsCfg := server.GetTLSConfig()
+	tlsCfg := srv.GetTLSConfig()
 	require.NotNil(t, tlsCfg)
 	err = cli.RunReloadTLS(t, connOverrider, true)
 	require.NoError(t, err)
-	tlsCfg = server.GetTLSConfig()
+	tlsCfg = srv.GetTLSConfig()
 	require.Nil(t, tlsCfg)
 }
 
@@ -522,15 +526,17 @@ func TestReloadTLS(t *testing.T) {
 		SSLCert: "/tmp/server-cert-reload.pem",
 		SSLKey:  "/tmp/server-key-reload.pem",
 	}
-	server, err := server.NewServer(cfg, ts.tidbdrv)
+	server.RunInGoTestChan = make(chan struct{})
+	srv, err := server.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	server.SetDomain(ts.domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	srv.SetDomain(ts.domain)
+
 	go func() {
-		err := server.Run(nil)
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	// The client provides a valid certificate.
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
@@ -539,7 +545,7 @@ func TestReloadTLS(t *testing.T) {
 	require.NoError(t, err)
 
 	// try reload a valid cert.
-	tlsCfg := server.GetTLSConfig()
+	tlsCfg := srv.GetTLSConfig()
 	cert, err := x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
 	require.NoError(t, err)
 	oldExpireTime := cert.NotAfter
@@ -563,7 +569,7 @@ func TestReloadTLS(t *testing.T) {
 	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
 
-	tlsCfg = server.GetTLSConfig()
+	tlsCfg = srv.GetTLSConfig()
 	cert, err = x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
 	require.NoError(t, err)
 	newExpireTime := cert.NotAfter
@@ -590,5 +596,5 @@ func TestReloadTLS(t *testing.T) {
 	err = cli.RunTestTLSConnection(t, connOverrider)
 	require.NotNil(t, err)
 	require.Truef(t, isTLSExpiredError(err), "real error is %+v", err)
-	server.Close()
+	srv.Close()
 }
