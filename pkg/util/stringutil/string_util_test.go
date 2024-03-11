@@ -202,7 +202,7 @@ func TestEscapeGlobExceptAsterisk(t *testing.T) {
 		{`[1-2]`, `\[1-2\]`},
 	}
 	for _, pair := range cases {
-		require.Equal(t, pair[1], EscapeGlobExceptAsterisk(pair[0]))
+		require.Equal(t, pair[1], EscapeGlobQuestionMark(pair[0]))
 	}
 }
 
