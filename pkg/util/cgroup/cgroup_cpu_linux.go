@@ -81,10 +81,7 @@ func inContainer(path string) bool {
 	// 	- check keywords inside /proc/self/cgroup (for cgroup V1)
 	// 	- check keywords inside /proc/self/mountinfo (for cgroup V2)
 	//
-	// but there might be false positive when check keywords, so for cgroup V2,
-	// we also check where there is any mount point which is on overlay.
-	// NOTE: this check is not always correct, as container can use other filesystem
-	// as storage driver, see https://docs.docker.com/storage/storagedriver/select-storage-driver/
+	// but there might be false positive when check keywords only.
 	containsKeywords := strings.Contains(string(v), "docker") ||
 		strings.Contains(string(v), "kubepods") ||
 		strings.Contains(string(v), "containerd")
