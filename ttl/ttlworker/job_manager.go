@@ -61,6 +61,8 @@ const taskGCTemplate = `DELETE task FROM
 	WHERE job.table_id IS NULL`
 
 const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
+const ttlTableStatusGCWithoutIDTemplate = `DELETE FROM mysql.tidb_ttl_table_status WHERE current_job_status IS NULL`
+const ttlTableStatusGCWithIDTemplate = ttlTableStatusGCWithoutIDTemplate + ` AND table_id NOT IN (%s)`
 
 const timeFormat = "2006-01-02 15:04:05"
 
@@ -74,6 +76,17 @@ func setTableStatusOwnerSQL(uuid string, tableID int64, jobStart time.Time, now 
 
 func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []interface{}) {
 	return updateHeartBeatTemplate, []interface{}{now.Format(timeFormat), tableID, id}
+}
+
+func gcTTLTableStatusGCSQL(existIDs []int64) string {
+	existIDStrs := make([]string, 0, len(existIDs))
+	for _, id := range existIDs {
+		existIDStrs = append(existIDStrs, strconv.Itoa(int(id)))
+	}
+	if len(existIDStrs) > 0 {
+		return fmt.Sprintf(ttlTableStatusGCWithIDTemplate, strings.Join(existIDStrs, ","))
+	}
+	return ttlTableStatusGCWithoutIDTemplate
 }
 
 // JobManager schedules and manages the ttl jobs on this instance
@@ -184,7 +197,7 @@ func (m *JobManager) jobLoop() error {
 			}
 		case <-gcTicker:
 			gcCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			DoGC(gcCtx, se)
+			m.DoGC(gcCtx, se)
 			cancel()
 		// Job Schedule loop:
 		case <-updateJobHeartBeatTicker:
@@ -444,6 +457,23 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 			}
 		}
 		return
+	}
+
+	// if the table of a running job disappears, also cancel it
+	for _, job := range m.runningJobs {
+		_, ok := m.infoSchemaCache.Tables[job.tbl.ID]
+		if ok {
+			continue
+		}
+
+		// when the job is locked, it can be found in `infoSchemaCache`. Therefore, it must have been dropped.
+		logutil.Logger(m.ctx).Info("cancel job because the table has been dropped or it's no longer TTL table", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
+		summary, err := summarizeErr(errors.New("TTL table has been removed or the TTL on this table has been stopped"))
+		if err != nil {
+			logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+		}
+		m.removeJob(job)
+		job.finish(se, now, summary)
 	}
 
 	// don't lock job if there's no free scan workers in local
@@ -799,7 +829,22 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
 }
 
 // DoGC deletes some old TTL job histories and redundant scan tasks
-func DoGC(ctx context.Context, se session.Session) {
+func (m *JobManager) DoGC(ctx context.Context, se session.Session) {
+	// Remove the table not exist in info schema cache.
+	// Delete the table status before deleting the tasks. Therefore the related tasks
+	if err := m.updateInfoSchemaCache(se); err == nil {
+		// only remove table status after updating info schema without error
+		existIDs := make([]int64, 0, len(m.infoSchemaCache.Tables))
+		for id := range m.infoSchemaCache.Tables {
+			existIDs = append(existIDs, id)
+		}
+		if _, err := se.ExecuteSQL(ctx, gcTTLTableStatusGCSQL(existIDs)); err != nil {
+			logutil.Logger(ctx).Warn("fail to gc ttl table status", zap.Error(err))
+		}
+	} else {
+		logutil.Logger(m.ctx).Warn("failed to update info schema cache", zap.Error(err))
+	}
+
 	if _, err := se.ExecuteSQL(ctx, taskGCTemplate); err != nil {
 		logutil.Logger(ctx).Warn("fail to gc redundant scan task", zap.Error(err))
 	}
