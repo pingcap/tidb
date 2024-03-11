@@ -58,6 +58,9 @@ const (
 
 	TiDBOptMPPOuterJoinFixedBuildSide = "tidb_opt_mpp_outer_join_fixed_build_side"
 
+	// TiDBOptUseNewHashJoin is used to disable/enable new hash join in TiDB
+	TiDBOptUseNewHashJoin = "tidb_opt_use_new_hash_join"
+
 	// TiDBOptDistinctAggPushDown is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -1194,6 +1197,7 @@ const (
 	DefOptDeriveTopN                               = false
 	DefOptCartesianBCJ                             = 1
 	DefOptMPPOuterJoinFixedBuildSide               = false
+	DefOptUseNewHashJoin                           = false
 	DefOptWriteRowID                               = false
 	DefOptEnableCorrelationAdjustment              = true
 	DefOptLimitPushDownThreshold                   = 100

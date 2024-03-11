@@ -44,30 +44,6 @@ var (
 	_ exec.Executor = &PartitionedHashJoinExec{}
 )
 
-// IsSupportedJoin returns true if current join is supported by partitioned hash join
-func IsSupportedJoin(v *plannercore.PhysicalHashJoin) bool {
-	switch v.JoinType {
-	case plannercore.LeftOuterJoin, plannercore.InnerJoin:
-		// null aware join is not supported yet
-		if len(v.LeftNAJoinKeys) > 0 {
-			return false
-		}
-		// cross join is not supported
-		if len(v.LeftJoinKeys) == 0 {
-			return false
-		}
-		// NullEQ is not supported yet
-		for _, value := range v.IsNullEQ {
-			if value {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
 type PartitionedHashJoinCtx struct {
 	SessCtx   sessionctx.Context
 	allocPool chunk.Allocator

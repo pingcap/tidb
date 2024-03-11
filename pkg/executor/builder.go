@@ -1690,7 +1690,7 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 }
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
-	if partitionedhashjoin.IsSupportedJoin(v) {
+	if v.SCtx().GetSessionVars().UseNewHashJoinImpl && v.CanUseNewHashJoin() {
 		return b.buildPartitionedHashJoin(v)
 	}
 	leftExec := b.build(v.Children()[0])
