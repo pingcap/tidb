@@ -115,6 +115,33 @@ type JoinHashTable struct {
 	partitionNumber uint64
 }
 
+type rowIter struct {
+	table           *JoinHashTable
+	subTableIndex   int
+	rowSegmentIndex int
+	rowIndex        uint64
+}
+
+func (ri *rowIter) getValue() unsafe.Pointer {
+	return ri.table.tables[ri.subTableIndex].rowData.segments[ri.rowSegmentIndex].rowLocations[ri.rowIndex]
+}
+
+func (ri *rowIter) next() {
+	ri.rowIndex++
+	if ri.rowIndex == ri.table.tables[ri.subTableIndex].rowData.segments[ri.rowSegmentIndex].rowCount() {
+		ri.rowSegmentIndex++
+		ri.rowIndex = 0
+		if ri.rowSegmentIndex == len(ri.table.tables[ri.subTableIndex].rowData.segments) {
+			ri.subTableIndex++
+			ri.rowSegmentIndex = 0
+		}
+	}
+}
+
+func (ri *rowIter) equals(other *rowIter) bool {
+	return ri.subTableIndex == other.subTableIndex && ri.rowSegmentIndex == other.rowSegmentIndex && ri.rowIndex == other.rowIndex
+}
+
 func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *JoinHashTable {
 	jht := &JoinHashTable{
 		isThreadSafe:    isThreadSafe,
@@ -127,6 +154,36 @@ func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *Join
 	return jht
 }
 
+func (jht *JoinHashTable) createRowIter(pos uint64) *rowIter {
+	if pos < 0 || pos > jht.totalRowCount() {
+		panic("invalid call to createRowIter, the input pos should be in [0, totalRowCount]")
+	}
+	if pos == jht.totalRowCount() {
+		return &rowIter{
+			table:           jht,
+			subTableIndex:   len(jht.tables),
+			rowSegmentIndex: 0,
+			rowIndex:        0,
+		}
+	}
+	subTableIndex := 0
+	for pos >= jht.tables[subTableIndex].rowData.rowCount() {
+		pos -= jht.tables[subTableIndex].rowData.rowCount()
+		subTableIndex++
+	}
+	rowSegmentIndex := 0
+	for pos >= jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount() {
+		pos -= jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount()
+		rowSegmentIndex++
+	}
+	return &rowIter{
+		table:           jht,
+		subTableIndex:   subTableIndex,
+		rowSegmentIndex: rowSegmentIndex,
+		rowIndex:        pos,
+	}
+}
+
 func (jht *JoinHashTable) isHashTableEmpty() bool {
 	for _, subTable := range jht.tables {
 		if !subTable.isHashTableEmpty {
@@ -134,6 +191,14 @@ func (jht *JoinHashTable) isHashTableEmpty() bool {
 		}
 	}
 	return true
+}
+
+func (jht *JoinHashTable) totalRowCount() uint64 {
+	ret := uint64(0)
+	for _, table := range jht.tables {
+		ret += table.rowData.rowCount()
+	}
+	return ret
 }
 
 func (jht *JoinHashTable) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {

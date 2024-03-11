@@ -69,12 +69,12 @@ func newRowTableSegment(rowCnt int) *rowTableSegment {
 	}
 }
 
-func (rts *rowTableSegment) rowCount() int64 {
-	return int64(len(rts.rowLocations))
+func (rts *rowTableSegment) rowCount() uint64 {
+	return uint64(len(rts.rowLocations))
 }
 
-func (rts *rowTableSegment) validKeyCount() int64 {
-	return int64(len(rts.validJoinKeyPos))
+func (rts *rowTableSegment) validKeyCount() uint64 {
+	return uint64(len(rts.validJoinKeyPos))
 }
 
 func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
@@ -378,16 +378,16 @@ func (rt *rowTable) merge(other *rowTable) {
 	rt.segments = append(rt.segments, other.segments...)
 }
 
-func (rt *rowTable) rowCount() int64 {
-	ret := int64(0)
+func (rt *rowTable) rowCount() uint64 {
+	ret := uint64(0)
 	for _, s := range rt.segments {
 		ret += s.rowCount()
 	}
 	return ret
 }
 
-func (rt *rowTable) validKeyCount() int64 {
-	ret := int64(0)
+func (rt *rowTable) validKeyCount() uint64 {
+	ret := uint64(0)
 	for _, s := range rt.segments {
 		ret += s.validKeyCount()
 	}
