@@ -551,9 +551,9 @@ func EscapeGlobQuestionMark(s string) string {
 	var buf strings.Builder
 	buf.Grow(len(s))
 	for _, c := range s {
-		switch c {
-		case '?':
+		if c == '?' {
 			buf.WriteByte('\\')
+			continue
 		}
 		buf.WriteRune(c)
 	}
