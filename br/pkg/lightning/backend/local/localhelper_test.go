@@ -271,11 +271,8 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	return regions, err
 }
 
-func (c *testSplitClient) IsScatterRegionFinished(
-	ctx context.Context,
-	regionID uint64,
-) (scatterDone bool, needRescatter bool, scatterErr error) {
-	return true, false, nil
+func (c *testSplitClient) WaitForScatterRegion(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
 }
 
 func cloneRegion(region *split.RegionInfo) *split.RegionInfo {
