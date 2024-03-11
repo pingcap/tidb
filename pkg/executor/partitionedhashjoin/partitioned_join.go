@@ -91,7 +91,6 @@ type ProbeWorker struct {
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe          JoinProbe
-	rowIters           *chunk.Iterator4Slice
 	ProbeChkResourceCh chan *probeChkResource
 	joinChkResourceCh  chan *chunk.Chunk
 	probeResultCh      chan *chunk.Chunk
