@@ -2510,7 +2510,7 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 
 func isAnalyzeTableSQL(sql string) bool {
 	// Get rid of the comments.
-	normalizedSQL := parser.Normalize(sql)
+	normalizedSQL := parser.Normalize(sql, "ON")
 	return strings.HasPrefix(normalizedSQL, "analyze table")
 }
 

@@ -186,6 +186,12 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			perIndexKVMemSizePerCon: 153391689,
 		},
 		{
+			createSQL:               "create table t (a int, b int, c int, primary key(a,b,c) clustered, key(b,c), unique(b), unique(c), key(a,b))",
+			numOfIndexGenKV:         4,
+			dataKVMemSizePerCon:     460175067,
+			perIndexKVMemSizePerCon: 153391689,
+		},
+		{
 			createSQL:               "create table t (a int, b int, c int, primary key(a,b,c) nonclustered, key(b,c), unique(b), unique(c), key(a,b))",
 			numOfIndexGenKV:         5,
 			dataKVMemSizePerCon:     402653184,
@@ -195,25 +201,27 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 
 	for _, c := range cases {
 		p := parser.New()
-		node, err := p.ParseOneStmt(c.createSQL, "", "")
-		require.NoError(t, err)
-		sctx := utilmock.NewContext()
-		info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
-		require.NoError(t, err)
-		info.State = model.StatePublic
+		t.Run(c.createSQL, func(t *testing.T) {
+			node, err := p.ParseOneStmt(c.createSQL, "", "")
+			require.NoError(t, err)
+			sctx := utilmock.NewContext()
+			info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+			require.NoError(t, err)
+			info.State = model.StatePublic
 
-		require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
-		dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(&proto.StepResource{
-			Mem: proto.NewAllocatable(2 * units.GiB),
-		}, &importer.Plan{
-			DesiredTableInfo: info,
-			ThreadCnt:        1,
+			require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
+			dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(&proto.StepResource{
+				Mem: proto.NewAllocatable(2 * units.GiB),
+			}, &importer.Plan{
+				DesiredTableInfo: info,
+				ThreadCnt:        1,
+			})
+			require.Equal(t, c.dataKVMemSizePerCon, dataKVMemSizePerCon, c.createSQL)
+			if c.numOfIndexGenKV > 0 {
+				require.Equal(t, c.perIndexKVMemSizePerCon, perIndexKVMemSizePerCon, c.createSQL)
+			}
+			require.LessOrEqual(t, c.dataKVMemSizePerCon+c.perIndexKVMemSizePerCon*uint64(c.numOfIndexGenKV), uint64(units.GiB))
 		})
-		require.Equal(t, c.dataKVMemSizePerCon, dataKVMemSizePerCon, c.createSQL)
-		if c.numOfIndexGenKV > 0 {
-			require.Equal(t, c.perIndexKVMemSizePerCon, perIndexKVMemSizePerCon, c.createSQL)
-		}
-		require.LessOrEqual(t, c.dataKVMemSizePerCon+c.perIndexKVMemSizePerCon*uint64(c.numOfIndexGenKV), uint64(units.GiB))
 	}
 }
 

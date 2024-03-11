@@ -46,7 +46,7 @@ func TestLogFormat(t *testing.T) {
 		StmtCtx:           stmtctx.NewStmtCtx(),
 		RefCountOfStmtCtx: &refCount,
 		MemTracker:        mem,
-		RedactSQL:         false,
+		RedactSQL:         "",
 		SessionAlias:      "alias123",
 	}
 	costTime := time.Second * 233

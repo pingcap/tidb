@@ -108,6 +108,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -870,6 +871,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	var err error
 	txnSize := s.txn.Size()
 	isPessimistic := s.txn.IsPessimistic()
+	isPipelined := s.txn.IsPipelined()
 	r, ctx := tracing.StartRegionEx(ctx, "session.doCommitWithRetry")
 	defer r.End()
 
@@ -888,7 +890,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
+		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic && !isPipelined {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.GetSQLLabel()),
 				zap.Error(err),
@@ -1171,8 +1173,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
 				sql := sqlForLog(st.GetTextToLog(false))
-				if !sessVars.EnableRedactLog {
-					sql += sessVars.PlanCacheParams.String()
+				if sessVars.EnableRedactNew != "ON" {
+					sql += redact.Redact(sessVars.EnableRedactNew, sessVars.PlanCacheParams.String())
 				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -1525,7 +1527,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
 		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
-		RedactSQL:             s.sessionVars.EnableRedactLog,
+		RedactSQL:             s.sessionVars.EnableRedactNew,
 		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
 	}
@@ -1667,11 +1669,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
-			if s.sessionVars.EnableRedactLog {
-				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			} else {
-				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			}
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.Redact(s.sessionVars.EnableRedactNew, sql)))
 			s.sessionVars.StmtCtx.AppendError(err)
 		}
 		return nil, err
@@ -1721,11 +1719,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 	if err != nil {
 		s.rollbackOnError(ctx)
 		logSQL := sql[:min(500, len(sql))]
-		if s.sessionVars.EnableRedactLog {
-			logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
-		} else {
-			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
-		}
+		logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.Redact(s.sessionVars.EnableRedactNew, logSQL)))
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
@@ -2213,9 +2207,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		if !s.sessionVars.InRestrictedSQL {
 			if !variable.ErrUnknownSystemVar.Equal(err) {
 				sql := stmtNode.Text()
-				if s.sessionVars.EnableRedactLog {
-					sql = parser.Normalize(sql)
-				}
+				sql = parser.Normalize(sql, s.sessionVars.EnableRedactNew)
 				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
 					zap.String("SQL", sql))
 			}
@@ -3823,9 +3815,10 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	})
 
 	s.txn.changeToPending(&txnFuture{
-		future:   future,
-		store:    s.store,
-		txnScope: scope,
+		future:    future,
+		store:     s.store,
+		txnScope:  scope,
+		pipelined: s.isPipelinedDML(),
 	})
 	return nil
 }
@@ -3941,8 +3934,8 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		}
 
 		query = executor.QueryReplacer.Replace(query)
-		if !vars.EnableRedactLog {
-			query += vars.PlanCacheParams.String()
+		if vars.EnableRedactNew != "ON" {
+			query += redact.Redact(vars.EnableRedactNew, vars.PlanCacheParams.String())
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
@@ -4296,6 +4289,26 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 	}
 
 	return indexusage.NewStmtIndexUsageCollector(s.idxUsageCollector)
+}
+
+// isPipelinedDML returns the current statement can be executed as a pipelined DML.
+func (s *session) isPipelinedDML() bool {
+	if !s.sessionVars.BulkDMLEnabled {
+		return false
+	}
+	stmtCtx := s.sessionVars.StmtCtx
+	if stmtCtx == nil {
+		return false
+	}
+	if !stmtCtx.InInsertStmt && !stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt {
+		// not a DML
+		return false
+	}
+	if s.isInternal() {
+		return false
+	}
+	return s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
+		!config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() && s.sessionVars.BinlogClient == nil
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.

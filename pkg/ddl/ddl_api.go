@@ -1661,6 +1661,9 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 
 	if c.GetDefaultValue() != nil {
 		if c.DefaultIsExpr {
+			if mysql.HasAutoIncrementFlag(c.GetFlag()) {
+				return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
+			}
 			return nil
 		}
 		if _, err := table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo()); err != nil {
@@ -5490,6 +5493,8 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		if err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
+	} else {
+		hasDefaultValue = true
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
@@ -5526,8 +5531,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// ProcessColumnOptions process column options.
-func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// ProcessModifyColumnOptions process column options.
+func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
@@ -5605,7 +5610,8 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	return nil
 }
 
-func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column, outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
+func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column,
+	outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
 	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 	processColumnFlags(col)
 
@@ -5774,7 +5780,7 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = ProcessColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -6280,8 +6286,8 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 	// Clean the NoDefaultValueFlag value.
 	col.DelFlag(mysql.NoDefaultValueFlag)
+	col.DefaultIsExpr = false
 	if len(specNewColumn.Options) == 0 {
-		col.DefaultIsExpr = false
 		err = col.SetDefaultValue(nil)
 		if err != nil {
 			return errors.Trace(err)
@@ -8140,15 +8146,15 @@ func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo,
 	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
-func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]string, error) {
+func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]types.Datum, error) {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
-	valStrings := make([]string, 0, len(colTypes))
+	valDatums := make([]types.Datum, 0, len(colTypes))
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
-			valStrings = append(valStrings, partitionMaxValue)
+			valDatums = append(valDatums, types.NewStringDatum(partitionMaxValue))
 			continue
 		}
 		if d, ok := colExpr.(*ast.DefaultExpr); ok {
@@ -8194,13 +8200,9 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes 
 		if err != nil {
 			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
-		s, err := newVal.ToString()
-		if err != nil {
-			return nil, err
-		}
-		valStrings = append(valStrings, s)
+		valDatums = append(valDatums, newVal)
 	}
-	return valStrings, nil
+	return valDatums, nil
 }
 
 // LockTables uses to execute lock tables statement.

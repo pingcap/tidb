@@ -247,8 +247,10 @@ func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		if idxInfo.Primary && !tblInfo.HasClusteredIndex() {
-			nonClusteredPK = true
+		if idxInfo.Primary {
+			if !tblInfo.HasClusteredIndex() {
+				nonClusteredPK = true
+			}
 			continue
 		}
 		count++

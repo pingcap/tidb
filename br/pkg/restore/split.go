@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,11 +23,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type Granularity string
@@ -254,7 +250,10 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 		}
 		return nil, errors.Trace(err)
 	}
-	rs.ScatterRegions(ctx, append(newRegions, regionInfo))
+	err2 := rs.client.ScatterRegions(ctx, append(newRegions, regionInfo))
+	if err2 != nil {
+		log.Warn("failed to scatter regions", zap.Error(err2))
+	}
 	return newRegions, nil
 }
 
@@ -272,32 +271,6 @@ func (rs *RegionSplitter) splitRegions(
 	}
 	rs.waitRegionsSplitted(ctx, newRegions)
 	return newRegions, nil
-}
-
-// scatterRegions scatter the regions.
-// for same reason just log and ignore error.
-// See the comments of function waitRegionScattered.
-func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*split.RegionInfo) {
-	log.Info("start to scatter regions", zap.Int("regions", len(newRegions)))
-	// the retry is for the temporary network errors during sending request.
-	err := utils.WithRetry(ctx, func() error {
-		err := rs.client.ScatterRegions(ctx, newRegions)
-		if isUnsupportedError(err) {
-			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
-			rs.ScatterRegionsSequentially(
-				ctx, newRegions,
-				// backoff about 6s, or we give up scattering this region.
-				&split.ExponentialBackoffer{
-					Attempts:    7,
-					BaseBackoff: 100 * time.Millisecond,
-				})
-			return nil
-		}
-		return err
-	}, &split.ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
-	if err != nil {
-		log.Warn("failed to scatter regions", logutil.ShortError(err))
-	}
 }
 
 // waitRegionsSplitted check multiple regions have finished the split.
@@ -347,50 +320,6 @@ func (rs *RegionSplitter) waitRegionsScattered(ctx context.Context, scatterRegio
 			zap.Int("not scattered Count", leftCnt),
 			zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)))
-	}
-}
-
-// ScatterRegionsSequentially scatter the region with some backoffer.
-// This function is for testing the retry mechanism.
-// For a real cluster, directly use ScatterRegions would be fine.
-func (rs *RegionSplitter) ScatterRegionsSequentially(ctx context.Context, newRegions []*split.RegionInfo, backoffer utils.Backoffer) {
-	newRegionSet := make(map[uint64]*split.RegionInfo, len(newRegions))
-	for _, newRegion := range newRegions {
-		newRegionSet[newRegion.Region.Id] = newRegion
-	}
-
-	if err := utils.WithRetry(ctx, func() error {
-		log.Info("trying to scatter regions...", zap.Int("remain", len(newRegionSet)))
-		var errs error
-		for _, region := range newRegionSet {
-			err := rs.client.ScatterRegion(ctx, region)
-			if err == nil {
-				// it is safe according to the Go language spec.
-				delete(newRegionSet, region.Region.Id)
-			} else if !split.PdErrorCanRetry(err) {
-				log.Warn("scatter meet error cannot be retried, skipping",
-					logutil.ShortError(err),
-					logutil.Region(region.Region),
-				)
-				delete(newRegionSet, region.Region.Id)
-			}
-			errs = multierr.Append(errs, err)
-		}
-		return errs
-	}, backoffer); err != nil {
-		log.Warn("Some regions haven't been scattered because errors.",
-			zap.Int("count", len(newRegionSet)),
-			// if all region are failed to scatter, the short error might also be verbose...
-			logutil.ShortError(err),
-			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i any) []string {
-				m := i.(map[uint64]*split.RegionInfo)
-				result := make([]string, 0, len(m))
-				for id := range m {
-					result = append(result, strconv.Itoa(int(id)))
-				}
-				return result
-			}),
-		)
 	}
 }
 
@@ -464,7 +393,10 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 		}
 
 		if len(reScatterRegions) > 0 {
-			rs.ScatterRegions(ctx, reScatterRegions)
+			err2 := rs.client.ScatterRegions(ctx, reScatterRegions)
+			if err2 != nil {
+				log.Warn("failed to scatter regions", zap.Error(err2))
+			}
 		}
 
 		if time.Since(startTime) > timeout {
@@ -950,27 +882,6 @@ func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.
 	res := iter.Emit(splitIter.buffer[splitIter.next])
 	splitIter.next += 1
 	return res
-}
-
-// isUnsupportedError checks whether we should fallback to ScatterRegion API when meeting the error.
-func isUnsupportedError(err error) bool {
-	s, ok := status.FromError(errors.Cause(err))
-	if !ok {
-		// Not a gRPC error. Something other went wrong.
-		return false
-	}
-	// In two conditions, we fallback to ScatterRegion:
-	// (1) If the RPC endpoint returns UNIMPLEMENTED. (This is just for making test cases not be so magic.)
-	// (2) If the Message is "region 0 not found":
-	//     In fact, PD reuses the gRPC endpoint `ScatterRegion` for the batch version of scattering.
-	//     When the request contains the field `regionIDs`, it would use the batch version,
-	//     Otherwise, it uses the old version and scatter the region with `regionID` in the request.
-	//     When facing 4.x, BR(which uses v5.x PD clients and call `ScatterRegions`!) would set `regionIDs`
-	//     which would be ignored by protocol buffers, and leave the `regionID` be zero.
-	//     Then the older version of PD would try to search the region with ID 0.
-	//     (Then it consistently fails, and returns "region 0 not found".)
-	return s.Code() == codes.Unimplemented ||
-		strings.Contains(s.Message(), "region 0 not found")
 }
 
 type splitBackoffer struct {
