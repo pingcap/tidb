@@ -476,3 +476,38 @@ SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema=
 column_default	extra
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
 column_default	extra
+create table t0 (c int(10), c1 int auto_increment default (str_to_date('1980-01-01','%Y-%m-%d')));
+Error 1067 (42000): Invalid default value for 'c1'
+CREATE TABLE t0 (id int, c int);
+insert into t0(id) values (1);
+alter table t0 modify column c int auto_increment default (str_to_date('1980-01-01','%Y-%m-%d'));
+Error 1067 (42000): Invalid default value for 'c'
+ALTER TABLE t0 MODIFY COLUMN c INT PRIMARY KEY DEFAULT(str_to_date('1980-01-01','%Y-%m-%d'));
+Error 8200 (HY000): can't change column constraint (PRIMARY KEY)
+ALTER TABLE t0 ALTER COLUMN c SET DEFAULT(str_to_date('1980-01-01','%Y-%m-%d'));
+insert into t0(id) values (2);
+drop table t0;
+CREATE TABLE t1 (i INT, b int DEFAULT (str_to_date('1980-01-01','%Y-%m-%d')), c INT GENERATED ALWAYS AS (b+2));
+SHOW COLUMNS FROM t1;
+Field	Type	Null	Key	Default	Extra
+i	int(11)	YES		NULL	
+b	int(11)	YES		str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+c	int(11)	YES		NULL	VIRTUAL GENERATED
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `i` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
+  `c` int(11) GENERATED ALWAYS AS (`b` + 2) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+INSERT INTO t1(i) VALUES (1);
+INSERT INTO t1(i, b) VALUES (2, DEFAULT);
+INSERT INTO t1(i, b) VALUES (3, 123);
+INSERT INTO t1(i, b) VALUES (NULL, NULL);
+SELECT * FROM t1;
+i	b	c
+1	19800101	19800103
+2	19800101	19800103
+3	123	125
+NULL	NULL	NULL
+drop table t1;
