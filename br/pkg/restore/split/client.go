@@ -634,7 +634,7 @@ func (c *pdClient) isScatterRegionFinished(
 		}
 		return false, false, errors.Trace(err)
 	}
-	return IsScatterRegionFinished(resp)
+	return isScatterRegionFinished(resp)
 }
 
 func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionInfo) (int, error) {
@@ -642,16 +642,17 @@ func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionIn
 		retErr        error
 		backoffer     = NewWaitRegionOnlineBackoffer()
 		retryCnt      = 0
-		notScattered  = make([]*RegionInfo, 0, len(regions))
 		needRescatter = make([]*RegionInfo, 0, len(regions))
 	)
-	// WithRetry will return multierr which is hard to use, so we use `retErr`
-	// to save the error needed to return.
+	// WithRetry will return multierr which is hard to use, so we use `retErr` to
+	// save the error needed to return. In the closure of WithRetry, regions should
+	// be updated as the not scattered regions.
 	_ = utils.WithRetry(ctx, func() error {
 		loggedLongRetry := false
+		notScattered := make([]*RegionInfo, 0, len(regions))
 		needRescatter = needRescatter[:0]
 
-		for _, region := range regions {
+		for i, region := range regions {
 			regionID := region.Region.GetId()
 
 			if retryCnt > 10 && !loggedLongRetry {
@@ -675,6 +676,7 @@ func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionIn
 						zap.Error(err),
 					)
 					retErr = err
+					regions = append(notScattered, regions[i:]...)
 					// return nil to stop utils.WithRetry, the error is saved in `retErr`
 					return nil
 				}
@@ -689,6 +691,7 @@ func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionIn
 			if ok {
 				continue
 			}
+			notScattered = append(notScattered, region)
 			if rescatter {
 				needRescatter = append(needRescatter, region)
 			}
@@ -724,10 +727,9 @@ func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionIn
 	return len(regions), retErr
 }
 
-// IsScatterRegionFinished checks whether the scatter region operator is
-// finished. TODO(lance6716): hide this function after scatter logic is unified
-// for BR and lightning.
-func IsScatterRegionFinished(resp *pdpb.GetOperatorResponse) (
+// isScatterRegionFinished checks whether the scatter region operator is
+// finished.
+func isScatterRegionFinished(resp *pdpb.GetOperatorResponse) (
 	scatterDone bool,
 	needRescatter bool,
 	scatterErr error,

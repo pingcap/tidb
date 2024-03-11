@@ -97,7 +97,7 @@ func PaginateScanRegion(
 	var (
 		lastRegions []*RegionInfo
 		err         error
-		backoffer   = NewWaitRegionOnlineBackoffer().(*WaitRegionOnlineBackoffer)
+		backoffer   = NewWaitRegionOnlineBackoffer()
 	)
 	_ = utils.WithRetry(ctx, func() error {
 		regions := make([]*RegionInfo, 0, 16)
