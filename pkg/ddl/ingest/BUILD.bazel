@@ -33,6 +33,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/parser/mysql",
+        "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/table",

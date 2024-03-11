@@ -613,7 +613,7 @@ func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, er
 
 // NewErrFoundConflictRecords generate an error ErrFoundDataConflictRecords / ErrFoundIndexConflictRecords
 // according to key and value.
-func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table, idxInfo *model.IndexInfo) error {
+func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error {
 	sessionOpts := encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	}
@@ -636,7 +636,40 @@ func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table, idxIn
 	}
 
 	// for index KV
+	_, idxID, _, err := tablecodec.DecodeIndexKey(key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
 	return NewErrFoundIndexConflictRecords(key, value, tbl, idxInfo)
+}
+
+// GenIndexValueFromIndex generate index value from index.
+func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) ([]string, error) {
+	idxColLen := len(idxInfo.Columns)
+	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
+	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	valueStr := make([]string, 0, idxColLen)
+	for i, val := range values[:idxColLen] {
+		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		str, err := d.ToString()
+		if err != nil {
+			str = string(val)
+		}
+		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
+			str = tidbutil.FmtNonASCIIPrintableCharToHex(str)
+		}
+		valueStr = append(valueStr, str)
+	}
+
+	return valueStr, nil
 }
 
 // NewErrFoundIndexConflictRecords generate an error ErrFoundIndexConflictRecords
@@ -651,48 +684,20 @@ func NewErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, 
 		return errors.Trace(err)
 	}
 
-	_, idxID, _, err := tablecodec.DecodeIndexKey(key)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if idxInfo == nil {
-		idxInfo = model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
-	}
-
 	h, err := decoder.DecodeHandleFromIndex(idxInfo, key, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	idxColLen := len(idxInfo.Columns)
+	valueStr, err := GenIndexValueFromIndex(key, value, tbl.Meta(), idxInfo)
 	indexName := fmt.Sprintf("%s.%s", tbl.Meta().Name.String(), idxInfo.Name.String())
-	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tbl.Meta())
-	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
 	if err != nil {
-		log.L().Warn("decode index key value failed", zap.String("index", indexName),
+		log.L().Warn("decode index key value / column value failed", zap.String("index", indexName),
 			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
-		return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, key, value))
-	}
-	valueStr := make([]string, 0, idxColLen)
-	for i, val := range values[:idxColLen] {
-		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
-		if err != nil {
-			log.L().Warn("decode column value failed", zap.String("index", indexName),
-				zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
-			return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, key, value))
-		}
-		str, err := d.ToString()
-		if err != nil {
-			str = string(val)
-		}
-		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
-			str = tidbutil.FmtNonASCIIPrintableCharToHex(str)
-		}
-		valueStr = append(valueStr, str)
+		return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, indexName, key, value))
 	}
 
-	return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, valueStr, h))
+	return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, indexName, valueStr, h))
 }
 
 // ConvertToErrFoundConflictRecords converts ErrFoundDuplicateKeys
@@ -703,7 +708,7 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 		return errors.Trace(err)
 	}
 
-	return NewErrFoundConflictRecords(rawKey, rawValue, tbl, nil)
+	return NewErrFoundConflictRecords(rawKey, rawValue, tbl)
 }
 
 // BuildDuplicateTaskForTest is only used for test.

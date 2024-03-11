@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -101,14 +102,31 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		SysVars: bc.sysVars,
 		IndexID: indexID,
 	}, lightning.DupeResAlgErr)
-	if err != nil && !common.ErrFoundDataConflictRecords.Equal(err) && !common.ErrFoundIndexConflictRecords.Equal(err) {
+	if err != nil && !common.ErrFoundIndexConflictRecords.Equal(err) {
 		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 		return err
 	} else if hasDupe {
 		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-		return tikv.ErrKeyExists
+
+		if common.ErrFoundIndexConflictRecords.Equal(err) {
+			tErr, ok := errors.Cause(err).(*terror.Error)
+			if !ok {
+				return err
+			}
+			if len(tErr.Args()) != 3 {
+				return err
+			}
+			valueStr, valueStrIsByte := tErr.Args()[1].([]byte)
+			indexName, indexNameIsByte := tErr.Args()[2].([]byte)
+			if !valueStrIsByte || !indexNameIsByte {
+				return err
+			}
+
+			return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(valueStr, indexName))
+		}
+		return errors.Trace(tikv.ErrKeyExists)
 	}
 	return nil
 }
@@ -142,14 +160,31 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
 		}, lightning.DupeResAlgErr)
-		if err != nil && !common.ErrFoundDataConflictRecords.Equal(err) && !common.ErrFoundIndexConflictRecords.Equal(err) {
+		if err != nil && !common.ErrFoundIndexConflictRecords.Equal(err) {
 			logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
 			return err
 		} else if hasDupe {
 			logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-			return tikv.ErrKeyExists
+
+			if common.ErrFoundIndexConflictRecords.Equal(err) {
+				tErr, ok := errors.Cause(err).(*terror.Error)
+				if !ok {
+					return err
+				}
+				if len(tErr.Args()) != 3 {
+					return err
+				}
+				valueStr, valueStrIsByte := tErr.Args()[1].([]byte)
+				indexName, indexNameIsByte := tErr.Args()[2].([]byte)
+				if !valueStrIsByte || !indexNameIsByte {
+					return err
+				}
+
+				return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(valueStr, indexName))
+			}
+			return errors.Trace(tikv.ErrKeyExists)
 		}
 	}
 	return nil

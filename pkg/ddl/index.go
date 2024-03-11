@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
@@ -1594,31 +1595,12 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 }
 
 func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
-	idxColLen := len(idxInfo.Columns)
+	valueStr, err := local.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
 	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
-	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
-	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
 	if err != nil {
-		logutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
+		logutil.BgLogger().Warn("decode index key value / column value failed", zap.String("index", indexName),
 			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
-		return kv.ErrKeyExists.FastGenByArgs(key, indexName)
-	}
-	valueStr := make([]string, 0, idxColLen)
-	for i, val := range values[:idxColLen] {
-		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
-		if err != nil {
-			logutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
-				zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
-			return kv.ErrKeyExists.FastGenByArgs(key, indexName)
-		}
-		str, err := d.ToString()
-		if err != nil {
-			str = string(val)
-		}
-		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
-			str = util.FmtNonASCIIPrintableCharToHex(str)
-		}
-		valueStr = append(valueStr, str)
+		return errors.Trace(kv.ErrKeyExists.FastGenByArgs(key, indexName))
 	}
 	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }

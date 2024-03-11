@@ -578,7 +578,7 @@ found duplicate key '%s', value '%s'
 
 ["Lightning:Restore:ErrFoundIndexConflictRecords"]
 error = '''
-found index conflict records in table %s, unique key is '%s', primary key is '%s'
+found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'
 '''
 
 ["Lightning:Restore:ErrInvalidMetaStatus"]

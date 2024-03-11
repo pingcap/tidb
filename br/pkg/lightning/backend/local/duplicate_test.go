@@ -179,7 +179,7 @@ func TestConvertToErrFoundConflictRecords(t *testing.T) {
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
 	newErr = local.ConvertToErrFoundConflictRecords(originalErr, tbl)
-	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, unique key is '[7]', primary key is '3'")
+	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_b', unique key is '[7]', primary key is '3'")
 }
 
 func TestConvertToErrFoundConflictRecordsMultipleColumnsIndex(t *testing.T) {
@@ -246,5 +246,5 @@ func TestConvertToErrFoundConflictRecordsMultipleColumnsIndex(t *testing.T) {
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
 	newErr = local.ConvertToErrFoundConflictRecords(originalErr, tbl)
-	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, unique key is '[7 103]', primary key is '3'")
+	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_bd', unique key is '[7 103]', primary key is '3'")
 }
