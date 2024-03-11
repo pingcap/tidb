@@ -25,8 +25,7 @@ type leftOuterJoinProbe struct {
 	// used when build right side
 	isNotMatchedRows []bool
 	// used when build left side
-	currentRowIter *rowIter
-	endRowIter     *rowIter
+	rowIter *rowIter
 }
 
 func (j *leftOuterJoinProbe) setChunkForProbe(chunk *chunk.Chunk) (err error) {
@@ -51,7 +50,7 @@ func (j *leftOuterJoinProbe) isScanRowTableDone() bool {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
-	return j.currentRowIter.equals(j.endRowIter)
+	return !j.rowIter.hasNext()
 }
 
 func (j *leftOuterJoinProbe) InitForScanRowTable() {
@@ -70,8 +69,7 @@ func (j *leftOuterJoinProbe) InitForScanRowTable() {
 	if endIndex > totalRowCount {
 		endIndex = totalRowCount
 	}
-	j.currentRowIter = j.ctx.joinHashTable.createRowIter(startIndex)
-	j.endRowIter = j.ctx.joinHashTable.createRowIter(endIndex)
+	j.rowIter = j.ctx.joinHashTable.createRowIter(startIndex, endIndex)
 }
 
 func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
@@ -81,21 +79,21 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 	if joinResult.Chk.IsFull() {
 		return joinResult
 	}
-	if j.currentRowIter == nil {
+	if j.rowIter == nil {
 		panic("scanRowTable before init")
 	}
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
 	remainCap := joinResult.Chk.RequiredRows() - joinResult.Chk.NumRows()
-	for insertedRows < remainCap && !j.currentRowIter.equals(j.endRowIter) {
-		currentRow := j.currentRowIter.getValue()
+	for insertedRows < remainCap && j.rowIter.hasNext() {
+		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
 			j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: currentRow, rowData: nil, currentColumnIndex: 0}, -1, 0)
 			joinResult.Chk.IncNumVirtualRows()
 			insertedRows++
 		}
-		j.currentRowIter.next()
+		j.rowIter.next()
 	}
 	// append probe side in batch
 	colOffset := len(j.lUsed)
