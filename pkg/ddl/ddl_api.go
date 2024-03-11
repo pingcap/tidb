@@ -1287,7 +1287,7 @@ func restoreFuncCall(expr *ast.FuncCallExpr) (string, error) {
 // getFuncCallDefaultValue gets the default column value of function-call expression.
 func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (any, bool, error) {
 	switch expr.FnName.L {
-	case ast.CurrentTimestamp, ast.CurrentDate:
+	case ast.CurrentTimestamp, ast.CurrentDate: // CURRENT_TIMESTAMP() and CURRENT_DATE()
 		tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
 		if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 			defaultFsp := 0
@@ -1308,7 +1308,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			return nil, false, errors.Trace(err)
 		}
 		return str, true, nil
-	case ast.Rand, ast.UUID, ast.UUIDToBin:
+	case ast.Rand, ast.UUID, ast.UUIDToBin: // RAND(), UUID() and UUID_TO_BIN()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -1318,12 +1318,12 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		}
 		col.DefaultIsExpr = true
 		return str, false, nil
-	case ast.DateFormat:
-		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
-		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
+	case ast.DateFormat: // DATE_FORMAT()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
+		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
 		nowFunc, ok := expr.Args[0].(*ast.FuncCallExpr)
 		if ok && nowFunc.FnName.L == ast.Now {
 			if err := expression.VerifyArgsWrapper(nowFunc.FnName.L, len(nowFunc.Args)); err != nil {
@@ -1343,7 +1343,6 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		}
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), nowFunc.FnName.String())
 	case ast.Replace:
-		// Support REPLACE(UPPER(UUID()), '-', '').
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -1355,6 +1354,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			}
 			funcCall = convertFunc.Args[0]
 		}
+		// Support REPLACE(UPPER(UUID()), '-', '').
 		if upperFunc, ok := funcCall.(*ast.FuncCallExpr); ok && upperFunc.FnName.L == ast.Upper {
 			if err := expression.VerifyArgsWrapper(upperFunc.FnName.L, len(upperFunc.Args)); err != nil {
 				return nil, false, errors.Trace(err)
@@ -1373,10 +1373,10 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		}
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	case ast.Upper:
-		// Support UPPER(SUBSTRING_INDEX(USER(), '@', 1)).
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support UPPER(SUBSTRING_INDEX(USER(), '@', 1)).
 		if substringIndexFunc, ok := expr.Args[0].(*ast.FuncCallExpr); ok && substringIndexFunc.FnName.L == ast.SubstringIndex {
 			if err := expression.VerifyArgsWrapper(substringIndexFunc.FnName.L, len(substringIndexFunc.Args)); err != nil {
 				return nil, false, errors.Trace(err)
@@ -1398,11 +1398,11 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			}
 		}
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
-	case ast.StrToDate:
-		// Support STR_TO_DATE('1980-01-01', '%Y-%m-%d').
+	case ast.StrToDate: // STR_TO_DATE()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support STR_TO_DATE('1980-01-01', '%Y-%m-%d').
 		if _, ok1 := expr.Args[0].(ast.ValueExpr); ok1 {
 			if _, ok2 := expr.Args[1].(ast.ValueExpr); ok2 {
 				str, err := restoreFuncCall(expr)
