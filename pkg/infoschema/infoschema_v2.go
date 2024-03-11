@@ -421,7 +421,23 @@ func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	panic("TODO")
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	dbInfos := is.AllSchemas()
+	for _, dbInfo := range dbInfos {
+		tbls := is.SchemaTables(dbInfo.Name)
+		for _, tbl := range tbls {
+			pi := tbl.Meta().GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, p := range pi.Definitions {
+				if p.ID == partitionID {
+					return tbl, dbInfo, &p
+				}
+			}
+		}
+	}
+	return nil, nil, nil
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
@@ -494,43 +510,49 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 
 func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
-	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (ret any, err error) {
+	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 		m := meta.NewSnapshotMeta(snapshot)
 
-		ret, err = m.GetTable(dbID, tblID)
-		return
+		tblInfo, err := m.GetTable(dbID, tblID)
+
+		if err != nil {
+			// TODO load table panic!!!
+			panic(err)
+		}
+
+		// table removed.
+		if tblInfo == nil {
+			return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+				fmt.Sprintf("(Schema ID %d)", dbID),
+				fmt.Sprintf("(Table ID %d)", tblID),
+			))
+		}
+
+		ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
+		ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
+		allocs := autoid.NewAllocatorsFromTblInfo(r, dbID, tblInfo)
+		// TODO: handle cached table!!!
+		ret, err := tables.TableFromMeta(allocs, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return ret, err
 	})
 
 	if err != nil {
-		// TODO load table panic!!!
-		panic(err)
+		return nil, errors.Trace(err)
 	}
 	if res == nil {
-		return nil, err
-	}
-	tblInfo := res.(*model.TableInfo)
-
-	// table removed.
-	if tblInfo == nil {
 		return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbID),
 			fmt.Sprintf("(Table ID %d)", tblID),
 		))
 	}
-
-	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
-	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
-	allocs := autoid.NewAllocatorsFromTblInfo(r, dbID, tblInfo)
-	// TODO: handle cached table!!!
-	ret, err := tables.TableFromMeta(allocs, tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ret, nil
+	return res.(table.Table), nil
 }
 
 var loadTableSF = &singleflight.Group{}
@@ -585,48 +607,6 @@ func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.Sch
 		return b.applyModifySchemaDefaultPlacementV2(m, diff)
 	}
 	return b.applyModifySchemaDefaultPlacement(m, diff)
-}
-
-func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
-	if b.enableV2 {
-		return b.applyCreatePolicyV2(m, diff)
-	}
-	return b.applyCreatePolicy(m, diff)
-}
-
-func applyDropPolicy(b *Builder, PolicyID int64) []int64 {
-	if b.enableV2 {
-		return b.applyDropPolicyV2(PolicyID)
-	}
-	return b.applyDropPolicy(PolicyID)
-}
-
-func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyAlterPolicyV2(m, diff)
-	}
-	return b.applyAlterPolicy(m, diff)
-}
-
-func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
-	if b.enableV2 {
-		return b.applyCreateOrAlterResourceGroupV2(m, diff)
-	}
-	return b.applyCreateOrAlterResourceGroup(m, diff)
-}
-
-func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []int64 {
-	if b.enableV2 {
-		return b.applyDropResourceGroupV2(m, diff)
-	}
-	return b.applyDropResourceGroup(m, diff)
-}
-
-func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyTruncateTableOrPartitionV2(m, diff)
-	}
-	return b.applyTruncateTableOrPartition(m, diff)
 }
 
 func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -721,26 +701,6 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model
 }
 
 func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
-	panic("TODO")
-}
-
-func (b *Builder) applyCreatePolicyV2(m *meta.Meta, diff *model.SchemaDiff) error {
-	panic("TODO")
-}
-
-func (b *Builder) applyAlterPolicyV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
-func (b *Builder) applyDropPolicyV2(PolicyID int64) []int64 {
-	panic("TODO")
-}
-
-func (b *Builder) applyDropResourceGroupV2(m *meta.Meta, diff *model.SchemaDiff) []int64 {
-	panic("TODO")
-}
-
-func (b *Builder) applyCreateOrAlterResourceGroupV2(m *meta.Meta, diff *model.SchemaDiff) error {
 	panic("TODO")
 }
 
