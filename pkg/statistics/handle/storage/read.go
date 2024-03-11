@@ -264,6 +264,11 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			continue
 		}
 		table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
+		// All the objects in the table shares the same stats version.
+		// Update here.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+		}
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -330,6 +335,9 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		if tracker != nil {
 			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
 		}
+		if idx.IsAnalyzed() {
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, idx.LastUpdateVersion)
+		}
 		table.Indices[histID] = idx
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
@@ -354,6 +362,11 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			continue
 		}
 		table.ColAndIdxExistenceMap.InsertCol(histID, colInfo, statsVer != statistics.Version0 || distinct > 0 || nullCount > 0)
+		// All the objects in the table shares the same stats version.
+		// Update here.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -440,6 +453,9 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	if col != nil {
 		if tracker != nil {
 			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
+		}
+		if col.IsAnalyzed() {
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, col.LastUpdateVersion)
 		}
 		table.Columns[col.ID] = col
 	} else {
@@ -613,9 +629,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 		StatsVer:   statsVer,
 	}
-	if colHist.StatsAvailable() {
-		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok = statsCache.Get(col.TableID)
@@ -623,6 +636,13 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	tbl = tbl.Copy()
+	if colHist.StatsAvailable() {
+		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+		if statsVer != statistics.Version0 {
+			tbl.StatsVer = int(statsVer)
+		}
+	}
 	tbl.Columns[col.ID] = colHist
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
@@ -677,7 +697,11 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 		return nil
 	}
 	tbl = tbl.Copy()
+	if idxHist.StatsVer != statistics.Version0 {
+		tbl.StatsVer = int(idxHist.StatsVer)
+	}
 	tbl.Indices[idx.ID] = idxHist
+	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	if idx.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",

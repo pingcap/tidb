@@ -865,6 +865,11 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 
 	// Execute some basic operations under infoschema v2.
 	tk.MustQuery("show tables").Check(testkit.Rows("v2"))
+	tk.MustExec("create table pt (id int) partition by range (id) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("truncate table v2")
+	tk.MustExec("truncate table pt")
+	tk.MustExec("alter table pt truncate partition p0")
+	tk.MustExec("alter table pt drop partition p0")
 	tk.MustExec("drop table v2")
 	tk.MustExec("create table v1 (id int)")
 

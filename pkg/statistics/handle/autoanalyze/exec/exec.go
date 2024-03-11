@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -93,24 +94,6 @@ func execAnalyzeStmt(
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }
 
-// TableAnalyzed checks if any column or index of the table has been analyzed.
-func TableAnalyzed(tbl *statistics.Table) bool {
-	if tbl.ColAndIdxExistenceMap.SomeAnalyzed() {
-		return true
-	}
-	for _, col := range tbl.Columns {
-		if col.IsAnalyzed() {
-			return true
-		}
-	}
-	for _, idx := range tbl.Indices {
-		if idx.IsAnalyzed() {
-			return true
-		}
-	}
-	return false
-}
-
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
 func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
@@ -132,4 +115,21 @@ func ParseAutoAnalyzeRatio(ratio string) float64 {
 		return variable.DefAutoAnalyzeRatio
 	}
 	return math.Max(autoAnalyzeRatio, 0)
+}
+
+// ParseAutoAnalysisWindow parses the time window for auto analysis.
+// It parses the times in UTC location.
+func ParseAutoAnalysisWindow(start, end string) (time.Time, time.Time, error) {
+	if start == "" {
+		start = variable.DefAutoAnalyzeStartTime
+	}
+	if end == "" {
+		end = variable.DefAutoAnalyzeEndTime
+	}
+	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
+	if err != nil {
+		return s, s, errors.Trace(err)
+	}
+	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
+	return s, e, err
 }

@@ -31,6 +31,18 @@ type EvalContext = context.EvalContext
 // BuildContext is used to build an expression
 type BuildContext = context.BuildContext
 
+// OptionalEvalPropKey is an alias of context.OptionalEvalPropKey
+type OptionalEvalPropKey = context.OptionalEvalPropKey
+
+// OptionalEvalPropProvider is an alias of context.OptionalEvalPropProvider
+type OptionalEvalPropProvider = context.OptionalEvalPropProvider
+
+// OptionalEvalPropKeySet is an alias of context.OptionalEvalPropKeySet
+type OptionalEvalPropKeySet = context.OptionalEvalPropKeySet
+
+// OptionalEvalPropDesc is an alias of context.OptionalEvalPropDesc
+type OptionalEvalPropDesc = context.OptionalEvalPropDesc
+
 func sqlMode(ctx EvalContext) mysql.SQLMode {
 	return ctx.SQLMode()
 }

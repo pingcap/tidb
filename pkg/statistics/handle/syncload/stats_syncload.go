@@ -483,6 +483,10 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		if colHist.StatsAvailable() {
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
 		}
+		// All the objects shares the same stats version. Update it here.
+		if colHist.StatsVer != statistics.Version0 {
+			tbl.StatsVer = statistics.Version0
+		}
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
 		// - If the stats is fully loaded,
@@ -495,6 +499,8 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
+			// All the objects shares the same stats version. Update it here.
+			tbl.StatsVer = statistics.Version0
 		}
 	}
 	s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)

@@ -168,6 +168,10 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				PhysicalID:        physicalID,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
+			// All the objects in the table shares the same stats version.
+			if statsVer != statistics.Version0 {
+				tbl.StatsVer = int(statsVer)
+			}
 			tbl.Indices[idx.ID] = idx
 			tbl.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, true)
 		}
@@ -216,6 +220,10 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				IsHandle:          tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				StatsVer:          statsVer,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			}
+			// All the objects in the table shares the same stats version.
+			if statsVer != statistics.Version0 {
+				tbl.StatsVer = int(statsVer)
 			}
 			tbl.Columns[col.ID] = col
 			tbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, true)
