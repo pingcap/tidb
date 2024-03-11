@@ -35,13 +35,12 @@ import (
 type TestClient struct {
 	split.SplitClient
 
-	mu               sync.RWMutex
-	stores           map[uint64]*metapb.Store
-	regions          map[uint64]*split.RegionInfo
-	regionsInfo      *pdtypes.RegionTree // For now it's only used in ScanRegions
-	nextRegionID     uint64
-	injectInScatter  func(*split.RegionInfo) error
-	injectInOperator func(uint64) (*pdpb.GetOperatorResponse, error)
+	mu              sync.RWMutex
+	stores          map[uint64]*metapb.Store
+	regions         map[uint64]*split.RegionInfo
+	regionsInfo     *pdtypes.RegionTree // For now it's only used in ScanRegions
+	nextRegionID    uint64
+	injectInScatter func(*split.RegionInfo) error
 
 	scattered   map[uint64]bool
 	InjectErr   bool
@@ -207,10 +206,7 @@ func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *split.Region
 	return c.injectInScatter(regionInfo)
 }
 
-func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	if c.injectInOperator != nil {
-		return c.injectInOperator(regionID)
-	}
+func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{
 		Header: new(pdpb.ResponseHeader),
 	}, nil
@@ -234,6 +230,10 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 		})
 	}
 	return regions, nil
+}
+
+func (c *TestClient) WaitForScatterRegion(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
 }
 
 func TestScanEmptyRegion(t *testing.T) {
