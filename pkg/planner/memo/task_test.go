@@ -68,7 +68,7 @@ func TestTaskFunctionality(t *testing.T) {
 	taskStack.Push(&TestTaskImpl{a: 4})
 	taskStack.Push(&TestTaskImpl{a: 5})
 	taskStack.Push(&TestTaskImpl{a: 6})
-	// no clean if, put it back
+	// no clean, put it back
 	TaskStackPool.Put(taskTaskPool)
 
 	// require again.
@@ -86,4 +86,7 @@ func TestTaskFunctionality(t *testing.T) {
 	require.Equal(t, one.desc(), "3")
 	one = taskStack.Pop()
 	require.Nil(t, one)
+
+	// self destroy.
+	taskStack.Destroy()
 }

@@ -44,10 +44,18 @@ func newTaskStack() *TaskStack {
 	}
 }
 
+// Destroy indicates that when stack itself is useless like in the end of optimizing phase, we can destroy ourselves.
+func (ts *TaskStack) Destroy() {
+	// when a taskStack itself is useless, we can destroy itself actively.
+	TaskStackPool.Put(ts)
+}
+
+// Len indicates the length of current stack.
 func (ts *TaskStack) Len() int {
 	return len(ts.tasks)
 }
 
+// Pop indicates to pop one task out of the stack.
 func (ts *TaskStack) Pop() Task {
 	if !ts.Empty() {
 		tmp := ts.tasks[len(ts.tasks)-1]
@@ -57,10 +65,12 @@ func (ts *TaskStack) Pop() Task {
 	return nil
 }
 
+// Push indicates to push one task into the stack.
 func (ts *TaskStack) Push(one Task) {
 	ts.tasks = append(ts.tasks, one)
 }
 
+// Empty indicates whether taskStack is empty.
 func (ts *TaskStack) Empty() bool {
 	return ts.Len() == 0
 }
