@@ -415,6 +415,7 @@ func (e *SortExec) generateResultInMemory() bool {
 
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]rowWithError, 0, maxChunkSize)
+	var idx int64 = 0
 	var row chunk.Row
 	for {
 		resBuf = resBuf[:0]
@@ -440,7 +441,7 @@ func (e *SortExec) generateResultInMemory() bool {
 
 		injectParallelSortRandomFail(3)
 
-		if e.Parallel.spillHelper.isSpillNeeded() {
+		if idx%1000 == 0 && e.Parallel.spillHelper.isSpillNeeded() {
 			return true
 		}
 	}
