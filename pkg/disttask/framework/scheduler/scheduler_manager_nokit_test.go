@@ -148,7 +148,8 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 		},
 	}
 	for i := 1; i <= 3; i++ {
-		taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(i)).Return(&proto.Task{TaskBase: *tasks[i-1]}, nil).Times(2)
+		taskMgr.EXPECT().GetTaskByID(gomock.Any(), int64(i)).Return(&proto.Task{TaskBase: *tasks[i-1]}, nil)
+		taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), int64(i)).Return(tasks[i-1], nil)
 	}
 
 	require.NoError(t, mgr.startSchedulers(tasks))
