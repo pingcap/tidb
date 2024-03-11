@@ -1459,6 +1459,9 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 
 	if c.GetDefaultValue() != nil {
 		if c.DefaultIsExpr {
+			if mysql.HasAutoIncrementFlag(c.GetFlag()) {
+				return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
+			}
 			return nil
 		}
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
@@ -4805,12 +4808,26 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		col.DefaultIsExpr = isSeqExpr
 	}
 
+<<<<<<< HEAD:ddl/ddl_api.go
 	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
 	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
+=======
+	// When the default value is expression, we skip check and convert.
+	if !col.DefaultIsExpr {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
+		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+		if err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
+	} else {
+		hasDefaultValue = true
+>>>>>>> 7be9a1e89a4 (ddl, test: fix the problem that table creation with auto_increment and default expressions (#51640)):pkg/ddl/ddl_api.go
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
@@ -4847,8 +4864,13 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD:ddl/ddl_api.go
 // processColumnOptions is only used in getModifiableColumnJob.
 func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+=======
+// ProcessModifyColumnOptions process column options.
+func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+>>>>>>> 7be9a1e89a4 (ddl, test: fix the problem that table creation with auto_increment and default expressions (#51640)):pkg/ddl/ddl_api.go
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
@@ -4927,7 +4949,8 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	return nil
 }
 
-func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column, outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
+func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column,
+	outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
 	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 	processColumnFlags(col)
 
@@ -5061,7 +5084,11 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
+<<<<<<< HEAD:ddl/ddl_api.go
 	if err = processColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+=======
+	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+>>>>>>> 7be9a1e89a4 (ddl, test: fix the problem that table creation with auto_increment and default expressions (#51640)):pkg/ddl/ddl_api.go
 		return nil, errors.Trace(err)
 	}
 
