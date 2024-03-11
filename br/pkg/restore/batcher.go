@@ -238,7 +238,8 @@ func (result DrainResult) Files() []TableIDWithFiles {
 	for i, endOffset := range result.TableEndOffsetInRanges {
 		tableID := result.TablesToSend[i].Table.ID
 		ranges := result.Ranges[startOffset:endOffset]
-		files := make([]*backuppb.File, 0, len(result.Ranges)*2)
+		// each range has at least a default file + a write file
+		files := make([]*backuppb.File, 0, len(ranges)*2)
 		for _, rg := range ranges {
 			files = append(files, rg.Files...)
 		}

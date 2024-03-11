@@ -138,7 +138,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	summary.CollectInt("restore files", len(files))
 
 	ranges, _, err := restore.MergeFileRanges(
-		files, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
+		files, nil, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,7 +153,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	err = restore.SplitRanges(ctx, client, ranges, nil, updateCh, true)
+	err = restore.SplitRanges(ctx, client, ranges, updateCh, true)
 	if err != nil {
 		return errors.Trace(err)
 	}

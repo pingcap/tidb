@@ -9,8 +9,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"go.uber.org/zap"
 )
 
 // Range record start and end key for localStoreDir.DB
@@ -24,38 +22,6 @@ type Range struct {
 func SortRanges(ranges []rtree.Range) ([]rtree.Range, error) {
 	rangeTree := rtree.NewRangeTree()
 	for _, rg := range ranges {
-		if rg.RewriteRules != nil {
-			startID := tablecodec.DecodeTableID(rg.StartKey)
-			endID := tablecodec.DecodeTableID(rg.EndKey)
-			var rule *import_sstpb.RewriteRule
-			if startID != endID {
-				log.Warn("table id does not match",
-					logutil.Key("startKey", rg.StartKey),
-					logutil.Key("endKey", rg.EndKey),
-					zap.Int64("startID", startID),
-					zap.Int64("endID", endID))
-				return nil, errors.Annotate(berrors.ErrRestoreTableIDMismatch, "table id mismatch")
-			}
-			rg.StartKey, rule = replacePrefix(rg.StartKey, rg.RewriteRules)
-			if rule == nil {
-				log.Warn("cannot find rewrite rule", logutil.Key("key", rg.StartKey))
-			} else {
-				log.Debug(
-					"rewrite start key",
-					logutil.Key("key", rg.StartKey), logutil.RewriteRule(rule))
-			}
-			oldKey := rg.EndKey
-			rg.EndKey, rule = replacePrefix(rg.EndKey, rg.RewriteRules)
-			if rule == nil {
-				log.Warn("cannot find rewrite rule", logutil.Key("key", rg.EndKey))
-			} else {
-				log.Debug(
-					"rewrite end key",
-					logutil.Key("origin-key", oldKey),
-					logutil.Key("key", rg.EndKey),
-					logutil.RewriteRule(rule))
-			}
-		}
 		if out := rangeTree.InsertRange(rg); out != nil {
 			log.Error("insert ranges overlapped",
 				logutil.Key("startKeyOut", out.StartKey),

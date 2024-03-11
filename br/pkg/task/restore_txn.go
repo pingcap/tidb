@@ -79,7 +79,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	summary.CollectInt("restore files", len(files))
 
 	ranges, _, err := restore.MergeFileRanges(
-		files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}

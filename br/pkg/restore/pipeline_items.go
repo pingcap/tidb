@@ -161,6 +161,7 @@ func DefaultOutputTableChan() chan *CreatedTable {
 type TableWithRange struct {
 	CreatedTable
 
+	// Range has been rewrited by rewrite rules.
 	Range []rtree.Range
 }
 
@@ -168,7 +169,7 @@ type TableIDWithFiles struct {
 	TableID int64
 
 	Files []*backuppb.File
-	// Rules is the rewrite rules for the specify table.
+	// RewriteRules is the rewrite rules for the specify table.
 	// because these rules belongs to the *one table*.
 	// we can hold them here.
 	RewriteRules *RewriteRules
