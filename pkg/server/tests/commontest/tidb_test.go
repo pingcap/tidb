@@ -1071,7 +1071,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			sqlStr := mc.GetSQL(s.SQLDigest)
 			encodedPlan := mc.GetPlan(s.PlanDigest)
 			// Normalize the user SQL before check.
-			normalizedSQL := parser.Normalize(sql)
+			normalizedSQL := parser.Normalize(sql, "ON")
 			require.Equalf(t, normalizedSQL, sqlStr, "sql: %v", sql)
 			// decode plan before check.
 			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
