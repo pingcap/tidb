@@ -115,31 +115,36 @@ type JoinHashTable struct {
 	partitionNumber uint64
 }
 
-type rowIter struct {
-	table           *JoinHashTable
+type rowPos struct {
 	subTableIndex   int
 	rowSegmentIndex int
 	rowIndex        uint64
 }
 
+type rowIter struct {
+	table      *JoinHashTable
+	currentPos *rowPos
+	endPos     *rowPos
+}
+
 func (ri *rowIter) getValue() unsafe.Pointer {
-	return ri.table.tables[ri.subTableIndex].rowData.segments[ri.rowSegmentIndex].rowLocations[ri.rowIndex]
+	return ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowLocations[ri.currentPos.rowIndex]
 }
 
 func (ri *rowIter) next() {
-	ri.rowIndex++
-	if ri.rowIndex == ri.table.tables[ri.subTableIndex].rowData.segments[ri.rowSegmentIndex].rowCount() {
-		ri.rowSegmentIndex++
-		ri.rowIndex = 0
-		if ri.rowSegmentIndex == len(ri.table.tables[ri.subTableIndex].rowData.segments) {
-			ri.subTableIndex++
-			ri.rowSegmentIndex = 0
+	ri.currentPos.rowIndex++
+	if ri.currentPos.rowIndex == ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowCount() {
+		ri.currentPos.rowSegmentIndex++
+		ri.currentPos.rowIndex = 0
+		if ri.currentPos.rowSegmentIndex == len(ri.table.tables[ri.currentPos.subTableIndex].rowData.segments) {
+			ri.currentPos.subTableIndex++
+			ri.currentPos.rowSegmentIndex = 0
 		}
 	}
 }
 
-func (ri *rowIter) equals(other *rowIter) bool {
-	return ri.subTableIndex == other.subTableIndex && ri.rowSegmentIndex == other.rowSegmentIndex && ri.rowIndex == other.rowIndex
+func (ri *rowIter) hasNext() bool {
+	return ri.currentPos.subTableIndex < ri.endPos.subTableIndex || ri.currentPos.rowSegmentIndex < ri.endPos.rowSegmentIndex || ri.currentPos.rowIndex < ri.endPos.rowIndex
 }
 
 func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *JoinHashTable {
@@ -154,13 +159,12 @@ func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *Join
 	return jht
 }
 
-func (jht *JoinHashTable) createRowIter(pos uint64) *rowIter {
+func (jht *JoinHashTable) createRowPos(pos uint64) *rowPos {
 	if pos < 0 || pos > jht.totalRowCount() {
-		panic("invalid call to createRowIter, the input pos should be in [0, totalRowCount]")
+		panic("invalid call to createRowPos, the input pos should be in [0, totalRowCount]")
 	}
 	if pos == jht.totalRowCount() {
-		return &rowIter{
-			table:           jht,
+		return &rowPos{
 			subTableIndex:   len(jht.tables),
 			rowSegmentIndex: 0,
 			rowIndex:        0,
@@ -176,11 +180,20 @@ func (jht *JoinHashTable) createRowIter(pos uint64) *rowIter {
 		pos -= jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount()
 		rowSegmentIndex++
 	}
-	return &rowIter{
-		table:           jht,
+	return &rowPos{
 		subTableIndex:   subTableIndex,
 		rowSegmentIndex: rowSegmentIndex,
 		rowIndex:        pos,
+	}
+}
+func (jht *JoinHashTable) createRowIter(start, end uint64) *rowIter {
+	if start > end {
+		start = end
+	}
+	return &rowIter{
+		table:      jht,
+		currentPos: jht.createRowPos(start),
+		endPos:     jht.createRowPos(end),
 	}
 }
 
