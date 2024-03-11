@@ -507,7 +507,6 @@ func SplitRanges(
 	ctx context.Context,
 	client *Client,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
@@ -518,7 +517,7 @@ func SplitRanges(
 		isRawKv,
 	))
 
-	return splitter.ExecuteSplit(ctx, ranges, rewriteRules, client.GetStoreCount(), isRawKv, func(keys [][]byte) {
+	return splitter.ExecuteSplit(ctx, ranges, client.GetStoreCount(), isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}

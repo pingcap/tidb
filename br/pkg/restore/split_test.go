@@ -627,7 +627,7 @@ type fakeRestorer struct {
 	tableIDIsInsequence bool
 }
 
-func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *RewriteRules, updateCh glue.Progress, isRawKv bool) error {
+func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress, isRawKv bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

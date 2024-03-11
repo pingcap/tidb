@@ -64,7 +64,6 @@ type OnSplitFunc func(key [][]byte)
 func (rs *RegionSplitter) ExecuteSplit(
 	ctx context.Context,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	storeCount int,
 	isRawKv bool,
 	onSplit OnSplitFunc,
@@ -82,7 +81,7 @@ func (rs *RegionSplitter) ExecuteSplit(
 
 	// Sort the range for getting the min and max key of the ranges
 	// TODO: this sort may not needed if we sort tables after creatation outside.
-	sortedRanges, errSplit := SortRanges(ranges, rewriteRules)
+	sortedRanges, errSplit := SortRanges(ranges)
 	if errSplit != nil {
 		return errors.Trace(errSplit)
 	}
@@ -625,7 +624,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 				startKey = point
 			}
 
-			return regionSplitter.ExecuteSplit(ctx, ranges, nil, 3, false, func([][]byte) {})
+			return regionSplitter.ExecuteSplit(ctx, ranges, 3, false, func([][]byte) {})
 		}
 		select {
 		case <-ctx.Done():

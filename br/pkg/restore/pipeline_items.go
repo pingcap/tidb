@@ -203,7 +203,6 @@ type TiKVRestorer interface {
 	// After spliting, it also scatters the fresh regions.
 	SplitRanges(ctx context.Context,
 		ranges []rtree.Range,
-		rewriteRules *RewriteRules,
 		updateCh glue.Progress,
 		isRawKv bool) error
 	// RestoreSSTFiles import the files to the TiKV.
@@ -351,7 +350,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
 			pool.ApplyOnErrorGroup(eg, func() error {
-				err := b.client.SplitRanges(ectx, result.Ranges, result.RewriteRules, b.updateCh, false)
+				err := b.client.SplitRanges(ectx, result.Ranges, b.updateCh, false)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err

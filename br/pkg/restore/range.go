@@ -21,10 +21,10 @@ type Range struct {
 }
 
 // SortRanges checks if the range overlapped and sort them.
-func SortRanges(ranges []rtree.Range, rewriteRules *RewriteRules) ([]rtree.Range, error) {
+func SortRanges(ranges []rtree.Range) ([]rtree.Range, error) {
 	rangeTree := rtree.NewRangeTree()
 	for _, rg := range ranges {
-		if rewriteRules != nil {
+		if rg.RewriteRules != nil {
 			startID := tablecodec.DecodeTableID(rg.StartKey)
 			endID := tablecodec.DecodeTableID(rg.EndKey)
 			var rule *import_sstpb.RewriteRule
@@ -36,7 +36,7 @@ func SortRanges(ranges []rtree.Range, rewriteRules *RewriteRules) ([]rtree.Range
 					zap.Int64("endID", endID))
 				return nil, errors.Annotate(berrors.ErrRestoreTableIDMismatch, "table id mismatch")
 			}
-			rg.StartKey, rule = replacePrefix(rg.StartKey, rewriteRules)
+			rg.StartKey, rule = replacePrefix(rg.StartKey, rg.RewriteRules)
 			if rule == nil {
 				log.Warn("cannot find rewrite rule", logutil.Key("key", rg.StartKey))
 			} else {
@@ -45,7 +45,7 @@ func SortRanges(ranges []rtree.Range, rewriteRules *RewriteRules) ([]rtree.Range
 					logutil.Key("key", rg.StartKey), logutil.RewriteRule(rule))
 			}
 			oldKey := rg.EndKey
-			rg.EndKey, rule = replacePrefix(rg.EndKey, rewriteRules)
+			rg.EndKey, rule = replacePrefix(rg.EndKey, rg.RewriteRules)
 			if rule == nil {
 				log.Warn("cannot find rewrite rule", logutil.Key("key", rg.EndKey))
 			} else {

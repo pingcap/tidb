@@ -9,6 +9,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 )
@@ -18,7 +19,10 @@ type Range struct {
 	StartKey []byte
 	EndKey   []byte
 	Files    []*backuppb.File
-	Size     uint64
+	// Rules is the rewrite rules for the range.
+	// the range belongs to the *one table*.
+	RewriteRules *restore.RewriteRules
+	Size         uint64
 }
 
 // BytesAndKeys returns total bytes and keys in a range.

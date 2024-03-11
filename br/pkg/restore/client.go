@@ -1407,10 +1407,9 @@ func getGroupFiles(files []*backuppb.File, supportMulti bool) [][]*backuppb.File
 // SplitRanges implements TiKVRestorer.
 func (rc *Client) SplitRanges(ctx context.Context,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool) error {
-	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
+	return SplitRanges(ctx, rc, ranges, updateCh, isRawKv)
 }
 
 func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
