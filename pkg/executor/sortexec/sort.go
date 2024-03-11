@@ -323,7 +323,7 @@ func (e *SortExec) generateResultWhenSpillTriggeredOnlyOnce() error {
 	return nil
 }
 
-func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
+func (e *SortExec) generateResultWithMulWayMerge() error {
 	inDiskNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
 	multiWayMerge := &multiWayMergeImpl{
 		lessRowFunction: e.lessRow,
@@ -396,7 +396,7 @@ func (e *SortExec) generateResultWhenSpillTriggered() error {
 	if inDiskNum == 1 {
 		return e.generateResultWhenSpillTriggeredOnlyOnce()
 	}
-	return e.generateResultWhenSpillTriggeredWithMulWayMerge()
+	return e.generateResultWithMulWayMerge()
 }
 
 // Return true when spill is triggered
