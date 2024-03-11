@@ -486,10 +486,6 @@ func (w *GCWorker) isKeyspaceInGCSafePointV2() bool {
 	return config.GetGlobalConfig().EnableSafePointV2 && w.store != nil && w.store.GetCodec() != nil && w.store.GetCodec().GetKeyspace() != nil
 }
 
-func (w *GCWorker) isNullKeyspaceInGCSafePointV2() bool {
-	return config.GetGlobalConfig().EnableSafePointV2 && (w.store.GetCodec() == nil || w.store.GetCodec().GetKeyspace() == nil)
-}
-
 func (w *GCWorker) isKeyspaceInGCSafePointV1() bool {
 	return !config.GetGlobalConfig().EnableSafePointV2 && w.store.GetCodec() != nil && w.store.GetCodec().GetKeyspace() != nil
 }
