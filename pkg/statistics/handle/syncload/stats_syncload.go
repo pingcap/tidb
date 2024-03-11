@@ -461,6 +461,10 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		}
 		tbl = tbl.Copy()
 		tbl.Columns[c.ID] = colHist
+		// All the objects shares the same stats version. Update it here.
+		if colHist.StatsVer != statistics.Version0 {
+			tbl.StatsVer = statistics.Version0
+		}
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
 		if !ok || index.IsFullLoad() {
@@ -468,6 +472,10 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		}
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
+		// All the objects shares the same stats version. Update it here.
+		if idxHist.StatsVer != statistics.Version0 {
+			tbl.StatsVer = statistics.Version0
+		}
 	}
 	s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	return true

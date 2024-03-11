@@ -39,11 +39,19 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 		}
 		path := paths[i]
 		idxMergeDisgest += "{Idxs:["
-		for j := 0; j < len(path.PartialIndexPaths); j++ {
+		for j := 0; j < len(path.PartialAlternativeIndexPaths); j++ {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.PartialIndexPaths[j].Index.Name.L
+			idxMergeDisgest += "{"
+			// for every ONE index partial alternatives, output a set.
+			for k, one := range path.PartialAlternativeIndexPaths[j] {
+				if k != 0 {
+					idxMergeDisgest += ","
+				}
+				idxMergeDisgest += one.Index.Name.L
+			}
+			idxMergeDisgest += "}"
 		}
 		idxMergeDisgest += "],TbFilters:["
 		for j := 0; j < len(path.TableFilters); j++ {

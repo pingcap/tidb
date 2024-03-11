@@ -21,8 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -56,25 +54,23 @@ type SessionBindingHandle interface {
 
 // sessionBindingHandle is used to handle all session sql bind operations.
 type sessionBindingHandle struct {
-	ch BindingCache
+	ch FuzzyBindingCache
 }
 
 // NewSessionBindingHandle creates a new SessionBindingHandle.
 func NewSessionBindingHandle() SessionBindingHandle {
 	sessionHandle := &sessionBindingHandle{}
-	sessionHandle.ch = newBindCache()
+	sessionHandle.ch = newFuzzyBindingCache(nil)
 	return sessionHandle
 }
 
 // appendSessionBinding adds the Bindings to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindings) {
-	oldBindings := h.ch.GetBinding(sqlDigest)
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
 		logutil.BgLogger().Warn("SessionHandle.appendSessionBinding", zap.String("category", "sql-bind"), zap.Error(err))
 	}
-	updateMetrics(metrics.ScopeSession, oldBindings, meta, false)
 }
 
 // CreateSessionBinding creates a Bindings to the cache.
@@ -104,33 +100,7 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
 
 // MatchSessionBinding returns the matched binding for this statement.
 func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	// The current implementation is simplistic, but session binding is only for test purpose, so
-	// there shouldn't be many session bindings, and to keep it simple, this implementation is acceptable.
-	leastWildcards := len(tableNames) + 1
-	bindings := h.ch.GetAllBindings()
-	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
-	for _, binding := range bindings {
-		bindingStmt, err := parser.New().ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-		if err != nil {
-			return
-		}
-		_, bindingFuzzyDigest := norm.NormalizeStmtForBinding(bindingStmt, norm.WithFuzz(true))
-		if bindingFuzzyDigest != fuzzyDigest {
-			continue
-		}
-		bindingTableNames := CollectTableNames(bindingStmt)
-
-		numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, bindingTableNames)
-		if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
-			continue // fuzzy binding is disabled, skip this binding
-		}
-		if matched && numWildcards < leastWildcards {
-			matchedBinding = binding
-			isMatched = true
-			leastWildcards = numWildcards
-		}
-	}
-	return
+	return h.ch.FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
 }
 
 // GetAllSessionBindings return all session bind info.
@@ -173,9 +143,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 }
 
 // Close closes the session handle.
-func (h *sessionBindingHandle) Close() {
-	updateMetrics(metrics.ScopeSession, h.ch.GetAllBindings(), nil, false)
-}
+func (*sessionBindingHandle) Close() {}
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.
 type sessionBindInfoKeyType int

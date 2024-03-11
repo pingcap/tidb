@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +21,10 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
@@ -73,6 +76,18 @@ type SplitClient interface {
 	// SetStoresLabel add or update specified label of stores. If labelValue
 	// is empty, it clears the label.
 	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
+	// IsScatterRegionFinished check the latest successful operator and return the
+	// follow status:
+	//
+	//	return (finished, needRescatter, error)
+	//
+	// if the latest operator is not `scatter-operator`, or its status is SUCCESS,
+	// it's likely that the scatter region operator is finished.
+	//
+	// if the latest operator is `scatter-operator` and its status is TIMEOUT or
+	// CANCEL, the needRescatter is true and the function caller needs to scatter
+	// this region again.
+	IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error)
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -125,10 +140,27 @@ func (c *pdClient) needScatter(ctx context.Context) bool {
 	return c.needScatterVal
 }
 
-// ScatterRegions scatters regions in a batch.
-func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *pdClient) ScatterRegions(ctx context.Context, newRegions []*RegionInfo) error {
+	log.Info("scatter regions", zap.Int("regions", len(newRegions)))
+	// the retry is for the temporary network errors during sending request.
+	return utils.WithRetry(ctx, func() error {
+		err := c.scatterRegions(ctx, newRegions)
+		if isUnsupportedError(err) {
+			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
+			c.scatterRegionsSequentially(
+				ctx, newRegions,
+				// backoff about 6s, or we give up scattering this region.
+				&ExponentialBackoffer{
+					Attempts:    7,
+					BaseBackoff: 100 * time.Millisecond,
+				})
+			return nil
+		}
+		return err
+	}, &ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
+}
+
+func (c *pdClient) scatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
 	regionsID := make([]uint64, 0, len(regionInfo))
 	for _, v := range regionInfo {
 		regionsID = append(regionsID, v.Region.Id)
@@ -551,12 +583,94 @@ func (c *pdClient) SetStoresLabel(
 	return nil
 }
 
-func (c *pdClient) getPDAPIAddr() string {
-	addr := c.client.GetLeaderAddr()
-	if addr != "" && !strings.HasPrefix(addr, "http") {
-		addr = "http://" + addr
+func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []*RegionInfo, backoffer utils.Backoffer) {
+	newRegionSet := make(map[uint64]*RegionInfo, len(newRegions))
+	for _, newRegion := range newRegions {
+		newRegionSet[newRegion.Region.Id] = newRegion
 	}
-	return strings.TrimRight(addr, "/")
+
+	if err := utils.WithRetry(ctx, func() error {
+		log.Info("trying to scatter regions...", zap.Int("remain", len(newRegionSet)))
+		var errs error
+		for _, region := range newRegionSet {
+			err := c.ScatterRegion(ctx, region)
+			if err == nil {
+				// it is safe according to the Go language spec.
+				delete(newRegionSet, region.Region.Id)
+			} else if !PdErrorCanRetry(err) {
+				log.Warn("scatter meet error cannot be retried, skipping",
+					logutil.ShortError(err),
+					logutil.Region(region.Region),
+				)
+				delete(newRegionSet, region.Region.Id)
+			}
+			errs = multierr.Append(errs, err)
+		}
+		return errs
+	}, backoffer); err != nil {
+		log.Warn("Some regions haven't been scattered because errors.",
+			zap.Int("count", len(newRegionSet)),
+			// if all region are failed to scatter, the short error might also be verbose...
+			logutil.ShortError(err),
+			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i any) []string {
+				m := i.(map[uint64]*RegionInfo)
+				result := make([]string, 0, len(m))
+				for id := range m {
+					result = append(result, strconv.Itoa(int(id)))
+				}
+				return result
+			}),
+		)
+	}
+}
+
+func (c *pdClient) IsScatterRegionFinished(
+	ctx context.Context,
+	regionID uint64,
+) (scatterDone bool, needRescatter bool, scatterErr error) {
+	resp, err := c.GetOperator(ctx, regionID)
+	if err != nil {
+		if common.IsRetryableError(err) {
+			// retry in the next cycle
+			return false, false, nil
+		}
+		return false, false, errors.Trace(err)
+	}
+	return IsScatterRegionFinished(resp)
+}
+
+// IsScatterRegionFinished checks whether the scatter region operator is
+// finished. TODO(lance6716): hide this function after scatter logic is unified
+// for BR and lightning.
+func IsScatterRegionFinished(resp *pdpb.GetOperatorResponse) (
+	scatterDone bool,
+	needRescatter bool,
+	scatterErr error,
+) {
+	// Heartbeat may not be sent to PD
+	if respErr := resp.GetHeader().GetError(); respErr != nil {
+		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
+			return true, false, nil
+		}
+		return false, false, errors.Annotatef(
+			berrors.ErrPDInvalidResponse,
+			"get operator error: %s, error message: %s",
+			respErr.GetType(),
+			respErr.GetMessage(),
+		)
+	}
+	// that 'scatter-operator' has finished
+	if string(resp.GetDesc()) != "scatter-region" {
+		return true, false, nil
+	}
+	switch resp.GetStatus() {
+	case pdpb.OperatorStatus_SUCCESS:
+		return true, false, nil
+	case pdpb.OperatorStatus_RUNNING:
+		return false, false, nil
+	default:
+		return false, true, nil
+	}
 }
 
 // CheckRegionEpoch check region epoch.
@@ -610,4 +724,25 @@ func (b *ExponentialBackoffer) NextBackoff(error) time.Duration {
 // Attempt returns the remain attempt times
 func (b *ExponentialBackoffer) Attempt() int {
 	return b.Attempts
+}
+
+// isUnsupportedError checks whether we should fallback to ScatterRegion API when meeting the error.
+func isUnsupportedError(err error) bool {
+	s, ok := status.FromError(errors.Cause(err))
+	if !ok {
+		// Not a gRPC error. Something other went wrong.
+		return false
+	}
+	// In two conditions, we fallback to ScatterRegion:
+	// (1) If the RPC endpoint returns UNIMPLEMENTED. (This is just for making test cases not be so magic.)
+	// (2) If the Message is "region 0 not found":
+	//     In fact, PD reuses the gRPC endpoint `ScatterRegion` for the batch version of scattering.
+	//     When the request contains the field `regionIDs`, it would use the batch version,
+	//     Otherwise, it uses the old version and scatter the region with `regionID` in the request.
+	//     When facing 4.x, BR(which uses v5.x PD clients and call `ScatterRegions`!) would set `regionIDs`
+	//     which would be ignored by protocol buffers, and leave the `regionID` be zero.
+	//     Then the older version of PD would try to search the region with ID 0.
+	//     (Then it consistently fails, and returns "region 0 not found".)
+	return s.Code() == codes.Unimplemented ||
+		strings.Contains(s.Message(), "region 0 not found")
 }

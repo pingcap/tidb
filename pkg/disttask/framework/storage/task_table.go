@@ -581,7 +581,7 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 	return err
 }
 
-// SwitchTaskStep implements the dispatcher.TaskManager interface.
+// SwitchTaskStep implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) SwitchTaskStep(
 	ctx context.Context,
 	task *proto.Task,
@@ -662,7 +662,7 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	return err
 }
 
-// SwitchTaskStepInBatch implements the dispatcher.TaskManager interface.
+// SwitchTaskStepInBatch implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) SwitchTaskStepInBatch(
 	ctx context.Context,
 	task *proto.Task,
@@ -671,7 +671,7 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 	subtasks []*proto.Subtask,
 ) error {
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
-		// some subtasks may be inserted by other dispatchers, we can skip them.
+		// some subtasks may be inserted by other schedulers, we can skip them.
 		rs, err := sqlexec.ExecSQL(ctx, se, `
 			select count(1) from mysql.tidb_background_subtask
 			where task_key = %? and step = %?`, task.ID, nextStep)

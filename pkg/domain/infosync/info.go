@@ -177,15 +177,15 @@ type ServerVersionInfo struct {
 
 // globalInfoSyncer stores the global infoSyncer.
 // Use a global variable for simply the code, use the domain.infoSyncer will have circle import problem in some pkg.
-// Use atomic.Value to avoid data race in the test.
-var globalInfoSyncer atomic.Value
+// Use atomic.Pointer to avoid data race in the test.
+var globalInfoSyncer atomic.Pointer[InfoSyncer]
 
 func getGlobalInfoSyncer() (*InfoSyncer, error) {
 	v := globalInfoSyncer.Load()
 	if v == nil {
 		return nil, errors.New("infoSyncer is not initialized")
 	}
-	return v.(*InfoSyncer), nil
+	return v, nil
 }
 
 func setGlobalInfoSyncer(is *InfoSyncer) {
@@ -403,6 +403,39 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 		return nil, err
 	}
 	return is.getAllServerInfo(ctx)
+}
+
+// UpdateServerLabel updates the server label for global info syncer.
+func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	// when etcdCli is nil, the server infos are generated from the latest config, no need to update.
+	if is.etcdCli == nil {
+		return nil
+	}
+	selfInfo, err := is.getServerInfoByID(ctx, is.info.ID)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for k, v := range labels {
+		if selfInfo.Labels[k] != v {
+			changed = true
+			selfInfo.Labels[k] = v
+		}
+	}
+	if !changed {
+		return nil
+	}
+	infoBuf, err := selfInfo.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	str := string(hack.String(infoBuf))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
+	return err
 }
 
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
