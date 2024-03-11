@@ -64,7 +64,7 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		// eval other condition, and construct final chunk
 		j.selected = j.selected[:0]
-		j.selected, joinResult.Err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		j.selected, joinResult.Err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
 		if joinResult.Err != nil {
 			return false, joinResult
 		}
@@ -77,15 +77,15 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 	return true, joinResult
 }
 
-func (j *innerJoinProbe) NeedScanHT() bool {
+func (j *innerJoinProbe) NeedScanRowTable() bool {
 	return false
 }
 
-func (j *innerJoinProbe) ScanHT(*util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
+func (j *innerJoinProbe) ScanRowTable(*util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
 	panic("should not reach here")
 }
 
-func (j *innerJoinProbe) IsScanHTDone() bool {
+func (j *innerJoinProbe) IsScanRowTableDone() bool {
 	panic("should not reach here")
 }
 

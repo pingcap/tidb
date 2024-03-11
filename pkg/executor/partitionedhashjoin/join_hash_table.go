@@ -25,9 +25,11 @@ import (
 )
 
 type subTable struct {
-	rowData   *rowTable
-	hashTable []unsafe.Pointer
-	posMask   uint64
+	rowData          *rowTable
+	hashTable        []unsafe.Pointer
+	posMask          uint64
+	isRowTableEmpty  bool
+	isHashTableEmpty bool
 }
 
 type hashStatistic struct {
@@ -53,7 +55,15 @@ func nextPowerOfTwo(value uint64) uint64 {
 
 func newSubTable(table *rowTable) *subTable {
 	ret := &subTable{
-		rowData: table,
+		rowData:          table,
+		isHashTableEmpty: false,
+		isRowTableEmpty:  false,
+	}
+	if table.rowCount() == 0 {
+		ret.isRowTableEmpty = true
+	}
+	if table.validKeyCount() == 0 {
+		ret.isHashTableEmpty = true
 	}
 	capacity := mathutil.MaxUint64(nextPowerOfTwo(uint64(table.validKeyCount())), uint64(1024))
 	ret.hashTable = make([]unsafe.Pointer, capacity)
@@ -115,6 +125,15 @@ func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *Join
 		jht.tables[i] = newSubTable(rowTable)
 	}
 	return jht
+}
+
+func (jht *JoinHashTable) isHashTableEmpty() bool {
+	for _, subTable := range jht.tables {
+		if !subTable.isHashTableEmpty {
+			return false
+		}
+	}
+	return true
 }
 
 func (jht *JoinHashTable) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
