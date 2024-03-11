@@ -46,9 +46,9 @@ type JoinProbe interface {
 	SetChunkForProbe(chunk *chunk.Chunk) error
 	Probe(joinResult *util.HashjoinWorkerResult) (ok bool, result *util.HashjoinWorkerResult)
 	IsCurrentChunkProbeDone() bool
-	ScanHT(joinResult *util.HashjoinWorkerResult) (result *util.HashjoinWorkerResult)
-	IsScanHTDone() bool
-	NeedScanHT() bool
+	ScanRowTable(joinResult *util.HashjoinWorkerResult) (result *util.HashjoinWorkerResult)
+	IsScanRowTableDone() bool
+	NeedScanRowTable() bool
 }
 
 type offsetAndLength struct {
@@ -141,7 +141,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		j.serializedKeys = make([][]byte, rows)
 	}
 	if j.ctx.Filter != nil {
-		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.Filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
+		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.Filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
 		if err != nil {
 			return err
 		}
