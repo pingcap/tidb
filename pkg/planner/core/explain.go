@@ -596,6 +596,10 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 
 	buffer := new(strings.Builder)
 
+	if p.SCtx().GetSessionVars().UseNewHashJoinImpl && p.CanUseNewHashJoin() {
+		buffer.WriteString("Use new hash join. ")
+	}
+
 	if len(p.EqualConditions) == 0 {
 		if len(p.NAEqualConditions) == 0 {
 			buffer.WriteString("CARTESIAN ")
