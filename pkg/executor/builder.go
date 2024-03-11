@@ -1630,7 +1630,7 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		e.ProbeWorkers[i] = &partitionedhashjoin.ProbeWorker{
 			HashJoinCtx: e.PartitionedHashJoinCtx,
 			WorkerID:    i,
-			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes),
+			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, i, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes),
 		}
 
 		e.BuildWorkers[i] = &partitionedhashjoin.BuildWorker{

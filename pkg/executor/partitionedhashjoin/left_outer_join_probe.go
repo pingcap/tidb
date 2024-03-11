@@ -22,10 +22,9 @@ import (
 
 type leftOuterJoinProbe struct {
 	innerJoinProbe
+	// used when build right side
 	isNotMatchedRows []bool
-	// used in scanHT when use left table as build side
-	scanStartIndex uint64
-	scanEndIndex   uint64
+	// used when build left side
 	currentRowIter *rowIter
 	endRowIter     *rowIter
 }
@@ -55,8 +54,27 @@ func (j *leftOuterJoinProbe) isScanRowTableDone() bool {
 	return j.currentRowIter.equals(j.endRowIter)
 }
 
-func (j *leftOuterJoinProbe) scanRowTable(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
-	// todo scan row table instead of hash table
+func (j *leftOuterJoinProbe) InitForScanRowTable() {
+	if j.rightAsBuildSide {
+		panic("should not reach here")
+	}
+	totalRowCount := j.ctx.joinHashTable.totalRowCount()
+	concurrency := j.ctx.Concurrency
+	workId := uint64(j.workID)
+	avgRowPerWorker := totalRowCount / uint64(concurrency)
+	startIndex := workId * avgRowPerWorker
+	endIndex := (workId + 1) * avgRowPerWorker
+	if workId == uint64(concurrency-1) {
+		endIndex = totalRowCount
+	}
+	if endIndex > totalRowCount {
+		endIndex = totalRowCount
+	}
+	j.currentRowIter = j.ctx.joinHashTable.createRowIter(startIndex)
+	j.endRowIter = j.ctx.joinHashTable.createRowIter(endIndex)
+}
+
+func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
@@ -64,8 +82,7 @@ func (j *leftOuterJoinProbe) scanRowTable(joinResult *util.HashjoinWorkerResult)
 		return joinResult
 	}
 	if j.currentRowIter == nil {
-		j.currentRowIter = j.ctx.joinHashTable.createRowIter(j.scanStartIndex)
-		j.endRowIter = j.ctx.joinHashTable.createRowIter(j.scanEndIndex)
+		panic("scanRowTable before init")
 	}
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
