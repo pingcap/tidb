@@ -1661,6 +1661,9 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 
 	if c.GetDefaultValue() != nil {
 		if c.DefaultIsExpr {
+			if mysql.HasAutoIncrementFlag(c.GetFlag()) {
+				return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
+			}
 			return nil
 		}
 		if _, err := table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo()); err != nil {
@@ -5490,6 +5493,8 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		if err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
+	} else {
+		hasDefaultValue = true
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
@@ -5526,8 +5531,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// ProcessColumnOptions process column options.
-func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// ProcessModifyColumnOptions process column options.
+func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
@@ -5605,7 +5610,8 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	return nil
 }
 
-func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column, outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
+func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column,
+	outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
 	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 	processColumnFlags(col)
 
@@ -5774,7 +5780,7 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = ProcessColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -6280,8 +6286,8 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 	// Clean the NoDefaultValueFlag value.
 	col.DelFlag(mysql.NoDefaultValueFlag)
+	col.DefaultIsExpr = false
 	if len(specNewColumn.Options) == 0 {
-		col.DefaultIsExpr = false
 		err = col.SetDefaultValue(nil)
 		if err != nil {
 			return errors.Trace(err)
