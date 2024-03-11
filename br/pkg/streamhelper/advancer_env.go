@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
@@ -48,8 +49,9 @@ func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 	return c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
 }
 
+// TODO: It should be able to synchoronize the current TS with the PD.
 func (c PDRegionScanner) FetchCurrentTS(ctx context.Context) (uint64, error) {
-	return uint64(time.Now().Unix()), nil
+	return oracle.ComposeTS(time.Now().UnixMilli(), 0), nil
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
