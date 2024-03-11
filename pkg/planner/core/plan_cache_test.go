@@ -1010,6 +1010,8 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select distinct a from t1 where a > 1 and b < 2",          // distinct
 		"select count(*) from t1 where a > 1 and b < 2 group by a", // group by
 		"select * from t1 order by a",                              // order by
+		"select * from t3 where full_name = 'a b'",                 // generated column
+		"select * from t3 where a > 1 and full_name = 'a b'",
 		"select * from t1 where a in (1, 2)",                       // Partitioned
 		"select * from t2 where a in (1, 2) and b in (1, 2, 3)",    // Partitioned
 		"select * from t1 where a in (1, 2) and b < 15",            // Partitioned
@@ -1030,8 +1032,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where bt > 0", // bit
 		"select * from t where a > 1 and bt > 0",
 		"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", // memTable
-		"select * from t3 where full_name = 'a b'",                                // generated column
-		"select * from t3 where a > 1 and full_name = 'a b'",
 		"select * from v",                // view
 		"select * from t where a = null", // null
 		"select * from t where false",    // table dual
@@ -1052,8 +1052,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: access tables in system schema",
-		"skip non-prepared plan-cache: query accesses generated columns is un-cacheable",
-		"skip non-prepared plan-cache: query accesses generated columns is un-cacheable",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
 		"skip non-prepared plan-cache: some parameters may be overwritten when constant propagation",
