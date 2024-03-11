@@ -1813,6 +1813,10 @@ var defaultSysVars = []*SysVar{
 		s.MPPOuterJoinFixedBuildSide = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptUseNewHashJoin, Value: BoolToOnOff(DefOptUseNewHashJoin), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.UseNewHashJoinImpl = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBExecutorConcurrency, Value: strconv.Itoa(DefExecutorConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
 		s.ExecutorConcurrency = tidbOptPositiveInt32(val, DefExecutorConcurrency)
 		return nil
