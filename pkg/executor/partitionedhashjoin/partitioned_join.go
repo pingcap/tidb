@@ -100,12 +100,12 @@ type PartitionedHashJoinCtx struct {
 type ProbeSideTupleFetcher struct {
 	*PartitionedHashJoinCtx
 
-	ProbeSideExec            exec.Executor
-	ProbeChkResourceCh       chan *probeChkResource
-	ProbeResultChs           []chan *chunk.Chunk
-	RequiredRows             int64
-	needScanHTAfterProbeDone bool
-	probeSideIsEmpty         bool
+	ProbeSideExec                  exec.Executor
+	ProbeChkResourceCh             chan *probeChkResource
+	ProbeResultChs                 []chan *chunk.Chunk
+	RequiredRows                   int64
+	needScanHTAfterProbeDone       bool
+	canSkipProbeIfHashTableIsEmpty bool
 }
 
 type ProbeWorker struct {
@@ -289,13 +289,17 @@ func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 				// be empty
 				fetcher.finished.Store(true)
 			}
-			emptyBuild, buildErr := fetcher.wait4BuildSide()
+			skipProbe, buildErr := fetcher.wait4BuildSide()
 			if buildErr != nil {
 				fetcher.joinResultCh <- &internalutil.HashjoinWorkerResult{
 					Err: buildErr,
 				}
 				return
-			} else if emptyBuild {
+			} else if skipProbe {
+				// stop probe
+				if !fetcher.needScanHTAfterProbeDone {
+					fetcher.finished.Store(true)
+				}
 				return
 			}
 			hasWaitedForBuild = true
@@ -304,13 +308,12 @@ func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 		if probeSideResult.NumRows() == 0 {
 			return
 		}
-		fetcher.probeSideIsEmpty = false
 
 		probeSideResource.dest <- probeSideResult
 	}
 }
 
-func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (emptyBuild bool, err error) {
+func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (skipProbe bool, err error) {
 	select {
 	case <-fetcher.closeCh:
 		return true, nil
@@ -319,7 +322,7 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (emptyBuild bool, err err
 			return false, err
 		}
 	}
-	if fetcher.probeSideIsEmpty == true && (fetcher.JoinType == plannercore.InnerJoin || fetcher.JoinType == plannercore.SemiJoin) {
+	if fetcher.joinHashTable.isHashTableEmpty() && fetcher.canSkipProbeIfHashTableIsEmpty {
 		return true, nil
 	}
 	return false, nil
@@ -372,14 +375,29 @@ func (w *BuildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 	}
 }
 
+func (e *PartitionedHashJoinExec) canSkipProbeIfHashTableIsEmpty() bool {
+	switch e.JoinType {
+	case plannercore.InnerJoin:
+		return true
+	case plannercore.LeftOuterJoin:
+		return !e.RightAsBuildSide
+	case plannercore.RightOuterJoin:
+		return e.RightAsBuildSide
+	case plannercore.SemiJoin:
+		return e.RightAsBuildSide
+	default:
+		return false
+	}
+}
+
 func (e *PartitionedHashJoinExec) initializeForProbe() {
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
 	e.joinResultCh = make(chan *internalutil.HashjoinWorkerResult, e.Concurrency+1)
 
 	e.ProbeSideTupleFetcher.PartitionedHashJoinCtx = e.PartitionedHashJoinCtx
-	e.ProbeSideTupleFetcher.needScanHTAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanHT()
-	e.ProbeSideTupleFetcher.probeSideIsEmpty = true
+	e.ProbeSideTupleFetcher.needScanHTAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
+	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
 	// e.ProbeSideTupleFetcher.ProbeResultChs is for transmitting the chunks which store the data of
 	// ProbeSideExec, it'll be written by probe side worker goroutine, and read by join
 	// workers.
@@ -448,24 +466,24 @@ func (e *PartitionedHashJoinExec) handleJoinWorkerPanic(r any) {
 
 func (e *PartitionedHashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.workerWg.Wait()
-	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanHT() {
+	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
 			e.workerWg.RunWithRecover(func() {
-				e.ProbeWorkers[workerID].scanHashTableAfterProbeDone()
+				e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
 			}, e.handleJoinWorkerPanic)
 		}
 	}
 	close(e.joinResultCh)
 }
 
-func (w *ProbeWorker) scanHashTableAfterProbeDone() {
+func (w *ProbeWorker) scanRowTableAfterProbeDone() {
 	ok, joinResult := w.getNewJoinResult()
 	if !ok {
 		return
 	}
-	for !w.JoinProbe.IsScanHTDone() {
-		joinResult = w.JoinProbe.ScanHT(joinResult)
+	for !w.JoinProbe.IsScanRowTableDone() {
+		joinResult = w.JoinProbe.ScanRowTable(joinResult)
 		if joinResult.Err != nil {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			return

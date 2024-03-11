@@ -47,18 +47,19 @@ func (j *leftOuterJoinProbe) setChunkForProbe(chunk *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (j *leftOuterJoinProbe) needScanHT() bool {
+func (j *leftOuterJoinProbe) needScanRowTable() bool {
 	return !j.rightAsBuildSide
 }
 
-func (j *leftOuterJoinProbe) isScanHTDone() bool {
+func (j *leftOuterJoinProbe) isScanRowTableDone() bool {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
 	return j.currentScanIndex >= j.scanEndIndex
 }
 
-func (j *leftOuterJoinProbe) scanHT(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
+func (j *leftOuterJoinProbe) scanRowTable(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
+	// todo scan row table instead of hash table
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
@@ -213,7 +214,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 	if j.ctx.hasOtherCondition() {
 		if joinedChk.NumRows() > 0 {
 			j.selected = j.selected[:0]
-			j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+			j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
 			if err != nil {
 				return err
 			}
@@ -261,7 +262,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
-		j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
 		if err != nil {
 			return err
 		}
