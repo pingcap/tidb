@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/tikv/client-go/v2/util"
@@ -580,10 +581,11 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
-	if sv.EnableRedactLog {
-		return parser.Normalize(cc.preparedStmt2StringNoArgs(stmtID))
+	sql := parser.Normalize(cc.preparedStmt2StringNoArgs(stmtID), sv.EnableRedactNew)
+	if m := sv.EnableRedactNew; m != "ON" {
+		sql += redact.String(sv.EnableRedactNew, sv.PlanCacheParams.String())
 	}
-	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PlanCacheParams.String()
+	return sql
 }
 
 func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
