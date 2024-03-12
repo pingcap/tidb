@@ -1341,7 +1341,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			col.DefaultIsExpr = true
 			return str, false, nil
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), nowFunc.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.Replace:
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
@@ -1371,7 +1372,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.Upper:
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
@@ -1397,7 +1399,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.StrToDate: // STR_TO_DATE()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
@@ -1413,7 +1416,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), fmt.Sprintf("%s with these args", expr.FnName.String()))
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
