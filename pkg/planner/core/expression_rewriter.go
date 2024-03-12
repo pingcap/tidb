@@ -2604,8 +2604,8 @@ func encodeHandleFromRow(ctx expression.EvalContext, args []expression.Expressio
 		recordID = kv.IntHandle(h)
 	} else {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		if len(pkIdx.Columns) != row.Len()-2 {
-			return nil, false, errors.Errorf("column count mismatch, expected %d, got %d", len(pkIdx.Columns), row.Len()-2)
+		if len(pkIdx.Columns) != len(args)-2 {
+			return nil, false, errors.Errorf("column count mismatch, expected %d, got %d", len(pkIdx.Columns), len(args)-2)
 		}
 		pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
 		for i, idxCol := range pkIdx.Columns {
@@ -2656,16 +2656,16 @@ func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Express
 		return nil, false, err
 	}
 	tblInfo := tbl.Meta()
-	idx := tblInfo.FindIndexByName(strings.ToLower(idxName))
-	if idx == nil {
+	idxInfo := tblInfo.FindIndexByName(strings.ToLower(idxName))
+	if idxInfo == nil {
 		return nil, false, errors.New("index not found")
 	}
 
-	if len(idx.Columns) != row.Len()-3 {
-		return nil, false, errors.Errorf("column count mismatch, expected %d, got %d", len(idx.Columns), row.Len()-3)
+	if len(idxInfo.Columns) != len(args)-3 {
+		return nil, false, errors.Errorf("column count mismatch, expected %d, got %d", len(idxInfo.Columns), len(args)-3)
 	}
-	idxDts := make([]types.Datum, 0, len(idx.Columns))
-	for i, idxCol := range idx.Columns {
+	idxDts := make([]types.Datum, 0, len(idxInfo.Columns))
+	for i, idxCol := range idxInfo.Columns {
 		dt, err := args[i+3].Eval(ctx, row)
 		if err != nil {
 			return nil, false, err
@@ -2677,8 +2677,9 @@ func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Express
 		}
 		idxDts = append(idxDts, idxDt)
 	}
-	tablecodec.TruncateIndexValues(tblInfo, idx, idxDts)
-	idxKey, err := codec.EncodeKey(ctx.GetSessionVars().Location(), nil, idxDts...)
+	tablecodec.TruncateIndexValues(tblInfo, idxInfo, idxDts)
+	idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	idxKey, _, err := idx.GenIndexKey(ctx.ErrCtx(), ctx.Location(), idxDts, nil, nil)
 	return idxKey, false, err
 }
 
