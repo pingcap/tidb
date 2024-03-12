@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
@@ -79,7 +80,7 @@ func TestMisc(t *testing.T) {
 
 	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
-	is := builder.Build()
+	is := builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 0)
 
 	// test create resource group
@@ -89,7 +90,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 1)
 	getResourceGroupInfo, ok := is.ResourceGroupByName(resourceGroupInfo.Name)
 	require.True(t, ok)
@@ -103,7 +104,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo2.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 2)
 	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo2.Name)
 	require.True(t, ok)
@@ -117,7 +118,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 2)
 	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo.Name)
 	require.True(t, ok)
@@ -129,7 +130,7 @@ func TestMisc(t *testing.T) {
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_ = applyDropResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 1)
 	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo2.Name)
 	require.True(t, ok)
@@ -143,7 +144,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 1)
 	getPolicyInfo, ok := is.PolicyByName(policyInfo.Name)
 	require.True(t, ok)
@@ -157,7 +158,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo2.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 2)
 	getPolicyInfo, ok = is.PolicyByName(policyInfo2.Name)
 	require.True(t, ok)
@@ -171,7 +172,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 2)
 	getPolicyInfo, ok = is.PolicyByName(policyInfo.Name)
 	require.True(t, ok)
@@ -183,7 +184,7 @@ func TestMisc(t *testing.T) {
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_ = applyDropPolicy(builder, policyInfo.ID)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 1)
 	getPolicyInfo, ok = is.PolicyByName(policyInfo2.Name)
 	require.True(t, ok)
