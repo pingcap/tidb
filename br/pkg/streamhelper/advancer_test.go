@@ -414,3 +414,29 @@ func TestOwnerDropped(t *testing.T) {
 		require.Equal(t, vsf.MinValue(), cp)
 	})
 }
+
+// TestRemoveTaskAndFlush tests the bug has been described in #50839.
+func TestRemoveTaskAndFlush(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	ctx := context.Background()
+	c := createFakeCluster(t, 4, true)
+	installSubscribeSupport(c)
+	env := &testEnv{
+		fakeCluster: c,
+		testCtx:     t,
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+	adv.SpawnSubscriptionHandler(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription-handler-loop", "pause"))
+	c.flushAll()
+	env.unregisterTask()
+	require.Eventually(t, func() bool {
+		return !adv.HasTask()
+	}, 10*time.Second, 100*time.Millisecond)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription-handler-loop"))
+	require.Eventually(t, func() bool {
+		return !adv.HasSubscribion()
+	}, 10*time.Second, 100*time.Millisecond)
+}

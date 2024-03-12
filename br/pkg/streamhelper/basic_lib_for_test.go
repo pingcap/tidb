@@ -590,6 +590,7 @@ type testEnv struct {
 	checkpoint uint64
 	testCtx    *testing.T
 	ranges     []kv.KeyRange
+	taskCh     chan<- streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
@@ -611,6 +612,7 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 		Ranges: rngs,
 	}
 	ch <- tsk
+	t.taskCh = ch
 	return nil
 }
 
@@ -638,6 +640,13 @@ func (t *testEnv) getCheckpoint() uint64 {
 	defer t.mu.Unlock()
 
 	return t.checkpoint
+}
+
+func (t *testEnv) unregisterTask() {
+	t.taskCh <- streamhelper.TaskEvent{
+		Type: streamhelper.EventDel,
+		Name: "whole",
+	}
 }
 
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
