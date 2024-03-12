@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -55,7 +56,7 @@ func TestVariable(t *testing.T) {
 func TestPipelinedDMLPositive(t *testing.T) {
 	// the test is a little tricky, only when pipelined dml is enabled, the failpoint panics and the panic message will be returned as error
 	// TODO: maybe save the pipelined DML usage into TxnInfo, so we can check from it.
-	require.NoError(t, failpoint.Enable("tikvclient/pipelinedCommitFail", `panic("pipelined memdb is be enabled")`))
+	require.NoError(t, failpoint.Enable("tikvclient/pipelinedCommitFail", `panic("pipelined memdb is enabled")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("tikvclient/pipelinedCommitFail"))
 	}()
@@ -93,7 +94,7 @@ func TestPipelinedDMLPositive(t *testing.T) {
 			return err
 		})
 		require.Error(t, err, stmt)
-		require.True(t, strings.Contains(err.Error(), "pipelined memdb is be enabled"), err.Error(), stmt)
+		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error(), stmt)
 		// binary protocol
 		ctx := context.Background()
 		parsedStmts, err := tk.Session().Parse(ctx, stmt)
@@ -103,7 +104,7 @@ func TestPipelinedDMLPositive(t *testing.T) {
 			return err
 		})
 		require.Error(t, err, stmt)
-		require.True(t, strings.Contains(err.Error(), "pipelined memdb is be enabled"), err.Error(), stmt)
+		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error(), stmt)
 	}
 }
 
@@ -127,6 +128,7 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	// not in auto-commit txn
 	tk.MustExec("set session tidb_dml_type = bulk")
 	tk.MustExec("begin")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode.")
 	tk.MustExec("insert into t values(2, 2)")
 	tk.MustExec("commit")
 
@@ -137,16 +139,19 @@ func TestPipelinedDMLNegative(t *testing.T) {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
 	}()
 	tk.MustExec("insert into t values(3, 3)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used in pessimistic autocommit mode. Fallback to standard mode.")
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(false)
 
 	// binlog is enabled
 	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("insert into t values(4, 4)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode.")
 	tk.Session().GetSessionVars().BinlogClient = nil
 
 	// in a running txn
 	tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec("begin")
+	// the warning is produced for the begin stmt.
 	tk.MustExec("set session tidb_dml_type = bulk") // turn on bulk dml in a txn doesn't effect the current txn.
 	tk.MustExec("insert into t values(5, 5)")
 	tk.MustExec("commit")
@@ -155,9 +160,20 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.Session().GetSessionVars().InRestrictedSQL = true
 	tk.MustExec("insert into t values(6, 6)")
 	tk.Session().GetSessionVars().InRestrictedSQL = false
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used for internal SQL. Fallback to standard mode.")
 
 	// it's a read statement
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6"))
+
+	// for deprecated batch-dml
+	tk.Session().GetSessionVars().BatchDelete = true
+	tk.Session().GetSessionVars().DMLBatchSize = 1
+	variable.EnableBatchDML.Store(true)
+	tk.MustExec("insert into t values(7, 7)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode.")
+	tk.Session().GetSessionVars().BatchDelete = false
+	tk.Session().GetSessionVars().DMLBatchSize = 0
+	variable.EnableBatchDML.Store(false)
 }
 
 func compareTables(t *testing.T, tk *testkit.TestKit, t1, t2 string) {
