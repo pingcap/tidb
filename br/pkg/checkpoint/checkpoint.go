@@ -857,7 +857,7 @@ func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir
 	eg, gCtx := errgroup.WithContext(ctx)
 	for _, filename := range removedFileNames {
 		name := filename
-		pool.ApplyOnErrorGroup(eg, func() error {
+		pool.ApplyOnErrorGroupWithErrorContext(eg, gCtx, func() error {
 			if err := s.DeleteFile(gCtx, name); err != nil {
 				log.Warn("failed to remove the file", zap.String("filename", name), zap.Error(err))
 				failedFilesCount.lock.Lock()

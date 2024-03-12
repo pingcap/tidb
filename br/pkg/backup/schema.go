@@ -109,7 +109,7 @@ func (ss *Schemas) BackupSchemas(
 		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
 			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
 		}
-		workerPool.ApplyOnErrorGroup(errg, func() error {
+		workerPool.ApplyOnErrorGroupWithErrorContext(errg, ectx, func() error {
 			if schema.tableInfo != nil {
 				logger := log.L().With(
 					zap.String("db", schema.dbInfo.Name.O),
@@ -149,7 +149,7 @@ func (ss *Schemas) BackupSchemas(
 				}
 				if statsHandle != nil {
 					statsWriter := metaWriter.NewStatsWriter()
-					if err := schema.dumpStatsToJSON(ctx, statsWriter, statsHandle, backupTS); err != nil {
+					if err := schema.dumpStatsToJSON(ectx, statsWriter, statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
 						return errors.Trace(err)
 					}

@@ -187,11 +187,8 @@ func downloadStats(
 	eg, ectx := errgroup.WithContext(ctx)
 	downloadWorkerpool := utils.NewWorkerPool(4, "download stats for each partition")
 	for _, statsFileIndex := range statsFileIndexes {
-		if ectx.Err() != nil {
-			break
-		}
 		statsFile := statsFileIndex
-		downloadWorkerpool.ApplyOnErrorGroup(eg, func() error {
+		downloadWorkerpool.ApplyOnErrorGroupWithErrorContext(eg, ectx, func() error {
 			var statsContent []byte
 			if len(statsFile.InlineData) > 0 {
 				statsContent = statsFile.InlineData
