@@ -100,7 +100,7 @@ func (h *InfoCache) Len() int {
 }
 
 func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
-	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts))
+	logutil.BgLogger().Info("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts))
 	// search one by one instead of binary search, because the timestamp of a schema could be 0
 	// this is ok because the size of h.cache is small (currently set to 16)
 	// moreover, the most likely hit element in the array is the first one in steady mode
@@ -188,7 +188,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 // It returns 'true' if it is cached, 'false' otherwise.
 // schemaTs is the commitTs of the txn creates the schema diff, which indicates since when the schema version is taking effect
 func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
-	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
+	logutil.BgLogger().Info("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

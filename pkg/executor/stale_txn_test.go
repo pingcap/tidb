@@ -884,6 +884,14 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
+
+	for _, cacheSize := range []int{1024, 0} {
+		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
+		testSetTransactionInfoSchema(t, tk)
+	}
+}
+
+func testSetTransactionInfoSchema(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
