@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -70,11 +71,12 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	baseExec := exec.NewBaseExecutor(ctx, schema, 0)
 	explainExec := &ExplainExec{
 		BaseExecutor: baseExec,
-		explain:      nil,
+		explain:      &core.Explain{},
 	}
 	// mockErrorOperator returns errors
 	mockOpr := mockErrorOperator{baseExec, false, false}
 	explainExec.analyzeExec = &mockOpr
+	explainExec.explain.Analyze = true
 	tmpCtx := context.Background()
 	_, err := explainExec.generateExplainInfo(tmpCtx)
 	require.EqualError(t, err, "next error, close error")
@@ -83,10 +85,11 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	// mockErrorOperator panic
 	explainExec = &ExplainExec{
 		BaseExecutor: baseExec,
-		explain:      nil,
+		explain:      &core.Explain{},
 	}
 	mockOpr = mockErrorOperator{baseExec, true, false}
 	explainExec.analyzeExec = &mockOpr
+	explainExec.explain.Analyze = true
 	_, err = explainExec.generateExplainInfo(tmpCtx)
 	require.EqualError(t, err, "next panic, close error")
 	require.True(t, mockOpr.closed)

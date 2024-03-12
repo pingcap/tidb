@@ -481,3 +481,57 @@ func TestIssue44369(t *testing.T) {
 	tk.MustExec("alter table t rename column b to bb;")
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
 }
+
+func TestTableLastAnalyzeVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+
+	// Only create table should not set the last_analyze_version
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl, found := h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+
+	// Only alter table should not set the last_analyze_version
+	tk.MustExec("alter table t add column b int default 0")
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	require.NoError(t, h.Update(is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+	tk.MustExec("alter table t add index idx(a)")
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	// We don't handle the ADD INDEX event in the HandleDDLEvent.
+	require.Equal(t, 0, len(h.DDLEventCh()))
+	require.NoError(t, err)
+	require.NoError(t, h.Update(is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+
+	// INSERT and updating the modify_count should not set the last_analyze_version
+	tk.MustExec("insert into t values(1, 1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+
+	// After analyze, last_analyze_version is set.
+	tk.MustExec("analyze table t")
+	require.NoError(t, h.Update(is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.NotEqual(t, uint64(0), statsTbl.LastAnalyzeVersion)
+}
