@@ -1031,9 +1031,9 @@ func (k TiDBDecodeKeyFunctionKeyType) String() string {
 const (
 	// TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
 	TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
-	// TiDBDecodeKeyFunctionKey is used to identify the encode record function in context.
+	// TiDBEncodeRecordFunctionKey is used to identify the encode record function in context.
 	TiDBEncodeRecordFunctionKey TiDBDecodeKeyFunctionKeyType = 1
-	// TiDBDecodeKeyFunctionKey is used to identify the encode index function in context.
+	// TiDBEncodeIndexFunctionKey is used to identify the encode index function in context.
 	TiDBEncodeIndexFunctionKey TiDBDecodeKeyFunctionKeyType = 2
 )
 
