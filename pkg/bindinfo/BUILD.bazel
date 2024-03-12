@@ -39,6 +39,7 @@ go_library(
         "//pkg/util/parser",
         "//pkg/util/sqlexec",
         "//pkg/util/stmtsummary/v2:stmtsummary",
+        "//pkg/util/stringutil",
         "//pkg/util/table-filter",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",

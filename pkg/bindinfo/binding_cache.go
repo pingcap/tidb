@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -31,8 +30,18 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
 )
+
+// GetBindingReturnNil is only for test
+var GetBindingReturnNil = stringutil.StringerStr("GetBindingReturnNil")
+
+// GetBindingReturnNilAlways is only for test
+var GetBindingReturnNilAlways = stringutil.StringerStr("getBindingReturnNilAlways")
+
+// LoadBindingNothing is only for test
+var LoadBindingNothing = stringutil.StringerStr("LoadBindingNothing")
 
 // FuzzyBindingCache is based on BindingCache, and provide some more advanced features, like
 // fuzzy matching, loading binding if cache miss automatically (TODO).
@@ -98,14 +107,19 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, sqlDigest := range fbc.fuzzy2SQLDigests[fuzzyDigest] {
 		bindings := bindingCache.GetBinding(sqlDigest)
-		if enableFailpoint {
-			failpoint.Inject("get_binding_return_nil", func() {
+		if intest.InTest && enableFailpoint {
+			n := sctx.Value(GetBindingReturnNil)
+			if n != nil {
 				bindings = nil
-			})
+			}
 		}
-		failpoint.Inject("get_binding_return_nil_always", func() {
-			bindings = nil
-		})
+		if intest.InTest {
+			n := sctx.Value(GetBindingReturnNilAlways)
+			if n != nil {
+				bindings = nil
+			}
+		}
+
 		if bindings != nil {
 			for _, binding := range bindings {
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
@@ -127,9 +141,12 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 }
 
 func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLDigest []string) {
-	failpoint.Inject("load_binding_nothing", func() {
-		failpoint.Return()
-	})
+	if intest.InTest {
+		n := sctx.Value(LoadBindingNothing)
+		if n != nil {
+			return
+		}
+	}
 	for _, sqlDigest := range missingSQLDigest {
 		start := time.Now()
 		bindings, err := fbc.loadBindingFromStorageFunc(sctx, sqlDigest)

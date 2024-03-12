@@ -18,9 +18,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/stretchr/testify/require"
 )
 
 func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
@@ -52,13 +51,14 @@ func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
 				query := fmt.Sprintf(c.qTemplate, db)
 				tk.MustExec(query)
 				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil", `return()`))
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil_always", `return()`))
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/bindinfo/load_bindings_from_storage_internal_timeout", "return"))
+				sctx := tk.Session()
+				sctx.SetValue(bindinfo.GetBindingReturnNil, true)
+				sctx.SetValue(bindinfo.GetBindingReturnNilAlways, true)
+				sctx.SetValue(bindinfo.LoadBindingNothing, true)
 				tk.MustExec(query)
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil"))
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil_always"))
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/bindinfo/load_bindings_from_storage_internal_timeout"))
+				sctx.ClearValue(bindinfo.GetBindingReturnNil)
+				sctx.ClearValue(bindinfo.GetBindingReturnNilAlways)
+				sctx.ClearValue(bindinfo.LoadBindingNothing)
 				tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 failed to load bindings, optimization process without bindings"))
 				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 			}

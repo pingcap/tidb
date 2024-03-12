@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
@@ -1112,9 +1111,10 @@ func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
 				query := fmt.Sprintf(c.qTemplate, db)
 				tk.MustExec(query)
 				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil", `return()`))
+				sctx := tk.Session()
+				sctx.SetValue(bindinfo.GetBindingReturnNil, true)
 				tk.MustExec(query)
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil"))
+				sctx.ClearValue(bindinfo.GetBindingReturnNil)
 				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 			}
 		}
