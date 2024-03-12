@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,14 +28,13 @@ import (
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tikv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -76,18 +76,22 @@ type litBackendCtx struct {
 	generic.SyncMap[int64, *engineInfo]
 	MemRoot  MemRoot
 	DiskRoot DiskRoot
+	store    kv.Storage
+
+	ctx      context.Context
 	jobID    int64
 	backend  *local.Backend
-	ctx      context.Context
 	cfg      *lightning.Config
 	sysVars  map[string]string
 	diskRoot DiskRoot
 	done     bool
 
+	instanceID         string
+	useDistributedLock bool
+
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
-	etcdClient      *clientv3.Client
 }
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
@@ -107,7 +111,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	} else if hasDupe {
 		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-		return tikv.ErrKeyExists
+		return kv.ErrKeyExists
 	}
 	return nil
 }
@@ -148,19 +152,10 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		} else if hasDupe {
 			logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-			return tikv.ErrKeyExists
+			return kv.ErrKeyExists
 		}
 	}
 	return nil
-}
-
-func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
-	mu := concurrency.NewMutex(se, key)
-	err := mu.Lock(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return mu, nil
 }
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
@@ -192,28 +187,28 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		return true, false, nil
 	}
 
-	// Use distributed lock if run in distributed mode).
-	if bc.etcdClient != nil {
-		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
-		se, _ := concurrency.NewSession(bc.etcdClient)
-		mu, err := acquireLock(bc.ctx, se, distLockKey)
+	if bc.useDistributedLock {
+		store := newDistLockDataStore(bc.store)
+		dKey := strconv.Itoa(int(bc.jobID))
+		dLock := meta.NewDistributedLockBuilder().
+			SetBackoff(5*time.Second).
+			SetLease(2*time.Minute).
+			Build(bc.ctx, store, bc.instanceID, dKey)
+		err = dLock.Lock()
 		if err != nil {
 			return true, false, errors.Trace(err)
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {
-			err = mu.Unlock(bc.ctx)
+			err := dLock.Unlock()
 			if err != nil {
 				logutil.Logger(bc.ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
 			} else {
 				logutil.Logger(bc.ctx).Info("release distributed flush lock success", zap.Int64("jobID", bc.jobID))
 			}
-			err = se.Close()
-			if err != nil {
-				logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
-			}
 		}()
 	}
+
 	err = bc.unsafeImportAndReset(ei)
 	if err != nil {
 		return true, false, err
