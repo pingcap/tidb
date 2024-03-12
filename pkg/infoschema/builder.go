@@ -132,7 +132,7 @@ func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaD
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -146,7 +146,7 @@ func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff
 	return tblIDs, nil
 }
 
-func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyReorganizePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -165,7 +165,7 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 	return tblIDs, nil
 }
 
-func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	// It is not in StatePublic.
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
 		ntIDs, err := applyTableUpdate(b, m, diff)

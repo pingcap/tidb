@@ -200,11 +200,32 @@ func MockPolicyInfo(t *testing.T, store kv.Storage, policyName string) *model.Po
 	}
 }
 
+// MockPolicyRefInfo mock policy ref info for testing.
+func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model.PolicyRefInfo {
+	id, err := GenGlobalID(store)
+	require.NoError(t, err)
+	return &model.PolicyRefInfo{
+		ID:   id,
+		Name: model.NewCIStr(policyName),
+	}
+}
+
 // AddTable add mock table for testing.
 func AddTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, dbInfo.Name.O, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// UpdateTable update mock table for testing.
+func UpdateTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateTable(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})

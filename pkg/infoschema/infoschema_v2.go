@@ -609,13 +609,6 @@ func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.Sch
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
-func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		// return b.applyDropTableOrPartitionV2(m, diff)
-	}
-	return b.applyDropTableOrPartition(m, diff)
-}
-
 func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	if b.enableV2 {
 		return b.applyRecoverTableV2(m, diff)
@@ -628,20 +621,6 @@ func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		return b.applyCreateTablesV2(m, diff)
 	}
 	return b.applyCreateTables(m, diff)
-}
-
-func applyReorganizePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyReorganizePartitionV2(m, diff)
-	}
-	return b.applyReorganizePartition(m, diff)
-}
-
-func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyExchangeTablePartitionV2(m, diff)
-	}
-	return b.applyExchangeTablePartition(m, diff)
 }
 
 func updateInfoSchemaBundles(b *Builder) {
@@ -712,14 +691,6 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.
 	panic("TODO")
 }
 
-func (b *Builder) applyTruncateTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
-func (b *Builder) applyDropTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
 func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	panic("TODO")
 }
@@ -728,19 +699,11 @@ func (b *Builder) applyCreateTablesV2(m *meta.Meta, diff *model.SchemaDiff) ([]i
 	panic("TODO")
 }
 
-func (b *Builder) applyReorganizePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
-func (b *Builder) applyExchangeTablePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
 func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	if b.deltaUpdate {
 		b.completeUpdateTablesV2(is)
 		for tblID := range b.updateTables {
-			b.updateTableBundles(is.infoSchema, tblID)
+			b.updateTableBundles(is, tblID)
 		}
 		return
 	}
@@ -750,7 +713,7 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			b.updateTableBundles(is.infoSchema, tbl.Meta().ID)
+			b.updateTableBundles(is, tbl.Meta().ID)
 		}
 	}
 }
