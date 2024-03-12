@@ -33,8 +33,9 @@ func TestSortRange(t *testing.T) {
 			EndKey:   append(tablecodec.GenTableRecordPrefix(1), []byte("bbb")...), Files: nil,
 		},
 	}
-	for _, rg := range ranges1 {
-		RewriteRange(&rg, rewriteRules)
+	for i, rg := range ranges1 {
+		tmp, _ := RewriteRange(&rg, rewriteRules)
+		ranges1[i] = *tmp
 	}
 	rs1, err := SortRanges(ranges1)
 	require.NoErrorf(t, err, "sort range1 failed: %v", err)
@@ -52,16 +53,16 @@ func TestSortRange(t *testing.T) {
 		},
 	}
 	for _, rg := range ranges2 {
-		RewriteRange(&rg, rewriteRules)
+		_, err := RewriteRange(&rg, rewriteRules)
+		require.Error(t, err)
+		require.Regexp(t, "table id mismatch.*", err.Error())
 	}
-	_, err = SortRanges(ranges2)
-	require.Error(t, err)
-	require.Regexp(t, "table id mismatch.*", err.Error())
 
 	ranges3 := initRanges()
 	rewriteRules1 := initRewriteRules()
-	for _, rg := range ranges3 {
-		RewriteRange(&rg, rewriteRules1)
+	for i, rg := range ranges3 {
+		tmp, _ := RewriteRange(&rg, rewriteRules1)
+		ranges3[i] = *tmp
 	}
 	rs3, err := SortRanges(ranges3)
 	require.NoErrorf(t, err, "sort range1 failed: %v", err)

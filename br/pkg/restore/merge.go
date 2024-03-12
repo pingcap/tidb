@@ -94,11 +94,12 @@ func MergeFileRanges(
 		}
 		// rewrite Range for split.
 		// so that splitRanges no need to handle rewrite rules any more.
-		if err := RewriteRange(rg, rewriteRules); err != nil {
+		tmpRng, err := RewriteRange(rg, rewriteRules)
+		if err != nil {
 			return nil, nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
 				"unable to rewrite range files %+v", files)
 		}
-		if out := rangeTree.InsertRange(*rg); out != nil {
+		if out := rangeTree.InsertRange(*tmpRng); out != nil {
 			return nil, nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
 				"duplicate range %s files %+v", out, files)
 		}
@@ -123,9 +124,9 @@ func MergeFileRanges(
 	}, nil
 }
 
-func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) error {
+func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) (*rtree.Range, error) {
 	if rewriteRules == nil {
-		return nil
+		return rg, nil
 	}
 	startID := tablecodec.DecodeTableID(rg.StartKey)
 	endID := tablecodec.DecodeTableID(rg.EndKey)
@@ -136,7 +137,7 @@ func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) error {
 			logutil.Key("endKey", rg.EndKey),
 			zap.Int64("startID", startID),
 			zap.Int64("endID", endID))
-		return errors.Annotate(berrors.ErrRestoreTableIDMismatch, "table id mismatch")
+		return nil, errors.Annotate(berrors.ErrRestoreTableIDMismatch, "table id mismatch")
 	}
 	rg.StartKey, rule = replacePrefix(rg.StartKey, rewriteRules)
 	if rule == nil {
@@ -157,5 +158,5 @@ func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) error {
 			logutil.Key("key", rg.EndKey),
 			logutil.RewriteRule(rule))
 	}
-	return nil
+	return rg, nil
 }
