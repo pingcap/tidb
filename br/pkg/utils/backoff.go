@@ -26,9 +26,17 @@ const (
 	downloadSSTWaitInterval    = 1 * time.Second
 	downloadSSTMaxWaitInterval = 4 * time.Second
 
+<<<<<<< HEAD
 	resetTSRetryTime       = 16
+=======
+	backupSSTRetryTimes      = 5
+	backupSSTWaitInterval    = 2 * time.Second
+	backupSSTMaxWaitInterval = 3 * time.Second
+
+	resetTSRetryTime       = 32
+>>>>>>> d604b069399 (br: stop log when full restore failed (#51578))
 	resetTSWaitInterval    = 50 * time.Millisecond
-	resetTSMaxWaitInterval = 500 * time.Millisecond
+	resetTSMaxWaitInterval = 2 * time.Second
 
 	resetTSRetryTimeExt       = 600
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
@@ -135,7 +143,6 @@ func NewDownloadSSTBackoffer() Backoffer {
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
-	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
 	// we don't care storeID here.
 	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
 	if res.Strategy == RetryStrategy {
@@ -209,8 +216,12 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	default:
+		// If the connection timeout, pd client would cancel the context, and return grpc context cancel error.
+		// So make the codes.Canceled retryable too.
+		// It's OK to retry the grpc context cancel error, because the parent context cancel returns context.Canceled.
+		// For example, cancel the `ectx` and then pdClient.GetTS(ectx) returns context.Canceled instead of grpc context canceled.
 		switch status.Code(e) {
-		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
+		case codes.DeadlineExceeded, codes.Canceled, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
 		default:

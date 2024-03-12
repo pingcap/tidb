@@ -1167,6 +1167,7 @@ func (rc *Client) RestoreSSTFiles(
 
 	var rangeFiles []*backuppb.File
 	var leftFiles []*backuppb.File
+<<<<<<< HEAD
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
 		rc.workerPool.ApplyOnErrorGroup(eg,
@@ -1179,6 +1180,62 @@ func (rc *Client) RestoreSSTFiles(
 				}()
 				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
 			})
+=======
+LOOPFORTABLE:
+	for _, tableIDWithFile := range tableIDWithFiles {
+		tableID := tableIDWithFile.TableID
+		files := tableIDWithFile.Files
+		fileCount += len(files)
+		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
+			filesReplica := rangeFiles
+			if ectx.Err() != nil {
+				log.Warn("Restoring encountered error and already stopped, give up remained files.",
+					zap.Int("remained", len(leftFiles)),
+					logutil.ShortError(ectx.Err()))
+				// We will fetch the error from the errgroup then (If there were).
+				// Also note if the parent context has been canceled or something,
+				// breaking here directly is also a reasonable behavior.
+				break LOOPFORTABLE
+			}
+			restoreFn := func() error {
+				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
+				for _, filesGroup := range filesGroups {
+					if importErr := func(fs []*backuppb.File) (err error) {
+						fileStart := time.Now()
+						defer func() {
+							if err == nil {
+								log.Info("import files done", logutil.Files(filesGroup),
+									zap.Duration("take", time.Since(fileStart)))
+								updateCh.Inc()
+							}
+						}()
+						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
+					}(filesGroup); importErr != nil {
+						return errors.Trace(importErr)
+					}
+				}
+
+				// the data of this range has been import done
+				if runner != nil && len(filesReplica) > 0 {
+					rangeKey := getFileRangeKey(filesReplica[0].Name)
+					// The checkpoint range shows this ranges of kvs has been restored into
+					// the table corresponding to the table-id.
+					if err := checkpoint.AppendRangesForRestore(ectx, runner, tableID, rangeKey); err != nil {
+						return errors.Trace(err)
+					}
+				}
+				return nil
+			}
+			if rc.granularity == string(CoarseGrained) {
+				eg.Go(restoreFn)
+			} else {
+				// if we are not use coarse granularity which means
+				// we still pipeline split & scatter regions and import sst files
+				// just keep the consistency as before.
+				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
+			}
+		}
+>>>>>>> d604b069399 (br: stop log when full restore failed (#51578))
 	}
 
 	if err := eg.Wait(); err != nil {

@@ -759,6 +759,10 @@ func (importer *FileImporter) downloadRawKVSST(
 
 func (importer *FileImporter) ingest(
 	ctx context.Context,
+<<<<<<< HEAD
+=======
+	files []*backuppb.File,
+>>>>>>> d604b069399 (br: stop log when full restore failed (#51578))
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
