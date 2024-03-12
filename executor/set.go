@@ -301,7 +301,8 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
 		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 		if sysVar != nil {
-			return sysVar.Value, nil
+			defVal := variable.GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)
+			return defVal, nil
 		}
 		return variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 	}
