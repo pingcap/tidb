@@ -151,7 +151,7 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 		start := time.Now()
 		bindings, err := fbc.loadBindingFromStorageFunc(sctx, sqlDigest)
 		if err != nil {
-			logutil.BgLogger().Warn("loadBindingFromStorageFunc failed",
+			logutil.BgLogger().Warn("failed to load binding from storage",
 				zap.String("sqlDigest", sqlDigest),
 				zap.Error(err),
 				zap.Duration("duration", time.Since(start)),
