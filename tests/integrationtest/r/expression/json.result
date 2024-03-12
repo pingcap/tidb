@@ -602,3 +602,42 @@ json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to last]')
 select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to 2]');
 json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to 2]')
 [1, 2, 3]
+<<<<<<< HEAD
+=======
+drop table if exists t;
+create table t (a json);
+insert into t values ('"-1"');
+insert into t values ('"18446744073709551615"');
+insert into t values ('"18446744073709552000"');
+select a, cast(a as unsigned) from t;
+a	cast(a as unsigned)
+"-1"	18446744073709551615
+"18446744073709551615"	18446744073709551615
+"18446744073709552000"	18446744073709551615
+select a, cast(a as signed) from t;
+a	cast(a as signed)
+"-1"	-1
+"18446744073709551615"	-1
+"18446744073709552000"	-1
+select cast(binary 'aa' as json);
+cast(binary 'aa' as json)
+"base64:type254:YWE="
+drop table if exists t;
+create table t (vb VARBINARY(10), b BINARY(10), vc VARCHAR(10), c CHAR(10));
+insert into t values ('1', '1', '1', '1');
+select cast(vb as json), cast(b as json), cast(vc as json), cast(c as json) from t;
+cast(vb as json)	cast(b as json)	cast(vc as json)	cast(c as json)
+"base64:type15:MQ=="	"base64:type254:MQAAAAAAAAAAAA=="	1	1
+select 1 from t where cast(vb as json) = '1';
+1
+select 1 from t where cast(b as json) = '1';
+1
+select 1 from t where cast(vc as json) = '1';
+1
+select 1 from t where cast(c as json) = '1';
+1
+select 1 from t where cast(BINARY vc as json) = '1';
+1
+select 1 from t where cast(BINARY c as json) = '1';
+1
+>>>>>>> 661f6d61aee (json: don't resize slice to get extra zero when the length is unspecified (#51586))
