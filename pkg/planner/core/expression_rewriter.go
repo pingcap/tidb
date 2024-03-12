@@ -2594,26 +2594,37 @@ func encodeHandleFromRow(ctx expression.EvalContext, args []expression.Expressio
 	if err != nil {
 		return nil, false, err
 	}
-	tblInfo := tbl.Meta()
+	recordID, err := buildHandle(ctx, tbl.Meta(), args[2:], row)
+	if err != nil {
+		return nil, false, err
+	}
+	key := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), recordID)
+	return key, false, nil
+}
+
+func buildHandle(ctx expression.EvalContext, tblInfo *model.TableInfo, pkArgs []expression.Expression, row chunk.Row) (kv.Handle, error) {
 	var recordID kv.Handle
 	if !tblInfo.IsCommonHandle {
-		h, isNull, err := args[2].EvalInt(ctx, row)
-		if err != nil || isNull {
-			return nil, isNull, err
+		h, _, err := pkArgs[0].EvalInt(ctx, row)
+		if err != nil {
+			return nil, err
 		}
 		recordID = kv.IntHandle(h)
 	} else {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		if len(pkIdx.Columns) != len(args)-2 {
-			return nil, false, errors.Errorf("column count mismatch, expected %d, got %d", len(pkIdx.Columns), len(args)-2)
+		if len(pkIdx.Columns) != len(pkArgs) {
+			return nil, errors.Errorf("pk column count mismatch, expected %d, got %d", len(pkIdx.Columns), pkArgs)
 		}
 		pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
 		for i, idxCol := range pkIdx.Columns {
-			dt, err := args[i+2].Eval(ctx, row)
+			dt, err := pkArgs[i].Eval(ctx, row)
+			if err != nil {
+				return nil, err
+			}
 			ft := tblInfo.Columns[idxCol.Offset].FieldType
 			pkDt, err := dt.ConvertTo(ctx.TypeCtx(), &ft)
 			if err != nil {
-				return nil, false, err
+				return nil, err
 			}
 			pkDts = append(pkDts, pkDt)
 		}
@@ -2623,15 +2634,14 @@ func encodeHandleFromRow(ctx expression.EvalContext, args []expression.Expressio
 		ec := ctx.ErrCtx()
 		err = ec.HandleError(err)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		recordID, err = kv.NewCommonHandle(handleBytes)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
-	key := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), recordID)
-	return key, false, nil
+	return recordID, nil
 }
 
 func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Expression, row chunk.Row) (kv.Key, bool, error) {
@@ -2661,9 +2671,24 @@ func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Express
 		return nil, false, errors.New("index not found")
 	}
 
-	if len(idxInfo.Columns) != len(args)-3 {
-		return nil, false, errors.Errorf("column count mismatch, expected %d, got %d", len(idxInfo.Columns), len(args)-3)
+	pkLen := 1
+	var pkIdx *model.IndexInfo
+	if tblInfo.IsCommonHandle {
+		pkIdx = tables.FindPrimaryIndex(tblInfo)
+		pkLen = len(pkIdx.Columns)
 	}
+
+	if len(idxInfo.Columns)+pkLen != len(args)-3 {
+		return nil, false, errors.Errorf(
+			"column count mismatch, expected %d (index length + pk/rowid length), got %d",
+			len(idxInfo.Columns), len(args)-3)
+	}
+
+	handle, err := buildHandle(ctx, tblInfo, args[3+len(idxInfo.Columns):], row)
+	if err != nil {
+		return nil, false, err
+	}
+
 	idxDts := make([]types.Datum, 0, len(idxInfo.Columns))
 	for i, idxCol := range idxInfo.Columns {
 		dt, err := args[i+3].Eval(ctx, row)
@@ -2679,7 +2704,8 @@ func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Express
 	}
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, idxDts)
 	idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-	idxKey, _, err := idx.GenIndexKey(ctx.ErrCtx(), ctx.Location(), idxDts, nil, nil)
+
+	idxKey, _, err := idx.GenIndexKey(ctx.ErrCtx(), ctx.Location(), idxDts, handle, nil)
 	return idxKey, false, err
 }
 
