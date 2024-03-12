@@ -215,16 +215,13 @@ select 10;`
 		conf.Log.SlowQueryFile = fileName4
 	})
 	for k := 0; k < 2; k++ {
-		if k == 1 {
-			continue
-		}
 		// k = 0 for normal files
 		// k = 1 for compressed files
 		var fileNames []string
 		if k == 0 {
 			fileNames = []string{fileName0, fileName1, fileName2, fileName3, fileName4}
 		} else {
-			fileNames = []string{fileName0+".gz", fileName1+".gz", fileName2+".gz", fileName3+".gz", fileName4}
+			fileNames = []string{fileName0 + ".gz", fileName1 + ".gz", fileName2 + ".gz", fileName3 + ".gz", fileName4}
 		}
 		prepareLogs(t, logData, fileNames)
 		tk := testkit.NewTestKit(t, store)

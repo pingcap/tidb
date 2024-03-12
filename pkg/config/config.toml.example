@@ -176,7 +176,7 @@ max-days = 0
 max-backups = 0
 
 # Compress function for rotated files.
-# It could be empty which means compression diabled or equals to "gzip".
+# It can be empty or "gzip", empty means compression disabled.
 compress = ""
 
 [security]
