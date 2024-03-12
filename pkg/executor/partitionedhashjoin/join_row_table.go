@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 )
 
 const SizeOfNextPtr = int(unsafe.Sizeof(*new(unsafe.Pointer)))
@@ -60,17 +59,20 @@ type rowTableSegment struct {
 	validJoinKeyPos []int            // the pos of rows that need to be inserted into hash table, used in hash table build
 }
 
-func newRowTableSegment(rowCnt int) *rowTableSegment {
+const MAX_ROW_TABLE_SEGMENT_SIZE = 1024
+
+func newRowTableSegment() *rowTableSegment {
 	return &rowTableSegment{
+		// TODO: if joinKeyIsInlined, the cap of rawData can be calculated
 		rawData:         make([]byte, 0),
-		hashValues:      make([]uint64, 0, rowCnt),
-		rowLocations:    make([]unsafe.Pointer, 0, rowCnt),
-		validJoinKeyPos: make([]int, 0),
+		hashValues:      make([]uint64, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
+		rowLocations:    make([]unsafe.Pointer, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
+		validJoinKeyPos: make([]int, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
 	}
 }
 
-func (rts *rowTableSegment) rowCount() uint64 {
-	return uint64(len(rts.rowLocations))
+func (rts *rowTableSegment) rowCount() int64 {
+	return int64(len(rts.rowLocations))
 }
 
 func (rts *rowTableSegment) validKeyCount() uint64 {
@@ -298,6 +300,13 @@ type rowTableBuilder struct {
 	needUsedFlag            bool
 
 	serializedKeyVectorBuffer [][]byte
+	rowTables                 []*rowTable
+	crrntSizeOfRowTable       []int64
+	// store the start position of each row in the rawData,
+	// we'll use this temp array to get the address of each row at the end
+	startPosInRawData [][]uint64
+	partIdxVector     []int
+	hashValue         []uint32
 }
 
 func newRowTable(meta *JoinTableMeta) *rowTable {
@@ -313,36 +322,29 @@ func (builder *rowTableBuilder) ClearBuffer() {
 	}
 }
 
-func (builder *rowTableBuilder) convertChkToRow(typeCtx types.Context, chk *chunk.Chunk, rowTableMeta *JoinTableMeta) (*rowTableSegment, error) {
-	var (
-		rowCnt = chk.NumRows()
-		seg    = newRowTableSegment(rowCnt)
-		// store the start position of each row in the rawData,
-		// we'll use this temp array to get the address of each row at the end
-		startPosInRawData = make([]uint, 0, rowCnt)
-		fakeAddrByte      = make([]byte, 8)
-	)
-
-	if !rowTableMeta.isJoinKeysInlined {
-		// if the join key is not inlined, we need to serialize the join keys
-		// to a temp buffer and then copy the serialized data to the rawData
-		if builder.serializedKeyVectorBuffer == nil {
-			builder.serializedKeyVectorBuffer = make([][]byte, 0, rowCnt)
-		}
-		for _, colIdx := range builder.buildKeyIndex {
-			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, nil /*TODO: filterVector*/, nil /*TODO: nullVector*/, rowTableMeta.ignoreIntegerKeySignFlag[colIdx], builder.serializedKeyVectorBuffer)
-			if err != nil {
-				return nil, err
+func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, rowTableMeta *JoinTableMeta) {
+	fakeAddrByte := make([]byte, 8)
+	for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+		var (
+			row               = chk.GetRow(rowIdx)
+			partIdx           = builder.partIdxVector[rowIdx]
+			seg               = builder.rowTables[partIdx].segments[len(builder.rowTables[partIdx].segments)-1]
+			startPosInRawData = builder.startPosInRawData[partIdx]
+		)
+		if builder.crrntSizeOfRowTable[partIdx]%MAX_ROW_TABLE_SEGMENT_SIZE == 0 {
+			for _, pos := range startPosInRawData {
+				seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
 			}
+			builder.startPosInRawData[partIdx] = builder.startPosInRawData[partIdx][:]
+			startPosInRawData = builder.startPosInRawData[partIdx]
+			seg = newRowTableSegment()
+			builder.rowTables[partIdx].segments = append(builder.rowTables[partIdx].segments, seg)
 		}
-	}
 
-	for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-		row := chk.GetRow(rowIdx)
-		startPosInRawData = append(startPosInRawData, uint(len(seg.rawData)))
+		startPosInRawData = append(startPosInRawData, uint64(len(seg.rawData)))
 		// next_row_ptr
 		seg.rawData = append(seg.rawData, fakeAddrByte...)
-		// null_map
+		// TODO: 补充 null_map
 		if len := rowTableMeta.nullMapLength; len > 0 {
 			seg.rawData = append(seg.rawData, make([]byte, len)...)
 		}
@@ -365,13 +367,8 @@ func (builder *rowTableBuilder) convertChkToRow(typeCtx types.Context, chk *chun
 		for _, colIdx := range builder.columnsNeedConvertToRow {
 			seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
 		}
+		builder.crrntSizeOfRowTable[partIdx]++
 	}
-
-	for _, pos := range startPosInRawData {
-		seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
-	}
-	builder.ClearBuffer()
-	return nil, nil
 }
 
 func (rt *rowTable) merge(other *rowTable) {
@@ -381,7 +378,7 @@ func (rt *rowTable) merge(other *rowTable) {
 func (rt *rowTable) rowCount() uint64 {
 	ret := uint64(0)
 	for _, s := range rt.segments {
-		ret += s.rowCount()
+		ret += uint64(s.rowCount())
 	}
 	return ret
 }
@@ -394,11 +391,7 @@ func (rt *rowTable) validKeyCount() uint64 {
 	return ret
 }
 
-func (rt *rowTable) insert(typeCtx types.Context, chk *chunk.Chunk, builder *rowTableBuilder) error {
-	segment, err := builder.convertChkToRow(typeCtx, chk, rt.meta)
-	if err != nil {
-		return err
-	}
-	rt.segments = append(rt.segments, segment)
-	return nil
-}
+// func (rt *rowTable) insert(typeCtx types.Context, chk *chunk.Chunk, builder *rowTableBuilder) error {
+// 	builder.appendToRowTable(typeCtx, chk, rt.meta)
+// 	return nil
+// }
