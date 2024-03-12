@@ -322,7 +322,7 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (skipProbe bool, err erro
 	return false, nil
 }
 
-func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, rowTableChannels []chan *rowTable) error {
+func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) error {
 	builder := w.rtBuilder
 	partitionNumber := w.HashJoinCtx.joinHashTable.partitionNumber
 	hashTableMeta := w.HashJoinCtx.hashTableMeta
@@ -710,11 +710,6 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	buildSideResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
 	fetchBuildSideRowsOk := make(chan error, 1)
-	// TODO: (@XuHuaiyu) close rowTableChannels
-	var rowTableChannels []chan *rowTable
-	for i := uint(0); i < uint(e.partitionNumber); i++ {
-		rowTableChannels = make([]chan *rowTable, e.Concurrency)
-	}
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
@@ -731,10 +726,11 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 		func() {
 			for i := uint(0); i < e.Concurrency; i++ {
 				// TODO: (@XuHuaiyu) check the error
-				e.BuildWorkers[i].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), buildSideResultCh, rowTableChannels)
+				e.BuildWorkers[i].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), buildSideResultCh)
 			}
 		},
 		func(r any) {
+			// TODO: @XuHuaiyu handle panic
 			if r != nil {
 
 			}
@@ -746,82 +742,85 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 		rowTables[i] = newRowTable(e.hashTableMeta)
 	}
 	// TODO: @XuHuaiyu wait on a waitgroup
+	totalRowCnt := 0
 	for _, w := range e.BuildWorkers {
 		for partIdx, rt := range w.rtBuilder.rowTables {
 			if rt == nil {
 				continue
 			}
 			rowTables[partIdx].merge(rt)
+			totalRowCnt += int(rt.rowCount())
 		}
 	}
 	e.joinHashTable = newJoinHashTable(e.Concurrency <= uint(e.partitionNumber), rowTables)
+	segStep := totalRowCnt / int(e.Concurrency)
+	var buildTaskCh = make(chan *buildTask, e.Concurrency)
 
-	// TODO: @XuHuaiyu paralle build hashtable
+	e.workerWg.RunWithRecover(
+		func() {
+			for partIdx := 0; partIdx < len(e.PartitionedHashJoinCtx.joinHashTable.tables); partIdx++ {
+				rowTable := e.PartitionedHashJoinCtx.joinHashTable.tables[partIdx].rowData
+				for startIdx := 0; startIdx < mathutil.Min(int(e.Concurrency), int(rowTable.rowCount())); startIdx++ {
+					buildTaskCh <- &buildTask{
+						partitionIdx: partIdx,
+						segStartIdx:  startIdx,
+						segStep:      segStep,
+					}
+				}
+			}
+
+		},
+		func(r any) {
+			// TODO: @XuHuaiyu handle panic
+			if r != nil {
+
+			}
+		},
+	)
+	e.workerWg.RunWithRecover(
+		func() {
+			for i := uint(0); i < uint(mathutil.Min(int(e.Concurrency), e.partitionNumber)); i++ {
+				// TODO: (@XuHuaiyu) check the error
+				e.BuildWorkers[i].buildHashTable(buildTaskCh)
+			}
+		},
+		func(r any) {
+			// TODO: @XuHuaiyu handle panic
+			if r != nil {
+
+			}
+		},
+	)
 
 	// TODO: Parallel build hash table. Currently not support because `unsafeHashTable` is not thread-safe.
-	err := e.BuildWorkers[0].buildHashTableForList(buildSideResultCh)
-	if err != nil {
-		e.buildFinished <- errors.Trace(err)
-		close(doneCh)
-	}
+	// err := e.BuildWorkers[0].buildHashTableForList(buildSideResultCh)
+	// if err != nil {
+	// 	e.buildFinished <- errors.Trace(err)
+	// 	close(doneCh)
+	// }
 	// Wait fetchBuildSideRows be finished.
 	// 1. if buildHashTableForList fails
 	// 2. if probeSideResult.NumRows() == 0, fetchProbeSideChunks will not wait for the build side.
-	channel.Clear(buildSideResultCh)
-	// Check whether err is nil to avoid sending redundant error into buildFinished.
-	if err == nil {
-		if err = <-fetchBuildSideRowsOk; err != nil {
-			e.buildFinished <- err
-		}
-	}
+	// channel.Clear(buildSideResultCh)
+	// // Check whether err is nil to avoid sending redundant error into buildFinished.
+	// if err == nil {
+	// 	if err = <-fetchBuildSideRowsOk; err != nil {
+	// 		e.buildFinished <- err
+	// 	}
+	// }
+}
+
+type buildTask struct {
+	partitionIdx int
+	segStartIdx  int
+	segStep      int
 }
 
 // buildHashTableForList builds hash table from `list`.
-func (w *BuildWorker) buildHashTableForList(buildSideResultCh <-chan *chunk.Chunk) error {
-	/*
-		var err error
-		var selected []bool
-		rowContainer := w.HashJoinCtx.rowContainer
-		rowContainer.GetMemTracker().AttachTo(w.HashJoinCtx.memTracker)
-		rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
-		rowContainer.GetDiskTracker().AttachTo(w.HashJoinCtx.diskTracker)
-		rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
-		if variable.EnableTmpStorageOnOOM.Load() {
-			actionSpill := rowContainer.ActionSpill()
-			failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
-				if val.(bool) {
-					actionSpill = rowContainer.rowContainer.ActionSpillForTest()
-					defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
-				}
-			})
-			w.HashJoinCtx.sessCtx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
-		}
-		for chk := range buildSideResultCh {
-			if w.HashJoinCtx.finished.Load() {
-				return nil
-			}
-			if !w.HashJoinCtx.useOuterToBuild {
-				err = rowContainer.PutChunk(chk, w.HashJoinCtx.isNullEQ)
-			} else {
-				var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
-				w.HashJoinCtx.outerMatchedStatus = append(w.HashJoinCtx.outerMatchedStatus, bitMap)
-				w.HashJoinCtx.memTracker.Consume(bitMap.BytesConsumed())
-				if len(w.HashJoinCtx.outerFilter) == 0 {
-					err = w.HashJoinCtx.rowContainer.PutChunk(chk, w.HashJoinCtx.isNullEQ)
-				} else {
-					selected, err = expression.VectorizedFilter(w.HashJoinCtx.sessCtx, w.HashJoinCtx.outerFilter, chunk.NewIterator4Chunk(chk), selected)
-					if err != nil {
-						return err
-					}
-					err = rowContainer.PutChunkSelected(chk, selected, w.HashJoinCtx.isNullEQ)
-				}
-			}
-			failpoint.Inject("ConsumeRandomPanic", nil)
-			if err != nil {
-				return err
-			}
-		}
-	*/
+func (w *BuildWorker) buildHashTable(taskCh chan *buildTask) error {
+	// for task := range taskCh {
+	// }
+
 	return nil
 }
 
