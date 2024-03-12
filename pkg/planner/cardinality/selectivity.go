@@ -736,7 +736,7 @@ func getMaskAndSelectivityForMVIndex(
 	}
 	// You can find more examples and explanations in comments for collectFilters4MVIndex() and
 	// buildPartialPaths4MVIndex() in planner/core.
-	accessConds, _ := CollectFilters4MVIndex(ctx, exprs, cols)
+	accessConds, _, _ := CollectFilters4MVIndex(ctx, exprs, cols)
 	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.Indices[id].Info, coll)
 	if err != nil || !ok {
 		return 1.0, 0, false
@@ -1089,6 +1089,7 @@ var (
 	) (
 		accessFilters,
 		remainingFilters []expression.Expression,
+		condTp int,
 	)
 	BuildPartialPaths4MVIndex func(
 		sctx context.PlanContext,
