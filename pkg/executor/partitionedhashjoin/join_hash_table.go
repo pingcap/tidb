@@ -133,7 +133,7 @@ func (ri *rowIter) getValue() unsafe.Pointer {
 
 func (ri *rowIter) next() {
 	ri.currentPos.rowIndex++
-	if ri.currentPos.rowIndex == ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowCount() {
+	if ri.currentPos.rowIndex == uint64(ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowCount()) {
 		ri.currentPos.rowSegmentIndex++
 		ri.currentPos.rowIndex = 0
 		if ri.currentPos.rowSegmentIndex == len(ri.table.tables[ri.currentPos.subTableIndex].rowData.segments) {
@@ -176,8 +176,8 @@ func (jht *JoinHashTable) createRowPos(pos uint64) *rowPos {
 		subTableIndex++
 	}
 	rowSegmentIndex := 0
-	for pos >= jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount() {
-		pos -= jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount()
+	for pos >= uint64(jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount()) {
+		pos -= uint64(jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount())
 		rowSegmentIndex++
 	}
 	return &rowPos{
