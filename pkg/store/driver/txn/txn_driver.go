@@ -340,7 +340,7 @@ func (txn *tikvTxn) extractKeyExistsErr(errExist *tikverr.ErrKeyExist) error {
 			return genKeyExistsError(
 				"UNKNOWN",
 				key.String(),
-				errors.New("The value is empty (a delete)."),
+				errors.New("The value is empty (a delete)"),
 			)
 		}
 	} else {
