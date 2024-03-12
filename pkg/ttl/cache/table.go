@@ -189,16 +189,19 @@ func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
 func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	now time.Time) (expire time.Time, err error) {
 	tz := se.GetSessionVars().Location()
+	now = now.In(tz)
 
 	expireExpr := t.TTLInfo.IntervalExprStr
 	unit := ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit)
 
+	if now.Unix() < 0 {
+		return time.Time{}, errors.Errorf("current time must after UTC time 1970-01-01 00:00:00, but %s", now)
+	}
+
 	var rows []chunk.Row
 	rows, err = se.ExecuteSQL(
 		ctx,
-		// FROM_UNIXTIME does not support negative value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>`
-		// to present current time
-		fmt.Sprintf("SELECT FROM_UNIXTIME(0) + INTERVAL %d SECOND - INTERVAL %s %s", now.Unix(), expireExpr, unit.String()),
+		fmt.Sprintf("SELECT FROM_UNIXTIME(%d) - INTERVAL %s %s", now.Unix(), expireExpr, unit.String()),
 	)
 
 	if err != nil {
@@ -206,7 +209,41 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	}
 
 	tm := rows[0].GetTime(0)
-	return tm.CoreTime().GoTime(tz)
+	formatted, err := tm.DateFormat("%Y-%m-%d %H:%i:%s.%f")
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	expire, err = time.ParseInLocation("2006-01-02 15:04:05.000000", formatted, tz)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	if expire.Hour() != tm.Hour() {
+		// For the daylight-saving time, the hour may be different, and it means the tm we get is not a "valid" date.
+		// For example, if we computed an expired `types.Time` with value "2024-03-10 02:30:00",
+		// this time does not "exist" in timezone `America/Los_Angeles` because after "2024-03-10 02:00:00",
+		// the time will leap to "2024-03-10 03:00:00" directly.
+		// If then we parse "2024-03-10 02:30:00" with `time.ParseInLocation` we will get a Go time "2024-03-10 01:30:00".
+		// So, return the parsed time directly.
+		return expire, nil
+	}
+
+	_, offsetNow := now.Zone()
+	_, offsetExpire := expire.Zone()
+	if interval := offsetExpire - offsetNow; interval < 0 {
+		// Consider daylight saving time, if the offsetNow > offsetExpire, that means we may delete the data that
+		// is still fresh.
+		// For example, in time zone `America/Los_Angeles` after `2024-03-10 02:00`, the time will
+		// leap to `2024-03-10 03:00`.
+		// If we start a job at that time, it will delete the data before `2024-03-10 01:30`
+		// while the expired duration is 90 minutes.
+		// But the data to be deleted was inserted 30 minutes ago, not 90 minutes.
+		// To make sure we do not delete the fresh data, we need to add the offset difference to the expired time.
+		expire = expire.Add(time.Second * time.Duration(interval))
+	}
+
+	return expire, nil
 }
 
 // SplitScanRanges split ranges for TTL scan

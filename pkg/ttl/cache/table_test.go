@@ -213,4 +213,39 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1969-10-01 01:00:00", tm.Format(time.DateTime))
 	require.Equal(t, tz2.String(), tm.Location().String())
+
+	// test cases for daylight saving time.
+	// When local standard time was about to reach Sunday, 10 March 2024, 02:00:00 clocks were turned forward 1 hour to
+	// Sunday, 10 March 2024, 03:00:00 local daylight time instead.
+	tz3, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	now, err = time.ParseInLocation(time.DateTime, "2024-03-11 19:49:59", tz3)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = tz3
+	tk.MustExec("create table test.t3(a int, t datetime) ttl = `t` + interval 90 minute")
+	tb3, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+	tblInfo3 := tb3.Meta()
+	ttlTbl3, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo3, model.NewCIStr(""))
+	require.NoError(t, err)
+	require.NoError(t, err)
+	tm, err = ttlTbl3.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2024-03-11 18:19:59", tm.Format(time.DateTime))
+	require.Equal(t, tz3.String(), tm.Location().String())
+
+	// across day light-saving time
+	now, err = time.ParseInLocation(time.DateTime, "2024-03-10 03:01:00", tz3)
+	require.NoError(t, err)
+	tm, err = ttlTbl3.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2024-03-10 00:31:00", tm.Format(time.DateTime))
+	require.Equal(t, tz3.String(), tm.Location().String())
+
+	now, err = time.ParseInLocation(time.DateTime, "2024-03-10 04:01:00", tz3)
+	require.NoError(t, err)
+	tm, err = ttlTbl3.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2024-03-10 01:31:00", tm.Format(time.DateTime))
+	require.Equal(t, tz3.String(), tm.Location().String())
 }
