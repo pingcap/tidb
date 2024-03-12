@@ -47,7 +47,7 @@ func newTaskStack() *TaskStack {
 // Destroy indicates that when stack itself is useless like in the end of optimizing phase, we can destroy ourselves.
 func (ts *TaskStack) Destroy() {
 	// when a taskStack itself is useless, we can destroy itself actively.
-	ts.tasks = ts.tasks[:0]
+	clear(ts.tasks)
 	TaskStackPool.Put(ts)
 }
 

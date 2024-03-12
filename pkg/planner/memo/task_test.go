@@ -89,4 +89,7 @@ func TestTaskFunctionality(t *testing.T) {
 
 	// self destroy.
 	taskStack.Destroy()
+	taskTaskPool = TaskStackPool.Get()
+	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 0)
+	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
 }
