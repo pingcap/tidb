@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -705,13 +706,14 @@ func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionIn
 		}
 
 		if len(needRecheck) == 0 {
+			retErr = nil
 			return nil
 		}
 		if len(needRecheck) < len(regions) {
 			// if scatter has progress, we should not increase the retry counter
 			backoffer.Stat.ReduceRetry()
 		}
-		regions = needRecheck
+		regions = slices.Clone(needRecheck)
 
 		if len(needRescatter) > 0 {
 			scatterErr := c.ScatterRegions(ctx, needRescatter)
