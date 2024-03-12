@@ -107,19 +107,12 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, sqlDigest := range fbc.fuzzy2SQLDigests[fuzzyDigest] {
 		bindings := bindingCache.GetBinding(sqlDigest)
-		if intest.InTest && enableFailpoint {
-			n := sctx.Value(GetBindingReturnNil)
-			if n != nil {
-				bindings = nil
-			}
+		if intest.InTest && enableFailpoint && sctx.Value(GetBindingReturnNil) != nil {
+			bindings = nil
 		}
-		if intest.InTest {
-			n := sctx.Value(GetBindingReturnNilAlways)
-			if n != nil {
-				bindings = nil
-			}
+		if intest.InTest && sctx.Value(GetBindingReturnNilAlways) != nil {
+			bindings = nil
 		}
-
 		if bindings != nil {
 			for _, binding := range bindings {
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
@@ -141,11 +134,8 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 }
 
 func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLDigest []string) {
-	if intest.InTest {
-		n := sctx.Value(LoadBindingNothing)
-		if n != nil {
-			return
-		}
+	if intest.InTest && sctx.Value(LoadBindingNothing) != nil {
+		return
 	}
 	for _, sqlDigest := range missingSQLDigest {
 		start := time.Now()
