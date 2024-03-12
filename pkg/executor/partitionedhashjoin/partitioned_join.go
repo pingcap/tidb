@@ -18,13 +18,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/cznic/mathutil"
-	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
-	"github.com/pingcap/tidb/pkg/expression"
+	"hash/fnv"
 	"runtime/trace"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/cznic/mathutil"
+	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
+	"github.com/pingcap/tidb/pkg/expression"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -103,6 +106,16 @@ type BuildWorker struct {
 	BuildKeyColIdx []int
 	WorkerID       uint
 	rowTable       *rowTable
+	partition      *chunk.List
+	rtBuilder      *rowTableBuilder
+}
+
+// preBuild split the build side data into multiple partitions.
+func (w *BuildWorker) preBuild() {
+	if w.partition != nil {
+		w.partition = chunk.NewList(w.BuildTypes, w.HashJoinCtx.SessCtx.GetSessionVars().InitChunkSize, w.HashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize)
+
+	}
 }
 
 // PartitionedHashJoinExec implements the hash join algorithm.
@@ -302,6 +315,47 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (skipProbe bool, err erro
 	}
 	return false, nil
 }
+
+func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, chkCh chan *chunk.Chunk) error {
+	builder := w.rtBuilder
+	if builder.serializedKeyVectorBuffer == nil {
+		builder.serializedKeyVectorBuffer = make([][]byte, 0, 1024)
+	} else {
+		builder.ClearBuffer()
+	}
+	partitionNumber := w.HashJoinCtx.joinHashTable.partitionNumber
+	hashTableMeta := w.HashJoinCtx.hashTableMeta
+	for chk := range chkCh {
+		// split partition
+		for _, colIdx := range builder.buildKeyIndex {
+			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, nil /*TODO: filterVector*/, nil /*TODO: nullVector*/, hashTableMeta.ignoreIntegerKeySignFlag[colIdx], builder.serializedKeyVectorBuffer)
+			if err != nil {
+				return err
+			}
+		}
+
+		builder.partIdxVector = builder.partIdxVector[:]
+		h := fnv.New32a()
+		for _, key := range builder.serializedKeyVectorBuffer {
+			h.Write(key)
+			builder.partIdxVector = append(builder.partIdxVector, int(h.Sum32())%int(partitionNumber))
+			h.Reset()
+		}
+
+		// 2. build rowtable
+		builder.appendToRowTable(typeCtx, chk, hashTableMeta)
+
+	}
+	return nil
+}
+
+// partitionWorker 各自持有一个 channel，等待 fetcher 发送的 chunk，然后处理 chunk
+// 1. 从 channel 中获取 chunk
+// 2. 切分 partition
+// 3. 获得所有数据后，构造 rowtable
+// 4. 分发 partition 和 rowtable 到不同的 build worker
+
+// buildWorker 等 partitionWorker 分发的 chunk，然后构造 hashtable
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
