@@ -193,7 +193,8 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 		case <-p.finishCh:
 			// We must wait the finish of the above goroutine,
 			// or p.errOutputChan may be closed in advandce.
-			<-spilledRowChannel
+			for range spilledRowChannel {
+			}
 			return nil
 		case row, ok = <-spilledRowChannel:
 			if !ok {
