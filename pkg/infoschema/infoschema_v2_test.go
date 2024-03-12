@@ -200,6 +200,7 @@ func TestBundles(t *testing.T) {
 	schemaName := model.NewCIStr("testDB")
 	tableName := model.NewCIStr("test")
 	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(t, err)
 	is := builder.Build()
 	require.Equal(t, 2, len(is.AllSchemas()))
 
@@ -248,6 +249,7 @@ func TestBundles(t *testing.T) {
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePlacement, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
 	is = builder.Build()
 	getTableInfo, err := is.TableByName(schemaName, tableName)
 	require.NoError(t, err)
