@@ -18,23 +18,24 @@ alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
 SET @x := NOW();
 insert into t0(c) values (1);
 insert into t0 values (2, default);
-SELECT * FROM t0 WHERE c = date_format(@x,'%Y-%m') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m');
+SELECT count(1) FROM t0 WHERE c1 = date_format(@x,'%Y-%m');
 insert into t1(c) values (1);
 insert into t1 values (2, default);
-SELECT * FROM t1 WHERE c = date_format(@x,'%Y-%m-%d');
+SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
+SET @x := NOW();
 insert into t2(c) values (1);
 insert into t2 values (2, default);
-SELECT * FROM t2 WHERE c = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
+SELECT count(1) FROM t2 WHERE c1 = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c1 = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
 SET @x := NOW();
 insert into t3(c) values (1);
 insert into t3 values (2, default);
-SELECT * FROM t3 WHERE c = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
+SELECT count(1) FROM t3 WHERE c1 = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c1 = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
 insert into t4(c) values (1);
 insert into t4 values (2, default);
-SELECT * FROM t4 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
+SELECT count(1) FROM t4 WHERE c1 = date_format(@x,'%Y-%m-%d');
 insert into t5(c) values (1);
 insert into t5 values (2, default);
-SELECT * FROM t5 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
+SELECT count(1) FROM t5 WHERE c1 = date_format(@x,'%Y-%m-%d');
 
 show create table t0;
 show create table t1;
@@ -172,7 +173,7 @@ show create table t0;
 show create table t1;
 show create table t2;
 
-# test modify column, set default value, add index
+# test modify column, set default value, add index, drop column
 alter table t0 add index idx1(c1);
 alter table t1 add unique index idx1(c, c1);
 insert into t0 values (5, default, default);
@@ -194,6 +195,10 @@ select * from t0 where c < 6;
 select c, c1 from t0 where c = 6 and c2 = date_format(now(),'%Y-%m-%d');;
 select * from t1;
 select * from t2;
+-- error 8200
+alter table t0 drop column c1;
+alter table t0 drop column c2;
+show create table t0;
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 
 # TestDefaultColumnWithUpper
@@ -397,13 +402,103 @@ ALTER TABLE t0 ALTER COLUMN c SET DEFAULT(str_to_date('1980-01-01','%Y-%m-%d'));
 insert into t0(id) values (2);
 drop table t0;
 
-# test generated column
-CREATE TABLE t1 (i INT, b int DEFAULT (str_to_date('1980-01-01','%Y-%m-%d')), c INT GENERATED ALWAYS AS (b+2));
+# test generated column and expression index
+CREATE TABLE t1 (i INT, b int DEFAULT (str_to_date('1980-01-01','%Y-%m-%d')), c INT GENERATED ALWAYS AS (b+2), d INT GENERATED ALWAYS AS (b+10) STORED);
+INSERT INTO t1(i) VALUES (1);
+CREATE INDEX idx1 ON t1 ((b+1));
+CREATE INDEX idx2 ON t1 ((c+1));
+CREATE INDEX idx3 ON t1 ((d+1));
 SHOW COLUMNS FROM t1;
 show create table t1;
-INSERT INTO t1(i) VALUES (1);
 INSERT INTO t1(i, b) VALUES (2, DEFAULT);
 INSERT INTO t1(i, b) VALUES (3, 123);
 INSERT INTO t1(i, b) VALUES (NULL, NULL);
 SELECT * FROM t1;
 drop table t1;
+
+# clustered index, multi-valued index and replace into
+create table t0 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c, c1));
+REPLACE INTO t0 VALUES (1, DEFAULT);
+SELECT * FROM t0;
+show columns from test.t0 where field='c1';
+-- error 3152
+create table t1 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')), c2 JSON default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c1(32), c2));
+create table t1 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')), c2 JSON default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c1(32)));
+SET @x := NOW();
+REPLACE INTO t1 VALUES (1, DEFAULT, '[1,1,2]');
+CREATE INDEX idx ON t1 ((cast(c2 as signed array)));
+REPLACE INTO t1 VALUES (1, DEFAULT, '[3, 4]');
+SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
+show create table t1;
+drop table t0, t1;
+
+# partition table and global index
+CREATE TABLE t0(
+    id INT NOT NULL,
+    c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    d datetime default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    unique key idx(id, c),
+    key idx1(id, c, d)
+)
+PARTITION BY RANGE (YEAR(c)) (
+    PARTITION p0 VALUES LESS THAN (1991),
+    PARTITION p1 VALUES LESS THAN (1996),
+    PARTITION p2 VALUES LESS THAN (2001),
+    PARTITION p3 VALUES LESS THAN MAXVALUE
+);
+INSERT INTO t0 VALUES(1, default, '1998-05-04 10:10:10'), (2, '1990-05-04 10:10:10', default),(3, default, '1991-05-04 10:10:10'), (4, '2000-05-04 10:10:10', '1991-05-04 10:10:10'),(5, default, '2002-05-04 10:10:10');
+select id from t0 order by c, d;
+show create table t0;
+drop table t0;
+
+# temporary table
+CREATE TEMPORARY TABLE t0(
+    id BIGINT,
+    c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    PRIMARY KEY(id, c)
+);
+show create table t0;
+SET @x := NOW();
+INSERT INTO t0 VALUES(1, default);
+SELECT count(1) FROM t0 WHERE c = date_format(@x,'%Y-%m-%d');
+show create table t0;
+drop table t0;
+
+# cache table
+CREATE TABLE t0(
+    id BIGINT,
+    c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    PRIMARY KEY(id, c)
+);
+SET @x := NOW();
+INSERT INTO t0 VALUES(1, default);
+ALTER TABLE t0 CACHE;
+INSERT INTO t0 VALUES(2, default);
+SELECT count(1) FROM t0 WHERE c = date_format(@x,'%Y-%m-%d');
+show create table t0;
+ALTER TABLE t0 NOCACHE;
+drop table t0;
+
+# foreign key
+CREATE TABLE parent (
+    id INT,
+    c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    primary key(c)
+);
+CREATE TABLE child (
+    id INT,
+    cc date default (date_format(now(),'%Y-%m-%d')),
+    INDEX idx (cc),
+    FOREIGN KEY (cc) REFERENCES parent(c) ON DELETE CASCADE
+);
+SET @x := NOW();
+INSERT INTO parent VALUES(1, default);
+INSERT INTO child VALUES(1, default);
+alter table child add foreign key fk_2(cc) references parent(c);
+-- error 1062
+INSERT INTO parent VALUES(2, default);
+alter table child drop foreign key fk_2;
+SELECT count(1) FROM parent WHERE c = date_format(@x,'%Y-%m-%d');
+SELECT count(1) FROM child WHERE cc = date_format(@x,'%Y-%m-%d');
+show create table child;
+drop table parent, child;

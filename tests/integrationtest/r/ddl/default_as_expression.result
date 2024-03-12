@@ -15,29 +15,36 @@ Error 1674 (HY000): Statement is unsafe because it uses a system function that m
 SET @x := NOW();
 insert into t0(c) values (1);
 insert into t0 values (2, default);
-SELECT * FROM t0 WHERE c = date_format(@x,'%Y-%m') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m');
-c	c1
+SELECT count(1) FROM t0 WHERE c1 = date_format(@x,'%Y-%m');
+count(1)
+2
 insert into t1(c) values (1);
 insert into t1 values (2, default);
-SELECT * FROM t1 WHERE c = date_format(@x,'%Y-%m-%d');
-c	c1
+SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
+count(1)
+2
+SET @x := NOW();
 insert into t2(c) values (1);
 insert into t2 values (2, default);
-SELECT * FROM t2 WHERE c = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
-c	c1
+SELECT count(1) FROM t2 WHERE c1 = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c1 = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
+count(1)
+2
 SET @x := NOW();
 insert into t3(c) values (1);
 insert into t3 values (2, default);
-SELECT * FROM t3 WHERE c = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
-c	c1
+SELECT count(1) FROM t3 WHERE c1 = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c1 = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
+count(1)
+2
 insert into t4(c) values (1);
 insert into t4 values (2, default);
-SELECT * FROM t4 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
-c	c1
+SELECT count(1) FROM t4 WHERE c1 = date_format(@x,'%Y-%m-%d');
+count(1)
+2
 insert into t5(c) values (1);
 insert into t5 values (2, default);
-SELECT * FROM t5 WHERE c = date_format(@x,'%Y-%m-%d %H:%i:%s') OR c = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H:%i:%s');
-c	c1
+SELECT count(1) FROM t5 WHERE c1 = date_format(@x,'%Y-%m-%d');
+count(1)
+2
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
@@ -356,6 +363,17 @@ c	c1	c2
 2	1980-01-01	NULL
 3	1980-01-01	NULL
 4	1980-01-01	NULL
+alter table t0 drop column c1;
+Error 8200 (HY000): can't drop column c1 with composite index covered or Primary Key covered now
+alter table t0 drop column c2;
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `c` int(10) DEFAULT NULL,
+  `c1` varchar(32),
+  KEY `idx` (`c`,`c1`),
+  KEY `idx1` (`c1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
 column_default	extra
 str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
@@ -747,27 +765,178 @@ Error 8200 (HY000): can't change column constraint (PRIMARY KEY)
 ALTER TABLE t0 ALTER COLUMN c SET DEFAULT(str_to_date('1980-01-01','%Y-%m-%d'));
 insert into t0(id) values (2);
 drop table t0;
-CREATE TABLE t1 (i INT, b int DEFAULT (str_to_date('1980-01-01','%Y-%m-%d')), c INT GENERATED ALWAYS AS (b+2));
+CREATE TABLE t1 (i INT, b int DEFAULT (str_to_date('1980-01-01','%Y-%m-%d')), c INT GENERATED ALWAYS AS (b+2), d INT GENERATED ALWAYS AS (b+10) STORED);
+INSERT INTO t1(i) VALUES (1);
+CREATE INDEX idx1 ON t1 ((b+1));
+CREATE INDEX idx2 ON t1 ((c+1));
+CREATE INDEX idx3 ON t1 ((d+1));
 SHOW COLUMNS FROM t1;
 Field	Type	Null	Key	Default	Extra
 i	int(11)	YES		NULL	
 b	int(11)	YES		str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
 c	int(11)	YES		NULL	VIRTUAL GENERATED
+d	int(11)	YES		NULL	STORED GENERATED
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `i` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
-  `c` int(11) GENERATED ALWAYS AS (`b` + 2) VIRTUAL
+  `c` int(11) GENERATED ALWAYS AS (`b` + 2) VIRTUAL,
+  `d` int(11) GENERATED ALWAYS AS (`b` + 10) STORED,
+  KEY `idx1` ((`b` + 1)),
+  KEY `idx2` ((`c` + 1)),
+  KEY `idx3` ((`d` + 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-INSERT INTO t1(i) VALUES (1);
 INSERT INTO t1(i, b) VALUES (2, DEFAULT);
 INSERT INTO t1(i, b) VALUES (3, 123);
 INSERT INTO t1(i, b) VALUES (NULL, NULL);
 SELECT * FROM t1;
-i	b	c
-1	19800101	19800103
-2	19800101	19800103
-3	123	125
-NULL	NULL	NULL
+i	b	c	d
+1	19800101	19800103	19800111
+2	19800101	19800103	19800111
+3	123	125	133
+NULL	NULL	NULL	NULL
 drop table t1;
+create table t0 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c, c1));
+REPLACE INTO t0 VALUES (1, DEFAULT);
+SELECT * FROM t0;
+c	c1
+1	19800101
+show columns from test.t0 where field='c1';
+Field	Type	Null	Key	Default	Extra
+c1	int(11)	NO	PRI	str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d')	DEFAULT_GENERATED
+create table t1 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')), c2 JSON default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c1(32), c2));
+Error 3152 (42000): JSON column 'c2' cannot be used in key specification.
+create table t1 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')), c2 JSON default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c1(32)));
+SET @x := NOW();
+REPLACE INTO t1 VALUES (1, DEFAULT, '[1,1,2]');
+CREATE INDEX idx ON t1 ((cast(c2 as signed array)));
+REPLACE INTO t1 VALUES (1, DEFAULT, '[3, 4]');
+SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
+count(1)
+1
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) DEFAULT NULL,
+  `c1` blob NOT NULL DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
+  `c2` json DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
+  PRIMARY KEY (`c1`(32)) /*T![clustered_index] NONCLUSTERED */,
+  KEY `idx` ((cast(`c2` as signed array)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t0, t1;
+CREATE TABLE t0(
+id INT NOT NULL,
+c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+d datetime default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+unique key idx(id, c),
+key idx1(id, c, d)
+)
+PARTITION BY RANGE (YEAR(c)) (
+PARTITION p0 VALUES LESS THAN (1991),
+PARTITION p1 VALUES LESS THAN (1996),
+PARTITION p2 VALUES LESS THAN (2001),
+PARTITION p3 VALUES LESS THAN MAXVALUE
+);
+INSERT INTO t0 VALUES(1, default, '1998-05-04 10:10:10'), (2, '1990-05-04 10:10:10', default),(3, default, '1991-05-04 10:10:10'), (4, '2000-05-04 10:10:10', '1991-05-04 10:10:10'),(5, default, '2002-05-04 10:10:10');
+select id from t0 order by c, d;
+id
+2
+4
+3
+1
+5
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `id` int(11) NOT NULL,
+  `c` date DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s'),
+  `d` datetime DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s'),
+  UNIQUE KEY `idx` (`id`,`c`),
+  KEY `idx1` (`id`,`c`,`d`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (YEAR(`c`))
+(PARTITION `p0` VALUES LESS THAN (1991),
+ PARTITION `p1` VALUES LESS THAN (1996),
+ PARTITION `p2` VALUES LESS THAN (2001),
+ PARTITION `p3` VALUES LESS THAN (MAXVALUE))
+drop table t0;
+CREATE TEMPORARY TABLE t0(
+id BIGINT,
+c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+PRIMARY KEY(id, c)
+);
+show create table t0;
+Table	Create Table
+t0	CREATE TEMPORARY TABLE `t0` (
+  `id` bigint(20) NOT NULL,
+  `c` date NOT NULL DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s'),
+  PRIMARY KEY (`id`,`c`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SET @x := NOW();
+INSERT INTO t0 VALUES(1, default);
+SELECT count(1) FROM t0 WHERE c = date_format(@x,'%Y-%m-%d');
+count(1)
+1
+show create table t0;
+Table	Create Table
+t0	CREATE TEMPORARY TABLE `t0` (
+  `id` bigint(20) NOT NULL,
+  `c` date NOT NULL DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s'),
+  PRIMARY KEY (`id`,`c`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t0;
+CREATE TABLE t0(
+id BIGINT,
+c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+PRIMARY KEY(id, c)
+);
+SET @x := NOW();
+INSERT INTO t0 VALUES(1, default);
+ALTER TABLE t0 CACHE;
+INSERT INTO t0 VALUES(2, default);
+SELECT count(1) FROM t0 WHERE c = date_format(@x,'%Y-%m-%d');
+count(1)
+2
+show create table t0;
+Table	Create Table
+t0	CREATE TABLE `t0` (
+  `id` bigint(20) NOT NULL,
+  `c` date NOT NULL DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H:%i:%s'),
+  PRIMARY KEY (`id`,`c`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */
+ALTER TABLE t0 NOCACHE;
+drop table t0;
+CREATE TABLE parent (
+id INT,
+c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+primary key(c)
+);
+CREATE TABLE child (
+id INT,
+cc date default (date_format(now(),'%Y-%m-%d')),
+INDEX idx (cc),
+FOREIGN KEY (cc) REFERENCES parent(c) ON DELETE CASCADE
+);
+SET @x := NOW();
+INSERT INTO parent VALUES(1, default);
+INSERT INTO child VALUES(1, default);
+alter table child add foreign key fk_2(cc) references parent(c);
+INSERT INTO parent VALUES(2, default);
+Error 1062 (23000): Duplicate entry '2024-03-12' for key 'parent.PRIMARY'
+alter table child drop foreign key fk_2;
+SELECT count(1) FROM parent WHERE c = date_format(@x,'%Y-%m-%d');
+count(1)
+1
+SELECT count(1) FROM child WHERE cc = date_format(@x,'%Y-%m-%d');
+count(1)
+1
+show create table child;
+Table	Create Table
+child	CREATE TABLE `child` (
+  `id` int(11) DEFAULT NULL,
+  `cc` date DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
+  KEY `idx` (`cc`),
+  CONSTRAINT `fk_1` FOREIGN KEY (`cc`) REFERENCES `test`.`parent` (`c`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table parent, child;
