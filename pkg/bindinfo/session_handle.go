@@ -100,7 +100,7 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
 
 // MatchSessionBinding returns the matched binding for this statement.
 func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	matchedBinding, isMatched, _ = h.ch.FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
+	matchedBinding, isMatched = h.ch.FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
 	return
 }
 

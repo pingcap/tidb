@@ -46,7 +46,7 @@ type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
 	// MatchGlobalBinding returns the matched binding for this statement.
-	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, warn error)
+	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
 
 	// GetAllGlobalBindings returns all bind records in cache.
 	GetAllGlobalBindings() (bindings Bindings)
@@ -464,7 +464,7 @@ func (h *globalBindingHandle) Size() int {
 }
 
 // MatchGlobalBinding returns the matched binding for this statement.
-func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, warn error) {
+func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
 	return h.getCache().FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
 }
 
