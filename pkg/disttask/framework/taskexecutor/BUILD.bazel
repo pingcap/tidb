@@ -23,6 +23,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/util",
         "//pkg/util/backoff",
+        "//pkg/util/cgroup",
         "//pkg/util/cpu",
         "//pkg/util/gctuner",
         "//pkg/util/intest",
