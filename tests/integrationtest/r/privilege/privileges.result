@@ -617,3 +617,23 @@ ADMIN SHOW SLOW RECENT 3;
 Error 8121 (HY000): privilege check for 'Super' fail
 ADMIN SHOW SLOW TOP ALL 3;
 Error 8121 (HY000): privilege check for 'Super' fail
+admin reload expr_pushdown_blacklist;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin reload opt_rule_blacklist;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin plugins enable audit;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin plugins disable audit;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin flush bindings;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin capture bindings;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin reload bindings;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin flush session plan_cache;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin flush global plan_cache;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin flush instance plan_cache;
+Error 8121 (HY000): privilege check for 'Super' fail
