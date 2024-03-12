@@ -93,7 +93,7 @@ func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzz
 		return
 	}
 	fbc.loadFromStore(sctx, missingSQLDigest) // loadFromStore's SetBinding has a Mutex inside, so it's safe to call it without lock
-	matchedBinding, isMatched, missingSQLDigest = fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
+	matchedBinding, isMatched, _ = fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
 	return
 }
 
