@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -61,19 +60,17 @@ type sessionBindingHandle struct {
 // NewSessionBindingHandle creates a new SessionBindingHandle.
 func NewSessionBindingHandle() SessionBindingHandle {
 	sessionHandle := &sessionBindingHandle{}
-	sessionHandle.ch = newFuzzyBindingCache()
+	sessionHandle.ch = newFuzzyBindingCache(nil)
 	return sessionHandle
 }
 
 // appendSessionBinding adds the Bindings to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindings) {
-	oldBindings := h.ch.GetBinding(sqlDigest)
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
 		logutil.BgLogger().Warn("SessionHandle.appendSessionBinding", zap.String("category", "sql-bind"), zap.Error(err))
 	}
-	updateMetrics(metrics.ScopeSession, oldBindings, meta, false)
 }
 
 // CreateSessionBinding creates a Bindings to the cache.
@@ -146,9 +143,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 }
 
 // Close closes the session handle.
-func (h *sessionBindingHandle) Close() {
-	updateMetrics(metrics.ScopeSession, h.ch.GetAllBindings(), nil, false)
-}
+func (*sessionBindingHandle) Close() {}
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.
 type sessionBindInfoKeyType int

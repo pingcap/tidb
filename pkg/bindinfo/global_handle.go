@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // GlobalBindingHandle is used to handle all global sql bind operations.
@@ -118,6 +118,9 @@ type globalBindingHandle struct {
 	// invalidBindings indicates the invalid bindings found during querying.
 	// A binding will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
 	invalidBindings *invalidBindingCache
+
+	// syncBindingSingleflight is used to synchronize the execution of `LoadFromStorageToCache` method.
+	syncBindingSingleflight singleflight.Group
 }
 
 // Lease influences the duration of loading bind info and handling invalid bind.
@@ -163,7 +166,7 @@ func (h *globalBindingHandle) setCache(c FuzzyBindingCache) {
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindings = newInvalidBindingCache()
-	h.setCache(newFuzzyBindingCache())
+	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
 	variable.RegisterStatistics(h)
 }
 
@@ -183,7 +186,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
-		newCache = newFuzzyBindingCache()
+		newCache = newFuzzyBindingCache(h.LoadBindingsFromStorage)
 	} else {
 		lastUpdateTime = h.getLastUpdateTime()
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
@@ -239,7 +242,6 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			} else {
 				newCache.RemoveBinding(sqlDigest)
 			}
-			updateMetrics(metrics.ScopeGlobal, oldBinding, newCache.GetBinding(sqlDigest), true)
 		}
 		return nil
 	})
@@ -626,7 +628,7 @@ func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 
 // Clear resets the bind handle. It is only used for test.
 func (h *globalBindingHandle) Clear() {
-	h.setCache(newFuzzyBindingCache())
+	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
 	h.setLastUpdateTime(types.ZeroTimestamp)
 	h.invalidBindings.reset()
 }
@@ -647,7 +649,6 @@ func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.
 			h.sPool.Put(resource)
 		}
 	}()
-
 	sctx := resource.(sessionctx.Context)
 	if wrapTxn {
 		if _, err = exec(sctx, "BEGIN PESSIMISTIC"); err != nil {
@@ -681,4 +682,47 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 	m := make(map[string]any)
 	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
 	return m, nil
+}
+
+// LoadBindingsFromStorageToCache loads global bindings from storage to the memory cache.
+func (h *globalBindingHandle) LoadBindingsFromStorage(sqlDigest string) (Bindings, error) {
+	if sqlDigest == "" {
+		return nil, nil
+	}
+	bindings, err, _ := h.syncBindingSingleflight.Do(sqlDigest, func() (any, error) {
+		return h.loadBindingsFromStorageInternal(sqlDigest)
+	})
+	if err != nil {
+		logutil.BgLogger().Warn("fail to LoadBindingsFromStorageToCache", zap.Error(err))
+		return nil, err
+	}
+	if bindings == nil {
+		return nil, nil
+	}
+	return bindings.(Bindings), err
+}
+
+func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
+	var bindings Bindings
+	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, "SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = ?", sqlDigest)
+		if err != nil {
+			return err
+		}
+		bindings = make([]Binding, 0, len(rows))
+		for _, row := range rows {
+			// Skip the builtin record which is designed for binding synchronization.
+			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
+				continue
+			}
+			_, binding, err := newBinding(sctx, row)
+			if err != nil {
+				logutil.BgLogger().Warn("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+				continue
+			}
+			bindings = append(bindings, binding)
+		}
+		return nil
+	})
+	return bindings, err
 }

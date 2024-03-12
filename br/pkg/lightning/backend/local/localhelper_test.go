@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 )
 
@@ -48,6 +47,7 @@ func init() {
 }
 
 type testSplitClient struct {
+	split.SplitClient
 	mu           sync.RWMutex
 	stores       map[uint64]*metapb.Store
 	regions      map[uint64]*split.RegionInfo
@@ -244,12 +244,6 @@ func (c *testSplitClient) ScatterRegion(ctx context.Context, regionInfo *split.R
 	return nil
 }
 
-func (c *testSplitClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	return &pdpb.GetOperatorResponse{
-		Header: new(pdpb.ResponseHeader),
-	}, nil
-}
-
 func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -278,20 +272,11 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	return regions, err
 }
 
-func (c *testSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
-	return
-}
-
-func (c *testSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
-	return nil
-}
-
-func (c *testSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
-	return nil
-}
-
-func (c *testSplitClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
-	return nil
+func (c *testSplitClient) IsScatterRegionFinished(
+	ctx context.Context,
+	regionID uint64,
+) (scatterDone bool, needRescatter bool, scatterErr error) {
+	return true, false, nil
 }
 
 func cloneRegion(region *split.RegionInfo) *split.RegionInfo {
@@ -975,6 +960,11 @@ func (c *scatterRegionCli) GetOperator(_ context.Context, regionID uint64) (*pdp
 	return ret, nil
 }
 
+func (c *scatterRegionCli) IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error) {
+	resp, _ := c.GetOperator(ctx, regionID)
+	return split.IsScatterRegionFinished(resp)
+}
+
 func TestWaitForScatterRegions(t *testing.T) {
 	ctx := context.Background()
 
@@ -1053,7 +1043,7 @@ func TestWaitForScatterRegions(t *testing.T) {
 	}
 	local = &Backend{splitCli: cli}
 	cnt, err = local.waitForScatterRegions(ctx, regions)
-	require.ErrorContains(t, err, "failed to get region operator, error type: DATA_COMPACTED")
+	require.ErrorContains(t, err, "get operator error: DATA_COMPACTED")
 	require.Equal(t, 2, cnt)
 	checkRespDrained(cli)
 	checkNoRetry(cli)

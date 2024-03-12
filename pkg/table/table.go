@@ -258,6 +258,7 @@ type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(expression.BuildContext, []types.Datum) (PhysicalTable, error)
+	GetPartitionIdxByRow(expression.BuildContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr

@@ -35,7 +35,7 @@ func bindingFuzzyDigest(t *testing.T, b Binding) string {
 }
 
 func TestFuzzyBindingCache(t *testing.T) {
-	fbc := newFuzzyBindingCache().(*fuzzyBindingCache)
+	fbc := newFuzzyBindingCache(nil).(*fuzzyBindingCache)
 	b1 := Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
 	fDigest1 := bindingFuzzyDigest(t, b1)
 	b2 := Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}

@@ -678,13 +678,6 @@ func (rc *Client) SetConcurrencyPerStore(c uint) {
 	rc.concurrencyPerStore = c
 }
 
-func (rc *Client) GetTotalDownloadConcurrency() uint {
-	if rc.storeCount <= 0 {
-		log.Fatal("uninitialize store count", zap.Int("storeCount", rc.storeCount))
-	}
-	return rc.concurrencyPerStore * uint(rc.storeCount)
-}
-
 func (rc *Client) GetConcurrencyPerStore() uint {
 	return rc.concurrencyPerStore
 }
@@ -1527,12 +1520,14 @@ LOOPFORTABLE:
 			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
-					if importErr := func(fs []*backuppb.File) error {
+					if importErr := func(fs []*backuppb.File) (err error) {
 						fileStart := time.Now()
 						defer func() {
-							log.Info("import files done", logutil.Files(filesGroup),
-								zap.Duration("take", time.Since(fileStart)))
-							updateCh.Inc()
+							if err == nil {
+								log.Info("import files done", logutil.Files(filesGroup),
+									zap.Duration("take", time.Since(fileStart)))
+								updateCh.Inc()
+							}
 						}()
 						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 					}(filesGroup); importErr != nil {
@@ -3693,13 +3688,14 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 		return errors.Trace(err)
 	}
 	info := dom.InfoSchema()
-	allSchema := info.AllSchemas()
+	allSchemaName := info.AllSchemaNames()
 	recorder := tiflashrec.New()
 
 	expectTiFlashStoreCount := uint64(0)
 	needTiFlash := false
-	for _, s := range allSchema {
-		for _, t := range s.Tables {
+	for _, s := range allSchemaName {
+		for _, t := range info.SchemaTables(s) {
+			t := t.Meta()
 			if t.TiFlashReplica != nil {
 				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
 				recorder.AddTable(t.ID, *t.TiFlashReplica)
