@@ -60,7 +60,7 @@ func generateUnfinishedPathsFromExpr(
 				[]expression.Expression{expr},
 				[]*util.AccessPath{path},
 			)
-			if len(usedMap) == 1 && usedMap[0] == true && len(paths) == 1 {
+			if len(usedMap) == 1 && usedMap[0] && len(paths) == 1 {
 				ret[i].useFullAccessConds = true
 				ret[i].FullAccessConds = paths[0].AccessConds
 				ret[i].needRemainFilter = needSelection
@@ -214,7 +214,7 @@ func buildAccessPathFromUnfinishedPath(
 					idxCols,
 					unfinishedPath.Index,
 					ds.tableStats.HistColl)
-				if err != nil || isIntersection {
+				if err != nil || !ok || isIntersection {
 					continue
 				}
 				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.IdxCol2AccessType) > 0
