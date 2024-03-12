@@ -43,6 +43,7 @@ var (
 	DistTaskGauge *prometheus.GaugeVec
 	//DistTaskStartTimeGauge is the gauge of dist task count.
 	DistTaskStartTimeGauge *prometheus.GaugeVec
+	// DistTaskUsedSlotsGauge is the gauge of used slots on executor node.
 	DistTaskUsedSlotsGauge *prometheus.GaugeVec
 )
 
