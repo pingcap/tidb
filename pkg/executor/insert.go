@@ -120,7 +120,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
-	return nil
+	return txn.GetMemBuffer().MayFlush()
 }
 
 func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
@@ -149,6 +149,9 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 			batchKeys = append(batchKeys, k.newKey)
 		}
 	}
+	if txn.IsPipelined() {
+		return txn.Prefetch(ctx, batchKeys)
+	}
 	return txn.BatchGet(ctx, batchKeys)
 }
 
@@ -174,7 +177,12 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 			}
 		}
 	}
-	_, err := txn.BatchGet(ctx, batchKeys)
+	var err error
+	if txn.IsPipelined() {
+		_, err = txn.Prefetch(ctx, batchKeys)
+	} else {
+		_, err = txn.BatchGet(ctx, batchKeys)
+	}
 	return err
 }
 

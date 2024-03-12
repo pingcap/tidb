@@ -172,9 +172,36 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
 }
 
+func (txn *tikvTxn) Prefetch(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	r, ctx := tracing.StartRegionEx(ctx, "tikvTxn.Prefetch")
+	defer r.End()
+	tikvKeys := toTiKVKeys(keys)
+	return txn.KVTxn.Prefetch(ctx, tikvKeys)
+}
+
 func (txn *tikvTxn) Delete(k kv.Key) error {
 	err := txn.KVTxn.Delete(k)
 	return derr.ToTiDBErr(err)
+}
+
+func (txn *tikvTxn) GetFromPrefetchCache(ctx context.Context, k kv.Key) ([]byte, error) {
+	if !txn.IsPipelined() {
+		return txn.Get(ctx, k)
+	}
+	val, err := txn.GetMemBuffer().GetLocal(ctx, k)
+	if kv.ErrNotExist.Equal(err) {
+		vals := txn.GetMemBuffer().GetPrefetchCache(ctx, [][]byte{k})
+		var ok bool
+		val, ok = vals[string(k)]
+		if !ok {
+			// if the key is not in the prefetch cache, get it from the snapshot's cache
+			val, err = txn.GetSnapshot().Get(ctx, k)
+		}
+	}
+	if err == nil && len(val) == 0 {
+		return nil, kv.ErrNotExist
+	}
+	return val, err
 }
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {

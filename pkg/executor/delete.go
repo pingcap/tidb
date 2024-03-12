@@ -55,10 +55,19 @@ type DeleteExec struct {
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	var err error
 	if e.IsMultiTable {
-		return e.deleteMultiTablesByChunk(ctx)
+		err = e.deleteMultiTablesByChunk(ctx)
+	} else {
+		err = e.deleteSingleTableByChunk(ctx)
 	}
-	return e.deleteSingleTableByChunk(ctx)
+	if err != nil {
+		return err
+	}
+	if txn, _ := e.Ctx().Txn(false); txn != nil {
+		return txn.GetMemBuffer().MayFlush()
+	}
+	return nil
 }
 
 func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {

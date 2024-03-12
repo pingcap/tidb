@@ -74,7 +74,12 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 			return err
 		}
 
-		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
+		if txn.IsPipelined() {
+			_, err = txn.GetFromPrefetchCache(ctx, r.handleKey.newKey)
+		} else {
+			_, err = txn.Get(ctx, r.handleKey.newKey)
+		}
+		if err == nil {
 			rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 			if err != nil {
 				return err
@@ -188,7 +193,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		}
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))
-	return nil
+	return txn.GetMemBuffer().MayFlush()
 }
 
 // Next implements the Executor Next interface.

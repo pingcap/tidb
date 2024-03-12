@@ -259,6 +259,7 @@ func TestPipelinedDMLInsertRPC(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, unique index idx(b))")
+	tk.MustExec("set session tidb_dml_type = standard")
 	res := tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
 	explain := getExplainResult(res)
 	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
@@ -268,15 +269,15 @@ func TestPipelinedDMLInsertRPC(t *testing.T) {
 	tk.MustExec("truncate table t1")
 	res = tk.MustQuery("explain analyze insert into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
 	explain = getExplainResult(res)
-	// TODO: try to optimize the rpc count, when use bulk dml, insert will send many BufferBatchGet rpc.
-	require.Regexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:10, total_time:.*}}.*", explain)
+	// no BufferBatchGet with lazy check
+	require.NotRegexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:.*, total_time:.*}}.*", explain)
 	// Test insert ignore.
 	tk.MustExec("truncate table t1")
 	res = tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
 	explain = getExplainResult(res)
-	// TODO: try to optimize the rpc count, when use bulk dml, insert ignore will send 5 BufferBatchGet and  1 BatchGet rpc.
 	// but without bulk dml, it will only use 1 BatchGet rpcs.
-	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:5, total_time:.*}}}.*", explain)
+	// there is still one BufferBatchGet in prefetch phase.
+	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
 	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
 }
 
@@ -533,4 +534,28 @@ func TestPipelinedDMLDisableRetry(t *testing.T) {
 	err := <-errCh
 	require.Error(t, err)
 	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
+}
+
+func TestReplaceRowCheck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t1, _t1")
+	tk1.MustExec("create table t1(a int, b int)")
+	tk1.MustExec("create table _t1(a int primary key, b int)")
+	tk1.MustExec("insert into t1 values(1, 1), (2, 2), (1, 2), (2, 1)")
+	tk1.MustExec("set session tidb_dml_type = bulk")
+	tk1.MustExec("replace into _t1 select * from t1")
+	tk1.MustExec("admin check table _t1")
+	tk1.MustQuery("select a from _t1").Sort().Check(testkit.Rows("1", "2"))
+
+	tk1.MustExec("truncate table _t1")
+	tk1.MustExec("insert ignore into _t1 select * from t1")
+	tk1.MustExec("admin check table _t1")
+	tk1.MustQuery("select a from _t1").Sort().Check(testkit.Rows("1", "2"))
+
+	tk1.MustExec("truncate table _t1")
+	tk1.MustExec("insert into _t1 select * from t1 on duplicate key update b = values(b)")
+	tk1.MustExec("admin check table _t1")
+	tk1.MustQuery("select a from _t1").Sort().Check(testkit.Rows("1", "2"))
 }

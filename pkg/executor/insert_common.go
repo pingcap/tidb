@@ -1251,7 +1251,11 @@ CheckAndInsert:
 		}
 
 		for _, uk := range r.uniqueKeys {
-			_, err := txn.Get(ctx, uk.newKey)
+			if txn.IsPipelined() {
+				_, err = txn.GetFromPrefetchCache(ctx, uk.newKey)
+			} else {
+				_, err = txn.Get(ctx, uk.newKey)
+			}
 			if err == nil {
 				if !replace {
 					// If duplicate keys were found in BatchGet, mark row = nil.

@@ -163,6 +163,10 @@ func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 	return data, derr.ToTiDBErr(err)
 }
 
+func (m *memBuffer) GetPrefetchCache(ctx context.Context, keys [][]byte) map[string][]byte {
+	return m.MemBuffer.GetPrefetchCache(ctx, keys)
+}
+
 type tikvGetter struct {
 	tikv.Getter
 }
