@@ -139,16 +139,9 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	e.initialized = true
 	e.files, err = e.getAllFiles(ctx, sctx, sctx.GetSessionVars().SlowQueryFile)
 	if e.extractor.Desc {
-		e.reverseLogFiles()
+		slices.Reverse(e.files)
 	}
 	return err
-}
-
-func (e *slowQueryRetriever) reverseLogFiles() {
-	for i := 0; i < len(e.files)/2; i++ {
-		j := len(e.files) - i - 1
-		e.files[i], e.files[j] = e.files[j], e.files[i]
-	}
 }
 
 func (e *slowQueryRetriever) close() error {
@@ -188,20 +181,30 @@ func (e *slowQueryRetriever) getNextFile() *logFile {
 	return ret
 }
 
-func (e *slowQueryRetriever) getPreviousFile() *os.File {
+func (e *slowQueryRetriever) getPreviousReader() (*bufio.Reader, error) {
 	fileIdx := e.fileIdx
 	// fileIdx refer to the next file which should be read
 	// so we need to set fileIdx to fileIdx - 2 to get the previous file.
 	fileIdx = fileIdx - 2
 	if fileIdx < 0 {
-		return nil
+		return nil, nil
 	}
-	file := e.files[fileIdx].file
-	_, err := file.Seek(0, io.SeekStart)
+	file := e.files[fileIdx]
+	_, err := file.file.Seek(0, io.SeekStart)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return file
+	var reader *bufio.Reader
+	if !file.compressed {
+		reader = bufio.NewReader(file.file)
+	} else {
+		gr, err := gzip.NewReader(file.file)
+		if err != nil {
+			return nil, err
+		}
+		reader = bufio.NewReader(gr)
+	}
+	return reader, nil
 }
 
 func (e *slowQueryRetriever) getNextReader() (*bufio.Reader, error) {
@@ -374,11 +377,10 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, rea
 					return decomposedSlowLogTasks, nil
 				}
 				e.fileLine = 0
-				file := e.getPreviousFile()
-				if file == nil {
+				reader, err = e.getPreviousReader()
+				if reader == nil || err != nil {
 					return decomposeToSlowLogTasks(logs, num), nil
 				}
-				reader = bufio.NewReader(file)
 				scanPreviousFile = true
 				continue
 			}
@@ -844,7 +846,7 @@ func ParseTime(s string) (time.Time, error) {
 
 type logFile struct {
 	file       *os.File  // The opened file handle
-	start, end time.Time // The start/end time of the log file
+	start      time.Time // The start time of the log file
 	compressed bool      // The file is compressed or not
 }
 
@@ -925,12 +927,11 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			return nil
 		}
 
-		// If we want to get the end time from a compressed file, we need uncompress the whole file which is very slow
-		// and consume a lot of memeory. So we assume the end time equals to inf.
-		fileEndTime := time.Unix(1<<63-1, 0)
+		// If we want to get the end time from a compressed file,
+		// we need uncompress the whole file which is very slow and consume a lot of memeory.
 		if !compressed {
 			// Get the file end time.
-			fileEndTime, err = e.getFileEndTime(ctx, file)
+			fileEndTime, err := e.getFileEndTime(ctx, file)
 			if err != nil {
 				return handleErr(err)
 			}
@@ -953,7 +954,6 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		logFiles = append(logFiles, logFile{
 			file:       file,
 			start:      fileStartTime,
-			end:        fileEndTime,
 			compressed: compressed,
 		})
 		skip = true
