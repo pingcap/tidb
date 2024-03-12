@@ -1119,4 +1119,5 @@ func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
 			}
 		}
 	}
+	bindinfo.GetBindingReturnNilBool.Store(false)
 }

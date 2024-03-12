@@ -17,6 +17,7 @@ package bindinfo
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
@@ -36,6 +37,8 @@ import (
 
 // GetBindingReturnNil is only for test
 var GetBindingReturnNil = stringutil.StringerStr("GetBindingReturnNil")
+
+var GetBindingReturnNilBool atomic.Bool
 
 // GetBindingReturnNilAlways is only for test
 var GetBindingReturnNilAlways = stringutil.StringerStr("getBindingReturnNilAlways")
@@ -81,7 +84,7 @@ func newFuzzyBindingCache(loadBindingFromStorageFunc func(sessionctx.Context, st
 }
 
 func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, warn error) {
-	matchedBinding, isMatched, missingSQLDigest := fbc.getFromMemory(sctx, fuzzyDigest, tableNames, true)
+	matchedBinding, isMatched, missingSQLDigest := fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
 	if len(missingSQLDigest) == 0 {
 		return
 	}
@@ -89,14 +92,14 @@ func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzz
 		return
 	}
 	fbc.loadFromStore(sctx, missingSQLDigest) // loadFromStore's SetBinding has a Mutex inside, so it's safe to call it without lock
-	matchedBinding, isMatched, missingSQLDigest = fbc.getFromMemory(sctx, fuzzyDigest, tableNames, false)
+	matchedBinding, isMatched, missingSQLDigest = fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
 	if intest.InTest && len(missingSQLDigest) != 0 {
 		warn = errors.New("failed to load bindings, optimization process without bindings")
 	}
 	return
 }
 
-func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName, enableFailpoint bool) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
+func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
 	fbc.mu.RLock()
 	defer fbc.mu.RUnlock()
 	bindingCache := fbc.BindingCache
@@ -107,8 +110,10 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, sqlDigest := range fbc.fuzzy2SQLDigests[fuzzyDigest] {
 		bindings := bindingCache.GetBinding(sqlDigest)
-		if intest.InTest && enableFailpoint && sctx.Value(GetBindingReturnNil) != nil {
-			bindings = nil
+		if intest.InTest && sctx.Value(GetBindingReturnNil) != nil {
+			if GetBindingReturnNilBool.CompareAndSwap(false, true) {
+				bindings = nil
+			}
 		}
 		if intest.InTest && sctx.Value(GetBindingReturnNilAlways) != nil {
 			bindings = nil
