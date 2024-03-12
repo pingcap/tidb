@@ -31,6 +31,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/hack",
         "//pkg/util/hint",
+        "//pkg/util/intest",
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
