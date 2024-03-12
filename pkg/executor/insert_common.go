@@ -1220,7 +1220,11 @@ CheckAndInsert:
 			continue
 		}
 		if r.handleKey != nil {
-			_, err := txn.Get(ctx, r.handleKey.newKey)
+			if txn.IsPipelined() {
+				_, err = txn.GetFromPrefetchCache(ctx, r.handleKey.newKey)
+			} else {
+				_, err = txn.Get(ctx, r.handleKey.newKey)
+			}
 			if err == nil {
 				if !replace {
 					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)

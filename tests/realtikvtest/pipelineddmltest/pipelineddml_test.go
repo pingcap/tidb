@@ -257,28 +257,40 @@ func TestPipelinedDMLInsertRPC(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int, unique index idx(b))")
-	tk.MustExec("set session tidb_dml_type = standard")
-	res := tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-	explain := getExplainResult(res)
-	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-	// Test with bulk dml.
-	tk.MustExec("set session tidb_dml_type = bulk")
-	// Test normal insert.
-	tk.MustExec("truncate table t1")
-	res = tk.MustQuery("explain analyze insert into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-	explain = getExplainResult(res)
-	// no BufferBatchGet with lazy check
-	require.NotRegexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:.*, total_time:.*}}.*", explain)
-	// Test insert ignore.
-	tk.MustExec("truncate table t1")
-	res = tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-	explain = getExplainResult(res)
-	// but without bulk dml, it will only use 1 BatchGet rpcs.
-	// there is still one BufferBatchGet in prefetch phase.
-	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+	tables := []string{
+		"create table t1 (a int, b int, unique index idx(b))", // unique index
+		"create table t1 (a int, b int primary key)",          // clustered handle
+	}
+	for _, table := range tables {
+		tk.MustExec("drop table if exists t1, _t1")
+		tk.MustExec(table)
+		tk.MustExec("set session tidb_dml_type = standard")
+		res := tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
+		explain := getExplainResult(res)
+		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+		// Test with bulk dml.
+		tk.MustExec("set session tidb_dml_type = bulk")
+		// Test normal insert.
+		tk.MustExec("truncate table t1")
+		res = tk.MustQuery("explain analyze insert into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
+		explain = getExplainResult(res)
+		// no BufferBatchGet with lazy check
+		require.NotRegexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:.*, total_time:.*}}.*", explain)
+
+		// Test insert ignore.
+		tk.MustExec("truncate table t1")
+		res = tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
+		explain = getExplainResult(res)
+		// but without bulk dml, it will only use 1 BatchGet rpcs.
+		// there is still one BufferBatchGet in prefetch phase.
+		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+		tk.MustExec("create table _t1 like t1")
+		res = tk.MustQuery("explain analyze insert ignore into _t1 select * from t1")
+		explain = getExplainResult(res)
+		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+	}
 }
 
 func getExplainResult(res *testkit.Result) string {
