@@ -659,8 +659,8 @@ func NewErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, 
 		return errors.Trace(err)
 	}
 
-	valueStr, err := tables.GenIndexValueFromIndex(key, value, tbl.Meta(), idxInfo)
 	indexName := fmt.Sprintf("%s.%s", tbl.Meta().Name.String(), idxInfo.Name.String())
+	valueStr, err := tables.GenIndexValueFromIndex(key, value, tbl.Meta(), idxInfo)
 	if err != nil {
 		log.L().Warn("decode index key value / column value failed", zap.String("index", indexName),
 			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
