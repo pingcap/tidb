@@ -977,7 +977,7 @@ const (
 	// version 138 set tidb_enable_null_aware_anti_join to true
 	version138 = 138
 	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
-	// deprecated in version194
+	// deprecated in version184
 	version139 = 139
 	// version 140 add column task_key to mysql.tidb_global_task
 	version140 = 140
