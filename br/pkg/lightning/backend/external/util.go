@@ -18,18 +18,20 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -42,7 +44,6 @@ func seekPropsOffsets(
 	starts []kv.Key,
 	paths []string,
 	exStorage storage.ExternalStorage,
-	checkHotSpot bool,
 ) (_ [][]uint64, err error) {
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
@@ -50,60 +51,102 @@ func seekPropsOffsets(
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	// adapt the NewMergePropIter argument types
-	multiFileStat := MultipleFilesStat{Filenames: make([][2]string, 0, len(paths))}
-	for _, path := range paths {
-		multiFileStat.Filenames = append(multiFileStat.Filenames, [2]string{"", path})
+	offsetsPerFile := make([][]uint64, len(paths))
+	for i := range offsetsPerFile {
+		offsetsPerFile[i] = make([]uint64, len(starts))
 	}
-	iter, err := NewMergePropIter(ctx, []MultipleFilesStat{multiFileStat}, exStorage, checkHotSpot)
-	if err != nil {
+	// if **all** files' first key is smaller than start key, we may lost the data
+	// between [start key, min(first key of all files)). So record this case for each
+	// file and check all files afterward.
+	firstKeyTooSmallCheckers := make([]kv.Key, len(paths))
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	for i := range paths {
+		i := i
+		eg.Go(func() error {
+			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)
+			if err2 != nil {
+				if err2 == io.EOF {
+					return nil
+				}
+				return errors.Trace(err2)
+			}
+			defer r.Close()
+
+			moved := false
+			keyIdx := 0
+			curKey := starts[keyIdx]
+
+			p, err3 := r.nextProp()
+			for {
+				if egCtx.Err() != nil {
+					return egCtx.Err()
+				}
+
+				switch err3 {
+				case nil:
+				case io.EOF:
+					for keyIdx++; keyIdx < len(starts); keyIdx++ {
+						offsetsPerFile[i][keyIdx] = offsetsPerFile[i][keyIdx-1]
+					}
+					return nil
+				default:
+					return errors.Trace(err3)
+				}
+				propKey := kv.Key(p.firstKey)
+				for propKey.Cmp(curKey) > 0 {
+					if !moved {
+						if firstKeyTooSmallCheckers[i] == nil {
+							firstKeyTooSmallCheckers[i] = propKey
+						}
+					}
+					keyIdx++
+					if keyIdx >= len(starts) {
+						return nil
+					}
+					offsetsPerFile[i][keyIdx] = offsetsPerFile[i][keyIdx-1]
+					curKey = starts[keyIdx]
+				}
+				moved = true
+				offsetsPerFile[i][keyIdx] = p.offset
+				p, err3 = r.nextProp()
+			}
+		})
+	}
+
+	if err = eg.Wait(); err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err := iter.Close(); err != nil {
-			logger.Warn("failed to close merge prop iterator", zap.Error(err))
-		}
-	}()
-	offsets4AllKey := make([][]uint64, 0, len(starts))
-	offsets := make([]uint64, len(paths))
-	offsets4AllKey = append(offsets4AllKey, offsets)
-	moved := false
 
-	keyIdx := 0
-	curKey := starts[keyIdx]
-	for iter.Next() {
-		p := iter.prop()
-		propKey := kv.Key(p.firstKey)
-		for propKey.Cmp(curKey) > 0 {
-			if !moved {
-				return nil, fmt.Errorf("start key %s is too small for stat files %v, propKey %s",
-					curKey.String(),
-					paths,
-					propKey.String(),
-				)
-			}
-			keyIdx++
-			if keyIdx >= len(starts) {
-				return offsets4AllKey, nil
-			}
-			curKey = starts[keyIdx]
-			newOffsets := slices.Clone(offsets)
-			offsets4AllKey = append(offsets4AllKey, newOffsets)
-			offsets = newOffsets
+	hasNil := false
+	for _, k := range firstKeyTooSmallCheckers {
+		if k == nil {
+			hasNil = true
+			break
 		}
-		moved = true
-		_, idx := iter.readerIndex()
-		offsets[idx] = p.offset
 	}
-	if iter.Error() != nil {
-		return nil, iter.Error()
+	if !hasNil {
+		minKey := firstKeyTooSmallCheckers[0]
+		for _, k := range firstKeyTooSmallCheckers[1:] {
+			if k.Cmp(minKey) < 0 {
+				minKey = k
+			}
+		}
+		return nil, fmt.Errorf("start key %s is too small for stat files %v, propKey %s",
+			starts[0].String(),
+			paths,
+			minKey.String(),
+		)
 	}
-	for len(offsets4AllKey) < len(starts) {
-		newOffsets := slices.Clone(offsets)
-		offsets4AllKey = append(offsets4AllKey, newOffsets)
-		offsets = newOffsets
+
+	// TODO(lance6716): change the caller so we don't need to transpose the result
+	offsetsPerKey := make([][]uint64, len(starts))
+	for i := range starts {
+		offsetsPerKey[i] = make([]uint64, len(paths))
+		for j := range paths {
+			offsetsPerKey[i][j] = offsetsPerFile[j][i]
+		}
 	}
-	return offsets4AllKey, nil
+	return offsetsPerKey, nil
 }
 
 // GetAllFileNames returns data file paths and stat file paths. Both paths are
