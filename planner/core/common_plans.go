@@ -509,6 +509,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		e.names = names
 		e.Plan = plan
 		stmtCtx.PointExec = true
+		if pointPlan, ok := plan.(*PointGetPlan); ok {
+			if pointPlan.stmtHints != nil {
+				stmtCtx.StmtHints = *pointPlan.stmtHints
+			}
+		}
 		return nil
 	}
 	if prepared.UseCache && !ignorePlanCache { // for general plans
@@ -564,6 +569,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					e.names = cachedVal.OutPutNames
 					e.Plan = cachedVal.Plan
 					stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+					if cachedVal.stmtHints != nil {
+						stmtCtx.StmtHints = *cachedVal.stmtHints
+					}
 					return nil
 				}
 				break
@@ -601,7 +609,7 @@ REBUILD:
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes, sessVars.StmtCtx.BindSQL)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes, sessVars.StmtCtx)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
@@ -673,13 +681,14 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		err      error
 		names    types.NameSlice
 	)
-	switch p.(type) {
+	switch pointPlan := p.(type) {
 	case *PointGetPlan:
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
 			return err
 		}
+		pointPlan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
 	}
 	if ok {
 		// just cache point plan now
