@@ -517,7 +517,7 @@ func NewBackend(
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
 		pd.WithCustomTimeoutOption(60*time.Second),
-		pd.WithMaxErrorRetry(3),
+		pd.WithMaxErrorRetry(10),
 	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
