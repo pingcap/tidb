@@ -72,6 +72,8 @@ func TestValidator(t *testing.T) {
 		{"create table t(id int not null auto_increment, c int, key (c, id))", true, nil},
 		{"create table t(id decimal auto_increment, key (id))", true,
 			errors.New("Incorrect column specifier for column 'id'")},
+		{"create table t0 (c int(10), c1 date auto_increment default (current_date()))", true,
+			errors.New("[types:1067]Invalid default value for 'c1'")},
 		{"create table t(id float auto_increment, key (id))", true, nil},
 		{"create table t(id int auto_increment) ENGINE=MYISAM", true, nil},
 		{"create table t(a int primary key, b int, c varchar(10), d char(256));", true,

@@ -762,6 +762,19 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
 		default:
+			if col.Tp.GetType() == mysql.TypeDate {
+				var defaultValueOpt *ast.ColumnOption
+				for _, op := range col.Options {
+					if op.Tp == ast.ColumnOptionDefaultValue {
+						defaultValueOpt = op
+						break
+					}
+				}
+				if defaultValueOpt != nil && defaultValueOpt.Expr != nil {
+					p.err = types.ErrInvalidDefault.GenWithStackByArgs(col.Name.Name.O)
+					return
+				}
+			}
 			p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
 		}
 	}
