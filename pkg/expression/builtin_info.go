@@ -849,10 +849,8 @@ func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	var store helper.Storage
-	if ctxStore, ok := ctx.GetStore().(helper.Storage); ok {
-		store = ctxStore
-	} else {
+	store, ok := ctx.GetStore().(helper.Storage)
+	if !ok {
 		return nil, errors.New("storage is not a helper.Storage")
 	}
 	sig := &builtinTiDBMVCCInfoSig{baseBuiltinFunc: bf, helper: helper.NewHelper(store)}
