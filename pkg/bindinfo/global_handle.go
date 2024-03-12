@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -709,6 +710,9 @@ func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, s
 }
 
 func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
+	failpoint.Inject("load_bindings_from_storage_internal_timeout", func() {
+		time.Sleep(time.Second)
+	})
 	var bindings Bindings
 	selectStmt := fmt.Sprintf("SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = '%s'", sqlDigest)
 	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
