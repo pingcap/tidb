@@ -16,6 +16,7 @@ package partitionedhashjoin
 
 import (
 	"encoding/binary"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"sync/atomic"
 	"unsafe"
 
@@ -164,8 +165,10 @@ func canBeInlinedAsJoinKey(tp *types.FieldType) bool {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear,
 		mysql.TypeDuration:
 		return true
-	// todo 1. check if date/datetime/timestamp can be inlined
-	//      2. string related type with binCollator can be inlined
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		collator := collate.GetCollator(tp.GetCollate())
+		return collate.CanUseRawMemAsKey(collator)
+	// todo check if date/datetime/timestamp can be inlined
 	default:
 		return false
 	}
