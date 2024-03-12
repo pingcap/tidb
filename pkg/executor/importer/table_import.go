@@ -415,7 +415,8 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
 	}
-	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
+	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
+	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
 
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
@@ -558,7 +559,7 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	}
 
 	defer unlockDiskQuota()
-
+	ti.logger.Info("start checking disk quota", zap.String("disk-quota", units.BytesSize(float64(ti.diskQuota))))
 	for {
 		select {
 		case <-ctx.Done():

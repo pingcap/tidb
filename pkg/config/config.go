@@ -1085,7 +1085,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf atomic.Value
+	globalConf atomic.Pointer[Config]
 )
 
 // NewConfig creates a new config instance with default value.
@@ -1098,7 +1098,7 @@ func NewConfig() *Config {
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return globalConf.Load().(*Config)
+	return globalConf.Load()
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
