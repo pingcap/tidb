@@ -1873,11 +1873,10 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
-	// The rc.db is not thread safe
-	var updateMetaLock sync.Mutex
 
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
+		var statsErr error = nil
 		if loadStats && oldTable.Stats != nil {
 			log.Info("start loads analyze after validate checksum",
 				zap.Int64("old id", oldTable.Info.ID),
@@ -1885,44 +1884,34 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 			)
 			start := time.Now()
 			// NOTICE: skip updating cache after load stats from json
-			if err := rc.statsHandler.LoadStatsFromJSONNoUpdate(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); err != nil {
-				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
+			if statsErr = rc.statsHandler.LoadStatsFromJSONNoUpdate(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(statsErr))
 			}
 			log.Info("restore stat done",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
-		} else if loadStats && oldTable.StatsFileIndexes != nil {
+		} else if loadStats && len(oldTable.StatsFileIndexes) > 0 {
 			log.Info("start to load statistic data for each partition",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
 			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
-			if err := metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); err != nil {
-				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(err))
+			if statsErr = metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(statsErr))
 			}
 			log.Info("restore statistic data done",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
-		} else {
+		}
+
+		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
 			// Not need to return err when failed because of update analysis-meta
-			restoreTS, err := rc.GetTSWithRetry(ctx)
-			if err != nil {
-				log.Error("getTS failed", zap.Error(err))
-			} else {
-				updateMetaLock.Lock()
-
-				log.Info("start update metas",
-					zap.Stringer("table", oldTable.Info.Name),
-					zap.Stringer("db", oldTable.DB.Name))
-				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
-				if err != nil {
-					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
-				}
-
-				updateMetaLock.Unlock()
+			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
+			if statsErr = rc.statsHandler.SaveMetaToStorage(tbl.Table.ID, int64(oldTable.TotalKvs), 0, "br restore"); statsErr != nil {
+				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
 			}
 		}
 		return nil

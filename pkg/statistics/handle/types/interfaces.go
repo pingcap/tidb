@@ -275,6 +275,9 @@ type StatsReadWriter interface {
 	// SaveTableStatsToStorage saves the stats of a table to storage.
 	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
+	// SaveMetaToStorage saves the stats meta of a table to storage.
+	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
+
 	// InsertColStats2KV inserts columns stats to kv.
 	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
 
