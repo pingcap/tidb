@@ -1030,9 +1030,11 @@ func (k TiDBDecodeKeyFunctionKeyType) String() string {
 
 const (
 	// TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
-	TiDBDecodeKeyFunctionKey    TiDBDecodeKeyFunctionKeyType = 0
+	TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
+	// TiDBDecodeKeyFunctionKey is used to identify the encode record function in context.
 	TiDBEncodeRecordFunctionKey TiDBDecodeKeyFunctionKeyType = 1
-	TiDBEncodeIndexFunctionKey  TiDBDecodeKeyFunctionKeyType = 2
+	// TiDBDecodeKeyFunctionKey is used to identify the encode index function in context.
+	TiDBEncodeIndexFunctionKey TiDBDecodeKeyFunctionKeyType = 2
 )
 
 type tidbDecodeSQLDigestsFunctionClass struct {
