@@ -69,7 +69,7 @@ type statementBuildInfo struct {
 }
 
 func (j job) String(redacted string) string {
-	return fmt.Sprintf("job id: %d, estimated size: %d, sql: %s", j.jobID, j.jobSize, redact.Redact(redacted, j.sql))
+	return fmt.Sprintf("job id: %d, estimated size: %d, sql: %s", j.jobID, j.jobSize, redact.String(redacted, j.sql))
 }
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement

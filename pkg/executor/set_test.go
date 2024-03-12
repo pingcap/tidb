@@ -464,10 +464,10 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
 	tk.MustExec("set session tidb_redact_log = oFf")
 	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("OFF"))
-	tk.MustExec("set session tidb_redact_log = On")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
 	tk.MustExec("set session tidb_redact_log = marker")
 	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("MARKER"))
+	tk.MustExec("set session tidb_redact_log = On")
+	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
 
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")

@@ -370,7 +370,7 @@ func CalculateChangePercentage(
 	tblStats *statistics.Table,
 	autoAnalyzeRatio float64,
 ) float64 {
-	if !exec.TableAnalyzed(tblStats) {
+	if !tblStats.IsAnalyzed() {
 		return unanalyzedTableDefaultChangePercentage
 	}
 
@@ -424,23 +424,12 @@ func findLastAnalyzeTime(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Time {
-	maxVersion := uint64(0)
-	for _, idx := range tblStats.Indices {
-		if idx.IsAnalyzed() {
-			maxVersion = max(maxVersion, idx.LastUpdateVersion)
-		}
-	}
-	for _, col := range tblStats.Columns {
-		if col.IsAnalyzed() {
-			maxVersion = max(maxVersion, col.LastUpdateVersion)
-		}
-	}
 	// Table is not analyzed, compose a fake version.
-	if maxVersion == 0 {
+	if !tblStats.IsAnalyzed() {
 		phy := oracle.GetTimeFromTS(currentTs)
 		return phy.Add(unanalyzedTableDefaultLastUpdateDuration)
 	}
-	return oracle.GetTimeFromTS(maxVersion)
+	return oracle.GetTimeFromTS(tblStats.LastAnalyzeVersion)
 }
 
 // CheckIndexesNeedAnalyze checks if the indexes of the table need to be analyzed.
@@ -450,7 +439,7 @@ func CheckIndexesNeedAnalyze(
 ) []string {
 	// If table is not analyzed, we need to analyze whole table.
 	// So we don't need to check indexes.
-	if !exec.TableAnalyzed(tblStats) {
+	if !tblStats.IsAnalyzed() {
 		return nil
 	}
 

@@ -62,6 +62,8 @@ type Table struct {
 	Name          string
 	HistColl
 	Version uint64
+	// It's the timestamp of the last analyze time.
+	LastAnalyzeVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
@@ -298,10 +300,11 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx.Copy()
 	}
 	nt := &Table{
-		HistColl:        newHistColl,
-		Version:         t.Version,
-		Name:            t.Name,
-		TblInfoUpdateTS: t.TblInfoUpdateTS,
+		HistColl:           newHistColl,
+		Version:            t.Version,
+		Name:               t.Name,
+		TblInfoUpdateTS:    t.TblInfoUpdateTS,
+		LastAnalyzeVersion: t.LastAnalyzeVersion,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -331,11 +334,12 @@ func (t *Table) ShallowCopy() *Table {
 		StatsVer:       t.StatsVer,
 	}
 	nt := &Table{
-		HistColl:        newHistColl,
-		Version:         t.Version,
-		Name:            t.Name,
-		TblInfoUpdateTS: t.TblInfoUpdateTS,
-		ExtendedStats:   t.ExtendedStats,
+		HistColl:           newHistColl,
+		Version:            t.Version,
+		Name:               t.Name,
+		TblInfoUpdateTS:    t.TblInfoUpdateTS,
+		ExtendedStats:      t.ExtendedStats,
+		LastAnalyzeVersion: t.LastAnalyzeVersion,
 	}
 	return nt
 }
@@ -410,6 +414,12 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 	}
 	// newly added column which is not analyzed yet
 	return nil, nil, nil, nil, false
+}
+
+// IsAnalyzed checks whether the table is analyzed or not by checking its last analyze's timestamp value.
+// A valid timestamp must be greater than 0.
+func (t *Table) IsAnalyzed() bool {
+	return t.LastAnalyzeVersion > 0
 }
 
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
