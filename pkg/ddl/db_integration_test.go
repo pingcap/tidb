@@ -1614,7 +1614,7 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("drop table if exists t, t1, t2")
 
 	// date_format
 	tk.MustExec("create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')))")
@@ -1630,6 +1630,16 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "xyz", Hostname: "localhost"}
 	tk.MustExec("insert into t(c) values (4),(5),(6)")
 	tk.MustExec("insert into t values (7, default)")
+	rows := tk.MustQuery("SELECT c1 from t order by c").Rows()
+	for i, row := range rows {
+		d, ok := row[0].(string)
+		require.True(t, ok)
+		if i < 3 {
+			require.Equal(t, "ROOT", d)
+		} else {
+			require.Equal(t, "XYZ", d)
+		}
+	}
 
 	// replace
 	tk.MustExec("create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')))")
@@ -1642,6 +1652,11 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	if int(sqlErr.Code) != errno.ErrTruncatedWrongValue {
 		require.Equal(t, errno.ErrDataOutOfRange, int(sqlErr.Code))
 	}
+	// test modify column
+	// The error message has UUID, so put this test here.
+	tk.MustExec("create table t2(c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));")
+	tk.MustExec("insert into t2(c) values (1),(2),(3);")
+	tk.MustGetErrCode("alter table t2 modify column c1 varchar(30) default 'xx';", errno.WarnDataTruncated)
 }
 
 func TestChangingDBCharset(t *testing.T) {
