@@ -266,7 +266,15 @@ func formatDataForDupError(data []types.Datum) (string, error) {
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
 func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
+	var (
+		oldValue []byte
+		err      error
+	)
+	if txn.IsPipelined() {
+		oldValue, err = txn.GetFromPrefetchCache(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
+	} else {
+		oldValue, err = txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
+	}
 	if err != nil {
 		return nil, err
 	}

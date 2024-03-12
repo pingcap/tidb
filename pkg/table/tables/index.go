@@ -552,7 +552,12 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 		return fetchDuplicatedHandleForTempIndexKey(ctx, key, distinct, txn, tableID, isCommon)
 	}
 	// The index key is not from temp index.
-	val, err := getKeyInTxn(ctx, txn, key)
+	var val []byte
+	if txn.IsPipelined() {
+		val, err = getKeyInPrefetchCache(ctx, txn, key)
+	} else {
+		val, err = getKeyInTxn(ctx, txn, key)
+	}
 	if err != nil || len(val) == 0 {
 		return false, nil, err
 	}
@@ -630,6 +635,21 @@ func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 // getKeyInTxn gets the value of the key in the transaction, and ignore the ErrNotExist error.
 func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
 	val, err := txn.Get(ctx, key)
+	if err != nil {
+		if kv.IsErrNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return val, nil
+}
+
+// getKeyInPrefetchCache gets the value of the key in the prefetch cache, and ignore the ErrNotExist error.
+func getKeyInPrefetchCache(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
+	if !txn.IsPipelined() {
+		panic("not in p-dml")
+	}
+	val, err := txn.GetFromPrefetchCache(ctx, key)
 	if err != nil {
 		if kv.IsErrNotFound(err) {
 			return nil, nil

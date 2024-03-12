@@ -290,6 +290,15 @@ func TestPipelinedDMLInsertRPC(t *testing.T) {
 		explain = getExplainResult(res)
 		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
 		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+		res = tk.MustQuery("explain analyze insert into _t1 select * from t1 on duplicate key update a = values(a) + 1")
+		explain = getExplainResult(res)
+		if strings.Contains(table, "unique") {
+			require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:2, total_time:.*}}}.*", explain)
+			require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:2, total_time:.*}}}.*", explain)
+		} else if strings.Contains(table, "primary") {
+			require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+		}
 	}
 }
 
