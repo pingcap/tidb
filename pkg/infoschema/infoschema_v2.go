@@ -644,6 +644,14 @@ func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDif
 	return b.applyExchangeTablePartition(m, diff)
 }
 
+func updateInfoSchemaBundles(b *Builder) {
+	if b.enableV2 {
+		b.updateInfoSchemaBundlesV2(&b.infoschemaV2)
+	} else {
+		b.updateInfoSchemaBundles(b.infoSchema)
+	}
+}
+
 // TODO: more UT to check the correctness.
 func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
@@ -726,4 +734,49 @@ func (b *Builder) applyReorganizePartitionV2(m *meta.Meta, diff *model.SchemaDif
 
 func (b *Builder) applyExchangeTablePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	panic("TODO")
+}
+
+func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
+	if b.deltaUpdate {
+		b.completeUpdateTablesV2(is)
+		for tblID := range b.updateTables {
+			b.updateTableBundles(is.infoSchema, tblID)
+		}
+		return
+	}
+
+	// do full update bundles
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	is.ruleBundleMap = make(map[int64]*placement.Bundle)
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			b.updateTableBundles(is.infoSchema, tbl.Meta().ID)
+		}
+	}
+}
+
+func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
+	if len(b.updatePolicies) == 0 && len(b.updatePartitions) == 0 {
+		return
+	}
+
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			tblInfo := tbl.Meta()
+			if tblInfo.PlacementPolicyRef != nil {
+				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
+					b.markTableBundleShouldUpdate(tblInfo.ID)
+				}
+			}
+
+			if tblInfo.Partition != nil {
+				for _, par := range tblInfo.Partition.Definitions {
+					if _, ok := b.updatePartitions[par.ID]; ok {
+						b.markTableBundleShouldUpdate(tblInfo.ID)
+					}
+				}
+			}
+		}
+	}
 }
