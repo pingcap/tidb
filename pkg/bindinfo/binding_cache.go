@@ -108,13 +108,15 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, sqlDigest := range fbc.fuzzy2SQLDigests[fuzzyDigest] {
 		bindings := bindingCache.GetBinding(sqlDigest)
-		if intest.InTest && sctx.Value(GetBindingReturnNil) != nil {
-			if GetBindingReturnNilBool.CompareAndSwap(false, true) {
+		if intest.InTest {
+			if sctx.Value(GetBindingReturnNil) != nil {
+				if GetBindingReturnNilBool.CompareAndSwap(false, true) {
+					bindings = nil
+				}
+			}
+			if sctx.Value(GetBindingReturnNilAlways) != nil {
 				bindings = nil
 			}
-		}
-		if intest.InTest && sctx.Value(GetBindingReturnNilAlways) != nil {
-			bindings = nil
 		}
 		if bindings != nil {
 			for _, binding := range bindings {
