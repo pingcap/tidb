@@ -375,8 +375,14 @@ func runWaitScatter(t *testing.T, client *TestClient) {
 func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	ranges := initRanges()
 	regionSplitter := NewRegionSplitter(client)
-
 	ctx := context.Background()
+
+	rules := initRewriteRules()
+	for i, rg := range ranges {
+		tmp, err := RewriteRange(&rg, rules)
+		require.NoError(t, err)
+		ranges[i] = *tmp
+	}
 	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
