@@ -8,7 +8,7 @@ go_test(
         "prepare_test.go",
     ],
     flaky = True,
-    shard_count = 21,
+    shard_count = 24,
     deps = [
         "//pkg/errno",
         "//pkg/executor",
@@ -24,6 +24,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "//pkg/util",
         "//pkg/util/hint",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_model//go",
