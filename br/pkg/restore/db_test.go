@@ -384,7 +384,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
@@ -396,7 +396,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 1, len(dbs))
 
@@ -412,7 +412,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 2, len(dbs))
 }
