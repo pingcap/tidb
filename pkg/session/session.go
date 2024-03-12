@@ -3818,7 +3818,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future:    future,
 		store:     s.store,
 		txnScope:  scope,
-		pipelined: s.usePipeilnedDMLorWarn(),
+		pipelined: s.usePipelinedDmlOrWarn(),
 	})
 	return nil
 }
@@ -4291,8 +4291,8 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 	return indexusage.NewStmtIndexUsageCollector(s.idxUsageCollector)
 }
 
-// usePipeilnedDMLorWarn returns the current statement can be executed as a pipelined DML.
-func (s *session) usePipeilnedDMLorWarn() bool {
+// usePipelinedDmlOrWarn returns the current statement can be executed as a pipelined DML.
+func (s *session) usePipelinedDmlOrWarn() bool {
 	if !s.sessionVars.BulkDMLEnabled {
 		return false
 	}
@@ -4302,31 +4302,31 @@ func (s *session) usePipeilnedDMLorWarn() bool {
 	}
 	vars := s.GetSessionVars()
 	if (vars.BatchCommit || vars.BatchInsert || vars.BatchDelete) && vars.DMLBatchSize > 0 && variable.EnableBatchDML.Load() {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode."))
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode"))
 		return false
 	}
 	if vars.BinlogClient != nil {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode."))
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode"))
 		return false
 	}
 	if !(stmtCtx.InInsertStmt || stmtCtx.InDeleteStmt || stmtCtx.InUpdateStmt) {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode."))
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode"))
 		return false
 	}
 	if s.isInternal() {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used for internal SQL. Fallback to standard mode."))
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used for internal SQL. Fallback to standard mode"))
 		return false
 	}
 	if vars.InTxn() {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used in transaction. Fallback to standard mode."))
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used in transaction. Fallback to standard mode"))
 		return false
 	}
 	if !vars.IsAutocommit() {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used in autocommit mode. Fallback to standard mode."))
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used in autocommit mode. Fallback to standard mode"))
 		return false
 	}
 	if config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used in pessimistic autocommit mode. Fallback to standard mode."))
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used in pessimistic autocommit mode. Fallback to standard mode"))
 		return false
 	}
 	return true
