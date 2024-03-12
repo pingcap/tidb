@@ -793,13 +793,12 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 
 // Build builds and returns the built infoschema.
 func (b *Builder) Build() InfoSchema {
+	updateInfoSchemaBundles(b)
 	if b.enableV2 {
 		b.infoschemaV2.ts = math.MaxUint64 // TODO: should be the correct TS
 		b.infoschemaV2.schemaVersion = b.infoSchema.SchemaMetaVersion()
-		updateInfoSchemaBundles(b)
 		return &b.infoschemaV2
 	}
-	updateInfoSchemaBundles(b)
 	return b.infoSchema
 }
 
