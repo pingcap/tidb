@@ -94,9 +94,6 @@ func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzz
 	}
 	fbc.loadFromStore(sctx, missingSQLDigest) // loadFromStore's SetBinding has a Mutex inside, so it's safe to call it without lock
 	matchedBinding, isMatched, missingSQLDigest = fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
-	if intest.InTest && len(missingSQLDigest) != 0 {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("failed to load bindings, optimization process without bindings"))
-	}
 	return
 }
 

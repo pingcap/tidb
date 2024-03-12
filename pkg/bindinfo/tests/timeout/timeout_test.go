@@ -59,7 +59,6 @@ func TestFuzzyBindingHintsWithSourceReturningTimeout(t *testing.T) {
 				sctx.ClearValue(bindinfo.GetBindingReturnNil)
 				sctx.ClearValue(bindinfo.GetBindingReturnNilAlways)
 				sctx.ClearValue(bindinfo.LoadBindingNothing)
-				tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 failed to load bindings, optimization process without bindings"))
 				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 				bindinfo.GetBindingReturnNilBool.Store(false)
 			}
