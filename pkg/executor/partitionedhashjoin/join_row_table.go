@@ -63,7 +63,7 @@ const MAX_ROW_TABLE_SEGMENT_SIZE = 1024
 
 func newRowTableSegment() *rowTableSegment {
 	return &rowTableSegment{
-		// TODO: if joinKeyIsInlined, the cap of rawData can be calculated
+		// TODO: @XuHuaiyu if joinKeyIsInlined, the cap of rawData can be calculated
 		rawData:         make([]byte, 0),
 		hashValues:      make([]uint64, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
 		rowLocations:    make([]unsafe.Pointer, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
@@ -316,10 +316,12 @@ func newRowTable(meta *JoinTableMeta) *rowTable {
 	}
 }
 
-func (builder *rowTableBuilder) ClearBuffer() {
+func (builder *rowTableBuilder) ClearBuffer(rowCnt int) {
+	builder.serializedKeyVectorBuffer = builder.serializedKeyVectorBuffer[:rowCnt]
 	for i := range builder.serializedKeyVectorBuffer {
 		builder.serializedKeyVectorBuffer[i] = builder.serializedKeyVectorBuffer[i][:0]
 	}
+	builder.serializedKeyVectorBuffer = builder.serializedKeyVectorBuffer[:]
 }
 
 func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, rowTableMeta *JoinTableMeta) {
@@ -328,10 +330,14 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 		var (
 			row               = chk.GetRow(rowIdx)
 			partIdx           = builder.partIdxVector[rowIdx]
-			seg               = builder.rowTables[partIdx].segments[len(builder.rowTables[partIdx].segments)-1]
 			startPosInRawData = builder.startPosInRawData[partIdx]
+			seg               *rowTableSegment
 		)
-		if builder.crrntSizeOfRowTable[partIdx]%MAX_ROW_TABLE_SEGMENT_SIZE == 0 {
+		if builder.rowTables[partIdx] == nil {
+			builder.rowTables[partIdx] = newRowTable(rowTableMeta)
+			seg = newRowTableSegment()
+			builder.rowTables[partIdx].segments = append(builder.rowTables[partIdx].segments, seg)
+		} else if builder.crrntSizeOfRowTable[partIdx]%MAX_ROW_TABLE_SEGMENT_SIZE == 0 {
 			for _, pos := range startPosInRawData {
 				seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
 			}
@@ -341,10 +347,14 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 			builder.rowTables[partIdx].segments = append(builder.rowTables[partIdx].segments, seg)
 		}
 
+		seg.hashValues = append(seg.hashValues, uint64(builder.hashValue[rowIdx]))
+		// TODO: @XuHuaiyu validJoinKeyPos
+		seg.validJoinKeyPos = append(seg.validJoinKeyPos, rowIdx)
+
 		startPosInRawData = append(startPosInRawData, uint64(len(seg.rawData)))
 		// next_row_ptr
 		seg.rawData = append(seg.rawData, fakeAddrByte...)
-		// TODO: 补充 null_map
+		// TODO: @XuHuaiyu 补充 null_map
 		if len := rowTableMeta.nullMapLength; len > 0 {
 			seg.rawData = append(seg.rawData, make([]byte, len)...)
 		}
