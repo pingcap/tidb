@@ -99,6 +99,11 @@ type ProbeWorker struct {
 	probeResultCh      chan *chunk.Chunk
 }
 
+type BuildSideTupleFetcher struct {
+	HashJoinCtx   *PartitionedHashJoinCtx
+	BuildSideExec exec.Executor
+}
+
 type BuildWorker struct {
 	HashJoinCtx    *PartitionedHashJoinCtx
 	BuildSideExec  exec.Executor
@@ -125,6 +130,7 @@ type PartitionedHashJoinExec struct {
 
 	ProbeSideTupleFetcher *ProbeSideTupleFetcher
 	ProbeWorkers          []*ProbeWorker
+	BuildSideTupleFetcher *BuildSideTupleFetcher
 	BuildWorkers          []*BuildWorker
 
 	workerWg util.WaitGroupWrapper
@@ -316,19 +322,24 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (skipProbe bool, err erro
 	return false, nil
 }
 
-func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, chkCh chan *chunk.Chunk) error {
+func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, rowTableChannels []chan *rowTable) error {
 	builder := w.rtBuilder
-	if builder.serializedKeyVectorBuffer == nil {
-		builder.serializedKeyVectorBuffer = make([][]byte, 0, 1024)
-	} else {
-		builder.ClearBuffer()
-	}
 	partitionNumber := w.HashJoinCtx.joinHashTable.partitionNumber
 	hashTableMeta := w.HashJoinCtx.hashTableMeta
-	for chk := range chkCh {
+	serializedKeyVectorBuffer := make([][]byte, 1024)
+	builder.hashValue = make([]uint32, 0, 1024)
+	builder.partIdxVector = make([]int, 0, 1024)
+	builder.rowTables = make([]*rowTable, partitionNumber)
+	for chk := range srcChkCh {
+		serializedKeyBuf := serializedKeyVectorBuffer[:chk.NumRows()]
+		for i := range serializedKeyBuf {
+			serializedKeyBuf[i] = serializedKeyBuf[i][:]
+		}
+		builder.hashValue = builder.hashValue[:]
+		builder.partIdxVector = builder.partIdxVector[:]
 		// split partition
 		for _, colIdx := range builder.buildKeyIndex {
-			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, nil /*TODO: filterVector*/, nil /*TODO: nullVector*/, hashTableMeta.ignoreIntegerKeySignFlag[colIdx], builder.serializedKeyVectorBuffer)
+			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, nil /*TODO: @XuHuaiyu filterVector*/, nil /*TODO: @XuHuaiyu nullVector*/, hashTableMeta.ignoreIntegerKeySignFlag[colIdx], serializedKeyBuf)
 			if err != nil {
 				return err
 			}
@@ -336,16 +347,22 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, c
 
 		builder.partIdxVector = builder.partIdxVector[:]
 		h := fnv.New32a()
-		for _, key := range builder.serializedKeyVectorBuffer {
+		for _, key := range serializedKeyBuf {
 			h.Write(key)
-			builder.partIdxVector = append(builder.partIdxVector, int(h.Sum32())%int(partitionNumber))
+			hash := h.Sum32()
+			builder.hashValue = append(builder.hashValue, hash)
+			builder.partIdxVector = append(builder.partIdxVector, int(hash)%int(partitionNumber))
 			h.Reset()
 		}
 
 		// 2. build rowtable
 		builder.appendToRowTable(typeCtx, chk, hashTableMeta)
-
 	}
+	// for i, rt := range builder.rowTables {
+	// 	if rt != nil {
+	// 		rowTableChannels[i] <- rt
+	// 	}
+	// }
 	return nil
 }
 
@@ -359,7 +376,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, c
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (w *BuildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+func (w *BuildSideTupleFetcher) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
 	failpoint.Inject("issue30289", func(val failpoint.Value) {
@@ -693,10 +710,15 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	buildSideResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
 	fetchBuildSideRowsOk := make(chan error, 1)
+	// TODO: (@XuHuaiyu) close rowTableChannels
+	var rowTableChannels []chan *rowTable
+	for i := uint(0); i < uint(e.partitionNumber); i++ {
+		rowTableChannels = make([]chan *rowTable, e.Concurrency)
+	}
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.BuildWorkers[0].fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
+			e.BuildSideTupleFetcher.fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r any) {
 			if r != nil {
@@ -705,6 +727,36 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 			close(fetchBuildSideRowsOk)
 		},
 	)
+	e.workerWg.RunWithRecover(
+		func() {
+			for i := uint(0); i < e.Concurrency; i++ {
+				// TODO: (@XuHuaiyu) check the error
+				e.BuildWorkers[i].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), buildSideResultCh, rowTableChannels)
+			}
+		},
+		func(r any) {
+			if r != nil {
+
+			}
+		},
+	)
+
+	rowTables := make([]*rowTable, e.partitionNumber)
+	for i := uint(0); i < uint(e.partitionNumber); i++ {
+		rowTables[i] = newRowTable(e.hashTableMeta)
+	}
+	// TODO: @XuHuaiyu wait on a waitgroup
+	for _, w := range e.BuildWorkers {
+		for partIdx, rt := range w.rtBuilder.rowTables {
+			if rt == nil {
+				continue
+			}
+			rowTables[partIdx].merge(rt)
+		}
+	}
+	e.joinHashTable = newJoinHashTable(e.Concurrency <= uint(e.partitionNumber), rowTables)
+
+	// TODO: @XuHuaiyu paralle build hashtable
 
 	// TODO: Parallel build hash table. Currently not support because `unsafeHashTable` is not thread-safe.
 	err := e.BuildWorkers[0].buildHashTableForList(buildSideResultCh)
