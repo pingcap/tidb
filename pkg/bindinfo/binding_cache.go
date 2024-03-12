@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -80,12 +81,8 @@ func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzz
 	}
 	fbc.loadFromStore(sctx, missingSQLDigest) // loadFromStore's SetBinding has a Mutex inside, so it's safe to call it without lock
 	matchedBinding, isMatched, missingSQLDigest = fbc.getFromMemory(sctx, fuzzyDigest, tableNames, false)
-	if len(missingSQLDigest) != 0 {
-		if isMatched {
-			warn = errors.New("only part of the load was successful, resulting in some bindings not being effective")
-		} else {
-			warn = errors.New("failed to load bindings, optimization process without bindings")
-		}
+	if intest.InTest && len(missingSQLDigest) != 0 {
+		warn = errors.New("failed to load bindings, optimization process without bindings")
 	}
 	return
 }
