@@ -14,7 +14,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/bindinfo",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/bindinfo/internal",
+        "//pkg/bindinfo/internal/logutil",
         "//pkg/bindinfo/norm",
         "//pkg/kv",
         "//pkg/metrics",
@@ -43,6 +43,7 @@ go_library(
         "//pkg/util/table-filter",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_golang_x_sync//singleflight",
         "@org_uber_go_zap//:zap",
     ],

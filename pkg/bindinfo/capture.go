@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -95,7 +95,7 @@ func (h *globalBindingHandle) extractCaptureFilterFromStorage() (filter *capture
 		// uses another background session.
 		rows, _, err := execRows(sctx, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
 		if err != nil {
-			internal.BindLogger().Warn("failed to load mysql.capture_plan_baselines_blacklist", zap.Error(err))
+			logutil.BindLogger().Warn("failed to load mysql.capture_plan_baselines_blacklist", zap.Error(err))
 			return err
 		}
 		for _, row := range rows {
@@ -105,7 +105,7 @@ func (h *globalBindingHandle) extractCaptureFilterFromStorage() (filter *capture
 			case "table":
 				tfilter, valid := ParseCaptureTableFilter(valStr)
 				if !valid {
-					internal.BindLogger().Warn("capture table filter is invalid, ignore it", zap.String("filter_value", valStr))
+					logutil.BindLogger().Warn("capture table filter is invalid, ignore it", zap.String("filter_value", valStr))
 					continue
 				}
 				filter.tables = append(filter.tables, tfilter)
@@ -114,18 +114,18 @@ func (h *globalBindingHandle) extractCaptureFilterFromStorage() (filter *capture
 			case "frequency":
 				f, err := strconv.ParseInt(valStr, 10, 64)
 				if err != nil {
-					internal.BindLogger().Warn("failed to parse frequency type value, ignore it", zap.String("filter_value", valStr), zap.Error(err))
+					logutil.BindLogger().Warn("failed to parse frequency type value, ignore it", zap.String("filter_value", valStr), zap.Error(err))
 					continue
 				}
 				if f < 1 {
-					internal.BindLogger().Warn("frequency threshold is less than 1, ignore it", zap.Int64("frequency", f))
+					logutil.BindLogger().Warn("frequency threshold is less than 1, ignore it", zap.Int64("frequency", f))
 					continue
 				}
 				if f > filter.frequency {
 					filter.frequency = f
 				}
 			default:
-				internal.BindLogger().Warn("unknown capture filter type, ignore it", zap.String("filter_type", filterTp))
+				logutil.BindLogger().Warn("unknown capture filter type, ignore it", zap.String("filter_type", filterTp))
 			}
 		}
 		return nil
@@ -142,7 +142,7 @@ func (h *globalBindingHandle) CaptureBaselines() {
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
-			internal.BindLogger().Debug("parse SQL failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			logutil.BindLogger().Debug("parse SQL failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 			continue
 		}
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
@@ -197,7 +197,7 @@ func (h *globalBindingHandle) CaptureBaselines() {
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.CreateGlobalBinding(nil, binding)
 		if err != nil {
-			internal.BindLogger().Debug("create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			logutil.BindLogger().Debug("create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
 }

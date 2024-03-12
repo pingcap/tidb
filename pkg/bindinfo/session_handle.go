@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -69,7 +69,7 @@ func NewSessionBindingHandle() SessionBindingHandle {
 func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindings) {
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
-		internal.BindLogger().Warn("SessionHandle.appendSessionBinding", zap.Error(err))
+		logutil.BindLogger().Warn("SessionHandle.appendSessionBinding", zap.Error(err))
 	}
 }
 

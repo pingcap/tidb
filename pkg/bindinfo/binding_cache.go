@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -146,7 +146,7 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 		start := time.Now()
 		bindings, err := fbc.loadBindingFromStorageFunc(sctx, sqlDigest)
 		if err != nil {
-			internal.BindLogger().Warn("failed to load binding from storage",
+			logutil.BindLogger().Warn("failed to load binding from storage",
 				zap.String("sqlDigest", sqlDigest),
 				zap.Error(err),
 				zap.Duration("duration", time.Since(start)),
@@ -162,7 +162,7 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 				// When the memory capacity of bing_cache is not enough,
 				// there will be some memory-related errors in multiple places.
 				// Only needs to be handled once.
-				internal.BindLogger().Warn("BindHandle.Update", zap.Error(err))
+				logutil.BindLogger().Warn("BindHandle.Update", zap.Error(err))
 			}
 		}
 	}

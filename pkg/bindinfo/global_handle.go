@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -226,7 +226,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			}
 
 			if err != nil {
-				internal.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
+				logutil.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
 				continue
 			}
 
@@ -238,7 +238,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 					// When the memory capacity of bing_cache is not enough,
 					// there will be some memory-related errors in multiple places.
 					// Only needs to be handled once.
-					internal.BindLogger().Warn("BindHandle.Update", zap.Error(err))
+					logutil.BindLogger().Warn("BindHandle.Update", zap.Error(err))
 				}
 			} else {
 				newCache.RemoveBinding(sqlDigest)
@@ -439,7 +439,7 @@ func (c *invalidBindingCache) reset() {
 func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	defer func() {
 		if err := h.LoadFromStorageToCache(false); err != nil {
-			internal.BindLogger().Warn("drop invalid global binding error", zap.Error(err))
+			logutil.BindLogger().Warn("drop invalid global binding error", zap.Error(err))
 		}
 	}()
 
@@ -447,7 +447,7 @@ func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	h.invalidBindings.reset()
 	for _, invalidBinding := range invalidBindings {
 		if _, err := h.dropGlobalBinding(invalidBinding.SQLDigest); err != nil {
-			internal.BindLogger().Debug("flush bind record failed", zap.Error(err))
+			logutil.BindLogger().Debug("flush bind record failed", zap.Error(err))
 		}
 	}
 }
@@ -585,7 +585,7 @@ func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint str
 			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
 			restoreCtx.DefaultDB = defaultDB
 			if err := n.With.Restore(restoreCtx); err != nil {
-				internal.BindLogger().Debug("restore SQL failed", zap.Error(err))
+				logutil.BindLogger().Debug("restore SQL failed", zap.Error(err))
 				return ""
 			}
 			withEnd := withIdx + len(withSb.String())
@@ -607,7 +607,7 @@ func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint str
 		bindSQL = bindSQL[insertIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	}
-	internal.BindLogger().Debug("unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
+	logutil.BindLogger().Debug("unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
 	return ""
 }
 
@@ -728,7 +728,7 @@ func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) 
 			}
 			_, binding, err := newBinding(sctx, row)
 			if err != nil {
-				internal.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
+				logutil.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
 				continue
 			}
 			bindings = append(bindings, binding)
