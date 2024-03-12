@@ -87,8 +87,8 @@ func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress unsafe.Pointer)
 	}
 }
 
-func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep int) {
-	if threadSafe {
+func (st *subTable) build(startSegmentIndex int, segmentStep int) {
+	if startSegmentIndex == 0 && segmentStep == 1 {
 		for i := startSegmentIndex; i < len(st.rowData.segments); i += segmentStep {
 			for index := range st.rowData.segments[i].validJoinKeyPos {
 				rowAddress := st.rowData.segments[i].rowLocations[index]
@@ -147,9 +147,8 @@ func (ri *rowIter) hasNext() bool {
 	return ri.currentPos.subTableIndex < ri.endPos.subTableIndex || ri.currentPos.rowSegmentIndex < ri.endPos.rowSegmentIndex || ri.currentPos.rowIndex < ri.endPos.rowIndex
 }
 
-func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *JoinHashTable {
+func newJoinHashTable(partitionedRowTables []*rowTable) *JoinHashTable {
 	jht := &JoinHashTable{
-		isThreadSafe:    isThreadSafe,
 		tables:          make([]*subTable, len(partitionedRowTables)),
 		partitionNumber: uint64(len(partitionedRowTables)),
 	}
@@ -215,7 +214,7 @@ func (jht *JoinHashTable) totalRowCount() uint64 {
 }
 
 func (jht *JoinHashTable) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
-	jht.tables[partitionIndex].build(jht.isThreadSafe, startSegmentIndex, segmentStep)
+	jht.tables[partitionIndex].build(startSegmentIndex, segmentStep)
 }
 
 func (jht *JoinHashTable) lookup(hashValue uint64) unsafe.Pointer {
