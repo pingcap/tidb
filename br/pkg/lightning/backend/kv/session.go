@@ -282,6 +282,16 @@ func (*transaction) IsPipelined() bool {
 	return false
 }
 
+// Prefetch implements the kv.Transaction interface.
+func (*transaction) Prefetch(ctx context.Context, k []kv.Key) (map[string][]byte, error) {
+	return nil, nil
+}
+
+// GetFromPrefetchCache implements the kv.Transaction interface.
+func (*transaction) GetFromPrefetchCache(ctx context.Context, k kv.Key) ([]byte, error) {
+	return nil, nil
+}
+
 type planCtxImpl struct {
 	*Session
 	*planctximpl.PlanCtxExtendedImpl
