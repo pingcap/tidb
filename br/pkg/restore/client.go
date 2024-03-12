@@ -1520,12 +1520,14 @@ LOOPFORTABLE:
 			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
-					if importErr := func(fs []*backuppb.File) error {
+					if importErr := func(fs []*backuppb.File) (err error) {
 						fileStart := time.Now()
 						defer func() {
-							log.Info("import files done", logutil.Files(filesGroup),
-								zap.Duration("take", time.Since(fileStart)))
-							updateCh.Inc()
+							if err == nil {
+								log.Info("import files done", logutil.Files(filesGroup),
+									zap.Duration("take", time.Since(fileStart)))
+								updateCh.Inc()
+							}
 						}()
 						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 					}(filesGroup); importErr != nil {

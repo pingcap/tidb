@@ -71,6 +71,8 @@ type EvalContext interface {
 	GetInfoSchema() infoschema.InfoSchemaMetaVersion
 	// GetDomainInfoSchema returns the latest information schema in domain
 	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	// GetOptionalPropProvider gets the optional property provider by key
+	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
 }
 
 // BuildContext is used to build an expression

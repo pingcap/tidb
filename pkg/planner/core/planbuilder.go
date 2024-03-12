@@ -1439,30 +1439,29 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p.setSchemaAndNames(buildShowSlowSchema())
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
-		return &ReloadExprPushdownBlacklist{}, nil
+		ret = &ReloadExprPushdownBlacklist{}
 	case ast.AdminReloadOptRuleBlacklist:
-		return &ReloadOptRuleBlacklist{}, nil
+		ret = &ReloadOptRuleBlacklist{}
 	case ast.AdminPluginEnable:
-		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
+		ret = &AdminPlugins{Action: Enable, Plugins: as.Plugins}
 	case ast.AdminPluginDisable:
-		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
+		ret = &AdminPlugins{Action: Disable, Plugins: as.Plugins}
 	case ast.AdminFlushBindings:
-		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpFlushBindings}
 	case ast.AdminCaptureBindings:
-		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpCaptureBindings}
 	case ast.AdminEvolveBindings:
-		var err error
 		// The 'baseline evolution' only work in the test environment before the feature is GA.
 		if !config.CheckTableBeforeDrop {
-			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+			return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 		}
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
+		ret = &SQLBindPlan{SQLBindOp: OpEvolveBindings}
 	case ast.AdminReloadBindings:
-		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpReloadBindings}
 	case ast.AdminReloadStatistics:
-		return &Simple{Statement: as}, nil
+		ret = &Simple{Statement: as}
 	case ast.AdminFlushPlanCache:
-		return &Simple{Statement: as}, nil
+		ret = &Simple{Statement: as}
 	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		ret = &Simple{Statement: as}
 	case ast.AdminShowBDRRole:
@@ -5215,8 +5214,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowStatsMeta:
-		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
+		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count", "Last_analyze_time"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDatetime}
 	case ast.ShowStatsExtended:
 		names = []string{"Db_name", "Table_name", "Stats_name", "Column_names", "Stats_type", "Stats_val", "Last_update_version"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}

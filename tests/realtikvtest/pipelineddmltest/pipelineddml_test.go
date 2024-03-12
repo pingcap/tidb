@@ -250,6 +250,41 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdate(t *testing.T) {
 	compareTables(t, tk, "t", "_t")
 }
 
+func TestPipelinedDMLInsertRPC(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, unique index idx(b))")
+	res := tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
+	explain := getExplainResult(res)
+	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+	// Test with bulk dml.
+	tk.MustExec("set session tidb_dml_type = bulk")
+	// Test normal insert.
+	tk.MustExec("truncate table t1")
+	res = tk.MustQuery("explain analyze insert into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
+	explain = getExplainResult(res)
+	// TODO: try to optimize the rpc count, when use bulk dml, insert will send many BufferBatchGet rpc.
+	require.Regexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:10, total_time:.*}}.*", explain)
+	// Test insert ignore.
+	tk.MustExec("truncate table t1")
+	res = tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
+	explain = getExplainResult(res)
+	// TODO: try to optimize the rpc count, when use bulk dml, insert ignore will send 5 BufferBatchGet and  1 BatchGet rpc.
+	// but without bulk dml, it will only use 1 BatchGet rpcs.
+	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:5, total_time:.*}}}.*", explain)
+	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+}
+
+func getExplainResult(res *testkit.Result) string {
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+	}
+	return resBuff.String()
+}
+
 func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(100)`))

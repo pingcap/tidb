@@ -29,7 +29,7 @@ func genErrMsg(pattern string, a ...any) string {
 
 func TestErrorRedact(t *testing.T) {
 	original := errors.RedactLogEnabled.Load()
-	errors.RedactLogEnabled.Store(true)
+	errors.RedactLogEnabled.Store(errors.RedactLogEnable)
 	defer func() { errors.RedactLogEnabled.Store(original) }()
 
 	class := ErrClass{}
