@@ -277,6 +277,11 @@ func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
 	return nil
 }
 
+// IsPipelined implements the kv.Transaction interface.
+func (*transaction) IsPipelined() bool {
+	return false
+}
+
 type planCtxImpl struct {
 	*Session
 	*planctximpl.PlanCtxExtendedImpl
