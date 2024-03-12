@@ -715,16 +715,14 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 	for _, task := range tasks {
 		task := task
 		pool.ApplyOnErrorGroup(g, func() error {
-			if err := common.Retry("collect local duplicate rows", logger, func() error {
-				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
-				var err error
-				if task.indexInfo == nil {
-					err = m.RecordDataConflictError(gCtx, stream)
-				} else {
-					err = m.RecordIndexConflictError(gCtx, stream, task.tableID, task.indexInfo)
-				}
-				return errors.Trace(err)
-			}); err != nil {
+			stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
+			var err error
+			if task.indexInfo == nil {
+				err = m.RecordDataConflictError(gCtx, stream)
+			} else {
+				err = m.RecordIndexConflictError(gCtx, stream, task.tableID, task.indexInfo)
+			}
+			if err != nil {
 				return errors.Trace(err)
 			}
 
