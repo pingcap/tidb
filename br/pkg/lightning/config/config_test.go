@@ -1005,6 +1005,11 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = IgnoreOnDup
 	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
+
+	cfg.TikvImporter.Backend = BackendTiDB
+	cfg.Conflict.Strategy = IgnoreOnDup
+	cfg.Conflict.PrecheckConflictBeforeImport = true
+	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.precheck-conflict-before-import cannot be set to true when use tikv-importer.backend = "tidb"`)
 }
 
 func TestAdjustMaxRecordRows(t *testing.T) {
@@ -1259,9 +1264,12 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.Strategy = "123"
 	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), "unsupported `conflict.strategy` (123)")
 
-	cfg.Conflict.Strategy = "IGNORE"
+	cfg.Conflict.Strategy = "REPLACE"
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
 	require.Equal(t, int64(math.MaxInt64), cfg.Conflict.Threshold)
+
+	cfg.Conflict.Strategy = "IGNORE"
+	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
 
 	cfg.Conflict.Strategy = ErrorOnDup
 	cfg.Conflict.Threshold = 1

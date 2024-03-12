@@ -1374,6 +1374,10 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			`%s cannot be set to "ignore" when use tikv-importer.backend = "local"`,
 			strategyConfigFrom)
 	}
+	if c.PrecheckConflictBeforeImport && i.Backend == BackendTiDB {
+		return common.ErrInvalidConfig.GenWithStack(
+			`conflict.precheck-conflict-before-import cannot be set to true when use tikv-importer.backend = "tidb"`)
+	}
 
 	if c.Threshold < 0 {
 		switch c.Strategy {

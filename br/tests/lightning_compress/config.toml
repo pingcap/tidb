@@ -9,6 +9,7 @@ trim-last-separator = false
 
 [conflict]
 strategy = 'ignore'
+precheck-conflict-before-import = true
 
 [checkpoint]
 enable = true

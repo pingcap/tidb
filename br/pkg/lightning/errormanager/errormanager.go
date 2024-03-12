@@ -217,7 +217,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 	}
 	switch cfg.TikvImporter.Backend {
 	case config.BackendLocal:
-		if cfg.Conflict.Strategy != "" {
+		if cfg.Conflict.PrecheckConflictBeforeImport && cfg.Conflict.Strategy != config.NoneOnDup {
 			em.conflictV2Enabled = true
 		}
 	case config.BackendTiDB:

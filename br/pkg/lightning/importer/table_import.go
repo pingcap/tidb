@@ -208,7 +208,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 2. Do duplicate detection if needed
-	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.Strategy != config.NoneOnDup {
+	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
 		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
 		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)

@@ -1,7 +1,5 @@
-[checkpoint]
-driver = "mysql"
-
 [tikv-importer]
+# Set on-duplicate=error to force using insert statement to write data.
 on-duplicate = "error"
 
 [conflict]
