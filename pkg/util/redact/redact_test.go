@@ -20,6 +20,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testStringer struct {
+	str string
+}
+
+func (s *testStringer) String() string {
+	return s.str
+}
+
 func TestRedact(t *testing.T) {
 	for _, c := range []struct {
 		mode   string
@@ -32,6 +40,7 @@ func TestRedact(t *testing.T) {
 		{"MARKER", "f‹xcv", "‹f‹‹xcv›"},
 		{"MARKER", "f›xcv", "‹f››xcv›"},
 	} {
-		require.Equal(t, c.output, Redact(c.mode, c.input))
+		require.Equal(t, c.output, String(c.mode, c.input))
+		require.Equal(t, c.output, Stringer(c.mode, &testStringer{c.input}).String())
 	}
 }
