@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "internal",
-    srcs = ["testutil.go"],
+    srcs = [
+        "logutil.go",
+        "testutil.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/bindinfo/internal",
     visibility = ["//pkg/bindinfo:__subpackages__"],
     deps = [
@@ -10,7 +13,9 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/testkit",
+        "//pkg/util/logutil",
         "//pkg/util/parser",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )
