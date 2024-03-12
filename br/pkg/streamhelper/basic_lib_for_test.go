@@ -752,6 +752,10 @@ func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 	}, nil
 }
 
+func (p* mockPDClient) GetClusterID(ctx context.Context) uint64 {
+	return 1
+}
+
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
