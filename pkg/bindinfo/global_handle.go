@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -685,27 +686,38 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 }
 
 // LoadBindingsFromStorageToCache loads global bindings from storage to the memory cache.
-func (h *globalBindingHandle) LoadBindingsFromStorage(sqlDigest string) (Bindings, error) {
+func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, sqlDigest string) (Bindings, error) {
 	if sqlDigest == "" {
 		return nil, nil
 	}
-	bindings, err, _ := h.syncBindingSingleflight.Do(sqlDigest, func() (any, error) {
+	timeout := time.Duration(sctx.GetSessionVars().LoadBindingTimeout) * time.Millisecond
+	resultChan := h.syncBindingSingleflight.DoChan(sqlDigest, func() (any, error) {
 		return h.loadBindingsFromStorageInternal(sqlDigest)
 	})
-	if err != nil {
-		logutil.BgLogger().Warn("fail to LoadBindingsFromStorageToCache", zap.Error(err))
-		return nil, err
+	select {
+	case result := <-resultChan:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		bindings := result.Val
+		if bindings == nil {
+			return nil, nil
+		}
+		return bindings.(Bindings), nil
+	case <-time.After(timeout):
+		return nil, errors.New("load bindings from storage timeout")
 	}
-	if bindings == nil {
-		return nil, nil
-	}
-	return bindings.(Bindings), err
 }
 
 func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
+	failpoint.Inject("load_bindings_from_storage_internal_timeout", func() {
+		time.Sleep(time.Second)
+	})
+
 	var bindings Bindings
+	selectStmt := fmt.Sprintf("SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = '%s'", sqlDigest)
 	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
-		rows, _, err := execRows(sctx, "SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = ?", sqlDigest)
+		rows, _, err := execRows(sctx, selectStmt)
 		if err != nil {
 			return err
 		}
