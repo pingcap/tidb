@@ -576,7 +576,7 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 		}
 
 		if algorithm == config.DupeResAlgErr {
-			return NewErrFoundIndexConflictRecords(key, val, m.tbl, indexInfo)
+			return newErrFoundIndexConflictRecords(key, val, m.tbl, indexInfo)
 		}
 	}
 	if indexHandles.Len() > 0 {
@@ -608,9 +608,9 @@ func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, er
 	return key, value, nil
 }
 
-// NewErrFoundConflictRecords generate an error ErrFoundDataConflictRecords / ErrFoundIndexConflictRecords
+// newErrFoundConflictRecords generate an error ErrFoundDataConflictRecords / ErrFoundIndexConflictRecords
 // according to key and value.
-func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error {
+func newErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error {
 	sessionOpts := encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	}
@@ -639,22 +639,17 @@ func NewErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error
 	}
 
 	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
-	return NewErrFoundIndexConflictRecords(key, value, tbl, idxInfo)
+	return newErrFoundIndexConflictRecords(key, value, tbl, idxInfo)
 }
 
-// NewErrFoundIndexConflictRecords generate an error ErrFoundIndexConflictRecords
+// newErrFoundIndexConflictRecords generate an error ErrFoundIndexConflictRecords
 // according to key and value.
-func NewErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, idxInfo *model.IndexInfo) error {
+func newErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, idxInfo *model.IndexInfo) error {
 	sessionOpts := encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	}
 
 	decoder, err := kv.NewTableKVDecoder(tbl, tbl.Meta().Name.L, &sessionOpts, log.L())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	h, err := decoder.DecodeHandleFromIndex(idxInfo, key, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -667,6 +662,10 @@ func NewErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, 
 		return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, indexName, key, value))
 	}
 
+	h, err := decoder.DecodeHandleFromIndex(idxInfo, key, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, indexName, valueStr, h))
 }
 
@@ -678,7 +677,7 @@ func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error 
 		return errors.Trace(err)
 	}
 
-	return NewErrFoundConflictRecords(rawKey, rawValue, tbl)
+	return newErrFoundConflictRecords(rawKey, rawValue, tbl)
 }
 
 // BuildDuplicateTaskForTest is only used for test.

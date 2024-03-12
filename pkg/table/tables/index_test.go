@@ -173,14 +173,9 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 }
 
 func TestGenIndexValueFromIndex(t *testing.T) {
-	p := parser.New()
-	node, _, err := p.ParseSQL("create table a (a int primary key, b int not null, c text, unique key key_b(b));")
-	require.NoError(t, err)
-	mockSctx := mock.NewContext()
-	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
-	require.NoError(t, err)
-	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), info)
+	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
+	tblInfo.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{

@@ -92,20 +92,11 @@ type litBackendCtx struct {
 	etcdClient      *clientv3.Client
 }
 
-// CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
-func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-	// backend must be a local backend.
-	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
-	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-		SysVars: bc.sysVars,
-		IndexID: indexID,
-	}, lightning.DupeResAlgErr)
+func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(err error, indexID int64, tbl table.Table, hasDupe bool) error {
 	if err != nil && !common.ErrFoundIndexConflictRecords.Equal(err) {
 		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-		return err
+		return errors.Trace(err)
 	} else if hasDupe {
 		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
@@ -126,6 +117,19 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		return errors.Trace(tikv.ErrKeyExists)
 	}
 	return nil
+}
+
+// CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
+func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
+	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
+	// backend must be a local backend.
+	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+		SysVars: bc.sysVars,
+		IndexID: indexID,
+	}, lightning.DupeResAlgErr)
+	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
@@ -157,29 +161,7 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
 		}, lightning.DupeResAlgErr)
-		if err != nil && !common.ErrFoundIndexConflictRecords.Equal(err) {
-			logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
-				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-			return err
-		} else if hasDupe {
-			logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
-				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-
-			if common.ErrFoundIndexConflictRecords.Equal(err) {
-				tErr, ok := errors.Cause(err).(*terror.Error)
-				if !ok {
-					return errors.Trace(tikv.ErrKeyExists)
-				}
-				if len(tErr.Args()) != 4 {
-					return errors.Trace(tikv.ErrKeyExists)
-				}
-				indexName := tErr.Args()[1]
-				valueStr := tErr.Args()[2]
-
-				return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(valueStr, indexName))
-			}
-			return errors.Trace(tikv.ErrKeyExists)
-		}
+		return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 	}
 	return nil
 }
