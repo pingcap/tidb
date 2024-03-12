@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -92,8 +91,7 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
 	}
-	logger.Info("build task executor manager", zap.Bool("in-container", cgroup.InContainer()),
-		zap.Int("total-cpu", totalCPU),
+	logger.Info("build task executor manager", zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))))
 	m := &Manager{
 		id:          id,
