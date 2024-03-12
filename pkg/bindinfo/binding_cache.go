@@ -38,6 +38,7 @@ import (
 // GetBindingReturnNil is only for test
 var GetBindingReturnNil = stringutil.StringerStr("GetBindingReturnNil")
 
+// GetBindingReturnNilBool is only for test
 var GetBindingReturnNilBool atomic.Bool
 
 // GetBindingReturnNilAlways is only for test
