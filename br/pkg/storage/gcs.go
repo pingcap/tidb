@@ -344,7 +344,7 @@ func (s *GCSStorage) Close() {
 // used in tests
 var mustReportCredErr = false
 
-const gcsClientCnt = 16
+const gcsClientCnt = 8
 
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
