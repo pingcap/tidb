@@ -225,8 +225,10 @@ type DrainResult struct {
 	TablesToSend []CreatedTable
 	// BlankTablesAfterSend are tables that will be full-restored after this batch send.
 	BlankTablesAfterSend []CreatedTable
-	RewriteRules         map[int64]*RewriteRules
-	Ranges               []rtree.Range
+	// RewriteRules are the rewrite rules for the tables.
+	// the key is the table id after rewritten.
+	RewriteRulesMap map[int64]*RewriteRules
+	Ranges          []rtree.Range
 	// Record which part of ranges belongs to the table
 	TableEndOffsetInRanges []int
 }
@@ -244,7 +246,7 @@ func (result DrainResult) Files() []TableIDWithFiles {
 			files = append(files, rg.Files...)
 		}
 		var rules *RewriteRules
-		if r, ok := result.RewriteRules[tableID]; ok {
+		if r, ok := result.RewriteRulesMap[tableID]; ok {
 			rules = r
 		}
 		tableIDWithFiles = append(tableIDWithFiles, TableIDWithFiles{
@@ -264,7 +266,7 @@ func newDrainResult() DrainResult {
 	return DrainResult{
 		TablesToSend:           make([]CreatedTable, 0),
 		BlankTablesAfterSend:   make([]CreatedTable, 0),
-		RewriteRules:           EmptyRewriteRulesMap(),
+		RewriteRulesMap:        EmptyRewriteRulesMap(),
 		Ranges:                 make([]rtree.Range, 0),
 		TableEndOffsetInRanges: make([]int, 0),
 	}
@@ -332,7 +334,7 @@ func (b *Batcher) drainRanges() DrainResult {
 		thisTableLen := len(thisTable.Range)
 		collected := len(result.Ranges)
 
-		result.RewriteRules[thisTable.Table.ID] = thisTable.RewriteRule
+		result.RewriteRulesMap[thisTable.Table.ID] = thisTable.RewriteRule
 		result.TablesToSend = append(result.TablesToSend, thisTable.CreatedTable)
 
 		// the batch is full, we should stop here!

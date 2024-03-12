@@ -39,7 +39,7 @@ func (sender *drySender) RestoreBatch(ranges restore.DrainResult) {
 	defer sender.mu.Unlock()
 	log.Info("fake restore range", rtree.ZapRanges(ranges.Ranges))
 	sender.nBatch++
-	for _, r := range ranges.RewriteRules {
+	for _, r := range ranges.RewriteRulesMap {
 		sender.rewriteRules.Append(*r)
 	}
 	sender.ranges = append(sender.ranges, ranges.Ranges...)
