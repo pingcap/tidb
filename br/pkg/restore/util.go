@@ -366,7 +366,7 @@ func GoValidateFileRanges(
 					}
 				}
 				// Merge small ranges to reduce split and scatter regions.
-				ranges, stat, err := MergeFileRanges(
+				ranges, stat, err := MergeAndRewriteFileRanges(
 					files, t.RewriteRule, splitSizeBytes, splitKeyCount)
 				if err != nil {
 					errCh <- err

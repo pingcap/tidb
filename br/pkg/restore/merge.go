@@ -34,12 +34,12 @@ type MergeRangesStat struct {
 	MergedRegionBytesAvg int
 }
 
-// MergeFileRanges returns ranges of the files are merged based on
+// MergeAndRewriteFileRanges returns ranges of the files are merged based on
 // splitSizeBytes and splitKeyCount.
 //
 // By merging small ranges, it speeds up restoring a backup that contains many
 // small ranges (regions) as it reduces split region and scatter region.
-func MergeFileRanges(
+func MergeAndRewriteFileRanges(
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
 	splitSizeBytes,
