@@ -90,6 +90,7 @@ go_library(
         "//pkg/privilege",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
+        "//pkg/store/helper",
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util",

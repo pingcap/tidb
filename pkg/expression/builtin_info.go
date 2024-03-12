@@ -20,6 +20,7 @@ package expression
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -27,12 +28,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -59,6 +62,9 @@ var (
 	_ functionClass = &tidbVersionFunctionClass{}
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
 	_ functionClass = &tidbDecodePlanFunctionClass{}
+	_ functionClass = &tidbMVCCInfoFunctionClass{}
+	_ functionClass = &tidbEncodeRecordKeyClass{}
+	_ functionClass = &tidbEncodeIndexKeyClass{}
 	_ functionClass = &tidbDecodeKeyFunctionClass{}
 	_ functionClass = &tidbDecodeSQLDigestsFunctionClass{}
 	_ functionClass = &nextValFunctionClass{}
@@ -80,6 +86,9 @@ var (
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
+	_ builtinFunc = &builtinTiDBMVCCInfoSig{}
+	_ builtinFunc = &builtinTiDBEncodeRecordKeySig{}
+	_ builtinFunc = &builtinTiDBEncodeIndexKeySig{}
 	_ builtinFunc = &builtinTiDBDecodeKeySig{}
 	_ builtinFunc = &builtinTiDBDecodeSQLDigestsSig{}
 	_ builtinFunc = &builtinNextValSig{}
@@ -831,6 +840,149 @@ func (b *builtinRowCountSig) evalInt(ctx EvalContext, row chunk.Row) (res int64,
 	return res, false, nil
 }
 
+type tidbMVCCInfoFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	var store helper.Storage
+	if ctxStore, ok := ctx.GetStore().(helper.Storage); ok {
+		store = ctxStore
+	} else {
+		return nil, errors.New("storage is not a helper.Storage")
+	}
+	sig := &builtinTiDBMVCCInfoSig{baseBuiltinFunc: bf, helper: helper.NewHelper(store)}
+	return sig, nil
+}
+
+type builtinTiDBMVCCInfoSig struct {
+	baseBuiltinFunc
+	helper *helper.Helper
+}
+
+func (b *builtinTiDBMVCCInfoSig) Clone() builtinFunc {
+	newSig := &builtinTiDBMVCCInfoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.helper = helper.NewHelper(b.helper.Store)
+	return newSig
+}
+
+// evalString evals a builtinTiDBMVCCInfoSig.
+func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	s, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+
+	encodedKey, err := hex.DecodeString(s)
+	if err != nil {
+		return "", false, err
+	}
+	resp, err := b.helper.GetMvccByEncodedKey(encodedKey)
+	if err != nil {
+		return "", false, err
+	}
+	js, err := json.Marshal(resp)
+	if err != nil {
+		return "", false, err
+	}
+	return string(js), false, nil
+}
+
+type tidbEncodeRecordKeyClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbEncodeRecordKeyClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	evalTps := make([]types.EvalType, 0, len(args))
+	evalTps = append(evalTps, types.ETString, types.ETString)
+	for _, arg := range args[2:] {
+		evalTps = append(evalTps, arg.GetType().EvalType())
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, evalTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBEncodeRecordKeySig{bf}
+	return sig, nil
+}
+
+type builtinTiDBEncodeRecordKeySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBEncodeRecordKeySig) Clone() builtinFunc {
+	newSig := &builtinTiDBEncodeRecordKeySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinTiDBEncodeRecordKeySig.
+func (b *builtinTiDBEncodeRecordKeySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	fn := ctx.Value(TiDBEncodeRecordFunctionKey)
+	if fn == nil {
+		return "", false, errors.New("missing encode record function")
+	}
+	encode := fn.(func(ctx EvalContext, args []Expression, row chunk.Row) (kv.Key, bool, error))
+	recordKey, isNull, err := encode(ctx, b.args, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return hex.EncodeToString(recordKey), false, nil
+}
+
+type tidbEncodeIndexKeyClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbEncodeIndexKeyClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	evalTps := make([]types.EvalType, 0, len(args))
+	evalTps = append(evalTps, types.ETString, types.ETString, types.ETString)
+	for _, arg := range args[3:] {
+		evalTps = append(evalTps, arg.GetType().EvalType())
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, evalTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBEncodeIndexKeySig{bf}
+	return sig, nil
+}
+
+type builtinTiDBEncodeIndexKeySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBEncodeIndexKeySig) Clone() builtinFunc {
+	newSig := &builtinTiDBEncodeIndexKeySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinTiDBEncodeIndexKeySig.
+func (b *builtinTiDBEncodeIndexKeySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	fn := ctx.Value(TiDBEncodeIndexFunctionKey)
+	if fn == nil {
+		return "", false, errors.New("missing encode index function")
+	}
+	encode := fn.(func(ctx EvalContext, args []Expression, row chunk.Row) (kv.Key, bool, error))
+	idxKey, isNull, err := encode(ctx, b.args, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return hex.EncodeToString(idxKey), false, nil
+}
+
 type tidbDecodeKeyFunctionClass struct {
 	baseFunctionClass
 }
@@ -878,8 +1030,12 @@ func (k TiDBDecodeKeyFunctionKeyType) String() string {
 	return "tidb_decode_key"
 }
 
-// TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
-const TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
+const (
+	// TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
+	TiDBDecodeKeyFunctionKey    TiDBDecodeKeyFunctionKeyType = 0
+	TiDBEncodeRecordFunctionKey TiDBDecodeKeyFunctionKeyType = 1
+	TiDBEncodeIndexFunctionKey  TiDBDecodeKeyFunctionKeyType = 2
+)
 
 type tidbDecodeSQLDigestsFunctionClass struct {
 	baseFunctionClass

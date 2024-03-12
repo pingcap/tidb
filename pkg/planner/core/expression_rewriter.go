@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -162,6 +163,8 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		rewriter.schema = expression.NewSchema()
 	}
 	rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
+	rewriter.sctx.SetValue(expression.TiDBEncodeRecordFunctionKey, encodeHandleFromRow)
+	rewriter.sctx.SetValue(expression.TiDBEncodeIndexFunctionKey, encodeIndexKeyFromRow)
 
 	expr, _, err := rewriteExprNode(rewriter, node, rewriter.asScalar)
 	if err != nil {
@@ -253,6 +256,8 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand},
 		}
 		rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
+		rewriter.sctx.SetValue(expression.TiDBEncodeRecordFunctionKey, encodeHandleFromRow)
+		rewriter.sctx.SetValue(expression.TiDBEncodeIndexFunctionKey, encodeIndexKeyFromRow)
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
 	}
@@ -2570,6 +2575,111 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 		return false
 	}
 	return strings.ToLower(x) == ast.CurrentTimestamp
+}
+
+func encodeHandleFromRow(ctx expression.EvalContext, args []expression.Expression, row chunk.Row) (kv.Key, bool, error) {
+	dbName, isNull, err := args[0].EvalString(ctx, row)
+	if err != nil || isNull {
+		return nil, isNull, err
+	}
+	tblName, isNull, err := args[1].EvalString(ctx, row)
+	if err != nil || isNull {
+		return nil, isNull, err
+	}
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if is == nil {
+		return nil, false, errors.New("missing information schema")
+	}
+	tbl, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	if err != nil {
+		return nil, false, err
+	}
+	tblInfo := tbl.Meta()
+	var recordID kv.Handle
+	if !tblInfo.IsCommonHandle {
+		h, isNull, err := args[2].EvalInt(ctx, row)
+		if err != nil || isNull {
+			return nil, isNull, err
+		}
+		recordID = kv.IntHandle(h)
+	} else {
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		if len(pkIdx.Columns) != row.Len()-2 {
+			return nil, false, errors.Errorf("column count mismatch, expected %d, got %d", len(pkIdx.Columns), row.Len()-2)
+		}
+		pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+		for i, idxCol := range pkIdx.Columns {
+			dt, err := args[i+2].Eval(ctx, row)
+			ft := tblInfo.Columns[idxCol.Offset].FieldType
+			pkDt, err := dt.ConvertTo(ctx.TypeCtx(), &ft)
+			if err != nil {
+				return nil, false, err
+			}
+			pkDts = append(pkDts, pkDt)
+		}
+		tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
+		var handleBytes []byte
+		handleBytes, err := codec.EncodeKey(ctx.Location(), nil, pkDts...)
+		ec := ctx.ErrCtx()
+		err = ec.HandleError(err)
+		if err != nil {
+			return nil, false, err
+		}
+		recordID, err = kv.NewCommonHandle(handleBytes)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	key := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), recordID)
+	return key, false, nil
+}
+
+func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Expression, row chunk.Row) (kv.Key, bool, error) {
+	dbName, isNull, err := args[0].EvalString(ctx, row)
+	if err != nil || isNull {
+		return nil, isNull, err
+	}
+	tblName, isNull, err := args[1].EvalString(ctx, row)
+	if err != nil || isNull {
+		return nil, isNull, err
+	}
+	idxName, isNull, err := args[2].EvalString(ctx, row)
+	if err != nil || isNull {
+		return nil, isNull, err
+	}
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if is == nil {
+		return nil, false, errors.New("missing information schema")
+	}
+	tbl, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	if err != nil {
+		return nil, false, err
+	}
+	tblInfo := tbl.Meta()
+	idx := tblInfo.FindIndexByName(strings.ToLower(idxName))
+	if idx == nil {
+		return nil, false, errors.New("index not found")
+	}
+
+	if len(idx.Columns) != row.Len()-3 {
+		return nil, false, errors.Errorf("column count mismatch, expected %d, got %d", len(idx.Columns), row.Len()-3)
+	}
+	idxDts := make([]types.Datum, 0, len(idx.Columns))
+	for i, idxCol := range idx.Columns {
+		dt, err := args[i+3].Eval(ctx, row)
+		if err != nil {
+			return nil, false, err
+		}
+		ft := tblInfo.Columns[idxCol.Offset].FieldType
+		idxDt, err := dt.ConvertTo(ctx.TypeCtx(), &ft)
+		if err != nil {
+			return nil, false, err
+		}
+		idxDts = append(idxDts, idxDt)
+	}
+	tablecodec.TruncateIndexValues(tblInfo, idx, idxDts)
+	idxKey, err := codec.EncodeKey(ctx.GetSessionVars().Location(), nil, idxDts...)
+	return idxKey, false, err
 }
 
 func decodeKeyFromString(ctx expression.EvalContext, s string) string {
