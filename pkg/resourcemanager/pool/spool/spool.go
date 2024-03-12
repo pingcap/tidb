@@ -53,9 +53,11 @@ type Pool struct {
 func NewPool(name string, size int32, component util.Component, options ...Option) (*Pool, error) {
 	opts := loadOptions(options...)
 	result := &Pool{
-		options:            opts,
-		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
-		taskManager:        poolmanager.NewTaskManager(size),
+		options:     opts,
+		taskManager: poolmanager.NewTaskManager(size),
+	}
+	if !opts.IgnoreMetric {
+		result.concurrencyMetrics = metrics.PoolConcurrencyCounter.WithLabelValues(name)
 	}
 	result.cond = *sync.NewCond(&result.condMu)
 	if size == 0 {
@@ -64,7 +66,9 @@ func NewPool(name string, size int32, component util.Component, options ...Optio
 	result.SetName(name)
 	result.capacity = size
 	result.originCapacity = size
-	result.concurrencyMetrics.Set(float64(size))
+	if result.concurrencyMetrics != nil {
+		result.concurrencyMetrics.Set(float64(size))
+	}
 	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
 	if err != nil {
 		return nil, err
@@ -82,7 +86,9 @@ func (p *Pool) Tune(size int32) {
 	p.SetLastTuneTs(time.Now())
 	old := p.capacity
 	p.capacity = size
-	p.concurrencyMetrics.Set(float64(size))
+	if p.concurrencyMetrics != nil {
+		p.concurrencyMetrics.Set(float64(size))
+	}
 	if old == size {
 		return
 	}
@@ -126,8 +132,6 @@ func (p *Pool) Cap() int32 {
 
 // Running returns the number of running goroutines.
 func (p *Pool) Running() int32 {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
 	return p.running.Load()
 }
 
@@ -138,8 +142,8 @@ func (p *Pool) run(fn func()) {
 			if r := recover(); r != nil {
 				logutil.BgLogger().Error("recover panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			p.wg.Done()
 			p.running.Add(-1)
+			p.wg.Done()
 		}()
 		fn()
 	}()

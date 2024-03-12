@@ -127,6 +127,11 @@ func (s *Store) GetMPPClient() kv.MPPClient {
 	}
 }
 
+// Go runs the function in the store's goroutine pool.
+func (s *Store) Go(f func()) error {
+	return s.store.Go(f)
+}
+
 func getEndPointType(t kv.StoreType) tikvrpc.EndpointType {
 	switch t {
 	case kv.TiKV:

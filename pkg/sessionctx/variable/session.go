@@ -1582,6 +1582,10 @@ type SessionVars struct {
 	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
 	// overwritten if this value is not 0.
 	TxnEntrySizeLimit uint64
+
+	// DistSQLParallelBuild indicates whether to build distsql task in parallel mode.
+	// If it is true, the distsql tasks will be built in sender thread, so that the slow build won't block the tasks being sent to stores.
+	DistSQLParallelBuild bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

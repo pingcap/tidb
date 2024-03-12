@@ -514,6 +514,11 @@ func (rr *KeyRanges) TotalRangeNum() int {
 	return ret
 }
 
+// HasHint checks if there are hints.
+func (rr *KeyRanges) HasHint() bool {
+	return rr.rowCountHints != nil
+}
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
@@ -595,8 +600,12 @@ type Request struct {
 
 	// ConnID stores the session connection id.
 	ConnID uint64
+
 	// ConnAlias stores the session connection alias.
 	ConnAlias string
+
+	// ParallelBuildTask indicates whether the request's tasks are built in parallel mode.
+	ParallelBuildTask bool
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

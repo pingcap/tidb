@@ -28,6 +28,9 @@ func loadOptions(options ...Option) *Options {
 // Options contains all options which will be applied when instantiating an pool.
 type Options struct {
 	Blocking bool
+	// IgnoreMetric indicates whether the metric of the pool should NOT be count.
+	// Because there are some drop-after-used pools, we should ignore the metrics.
+	IgnoreMetric bool
 }
 
 // DefaultOption is the default option.
@@ -41,5 +44,12 @@ func DefaultOption() *Options {
 func WithBlocking(blocking bool) Option {
 	return func(opts *Options) {
 		opts.Blocking = blocking
+	}
+}
+
+// WithIgnoreMetric indicates whether the pool is ignoring metric.
+func WithIgnoreMetric(ignoreMetric bool) Option {
+	return func(opts *Options) {
+		opts.IgnoreMetric = ignoreMetric
 	}
 }

@@ -313,6 +313,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.StoreBusyThreshold = sv.LoadBasedReplicaReadThreshold
 	builder.Request.RunawayChecker = sv.StmtCtx.RunawayChecker
 	builder.Request.TiKVClientReadTimeout = sv.GetTiKVClientReadTimeout()
+	builder.Request.ParallelBuildTask = !sv.InRestrictedSQL && sv.DistSQLParallelBuild
 	return builder
 }
 

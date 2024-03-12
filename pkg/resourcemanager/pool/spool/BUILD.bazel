@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "spool",
     srcs = [
+        "dynamic_worker.go",
         "option.go",
         "spool.go",
     ],
@@ -25,13 +26,14 @@ go_test(
     name = "spool_test",
     timeout = "short",
     srcs = [
+        "dynamic_worker_test.go",
         "main_test.go",
         "spool_test.go",
     ],
     embed = [":spool"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 8,
     deps = [
         "//pkg/resourcemanager/pool",
         "//pkg/resourcemanager/util",
