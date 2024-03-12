@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "gluetidb",
+    srcs = ["glue.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/gluetidb",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/glue",
+        "//br/pkg/gluetikv",
+        "//br/pkg/logutil",
+        "//config",
+        "//ddl",
+        "//domain",
+        "//executor",
+        "//kv",
+        "//meta/autoid",
+        "//parser/model",
+        "//parser/mysql",
+        "//session",
+        "//sessionctx",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "gluetidb_test",
+    timeout = "short",
+    srcs = ["glue_test.go"],
+    embed = [":gluetidb"],
+    flaky = True,
+    deps = [
+        "//ddl",
+        "//kv",
+        "//meta",
+        "//parser/model",
+        "//sessionctx",
+        "//testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

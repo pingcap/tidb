@@ -2409,7 +2409,20 @@ func (d *ddl) CreateTableWithInfo(
 func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName model.CIStr,
 	infos []*model.TableInfo,
+<<<<<<< HEAD
 	onExist OnExist) error {
+=======
+	cs ...CreateTableWithInfoConfigurier,
+) error {
+	failpoint.Inject("RestoreBatchCreateTableEntryTooLarge", func(val failpoint.Value) {
+		injectBatchSize := val.(int)
+		if len(infos) > injectBatchSize {
+			failpoint.Return(kv.ErrEntryTooLarge)
+		}
+	})
+	c := GetCreateTableWithInfoConfig(cs)
+
+>>>>>>> 41c1250c265 (br: reused table id is disabled when restore a brand-new cluster (#41358))
 	jobs := &model.Job{
 		BinlogInfo: &model.HistoryInfo{},
 	}
