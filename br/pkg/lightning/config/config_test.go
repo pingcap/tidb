@@ -966,12 +966,12 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	ctx := context.Background()
 
 	cfg.TikvImporter.Backend = BackendTiDB
-	cfg.Conflict.Strategy = ""
+	cfg.Conflict.Strategy = NoneOnDup
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, ErrorOnDup, cfg.Conflict.Strategy)
 
 	cfg.TikvImporter.Backend = BackendLocal
-	cfg.Conflict.Strategy = ""
+	cfg.Conflict.Strategy = NoneOnDup
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Empty(t, cfg.Conflict.Strategy)
 
@@ -993,14 +993,18 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
 	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
-	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.duplicate-resolution")
+	require.NoError(t, cfg.Adjust(ctx))
 
 	cfg.TikvImporter.Backend = BackendLocal
-	cfg.Conflict.Strategy = ""
+	cfg.Conflict.Strategy = NoneOnDup
 	cfg.TikvImporter.OnDuplicate = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
 	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
-	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
+	require.NoError(t, cfg.Adjust(ctx))
+
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.Conflict.Strategy = IgnoreOnDup
+	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
 }
 
 func TestAdjustMaxRecordRows(t *testing.T) {

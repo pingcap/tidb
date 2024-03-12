@@ -63,11 +63,19 @@ const (
 	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
 	CheckpointDriverFile = "file"
 
+	// NoneOnDup does nothing when detecting duplicate.
+	NoneOnDup = ""
 	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
+	// ReplaceOnDup records all duplicate records, remove some rows with conflict
+	// and reserve other rows that can be kept and not cause conflict anymore for local backend.
+	// Users need to analyze the lightning_task_info.conflict_error_v2 table to check whether the reserved data
+	// cater to their need and check whether they need to add back the correct rows.
 	ReplaceOnDup = "replace"
 	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
+	// Local backend does not support IgnoreOnDup.
 	IgnoreOnDup = "ignore"
-	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint for TiDB backend.
+	// ErrorOnDup indicates using INSERT INTO to insert data for TiDB backend, which would violate PK or UNIQUE constraint when detecting duplicate.
+	// ErrorOnDup reports an error after detecting the first conflict and stops the import process for local backend.
 	ErrorOnDup = "error"
 
 	// KVWriteBatchSize batch size when write to TiKV.
@@ -1328,42 +1336,43 @@ func ParseCharset(dataCharacterSet string) (Charset, error) {
 
 // Conflict is the config section for PK/UK conflict related configurations.
 type Conflict struct {
-	Strategy      string `toml:"strategy" json:"strategy"`
-	Threshold     int64  `toml:"threshold" json:"threshold"`
-	MaxRecordRows int64  `toml:"max-record-rows" json:"max-record-rows"`
+	Strategy                     string `toml:"strategy" json:"strategy"`
+	PrecheckConflictBeforeImport bool   `toml:"precheck-conflict-before-import" json:"precheck-conflict-before-import"`
+	Threshold                    int64  `toml:"threshold" json:"threshold"`
+	MaxRecordRows                int64  `toml:"max-record-rows" json:"max-record-rows"`
 }
 
 // adjust assigns default values and check illegal values. The arguments must be
 // adjusted before calling this function.
 func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	strategyConfigFrom := "conflict.strategy"
-	if c.Strategy == "" {
-		if i.OnDuplicate == "" && i.Backend == BackendTiDB {
+	if c.Strategy == NoneOnDup {
+		if i.OnDuplicate == NoneOnDup && i.Backend == BackendTiDB {
 			c.Strategy = ErrorOnDup
 		}
-		if i.OnDuplicate != "" {
+		if i.OnDuplicate != NoneOnDup {
 			strategyConfigFrom = "tikv-importer.on-duplicate"
 			c.Strategy = i.OnDuplicate
 		}
 	}
 	c.Strategy = strings.ToLower(c.Strategy)
 	switch c.Strategy {
-	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, "":
+	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, NoneOnDup:
 	default:
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
-	if c.Strategy != "" {
+	if c.Strategy != NoneOnDup {
 		if i.ParallelImport && i.Backend == BackendLocal {
 			return common.ErrInvalidConfig.GenWithStack(
 				`%s cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`,
 				strategyConfigFrom)
 		}
-		if i.DuplicateResolution != DupeResAlgNone {
-			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.duplicate-resolution",
-				strategyConfigFrom)
-		}
+	}
+	if c.Strategy == IgnoreOnDup && i.Backend == BackendLocal {
+		return common.ErrInvalidConfig.GenWithStack(
+			`%s cannot be set to "ignore" when use tikv-importer.backend = "local"`,
+			strategyConfigFrom)
 	}
 
 	if c.Threshold < 0 {
@@ -1372,7 +1381,7 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			c.Threshold = 0
 		case IgnoreOnDup, ReplaceOnDup:
 			c.Threshold = math.MaxInt64
-		case "":
+		case NoneOnDup:
 			c.Threshold = 0
 			if i.DuplicateResolution != DupeResAlgNone {
 				c.Threshold = math.MaxInt64
@@ -1486,9 +1495,10 @@ func NewConfig() *Config {
 			ChecksumViaSQL:    false,
 		},
 		Conflict: Conflict{
-			Strategy:      "",
-			Threshold:     -1,
-			MaxRecordRows: -1,
+			Strategy:                     NoneOnDup,
+			PrecheckConflictBeforeImport: false,
+			Threshold:                    -1,
+			MaxRecordRows:                -1,
 		},
 	}
 }
