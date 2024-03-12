@@ -34,6 +34,7 @@ import (
 func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(context.Canceled))
 	require.False(t, IsRetryableError(context.DeadlineExceeded))
+	require.True(t, IsRetryableError(ErrWriteTooSlow))
 	require.False(t, IsRetryableError(io.EOF))
 	require.False(t, IsRetryableError(&net.AddrError{}))
 	require.False(t, IsRetryableError(&net.DNSError{}))
