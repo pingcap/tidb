@@ -2137,9 +2137,10 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 		"Shuffle_13 10000.00 root  execution info: concurrency:5, data sources:[TableReader_11]",
 		"└─Window_8 10000.00 root  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o_time range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following)",
 		"  └─Sort_12 10000.00 root  test.first_range.p, test.first_range.o_time",
-		"    └─TableReader_11 10000.00 root  MppVersion: 2, data:ExchangeSender_10",
-		"      └─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"        └─TableFullScan_9 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
+		"    └─ShuffleReceiver_14 10000.00 root  ",
+		"      └─TableReader_11 10000.00 root  MppVersion: 2, data:ExchangeSender_10",
+		"        └─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"          └─TableFullScan_9 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 }
 
 // https://github.com/pingcap/tidb/issues/41458

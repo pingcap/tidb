@@ -132,11 +132,11 @@ create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', 
 create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));
 create table t2 (c int(10), c1 varchar(256) default (REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', '')), index idx(c1));
 create table t1 (c int(10), c1 varchar(256) default (REPLACE('xdfj-jfj', '-', '')));
-Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `REPLACE`.
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `REPLACE with disallowed args`.
 create table t1 (c int(10), c1 varchar(256) default (UPPER(UUID())));
-Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `UPPER`.
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `UPPER with disallowed args`.
 create table t1 (c int(10), c1 varchar(256) default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')));
-Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `REPLACE`.
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `REPLACE with disallowed args`.
 alter table t add column c2 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
 Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
 alter table t add column c3 int default (UPPER(UUID()));
@@ -219,9 +219,9 @@ create table t2 (c int(10), c1 blob default (str_to_date('1980-01-01','%Y-%m-%d'
 create table t5 (c int(10), c1 json default (str_to_date('9999-01-01','%Y-%m-%d')), c2 timestamp default (str_to_date('1980-01-01','%Y-%m-%d')));
 set session sql_mode=@sqlMode;
 create table t6 (c int(10), c1 varchar(32) default (str_to_date(upper('1980-01-01'),'%Y-%m-%d')));
-Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `str_to_date with these args`.
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `str_to_date with disallowed args`.
 create table t6 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01',upper('%Y-%m-%d'))));
-Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `str_to_date with these args`.
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `str_to_date with disallowed args`.
 alter table t0 add column c3 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
 Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
 alter table t0 add column c4 int default (str_to_date('1980-01-01','%Y-%m-%d'));
@@ -365,7 +365,7 @@ create table t1 (c int(10), c1 int default (upper(substring_index(user(),_utf8mb
 create table t2 (c int(10), c1 varchar(256) default (substring_index(user(),'@',1)));
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `substring_index`.
 create table t2 (c int(10), c1 varchar(256) default (upper(substring_index('fjks@jkkl','@',1))));
-Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `upper`.
+Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `upper with disallowed args`.
 create table t2 (c int(10), c1 varchar(256) default (upper(substring_index(user(),'x',1))));
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString x`.
 alter table t add column c2 varchar(32) default (upper(substring_index(user(),'@',1)));

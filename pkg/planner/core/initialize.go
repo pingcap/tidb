@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
@@ -549,50 +548,6 @@ func (p *BatchPointGetPlan) Init(ctx PlanContext, stats *property.StatsInfo, sch
 	p.SetStats(stats)
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 
-	var (
-		pids   = make([]int64, 0, len(p.IndexValues))
-		hasErr bool
-		d      types.Datum
-	)
-
-	if p.PartitionColPos == GlobalWithoutColumnPos {
-		return p
-	}
-
-	if p.PartitionExpr != nil {
-		if len(p.Handles) > 0 {
-			for _, handle := range p.Handles {
-				if handle.IsInt() {
-					d = types.NewIntDatum(handle.IntValue())
-				} else {
-					var err error
-					_, d, err = codec.DecodeOne(handle.EncodedCol(p.PartitionColPos))
-					if err != nil {
-						hasErr = true
-						break
-					}
-				}
-				pid, err := GetPhysID(p.TblInfo, p.PartitionExpr, d)
-				if err != nil {
-					hasErr = true
-					break
-				}
-				pids = append(pids, pid)
-			}
-		} else {
-			for _, idxVals := range p.IndexValues {
-				pid, err := GetPhysID(p.TblInfo, p.PartitionExpr, idxVals[p.PartitionColPos])
-				if err != nil {
-					hasErr = true
-					break
-				}
-				pids = append(pids, pid)
-			}
-		}
-	}
-	if !hasErr {
-		p.PartitionIDs = pids
-	}
 	return p
 }
 
