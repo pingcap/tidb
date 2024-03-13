@@ -410,6 +410,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 					Indices:       analyzedIndices,
 					ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
 				},
+				LastAnalyzeVersion: 1,
 			},
 			autoAnalyzeRatio: 0.5,
 			want:             2,
@@ -440,6 +441,7 @@ func TestGetTableLastAnalyzeDuration(t *testing.T) {
 				},
 			},
 		},
+		LastAnalyzeVersion: lastUpdateTs,
 	}
 	// 2024-01-01 10:00:00
 	currentTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
@@ -505,6 +507,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 						},
 					},
 				},
+				LastAnalyzeVersion: 1,
 			},
 			want: []string{"index1"},
 		},
@@ -636,7 +639,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 				{
 					ID:   2,
@@ -661,7 +665,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -724,7 +729,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 				{
 					ID:   2,
@@ -749,7 +755,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{

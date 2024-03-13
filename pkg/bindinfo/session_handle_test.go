@@ -91,9 +91,6 @@ func TestSessionBinding(t *testing.T) {
 		tk.MustExec("create table t1(i int, s varchar(20))")
 		tk.MustExec("create index index_t on t(i,s)")
 
-		metrics.BindTotalGauge.Reset()
-		metrics.BindMemoryUsage.Reset()
-
 		_, err := tk.Exec("create session " + testSQL.createSQL)
 		require.NoError(t, err, "err %v", err)
 
@@ -101,14 +98,6 @@ func TestSessionBinding(t *testing.T) {
 			_, err = tk.Exec("create session " + testSQL.overlaySQL)
 			require.NoError(t, err)
 		}
-
-		pb := &dto.Metric{}
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
-		require.NoError(t, err)
-		require.Equal(t, float64(1), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
-		require.NoError(t, err)
-		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
 		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")

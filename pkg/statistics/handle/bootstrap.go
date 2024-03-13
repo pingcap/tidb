@@ -132,6 +132,8 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			if index.IsAnalyzed() {
 				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			table.Indices[hist.ID] = index
 		} else {
@@ -158,6 +160,8 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			table.Columns[hist.ID] = col
 		}
@@ -208,6 +212,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			if statsVer != statistics.Version0 {
 				index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.Indices[hist.ID] = index
@@ -234,6 +240,10 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
+			if statsVer != statistics.Version0 {
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
+			}
 		}
 		cache.Put(tblID, table) // put this table again since it is updated
 	}
