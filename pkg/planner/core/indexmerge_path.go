@@ -1738,6 +1738,9 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
 			checkOK = targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1])
+			if !checkOK {
+				break
+			}
 			v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
 			if !ok {
 				checkOK = false
@@ -1748,6 +1751,9 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 			tp = 4
 		case ast.JSONContains: // json_contains(a, '1')
 			checkOK = targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0])
+			if !checkOK {
+				break
+			}
 			virColVals, ok = jsonArrayExpr2Exprs(sctx.GetExprCtx(), ast.JSONContains, sf.GetArgs()[1], jsonType)
 			if !ok || len(virColVals) == 0 {
 				checkOK = false
@@ -1786,29 +1792,30 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 			tp = 4
 		}
 		return checkOK, tp
-	} else {
-		if sf.FuncName.L != ast.EQ { // only support EQ now
-			return false, 0
+	}
+	// else: non virtual column
+	if sf.FuncName.L != ast.EQ { // only support EQ now
+		return false, 0
+	}
+	args := sf.GetArgs()
+	var argCol *expression.Column
+	var argConst *expression.Constant
+	if c, isCol := args[0].(*expression.Column); isCol {
+		if con, isCon := args[1].(*expression.Constant); isCon {
+			argCol, argConst = c, con
 		}
-		args := sf.GetArgs()
-		var argCol *expression.Column
-		var argConst *expression.Constant
-		if c, isCol := args[0].(*expression.Column); isCol {
-			if con, isCon := args[1].(*expression.Constant); isCon {
-				argCol, argConst = c, con
-			}
-		} else if c, isCol := args[1].(*expression.Column); isCol {
-			if con, isCon := args[0].(*expression.Constant); isCon {
-				argCol, argConst = c, con
-			}
-		}
-		if argCol == nil || argConst == nil {
-			return false, 0
-		}
-		if argCol.Equal(sctx.GetExprCtx(), idxCol) {
-			return true, 1
+	} else if c, isCol := args[1].(*expression.Column); isCol {
+		if con, isCon := args[0].(*expression.Constant); isCon {
+			argCol, argConst = c, con
 		}
 	}
+	if argCol == nil || argConst == nil {
+		return false, 0
+	}
+	if argCol.Equal(sctx.GetExprCtx(), idxCol) {
+		return true, 1
+	}
+
 	return false, 0
 }
 
