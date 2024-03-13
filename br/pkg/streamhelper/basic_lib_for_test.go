@@ -26,8 +26,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
+=======
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/tikv/client-go/v2/oracle"
+>>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -99,7 +105,14 @@ type fakeCluster struct {
 	regions   []*region
 	testCtx   *testing.T
 
+<<<<<<< HEAD
 	onGetClient func(uint64) error
+=======
+	onGetClient        func(uint64) error
+	onClearCache       func(uint64) error
+	serviceGCSafePoint uint64
+	currentTS          uint64
+>>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -254,6 +267,30 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 	return resp, nil
 }
 
+<<<<<<< HEAD
+=======
+// Updates the service GC safe point for the cluster.
+// Returns the latest service GC safe point.
+// If the arguments is `0`, this would remove the service safe point.
+func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if at == 0 {
+		f.serviceGCSafePoint = at
+		return at, nil
+	}
+	if f.serviceGCSafePoint > at {
+		return f.serviceGCSafePoint, nil
+	}
+	f.serviceGCSafePoint = at
+	return at, nil
+}
+
+func (f *fakeCluster) FetchCurrentTS(ctx context.Context) (uint64, error) {
+	return f.currentTS, nil
+}
+
+>>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 // RegionScan gets a list of regions, starts from the region that contains key.
 // Limit limits the maximum number of regions returned.
 func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte, limit int) ([]streamhelper.RegionWithLeader, error) {
@@ -471,6 +508,29 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 	return minCheckpoint
 }
 
+func (f *fakeCluster) advanceCheckpointBy(duration time.Duration) uint64 {
+	minCheckpoint := uint64(math.MaxUint64)
+	for _, r := range f.regions {
+		f.updateRegion(r.id, func(r *region) {
+			newCheckpointTime := oracle.GetTimeFromTS(r.checkpoint.Load()).Add(duration)
+			newCheckpoint := oracle.GoTimeToTS(newCheckpointTime)
+			r.checkpoint.Store(newCheckpoint)
+			if newCheckpoint < minCheckpoint {
+				minCheckpoint = newCheckpoint
+			}
+			r.fsim.flushedEpoch.Store(0)
+		})
+	}
+	log.Info("checkpoint updated", zap.Uint64("to", minCheckpoint))
+	return minCheckpoint
+}
+
+func (f *fakeCluster) advanceClusterTimeBy(duration time.Duration) uint64 {
+	newTime := oracle.GoTimeToTS(oracle.GetTimeFromTS(f.currentTS).Add(duration))
+	f.currentTS = newTime
+	return newTime
+}
+
 func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 	c := &fakeCluster{
 		stores:  map[uint64]*fakeStore{},
@@ -632,6 +692,22 @@ func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName s
 	defer t.mu.Unlock()
 
 	t.checkpoint = 0
+	return nil
+}
+
+func (t *testEnv) PauseTask(ctx context.Context, taskName string) error {
+	t.taskCh <- streamhelper.TaskEvent{
+		Type: streamhelper.EventPause,
+		Name: taskName,
+	}
+	return nil
+}
+
+func (t *testEnv) ResumeTask(ctx context.Context) error {
+	t.taskCh <- streamhelper.TaskEvent{
+		Type: streamhelper.EventResume,
+		Name: "whole",
+	}
 	return nil
 }
 

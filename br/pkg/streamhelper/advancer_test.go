@@ -16,7 +16,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/kv"
+=======
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/stretchr/testify/assert"
+>>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -439,4 +444,81 @@ func TestRemoveTaskAndFlush(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return !adv.HasSubscribion()
 	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func TestEnableCheckPointLimit(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	adv.StartTaskListener(ctx)
+	for i := 0; i < 5; i++ {
+		c.advanceClusterTimeBy(30 * time.Second)
+		c.advanceCheckpointBy(20 * time.Second)
+		require.NoError(t, adv.OnTick(ctx))
+	}
+}
+
+func TestCheckPointLagged(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	adv.StartTaskListener(ctx)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	// after some times, the isPaused will be set and ticks are skipped
+	require.Eventually(t, func() bool {
+		return assert.NoError(t, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
+}
+
+func TestCheckPointResume(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	adv.StartTaskListener(ctx)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	require.Eventually(t, func() bool {
+		return assert.NoError(t, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
+	//now the checkpoint issue is fixed and resumed
+	c.advanceCheckpointBy(1 * time.Minute)
+	env.ResumeTask(ctx)
+	require.Eventually(t, func() bool {
+		return assert.NoError(t, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
+	//with time passed, the checkpoint will exceed the limit again
+	c.advanceClusterTimeBy(2 * time.Minute)
+	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 }
