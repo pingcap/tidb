@@ -15682,8 +15682,8 @@
           },
           "yaxes": [
             {
-	      "$$hashKey": "object:354",
-	      "format": "s",
+              "$$hashKey": "object:354",
+              "format": "s",
               "label": null,
               "logBase": 2,
               "max": null,
@@ -15691,7 +15691,7 @@
               "show": true
             },
             {
-	      "$$hashKey": "object:355",
+              "$$hashKey": "object:355",
               "label": null,
               "logBase": 1,
               "max": null,
@@ -16874,7 +16874,7 @@
             "alignLevel": null
           }
         },
-                {
+        {
           "aliasColors": {},
           "bars": false,
           "dashLength": 10,

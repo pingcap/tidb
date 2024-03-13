@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -84,10 +85,20 @@ func newFuzzyBindingCache(loadBindingFromStorageFunc func(sessionctx.Context, st
 	}
 }
 
+func (fbc *fuzzyBindingCache) shouldMetric() bool {
+	return fbc.loadBindingFromStorageFunc != nil // only metric for GlobalBindingCache, whose loadBindingFromStorageFunc is not nil.
+}
+
 func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
 	matchedBinding, isMatched, missingSQLDigest := fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
 	if len(missingSQLDigest) == 0 {
+		if fbc.shouldMetric() {
+			metrics.BindingCacheHitCounter.Inc()
+		}
 		return
+	}
+	if fbc.shouldMetric() {
+		metrics.BindingCacheMissCounter.Inc()
 	}
 	if fbc.loadBindingFromStorageFunc == nil {
 		return

@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -210,6 +211,10 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 		defer func() {
 			h.setLastUpdateTime(lastUpdateTime)
 			h.setCache(newCache)
+
+			metrics.BindingCacheMemUsage.Set(float64(h.GetMemUsage()))
+			metrics.BindingCacheMemLimit.Set(float64(h.GetMemCapacity()))
+			metrics.BindingCacheNumBindings.Set(float64(h.Size()))
 		}()
 
 		for _, row := range rows {
