@@ -35,10 +35,19 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// seekPropsOffsets seeks the statistic files to find the largest offset of
-// sorted data file offsets such that the key at offset is less than or equal to
-// the given start keys. Caller can specify multiple ascending keys and
-// seekPropsOffsets will return the offsets list for each key.
+// seekPropsOffsets reads the statistic files to find the largest offset of
+// corresponding sorted data file such that the key at offset is less than or
+// equal to the given start keys. These returned offsets can be used to seek data
+// file reader, read, parse and skip few smaller keys, and then locate the needed
+// data.
+//
+// To avoid potential data loss, it also checks at least one statistic file has a
+// key larger than or equal to the start key. If not, we are afraid that some
+// paths are missing, and the data between [start key, min(first key of
+// statistic files)) are lost.
+//
+// Caller can specify multiple ascending keys and seekPropsOffsets will return
+// the offsets list per file for each key.
 func seekPropsOffsets(
 	ctx context.Context,
 	starts []kv.Key,
@@ -55,9 +64,8 @@ func seekPropsOffsets(
 	for i := range offsetsPerFile {
 		offsetsPerFile[i] = make([]uint64, len(starts))
 	}
-	// if **all** files' first key is smaller than start key, we may lost the data
-	// between [start key, min(first key of all files)). So record this case for each
-	// file and check all files afterward.
+	// Record first key if it is smaller than first key of "starts" key argument for
+	// each file, and check all files afterward.
 	firstKeyTooSmallCheckers := make([]kv.Key, len(paths))
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := range paths {
@@ -78,15 +86,13 @@ func seekPropsOffsets(
 
 			p, err3 := r.nextProp()
 			for {
-				if egCtx.Err() != nil {
-					return egCtx.Err()
-				}
-
 				switch err3 {
 				case nil:
 				case io.EOF:
+					// fill the rest of the offsets with the last offset
+					currOffset := offsetsPerFile[i][keyIdx]
 					for keyIdx++; keyIdx < len(starts); keyIdx++ {
-						offsetsPerFile[i][keyIdx] = offsetsPerFile[i][keyIdx-1]
+						offsetsPerFile[i][keyIdx] = currOffset
 					}
 					return nil
 				default:
