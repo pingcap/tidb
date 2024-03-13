@@ -1910,7 +1910,9 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
 			// Not need to return err when failed because of update analysis-meta
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
-			if statsErr = rc.statsHandler.SaveMetaToStorage(tbl.Table.ID, int64(oldTable.TotalKvs), 0, "br restore"); statsErr != nil {
+			// the total kvs contains the index kvs, but the stats meta needs the count of rows
+			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
+			if statsErr = rc.statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore"); statsErr != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
 			}
 		}
