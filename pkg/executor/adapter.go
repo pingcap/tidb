@@ -91,7 +91,7 @@ type recordSet struct {
 	fields     []*ast.ResultField
 	executor   exec.Executor
 	stmt       *ExecStmt
-	lastErr    error
+	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
 }
@@ -157,7 +157,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
-		a.lastErr = err
+		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}
 	numRows := req.NumRows()
@@ -195,7 +195,7 @@ func (a *recordSet) Finish() error {
 		}
 	})
 	if err != nil {
-		a.lastErr = err
+		a.lastErrs = append(a.lastErrs, err)
 	}
 	return err
 }
@@ -205,13 +205,13 @@ func (a *recordSet) Close() error {
 	if err != nil {
 		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
 	}
-	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
 	return err
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
 func (a *recordSet) OnFetchReturned() {
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
+	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
