@@ -940,6 +940,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	// preallocate the table id, because any ddl job or database creation also allocates the global ID
+	err = client.AllocTableIDs(ctx, tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// execute DDL first
 	err = client.ExecDDLs(ctx, ddlJobs)
 	if err != nil {
