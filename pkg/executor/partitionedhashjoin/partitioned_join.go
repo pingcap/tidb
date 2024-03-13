@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"runtime/trace"
 	"strconv"
 	"sync/atomic"
@@ -358,11 +359,6 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		// 2. build rowtable
 		builder.appendToRowTable(typeCtx, chk, hashTableMeta)
 	}
-	// for i, rt := range builder.rowTables {
-	// 	if rt != nil {
-	// 		rowTableChannels[i] <- rt
-	// 	}
-	// }
 	return nil
 }
 
@@ -699,6 +695,54 @@ func (e *PartitionedHashJoinExec) handleFetchAndBuildHashTablePanic(r any) {
 	close(e.buildFinished)
 }
 
+// checkBalance checks whether the segment count of each partition is balanced.
+func (e *PartitionedHashJoinExec) checkBalance(totalSegmentCnt int) bool {
+	isBalanced := e.Concurrency == uint(e.partitionNumber)
+	avgSegCnt := totalSegmentCnt / e.partitionNumber
+	balanceThreshold := int(float64(avgSegCnt) * 0.8)
+	subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
+
+	for _, subTable := range subTables {
+		if math.Abs(float64(len(subTable.rowData.segments)-avgSegCnt)) > float64(balanceThreshold) {
+			isBalanced = false
+			break
+		}
+	}
+	return isBalanced
+}
+
+func (e *PartitionedHashJoinExec) createBuildTask(partIdx int, segStartIdx int, segEndIdx int) *buildTask {
+	return &buildTask{
+		partitionIdx: partIdx,
+		segStartIdx:  segStartIdx,
+		segEndIdx:    segEndIdx,
+	}
+}
+
+func (e *PartitionedHashJoinExec) createTasksForUnbalancedTable(buildTaskCh chan<- *buildTask, partIdx int, segStep int, rowTable *RowTable) {
+	for startIdx := 0; startIdx < len(rowTable.segments); startIdx += segStep {
+		endIdx := mathutil.Min(startIdx+segStep, len(rowTable.segments))
+		buildTaskCh <- e.createBuildTask(partIdx, startIdx, endIdx)
+	}
+}
+
+func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, totalSegmentCnt int) func() {
+	return func() {
+		isBalanced := e.checkBalance(totalSegmentCnt)
+		segStep := totalSegmentCnt / int(e.Concurrency)
+		subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
+
+		for partIdx, subTable := range subTables {
+			rowTable := subTable.rowData
+			if isBalanced {
+				buildTaskCh <- e.createBuildTask(partIdx, 0, len(rowTable.segments))
+				continue
+			}
+			e.createTasksForUnbalancedTable(buildTaskCh, partIdx, segStep, rowTable)
+		}
+	}
+}
+
 func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	if e.stats != nil {
 		start := time.Now()
@@ -742,44 +786,34 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 		rowTables[i] = newRowTable(e.hashTableMeta)
 	}
 	// TODO: @XuHuaiyu wait on a waitgroup
-	totalRowCnt := 0
+	totalSegmentCnt := 0
 	for _, w := range e.BuildWorkers {
 		for partIdx, rt := range w.rtBuilder.rowTables {
 			if rt == nil {
 				continue
 			}
 			rowTables[partIdx].merge(rt)
-			totalRowCnt += int(rt.rowCount())
+			totalSegmentCnt += len(rt.segments)
 		}
 	}
 	e.joinHashTable = newJoinHashTable(rowTables)
-	segStep := totalRowCnt / int(e.Concurrency)
-	var buildTaskCh = make(chan *buildTask, e.Concurrency)
 
+	buildTaskCh := make(chan *buildTask, e.Concurrency)
 	e.workerWg.RunWithRecover(
 		func() {
-			for partIdx := 0; partIdx < len(e.PartitionedHashJoinCtx.joinHashTable.tables); partIdx++ {
-				rowTable := e.PartitionedHashJoinCtx.joinHashTable.tables[partIdx].rowData
-				for startIdx := 0; startIdx < mathutil.Min(int(e.Concurrency), int(rowTable.rowCount())); startIdx++ {
-					buildTaskCh <- &buildTask{
-						partitionIdx: partIdx,
-						segStartIdx:  startIdx,
-						segStep:      segStep,
-					}
-				}
-			}
-
+			e.createTasks(buildTaskCh, totalSegmentCnt)
 		},
 		func(r any) {
 			// TODO: @XuHuaiyu handle panic
 			if r != nil {
 
 			}
+			close(buildTaskCh)
 		},
 	)
 	e.workerWg.RunWithRecover(
 		func() {
-			for i := uint(0); i < uint(mathutil.Min(int(e.Concurrency), e.partitionNumber)); i++ {
+			for i := uint(0); i < e.Concurrency; i++ {
 				// TODO: (@XuHuaiyu) check the error
 				e.BuildWorkers[i].buildHashTable(buildTaskCh)
 			}
@@ -813,13 +847,15 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 type buildTask struct {
 	partitionIdx int
 	segStartIdx  int
-	segStep      int
+	segEndIdx    int
 }
 
 // buildHashTableForList builds hash table from `list`.
 func (w *BuildWorker) buildHashTable(taskCh chan *buildTask) error {
-	// for task := range taskCh {
-	// }
+	for task := range taskCh {
+		partIdx, segStartIdx, segStep := task.partitionIdx, task.segStartIdx, task.segStep
+		w.HashJoinCtx.joinHashTable.tables[partIdx].build(segStartIdx, segStep)
+	}
 
 	return nil
 }
