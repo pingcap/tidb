@@ -1480,6 +1480,11 @@ var defaultSysVars = []*SysVar{
 		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBLoadBindingTimeout, Value: "200", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatableVerfied: false, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		timeoutMS := tidbOptPositiveInt32(s, 0)
+		vars.LoadBindingTimeout = uint64(timeoutMS)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: MaxExecutionTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatableVerfied: true, SetSession: func(s *SessionVars, val string) error {
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -2152,8 +2157,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: DefTiDBRedactLog, Type: TypeEnum, PossibleValues: []string{Off, On, Marker}, SetSession: func(s *SessionVars, val string) error {
-		s.EnableRedactLog = val != Off
-		s.EnableRedactNew = val
+		s.EnableRedactLog = val
 		errors.RedactLogEnabled.Store(val)
 		return nil
 	}},
@@ -3421,6 +3425,8 @@ const (
 	MaxExecutionTime = "max_execution_time"
 	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
+	// TiDBLoadBindingTimeout is the name of the 'tidb_load_binding_timeout' system variable.
+	TiDBLoadBindingTimeout = "tidb_load_binding_timeout"
 	// ReadOnly is the name of the 'read_only' system variable.
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.

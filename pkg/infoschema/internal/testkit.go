@@ -245,6 +245,17 @@ func DropDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
 	require.NoError(t, err)
 }
 
+// UpdateDB update mock db for testing.
+func UpdateDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateDatabase(dbInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
 // AddResourceGroup add mock resource group for testing.
 func AddResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGroupInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
