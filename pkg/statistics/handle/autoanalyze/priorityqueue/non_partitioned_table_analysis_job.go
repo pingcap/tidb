@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 var _ AnalysisJob = &NonPartitionedTableAnalysisJob{}
@@ -91,12 +92,16 @@ func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the table is valid to analyze.
 // We will check the last failed job and average analyze duration to determine whether the table is valid to analyze.
-func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+	samplingLogger *zap.Logger,
+) (bool, string) {
 	if valid, failReason := isValidWeight(j.Weight); !valid {
 		return false, failReason
 	}
 
 	if valid, failReason := isValidToAnalyze(
+		samplingLogger,
 		sctx,
 		j.TableSchema,
 		j.TableName,

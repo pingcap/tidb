@@ -17,5 +17,6 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/sqlexec",
+        "@org_uber_go_zap//:zap",
     ],
 )

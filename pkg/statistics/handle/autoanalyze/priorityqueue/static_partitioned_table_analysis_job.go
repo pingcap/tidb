@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 var _ AnalysisJob = &StaticPartitionedTableAnalysisJob{}
@@ -104,7 +105,10 @@ func (j *StaticPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the partition is valid to analyze.
 // Only the specified static partition is checked.
-func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+	samplingLogger *zap.Logger,
+) (bool, string) {
 	if valid, failReason := isValidWeight(j.Weight); !valid {
 		return false, failReason
 	}
@@ -113,6 +117,7 @@ func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Con
 	if j.StaticPartitionName != "" {
 		partitionNames := []string{j.StaticPartitionName}
 		if valid, failReason := isValidToAnalyze(
+			samplingLogger,
 			sctx,
 			j.TableSchema,
 			j.GlobalTableName,

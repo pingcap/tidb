@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
@@ -50,7 +49,10 @@ type AnalysisJob interface {
 	// It checks the last failed analysis duration and the average analysis duration.
 	// If the last failed analysis duration is less than 2 times the average analysis duration,
 	// we skip this table to avoid too much failed analysis.
-	IsValidToAnalyze(sctx sessionctx.Context) (bool, string)
+	IsValidToAnalyze(
+		sctx sessionctx.Context,
+		samplingLogger *zap.Logger,
+	) (bool, string)
 
 	// Analyze executes the analyze statement within a transaction.
 	Analyze(
@@ -91,6 +93,7 @@ func isValidWeight(weight float64) (bool, string) {
 // we skip this table to avoid too much failed analysis. Because the last analysis just failed,
 // we don't want to block the queue by analyzing it again.
 func isValidToAnalyze(
+	samplingLogger *zap.Logger,
 	sctx sessionctx.Context,
 	schema, table string,
 	partitionNames ...string,
@@ -98,7 +101,7 @@ func isValidToAnalyze(
 	lastFailedAnalysisDuration, err :=
 		GetLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
-		statslogutil.StatsLogger().Warn(
+		samplingLogger.Warn(
 			"Fail to get last failed analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -111,7 +114,7 @@ func isValidToAnalyze(
 	averageAnalysisDuration, err :=
 		GetAverageAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
-		statslogutil.StatsLogger().Warn(
+		samplingLogger.Warn(
 			"Fail to get average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -124,7 +127,7 @@ func isValidToAnalyze(
 	// Last analysis just failed, we should not analyze it again.
 	if lastFailedAnalysisDuration == justFailed {
 		// The last analysis failed, we should not analyze it again.
-		statslogutil.StatsLogger().Info(
+		samplingLogger.Info(
 			"Skip analysis because the last analysis just failed",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -137,7 +140,7 @@ func isValidToAnalyze(
 	// Skip this table to avoid too much failed analysis.
 	onlyFailedAnalysis := lastFailedAnalysisDuration != NoRecord && averageAnalysisDuration == NoRecord
 	if onlyFailedAnalysis && lastFailedAnalysisDuration < defaultFailedAnalysisWaitTime {
-		statslogutil.StatsLogger().Info(
+		samplingLogger.Info(
 			fmt.Sprintf("Skip analysis because the last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime),
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -151,7 +154,7 @@ func isValidToAnalyze(
 	meetSkipCondition := lastFailedAnalysisDuration != NoRecord &&
 		lastFailedAnalysisDuration < 2*averageAnalysisDuration
 	if meetSkipCondition {
-		statslogutil.StatsLogger().Info(
+		samplingLogger.Info(
 			"Skip analysis because the last failed analysis duration is less than 2 times the average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),

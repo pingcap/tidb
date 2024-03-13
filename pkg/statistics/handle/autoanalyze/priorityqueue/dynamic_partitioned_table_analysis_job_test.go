@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -112,6 +113,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 }
 
 func TestIsValidToAnalyzeForDynamicPartitionedTable(t *testing.T) {
+	logger := logutil.StatsSamplerLogger()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -127,7 +129,7 @@ func TestIsValidToAnalyzeForDynamicPartitionedTable(t *testing.T) {
 
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	valid, failReason := job.IsValidToAnalyze(sctx)
+	valid, failReason := job.IsValidToAnalyze(sctx, logger)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
@@ -136,24 +138,24 @@ func TestIsValidToAnalyzeForDynamicPartitionedTable(t *testing.T) {
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", now)
 	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
-	valid, _ = job.IsValidToAnalyze(sctx)
+	valid, _ = job.IsValidToAnalyze(sctx, logger)
 	require.False(t, valid)
 	// Failed 10 seconds ago.
 	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	valid, failReason = job.IsValidToAnalyze(sctx, logger)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	valid, failReason = job.IsValidToAnalyze(sctx, logger)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 	// Smaller start time for p1.
 	startTime = tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p1", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	valid, failReason = job.IsValidToAnalyze(sctx, logger)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 }
