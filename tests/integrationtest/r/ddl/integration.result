@@ -106,6 +106,8 @@ create table t2(a int not null, b int, primary key(a) nonclustered, unique idx_b
 drop table if exists t3;
 set tidb_enable_global_index=1;
 create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b)) partition by hash(a) partitions 3;
+drop table if exists t4;
+create table t4(a int not null, b int, primary key(a)) partition by hash(a) partitions 3;
 alter table t partition by hash(a) partitions 3;
 Error 8214 (HY000): global index is not supported yet for alter table partitioning
 alter table t partition by key() partitions 3;
@@ -115,7 +117,9 @@ Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioni
 alter table t2 partition by hash(b) partitions 3;
 Error 8214 (HY000): global index is not supported yet for alter table partitioning
 alter table t3 partition by key(a) partitions 3;
-Error 8214 (HY000): global indexes is not supported yet for reorganize partition
+Error 8214 (HY000): global index is not supported yet for alter table partitioning
+alter table t4 partition by hash(b) partitions 3;
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
 set tidb_enable_global_index=0;
 alter table t partition by hash(a) partitions 3;
 Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
@@ -126,5 +130,7 @@ Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioni
 alter table t2 partition by hash(b) partitions 3;
 Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
 alter table t3 partition by key(a) partitions 3;
-Error 8214 (HY000): global indexes is not supported yet for reorganize partition
-drop table t, t2, t3;
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+alter table t4 partition by hash(b) partitions 3;
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+drop table t, t2, t3, t4;
