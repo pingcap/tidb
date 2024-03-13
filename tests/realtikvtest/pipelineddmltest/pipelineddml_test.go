@@ -151,8 +151,8 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	// in a running txn
 	tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec("begin")
-	// the warning is produced for the begin stmt.
-	tk.MustExec("set session tidb_dml_type = bulk") // turn on bulk dml in a txn doesn't effect the current txn.
+	// turn on bulk dml in a txn doesn't affect the current txn.
+	tk.MustExec("set session tidb_dml_type = bulk")
 	tk.MustExec("insert into t values(5, 5)")
 	tk.MustExec("commit")
 
@@ -174,6 +174,14 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.Session().GetSessionVars().BatchDelete = false
 	tk.Session().GetSessionVars().DMLBatchSize = 0
 	variable.EnableBatchDML.Store(false)
+
+	// for explain and explain analyze
+	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
+	tk.MustExec("explain insert into t values(8, 8)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
+	tk.MustExec("explain analyze insert into t values(9, 9)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
+	tk.Session().GetSessionVars().BinlogClient = nil
 }
 
 func compareTables(t *testing.T, tk *testkit.TestKit, t1, t2 string) {
