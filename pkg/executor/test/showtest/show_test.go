@@ -1632,12 +1632,17 @@ func TestShowCreatePlacementPolicy(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
+	tk.MustExec("CREATE PLACEMENT POLICY xyz2 FOLLOWERS=1 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz2").Check(testkit.Rows("xyz2 CREATE PLACEMENT POLICY `xyz2` FOLLOWERS=1 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
+	tk.MustExec("DROP PLACEMENT POLICY xyz2")
 	// non existent policy
 	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
 	require.Equal(t, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error(), err.Error())
 	// alter and try second example
 	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
+	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
 	tk.MustExec("DROP PLACEMENT POLICY xyz")
 }
 

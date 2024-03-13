@@ -1905,6 +1905,10 @@ func (p *PlacementSettings) String() string {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
 	}
 
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
+	}
+
 	return sb.String()
 }
 
