@@ -685,7 +685,8 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 		assertionFailure.ExistingStartTs, assertionFailure.ExistingCommitTs,
 	)
 
-	if s.GetSessionVars().EnableRedactLog {
+	rmode := s.GetSessionVars().EnableRedactLog
+	if rmode == errors.RedactLogEnable {
 		return newErr
 	}
 
@@ -727,7 +728,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	}
 	if store, ok := s.store.(helper.Storage); ok {
 		content := consistency.GetMvccByKey(store, key, decodeFunc)
-		logutil.Logger(ctx).Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", content))
+		logutil.Logger(ctx).Error("assertion failed", zap.String("message", redact.String(rmode, newErr.Error())), zap.String("mvcc history", redact.String(rmode, content)))
 	}
 	return newErr
 }
@@ -1173,8 +1174,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
 				sql := sqlForLog(st.GetTextToLog(false))
-				if sessVars.EnableRedactNew != "ON" {
-					sql += redact.String(sessVars.EnableRedactNew, sessVars.PlanCacheParams.String())
+				if sessVars.EnableRedactLog != "ON" {
+					sql += redact.String(sessVars.EnableRedactLog, sessVars.PlanCacheParams.String())
 				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -1527,7 +1528,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
 		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
-		RedactSQL:             s.sessionVars.EnableRedactNew,
+		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
 	}
@@ -1669,7 +1670,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
-			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.String(s.sessionVars.EnableRedactNew, sql)))
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.String(s.sessionVars.EnableRedactLog, sql)))
 			s.sessionVars.StmtCtx.AppendError(err)
 		}
 		return nil, err
@@ -1719,7 +1720,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 	if err != nil {
 		s.rollbackOnError(ctx)
 		logSQL := sql[:min(500, len(sql))]
-		logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.String(s.sessionVars.EnableRedactNew, logSQL)))
+		logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.String(s.sessionVars.EnableRedactLog, logSQL)))
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
@@ -2207,7 +2208,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		if !s.sessionVars.InRestrictedSQL {
 			if !variable.ErrUnknownSystemVar.Equal(err) {
 				sql := stmtNode.Text()
-				sql = parser.Normalize(sql, s.sessionVars.EnableRedactNew)
+				sql = parser.Normalize(sql, s.sessionVars.EnableRedactLog)
 				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
 					zap.String("SQL", sql))
 			}
@@ -3934,8 +3935,8 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		}
 
 		query = executor.QueryReplacer.Replace(query)
-		if vars.EnableRedactNew != "ON" {
-			query += redact.String(vars.EnableRedactNew, vars.PlanCacheParams.String())
+		if vars.EnableRedactLog != "ON" {
+			query += redact.String(vars.EnableRedactLog, vars.PlanCacheParams.String())
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),

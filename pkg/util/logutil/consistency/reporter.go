@@ -186,7 +186,7 @@ func decodeMvccRecordValue(bs []byte, colMap map[int64]*types.FieldType, tb *mod
 
 // ReportLookupInconsistent reports inconsistent when index rows is more than record rows.
 func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt int, missHd, fullHd []kv.Handle, missRowIdx []RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactNew
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
 
 	const maxFullHandleCnt = 50
 	displayFullHdCnt := min(len(fullHd), maxFullHandleCnt)
@@ -215,7 +215,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 
 // ReportAdminCheckInconsistentWithColInfo reports inconsistent when the value of index row is different from record row.
 func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, handle kv.Handle, colName string, idxDat, tblDat fmt.Stringer, err error, idxRow *RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactNew
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
 	fs := []zap.Field{
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
@@ -252,7 +252,7 @@ func (r *RecordData) String() string {
 
 // ReportAdminCheckInconsistent reports inconsistent when single index row not found in record rows.
 func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.Handle, idxRow, tblRow *RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactNew
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
 	fs := []zap.Field{
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),

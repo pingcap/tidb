@@ -1160,7 +1160,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
 					zap.Uint64("timestamp", startTS),
-					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactNew)),
+					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}
 			err1 := cc.writeError(ctx, err)
@@ -2613,7 +2613,7 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		sql = parser.Normalize(sql, cc.ctx.GetSessionVars().EnableRedactNew)
+		sql = parser.Normalize(sql, cc.ctx.GetSessionVars().EnableRedactLog)
 		return executor.FormatSQL(sql).String()
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
