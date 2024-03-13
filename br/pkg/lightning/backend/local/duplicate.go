@@ -1082,7 +1082,6 @@ func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl 
 
 // CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 // the data import by other lightning.
-// TODO: revise the returned arguments to (hasDupe bool, conflictErr error, err error) to distinguish the conflict error and the common error
 func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
