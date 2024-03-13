@@ -993,17 +993,18 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
 	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
-	require.NoError(t, cfg.Adjust(ctx))
+	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be used with tikv-importer.duplicate-resolution`)
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = NoneOnDup
 	cfg.TikvImporter.OnDuplicate = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
 	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
-	require.NoError(t, cfg.Adjust(ctx))
+	require.ErrorContains(t, cfg.Adjust(ctx), `tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution`)
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = IgnoreOnDup
+	cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
 	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
 
 	cfg.TikvImporter.Backend = BackendTiDB
