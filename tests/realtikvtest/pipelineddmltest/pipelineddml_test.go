@@ -258,46 +258,86 @@ func TestPipelinedDMLInsertRPC(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tables := []string{
-		"create table t1 (a int, b int, unique index idx(b))", // unique index
-		"create table t1 (a int, b int primary key)",          // clustered handle
+		"create table _t1 (a int, b int)",                                  // no index, auto generated handle
+		"create table _t1 (a int primary key, b int)",                      // clustered handle
+		"create table _t1 (a int, b int, unique index idx(b))",             // unique index
+		"create table _t1 (a int primary key, b int, unique index idx(b))", // clustered handle + unique index
 	}
 	for _, table := range tables {
-		tk.MustExec("drop table if exists t1, _t1")
-		tk.MustExec(table)
-		tk.MustExec("set session tidb_dml_type = standard")
-		res := tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-		explain := getExplainResult(res)
-		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-		// Test with bulk dml.
-		tk.MustExec("set session tidb_dml_type = bulk")
-		// Test normal insert.
-		tk.MustExec("truncate table t1")
-		res = tk.MustQuery("explain analyze insert into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-		explain = getExplainResult(res)
-		// no BufferBatchGet with lazy check
-		require.NotRegexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:.*, total_time:.*}}.*", explain)
+		for _, tableSource := range []bool{true, false} {
+			hasPK := strings.Contains(table, "primary key")
+			hasUK := strings.Contains(table, "unique index")
+			tk.MustExec("drop table if exists t1, _t1")
+			var values string
+			if tableSource {
+				tk.MustExec("create table t1 (a int, b int)")
+				tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+				values = " select * from t1"
+			} else {
+				values = " values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)"
+			}
+			tk.MustExec(table)
 
-		// Test insert ignore.
-		tk.MustExec("truncate table t1")
-		res = tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-		explain = getExplainResult(res)
-		// but without bulk dml, it will only use 1 BatchGet rpcs.
-		// there is still one BufferBatchGet in prefetch phase.
-		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-		tk.MustExec("create table _t1 like t1")
-		res = tk.MustQuery("explain analyze insert ignore into _t1 select * from t1")
-		explain = getExplainResult(res)
-		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-		require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-		res = tk.MustQuery("explain analyze insert into _t1 select * from t1 on duplicate key update a = values(a) + 1")
-		explain = getExplainResult(res)
-		if strings.Contains(table, "unique") {
-			require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:2, total_time:.*}}}.*", explain)
-			require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:2, total_time:.*}}}.*", explain)
-		} else if strings.Contains(table, "primary") {
-			require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-			require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			// Test with standard dml.
+			tk.MustExec("set session tidb_dml_type = standard")
+			res := tk.MustQuery("explain analyze insert ignore into _t1" + values)
+			explain := getExplainResult(res)
+			if hasPK || hasUK {
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+			}
+
+			// Test with bulk dml.
+			tk.MustExec("set session tidb_dml_type = bulk")
+
+			// Test normal insert.
+			tk.MustExec("truncate table _t1")
+			res = tk.MustQuery("explain analyze insert into _t1" + values)
+			explain = getExplainResult(res)
+			// no BufferBatchGet with lazy check
+			require.NotRegexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:.*, total_time:.*}}.*", explain)
+
+			// Test insert ignore.
+			tk.MustExec("truncate table _t1")
+			res = tk.MustQuery("explain analyze insert ignore into _t1" + values)
+			explain = getExplainResult(res)
+			// with bulk dml, it will 1 BatchGet and 1 BufferBatchGet RPCs in prefetch phase.
+			// but no need to prefetch when there are no unique indexes and no primary key.
+			if hasPK || hasUK {
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+			}
+			// The ignore takes effect now.
+			res = tk.MustQuery("explain analyze insert ignore into _t1" + values)
+			explain = getExplainResult(res)
+			if hasPK || hasUK {
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+			}
+
+			// Test insert on duplicate key update.
+			res = tk.MustQuery("explain analyze insert into _t1 " + values + " on duplicate key update a = values(a) + 5")
+			explain = getExplainResult(res)
+			if hasUK {
+				// 2 rounds checks are required: read handles by unique keys and read rows by handles
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:2, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:2, total_time:.*}}}.*", explain)
+			} else if hasPK {
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+			}
 		}
 	}
 }
