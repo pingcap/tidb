@@ -40,7 +40,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, domains json null, images json null, KEY `a_domains_b` (a, (cast(`domains` as char(253) array)), b))")
-	sql := "SELECT * FROM t WHERE   15975127 member of (domains)   AND 15975128 member of (domains) AND a = 1 AND b = 2"
+	sql := "SELECT * FROM t WHERE   '15975127' member of (domains)   AND '15975128' member of (domains) AND a = 1 AND b = 2"
 
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
