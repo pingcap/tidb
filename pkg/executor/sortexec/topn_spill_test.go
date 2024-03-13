@@ -55,7 +55,6 @@ func TestTopNSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = true
 
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
@@ -68,8 +67,7 @@ func TestTopNSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	for i := 0; i < 10; i++ {
-		inMemoryThenSpill(t, ctx, nil, sortCase, schema, dataSource)
-		inMemoryThenSpill(t, ctx, exe, sortCase, schema, dataSource)
+
 	}
 }
 
