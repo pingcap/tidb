@@ -113,7 +113,12 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			mvIndex = true
 		}
 		indexColLen := ip.Length
-		indexColumnLength, err := getIndexColumnLength(col, ip.Length)
+		if indexColLen != types.UnspecifiedLength &&
+			types.IsTypeChar(col.FieldType.GetType()) &&
+			indexColLen == col.FieldType.GetFlen() {
+			indexColLen = types.UnspecifiedLength
+		}
+		indexColumnLength, err := getIndexColumnLength(col, indexColLen)
 		if err != nil {
 			return nil, false, err
 		}
