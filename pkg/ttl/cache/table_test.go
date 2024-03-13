@@ -248,4 +248,16 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2024-03-10 01:31:00", tm.Format(time.DateTime))
 	require.Equal(t, tz3.String(), tm.Location().String())
+
+	now, err = time.ParseInLocation(time.DateTime, "2024-11-03 03:00:00", tz3)
+	require.NoError(t, err)
+	tm, err = ttlTbl3.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2024-11-03 01:30:00", tm.Format(time.DateTime))
+	require.Equal(t, tz3.String(), tm.Location().String())
+	// 2024-11-03 01:30:00 in America/Los_Angeles has two related time points:
+	// 2024-11-03 01:30:00 -0700 PDT
+	// 2024-11-03 01:30:00 -0800 PST
+	// We must use the earlier one to avoid deleting some unexpected rows.
+	require.Equal(t, int64(9000), now.Unix()-tm.Unix())
 }
