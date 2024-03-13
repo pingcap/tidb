@@ -1186,6 +1186,9 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			indexMergeConds,
 			0,
 		)
+		if finishedIndexMergePath == nil {
+			return nil
+		}
 
 		var mvIndexPartialPathCnt, normalIndexPartialPathCnt int
 		for _, path := range finishedIndexMergePath.PartialIndexPaths {

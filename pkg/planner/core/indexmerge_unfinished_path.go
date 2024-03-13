@@ -237,6 +237,7 @@ func buildAccessPathFromUnfinishedPath(
 					continue
 				}
 			}
+			needSelection = needSelection || unfinishedPath.needRemainFilter
 			maxCountAfterAccess := -1.0
 			for _, p := range paths {
 				maxCountAfterAccess = math.Max(maxCountAfterAccess, p.CountAfterAccess)
