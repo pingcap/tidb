@@ -22,6 +22,7 @@ import (
 	"math"
 	"runtime/trace"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -695,6 +696,24 @@ func (e *PartitionedHashJoinExec) handleFetchAndBuildHashTablePanic(r any) {
 	close(e.buildFinished)
 }
 
+func (e *PartitionedHashJoinExec) mergeRowTables() ([]*rowTable, int) {
+	rowTables := make([]*rowTable, e.partitionNumber)
+	totalSegmentCnt := 0
+	for i := uint(0); i < uint(e.partitionNumber); i++ {
+		rowTables[i] = newRowTable(e.hashTableMeta)
+	}
+	for _, w := range e.BuildWorkers {
+		for partIdx, rt := range w.rtBuilder.rowTables {
+			if rt == nil {
+				continue
+			}
+			rowTables[partIdx].merge(rt)
+			totalSegmentCnt += len(rt.segments)
+		}
+	}
+	return rowTables, totalSegmentCnt
+}
+
 // checkBalance checks whether the segment count of each partition is balanced.
 func (e *PartitionedHashJoinExec) checkBalance(totalSegmentCnt int) bool {
 	isBalanced := e.Concurrency == uint(e.partitionNumber)
@@ -739,98 +758,102 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 			e.stats.fetchAndBuildHashTable = time.Since(start)
 		}()
 	}
-	// buildSideResultCh transfers build side chunk from build side fetch to build hash table.
-	buildSideResultCh := make(chan *chunk.Chunk, 1)
+
+	wg := new(sync.WaitGroup)
+	errCh := make(chan error, 1+e.Concurrency)
+	srcChkCh := e.fetchBuildSideRows(ctx, wg, errCh)
+	e.splitAndAppendToRowTable(srcChkCh, wg, errCh)
+	wg.Wait()
+	close(errCh)
+	if err := <-errCh; err != nil {
+		e.buildFinished <- err
+	}
+
+	rowTables, totalSegmentCnt := e.mergeRowTables()
+	e.joinHashTable = newJoinHashTable(rowTables)
+
+	wg = new(sync.WaitGroup)
+	errCh = make(chan error, 1+e.Concurrency)
+	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh)
+	e.buildHashTable(buildTaskCh, wg, errCh)
+	wg.Wait()
+	close(errCh)
+	if err := <-errCh; err != nil {
+		e.buildFinished <- err
+	}
+}
+
+func (e *PartitionedHashJoinExec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGroup, errCh chan error) chan *chunk.Chunk {
+	srcChkCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
-	fetchBuildSideRowsOk := make(chan error, 1)
+	wg.Add(1)
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.BuildSideTupleFetcher.fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
+			e.BuildSideTupleFetcher.fetchBuildSideRows(ctx, srcChkCh, errCh, doneCh)
 		},
 		func(r any) {
 			if r != nil {
-				fetchBuildSideRowsOk <- util.GetRecoverError(r)
-			}
-			close(fetchBuildSideRowsOk)
-		},
-	)
-	e.workerWg.RunWithRecover(
-		func() {
-			for i := uint(0); i < e.Concurrency; i++ {
-				// TODO: (@XuHuaiyu) check the error
-				e.BuildWorkers[i].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), buildSideResultCh)
-			}
-		},
-		func(r any) {
-			// TODO: @XuHuaiyu handle panic
-			if r != nil {
-
+				errCh <- util.GetRecoverError(r)
 			}
 		},
 	)
+	return srcChkCh
+}
 
-	rowTables := make([]*rowTable, e.partitionNumber)
-	for i := uint(0); i < uint(e.partitionNumber); i++ {
-		rowTables[i] = newRowTable(e.hashTableMeta)
+func (e *PartitionedHashJoinExec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, wg *sync.WaitGroup, errCh chan error) {
+	for i := uint(0); i < e.Concurrency; i++ {
+		wg.Add(1)
+		e.workerWg.RunWithRecover(
+			func() {
+				err := e.BuildWorkers[i].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh)
+				if err != nil {
+					errCh <- err
+				}
+			},
+			func(r any) {
+				if r != nil {
+					errCh <- util.GetRecoverError(r)
+				}
+				wg.Done()
+			},
+		)
 	}
-	// TODO: @XuHuaiyu wait on a waitgroup
-	totalSegmentCnt := 0
-	for _, w := range e.BuildWorkers {
-		for partIdx, rt := range w.rtBuilder.rowTables {
-			if rt == nil {
-				continue
-			}
-			rowTables[partIdx].merge(rt)
-			totalSegmentCnt += len(rt.segments)
-		}
-	}
-	e.joinHashTable = newJoinHashTable(rowTables)
+}
 
+func (e *PartitionedHashJoinExec) createBuildTasks(totalSegmentCnt int, wg *sync.WaitGroup, errCh chan error) chan *buildTask {
 	buildTaskCh := make(chan *buildTask, e.Concurrency)
+	wg.Add(1)
 	e.workerWg.RunWithRecover(
-		func() {
-			e.createTasks(buildTaskCh, totalSegmentCnt)
-		},
+		func() { e.createTasks(buildTaskCh, totalSegmentCnt) },
 		func(r any) {
-			// TODO: @XuHuaiyu handle panic
 			if r != nil {
-
+				errCh <- util.GetRecoverError(r)
 			}
 			close(buildTaskCh)
 		},
 	)
-	e.workerWg.RunWithRecover(
-		func() {
-			for i := uint(0); i < e.Concurrency; i++ {
-				// TODO: (@XuHuaiyu) check the error
-				e.BuildWorkers[i].buildHashTable(buildTaskCh)
-			}
-		},
-		func(r any) {
-			// TODO: @XuHuaiyu handle panic
-			if r != nil {
+	return buildTaskCh
+}
 
-			}
-		},
-	)
-
-	// TODO: Parallel build hash table. Currently not support because `unsafeHashTable` is not thread-safe.
-	// err := e.BuildWorkers[0].buildHashTableForList(buildSideResultCh)
-	// if err != nil {
-	// 	e.buildFinished <- errors.Trace(err)
-	// 	close(doneCh)
-	// }
-	// Wait fetchBuildSideRows be finished.
-	// 1. if buildHashTableForList fails
-	// 2. if probeSideResult.NumRows() == 0, fetchProbeSideChunks will not wait for the build side.
-	// channel.Clear(buildSideResultCh)
-	// // Check whether err is nil to avoid sending redundant error into buildFinished.
-	// if err == nil {
-	// 	if err = <-fetchBuildSideRowsOk; err != nil {
-	// 		e.buildFinished <- err
-	// 	}
-	// }
+func (e *PartitionedHashJoinExec) buildHashTable(buildTaskCh chan *buildTask, wg *sync.WaitGroup, errCh chan error) {
+	for i := uint(0); i < e.Concurrency; i++ {
+		wg.Add(1)
+		e.workerWg.RunWithRecover(
+			func() {
+				err := e.BuildWorkers[i].buildHashTable(buildTaskCh)
+				if err != nil {
+					errCh <- err
+				}
+			},
+			func(r any) {
+				if r != nil {
+					errCh <- util.GetRecoverError(r)
+				}
+				wg.Done()
+			},
+		)
+	}
 }
 
 type buildTask struct {
