@@ -1961,7 +1961,7 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 			sql, _ = sessVars.StmtCtx.SQLDigest()
 		}
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		sql = rmode, sensitiveStmt.SecureText()
+		sql = sensitiveStmt.SecureText()
 	} else {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
