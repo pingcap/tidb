@@ -1056,7 +1056,7 @@ func TestCheckFailReport(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := newInconsistencyKit(t, testkit.NewAsyncTestKit(t, store), newDefaultOpt())
 
-	rmode := tk.sctx.GetSessionVars().EnableRedactNew
+	rmode := tk.sctx.GetSessionVars().EnableRedactLog
 
 	// row more than unique index
 	func() {
