@@ -853,8 +853,8 @@ type buildTask struct {
 // buildHashTableForList builds hash table from `list`.
 func (w *BuildWorker) buildHashTable(taskCh chan *buildTask) error {
 	for task := range taskCh {
-		partIdx, segStartIdx, segStep := task.partitionIdx, task.segStartIdx, task.segStep
-		w.HashJoinCtx.joinHashTable.tables[partIdx].build(segStartIdx, segStep)
+		partIdx, segStartIdx, segEndIdx := task.partitionIdx, task.segStartIdx, task.segEndIdx
+		w.HashJoinCtx.joinHashTable.tables[partIdx].build(segStartIdx, segEndIdx)
 	}
 
 	return nil
