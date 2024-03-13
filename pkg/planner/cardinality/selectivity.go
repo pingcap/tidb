@@ -122,10 +122,10 @@ func Selectivity(
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
-	for i, col := range extractedCols {
-		if i != 0 && extractedCols[i].ID == extractedCols[i-1].ID {
-			continue
-		}
+	extractedCols = slices.CompactFunc(extractedCols, func(a, b *expression.Column) bool {
+		return a.ID == b.ID
+	})
+	for _, col := range extractedCols {
 		id := col.UniqueID
 		colStats := coll.Columns[col.UniqueID]
 		if colStats != nil {
