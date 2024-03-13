@@ -670,7 +670,7 @@ func newErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, 
 }
 
 // ConvertToErrFoundConflictRecords converts ErrFoundDuplicateKeys
-// to ErrFoundDuplicateKeys error.
+// to ErrFoundDataConflictRecords or ErrFoundIndexConflictRecords error.
 func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error {
 	rawKey, rawValue, err := RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	if err != nil {
