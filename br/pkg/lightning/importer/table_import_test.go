@@ -1241,6 +1241,10 @@ type mockPDClient struct {
 	leaderAddr string
 }
 
+func (m *mockPDClient) GetClusterID(_ context.Context) uint64 {
+	return 1
+}
+
 func (m *mockPDClient) GetLeaderAddr() string {
 	return m.leaderAddr
 }

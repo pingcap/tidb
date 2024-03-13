@@ -208,7 +208,7 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	var sql string
 	if node != nil {
 		sql = node.OriginalText()
-		sql = parser.Normalize(sql, m.sctx.GetSessionVars().EnableRedactNew)
+		sql = parser.Normalize(sql, m.sctx.GetSessionVars().EnableRedactLog)
 	}
 	m.recordEvent(sql)
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
