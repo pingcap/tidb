@@ -280,6 +280,10 @@ func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, mat
 	return target, ok
 }
 
+func (is *infoschemaV2) base() *infoSchema {
+	return is.infoSchema
+}
+
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	// Get from the cache.
 	key := tableCacheKey{id, is.schemaVersion}

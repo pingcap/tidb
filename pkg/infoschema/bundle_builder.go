@@ -113,12 +113,7 @@ func (b *bundleInfoBuilder) completeUpdateTables(is *infoSchema) {
 }
 
 func (b *bundleInfoBuilder) updateTableBundles(infoSchemaInterface InfoSchema, tableID int64) {
-	// TODO: refactor
-	is, ok := infoSchemaInterface.(*infoSchema)
-	if !ok {
-		is = infoSchemaInterface.(*infoschemaV2).infoSchema
-	}
-
+	is := infoSchemaInterface.base()
 	tbl, ok := infoSchemaInterface.TableByID(tableID)
 	if !ok {
 		b.deleteBundle(is, tableID)
