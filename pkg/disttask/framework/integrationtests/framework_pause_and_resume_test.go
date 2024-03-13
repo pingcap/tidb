@@ -37,7 +37,12 @@ func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state p
 	require.NoError(t, err)
 	historySubTasksCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, mgr, taskID)
 	require.NoError(t, err)
-	require.Equal(t, expectedCnt, cntByStatesStepOne[state]+cntByStatesStepTwo[state]+int64(historySubTasksCnt))
+	// all subtasks moved to history.
+	if historySubTasksCnt != 0 {
+		require.Equal(t, expectedCnt, int64(historySubTasksCnt))
+	} else {
+		require.Equal(t, expectedCnt, cntByStatesStepOne[state]+cntByStatesStepTwo[state])
+	}
 }
 
 func TestFrameworkPauseAndResume(t *testing.T) {

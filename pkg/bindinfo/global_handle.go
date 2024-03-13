@@ -23,7 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -35,7 +36,6 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -226,7 +226,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			}
 
 			if err != nil {
-				logutil.BgLogger().Warn("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+				logutil.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
 				continue
 			}
 
@@ -238,12 +238,11 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 					// When the memory capacity of bing_cache is not enough,
 					// there will be some memory-related errors in multiple places.
 					// Only needs to be handled once.
-					logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(err))
+					logutil.BindLogger().Warn("BindHandle.Update", zap.Error(err))
 				}
 			} else {
 				newCache.RemoveBinding(sqlDigest)
 			}
-			updateMetrics(metrics.ScopeGlobal, oldBinding, newCache.GetBinding(sqlDigest), true)
 		}
 		return nil
 	})
@@ -440,7 +439,7 @@ func (c *invalidBindingCache) reset() {
 func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	defer func() {
 		if err := h.LoadFromStorageToCache(false); err != nil {
-			logutil.BgLogger().Warn("drop invalid global binding error", zap.Error(err))
+			logutil.BindLogger().Warn("drop invalid global binding error", zap.Error(err))
 		}
 	}()
 
@@ -448,7 +447,7 @@ func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	h.invalidBindings.reset()
 	for _, invalidBinding := range invalidBindings {
 		if _, err := h.dropGlobalBinding(invalidBinding.SQLDigest); err != nil {
-			logutil.BgLogger().Debug("flush bind record failed", zap.String("category", "sql-bind"), zap.Error(err))
+			logutil.BindLogger().Debug("flush bind record failed", zap.Error(err))
 		}
 	}
 }
@@ -546,7 +545,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindingSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
+func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
@@ -586,7 +585,7 @@ func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint str
 			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
 			restoreCtx.DefaultDB = defaultDB
 			if err := n.With.Restore(restoreCtx); err != nil {
-				logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
+				logutil.BindLogger().Debug("restore SQL failed", zap.Error(err))
 				return ""
 			}
 			withEnd := withIdx + len(withSb.String())
@@ -608,7 +607,7 @@ func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint str
 		bindSQL = bindSQL[insertIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	}
-	logutil.Logger(ctx).Debug("unexpected statement type when generating bind SQL", zap.String("category", "sql-bind"), zap.Any("statement", stmtNode))
+	logutil.BindLogger().Debug("unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
 	return ""
 }
 
@@ -687,27 +686,37 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 }
 
 // LoadBindingsFromStorageToCache loads global bindings from storage to the memory cache.
-func (h *globalBindingHandle) LoadBindingsFromStorage(sqlDigest string) (Bindings, error) {
+func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, sqlDigest string) (Bindings, error) {
 	if sqlDigest == "" {
 		return nil, nil
 	}
-	bindings, err, _ := h.syncBindingSingleflight.Do(sqlDigest, func() (any, error) {
+	timeout := time.Duration(sctx.GetSessionVars().LoadBindingTimeout) * time.Millisecond
+	resultChan := h.syncBindingSingleflight.DoChan(sqlDigest, func() (any, error) {
 		return h.loadBindingsFromStorageInternal(sqlDigest)
 	})
-	if err != nil {
-		logutil.BgLogger().Warn("fail to LoadBindingsFromStorageToCache", zap.Error(err))
-		return nil, err
+	select {
+	case result := <-resultChan:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		bindings := result.Val
+		if bindings == nil {
+			return nil, nil
+		}
+		return bindings.(Bindings), nil
+	case <-time.After(timeout):
+		return nil, errors.New("load bindings from storage timeout")
 	}
-	if bindings == nil {
-		return nil, nil
-	}
-	return bindings.(Bindings), err
 }
 
 func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
+	failpoint.Inject("load_bindings_from_storage_internal_timeout", func() {
+		time.Sleep(time.Second)
+	})
 	var bindings Bindings
+	selectStmt := fmt.Sprintf("SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = '%s'", sqlDigest)
 	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
-		rows, _, err := execRows(sctx, "SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = ?", sqlDigest)
+		rows, _, err := execRows(sctx, selectStmt)
 		if err != nil {
 			return err
 		}
@@ -719,7 +728,7 @@ func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) 
 			}
 			_, binding, err := newBinding(sctx, row)
 			if err != nil {
-				logutil.BgLogger().Warn("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+				logutil.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
 				continue
 			}
 			bindings = append(bindings, binding)

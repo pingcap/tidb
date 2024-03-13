@@ -598,7 +598,7 @@ func TestAnalyzeClusteredIndexPrimary(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t0 index primary")
 	tk.MustExec("analyze table t1 index primary")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows(
+	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
 		"test t0  PRIMARY 1 0 1 1 1111 1111 0",
 		"test t1  PRIMARY 1 0 1 1 1111 1111 0"))
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
