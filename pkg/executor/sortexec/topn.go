@@ -93,7 +93,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	return exec.Open(ctx, e.Children(0))
 }
 
-// Close implements the Executor Close interface.，
+// Close implements the Executor Close interface.
 func (e *TopNExec) Close() error {
 	close(e.finishCh)
 	if e.fetched.CompareAndSwap(false, true) {
