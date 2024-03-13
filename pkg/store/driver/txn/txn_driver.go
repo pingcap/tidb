@@ -343,12 +343,13 @@ func (txn *tikvTxn) GetVars() any {
 
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikverr.ErrKeyExist); ok {
-		return txn.extractKeyExistsErr(e.GetKey())
+		return txn.extractKeyExistsErr(e)
 	}
 	return extractKeyErr(err)
 }
 
-func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
+func (txn *tikvTxn) extractKeyExistsErr(errExist *tikverr.ErrKeyExist) error {
+	var key kv.Key = errExist.GetKey()
 	tableID, indexID, isRecord, err := tablecodec.DecodeKeyHead(key)
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
@@ -359,10 +360,19 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
+	var value []byte
 	if txn.IsPipelined() {
-		return genKeyExistsError("UNKNOWN", key.String(), errors.New("currently pipelined dml doesn't extract value from key exists error"))
+		value = errExist.Value
+		if len(value) == 0 {
+			return genKeyExistsError(
+				"UNKNOWN",
+				key.String(),
+				errors.New("The value is empty (a delete)"),
+			)
+		}
+	} else {
+		value, err = txn.KVTxn.GetUnionStore().GetMemBuffer().GetMemDB().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	}
-	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().GetMemDB().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}

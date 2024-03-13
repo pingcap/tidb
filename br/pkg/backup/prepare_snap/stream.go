@@ -70,6 +70,7 @@ func (p *prepareStream) InitConn(ctx context.Context, cli PrepareClient) error {
 	p.cli = cli
 	p.clientLoopHandle, ctx = errgroup.WithContext(ctx)
 	ctx, p.stopBgTasks = context.WithCancel(ctx)
+	log.Info("initializing", zap.Uint64("store", p.storeID))
 	return p.GoLeaseLoop(ctx, p.leaseDuration)
 }
 

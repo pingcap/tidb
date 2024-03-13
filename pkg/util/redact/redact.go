@@ -15,11 +15,16 @@
 package redact
 
 import (
+	"fmt"
 	"strings"
 )
 
-// Redact will redact the input string according to 'mode'. Check 'tidb_redact_log': https://github.com/pingcap/tidb/blob/acf9e3128693a5a13f31027f05f4de41edf8d7b2/pkg/sessionctx/variable/sysvar.go#L2154.
-func Redact(mode string, input string) string {
+var (
+	_ fmt.Stringer = redactStringer{}
+)
+
+// String will redact the input string according to 'mode'. Check 'tidb_redact_log': https://github.com/pingcap/tidb/blob/acf9e3128693a5a13f31027f05f4de41edf8d7b2/pkg/sessionctx/variable/sysvar.go#L2154.
+func String(mode string, input string) string {
 	switch mode {
 	case "MARKER":
 		b := &strings.Builder{}
@@ -40,4 +45,18 @@ func Redact(mode string, input string) string {
 	default:
 		return ""
 	}
+}
+
+type redactStringer struct {
+	mode     string
+	stringer fmt.Stringer
+}
+
+func (s redactStringer) String() string {
+	return String(s.mode, s.stringer.String())
+}
+
+// Stringer will redact the input stringer according to 'mode', similar to String().
+func Stringer(mode string, input fmt.Stringer) redactStringer {
+	return redactStringer{mode, input}
 }

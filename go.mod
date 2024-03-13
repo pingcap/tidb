@@ -81,7 +81,7 @@ require (
 	github.com/otiai10/copy v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
-	github.com/pingcap/errors v0.11.5-0.20231212100244-799fae176cfb
+	github.com/pingcap/errors v0.11.5-0.20240311081613-f97970b88865
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20240227073058-929ab83f9754
@@ -107,7 +107,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240308052415-af4f9a9b6e41
+	github.com/tikv/client-go/v2 v2.0.8-0.20240313022320-d59fea5757db
 	github.com/tikv/pd/client v0.0.0-20240229065730-92a31c12238e
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6

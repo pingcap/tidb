@@ -620,3 +620,18 @@ func TestReplaceRowCheck(t *testing.T) {
 	tk1.MustExec("admin check table _t1")
 	tk1.MustQuery("select a from _t1").Sort().Check(testkit.Rows("1", "2"))
 }
+
+func TestDuplicateKeyErrorMessage(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	err1 := tk.ExecToErr("insert into t1 values(1, 1)")
+	require.Error(t, err1)
+	tk.MustExec("set session tidb_dml_type = bulk")
+	err2 := tk.ExecToErr("insert into t1 values(1, 1)")
+	require.Error(t, err2)
+	require.Equal(t, err1.Error(), err2.Error())
+}

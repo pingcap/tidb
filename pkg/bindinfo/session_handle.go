@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -69,7 +69,7 @@ func NewSessionBindingHandle() SessionBindingHandle {
 func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindings) {
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
-		logutil.BgLogger().Warn("SessionHandle.appendSessionBinding", zap.String("category", "sql-bind"), zap.Error(err))
+		logutil.BindLogger().Warn("SessionHandle.appendSessionBinding", zap.Error(err))
 	}
 }
 
@@ -100,7 +100,8 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
 
 // MatchSessionBinding returns the matched binding for this statement.
 func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	return h.ch.FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
+	matchedBinding, isMatched = h.ch.FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
+	return
 }
 
 // GetAllSessionBindings return all session bind info.
