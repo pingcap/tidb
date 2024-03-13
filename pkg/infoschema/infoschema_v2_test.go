@@ -202,7 +202,7 @@ func TestBundles(t *testing.T) {
 	tableName := model.NewCIStr("test")
 	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
-	is := builder.Build()
+	is := builder.Build(math.MaxUint64)
 	require.Equal(t, 2, len(is.AllSchemas()))
 
 	// create database
@@ -212,7 +212,7 @@ func TestBundles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Equal(t, 3, len(is.AllSchemas()))
 	require.NoError(t, txn.Rollback())
 
@@ -224,7 +224,7 @@ func TestBundles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Equal(t, 1, len(is.SchemaTables(dbInfo.Name)))
 	require.NoError(t, txn.Rollback())
 
@@ -235,7 +235,7 @@ func TestBundles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreatePlacementPolicy, Version: 3, SchemaID: policyInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 1)
 	getPolicyInfo, ok := is.PolicyByName(policyInfo.Name)
 	require.True(t, ok)
@@ -251,7 +251,7 @@ func TestBundles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePlacement, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	getTableInfo, err := is.TableByName(schemaName, tableName)
 	require.NoError(t, err)
 	require.Equal(t, policyRefInfo, getTableInfo.Meta().PlacementPolicyRef)
@@ -265,7 +265,7 @@ func TestBundles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 5, SchemaID: policyInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	getTableInfo, err = is.TableByName(schemaName, tableName)
 	require.NoError(t, err)
 	getPolicyInfo, ok = is.PolicyByName(getTableInfo.Meta().PlacementPolicyRef.Name)
