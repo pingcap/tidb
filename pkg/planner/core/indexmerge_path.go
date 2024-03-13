@@ -1127,6 +1127,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		dnfFilters := expression.FlattenDNFConditions(sf)
 
 		// ++++++++++++++++
+		var mvIndexPathCnt int
 		candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 		for idx := 0; idx < normalPathCnt; idx++ {
 			if ds.possibleAccessPaths[idx].Index != nil && ds.possibleAccessPaths[idx].Index.Global {
@@ -1138,10 +1139,13 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 					!ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L)) {
 				continue
 			}
+			if isMVIndexPath(ds.possibleAccessPaths[idx]) {
+				mvIndexPathCnt++
+			}
 			candidateAccessPaths = append(candidateAccessPaths, ds.possibleAccessPaths[idx])
 		}
 
-		if len(dnfFilters) < 2 {
+		if len(dnfFilters) < 2 || mvIndexPathCnt == 0 {
 			return nil
 		}
 		unfinishedPathList := generateUnfinishedPathsFromExpr(
@@ -1182,6 +1186,19 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			indexMergeConds,
 			0,
 		)
+
+		var mvIndexPartialPathCnt, normalIndexPartialPathCnt int
+		for _, path := range finishedIndexMergePath.PartialIndexPaths {
+			if isMVIndexPath(path) {
+				mvIndexPartialPathCnt++
+			} else {
+				normalIndexPartialPathCnt++
+			}
+		}
+		if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt <= 1 && normalIndexPartialPathCnt == 0) {
+			return nil
+		}
+
 		if finishedIndexMergePath != nil {
 			ds.possibleAccessPaths = append(ds.possibleAccessPaths, finishedIndexMergePath)
 		}
