@@ -47,6 +47,9 @@ func NewExprExtendedImpl(sctx sessionctx.Context) *ExprCtxExtendedImpl {
 	impl := &ExprCtxExtendedImpl{sctx: sctx}
 	// set all optional properties
 	impl.setOptionalProp(currentUserProp(sctx))
+	impl.setOptionalProp(contextopt.NewSessionVarsProvider(sctx))
+	impl.setOptionalProp(contextopt.NewAdvisoryLockPropProvider(sctx))
+	impl.setOptionalProp(contextopt.DDLOwnerInfoProvider(sctx.IsDDLOwner))
 	// When EvalContext is created from a session, it should contain all the optional properties.
 	intest.Assert(impl.props.PropKeySet().IsFull())
 	return impl

@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -108,7 +109,7 @@ func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 	bf.tp.SetFlen(c.flen)
-	sig := &extensionFuncSig{bf, c.funcDef}
+	sig := &extensionFuncSig{baseBuiltinFunc: bf, FunctionDef: c.funcDef}
 	return sig, nil
 }
 
@@ -144,6 +145,8 @@ var _ extension.FunctionContext = extensionFnContext{}
 
 type extensionFuncSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
+
 	extension.FunctionDef
 }
 
@@ -154,17 +157,29 @@ func (b *extensionFuncSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *extensionFuncSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 func (b *extensionFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return "", true, err
+	}
 	if b.EvalTp == types.ETString {
-		fnCtx := newExtensionFnContext(ctx, b)
+		fnCtx := newExtensionFnContext(ctx, vars, b)
 		return b.EvalStringFunc(fnCtx, row)
 	}
 	return b.baseBuiltinFunc.evalString(ctx, row)
 }
 
 func (b *extensionFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
 	if b.EvalTp == types.ETInt {
-		fnCtx := newExtensionFnContext(ctx, b)
+		fnCtx := newExtensionFnContext(ctx, vars, b)
 		return b.EvalIntFunc(fnCtx, row)
 	}
 	return b.baseBuiltinFunc.evalInt(ctx, row)
@@ -172,12 +187,13 @@ func (b *extensionFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 
 type extensionFnContext struct {
 	context.Context
-	ctx EvalContext
-	sig *extensionFuncSig
+	ctx  EvalContext
+	vars *variable.SessionVars
+	sig  *extensionFuncSig
 }
 
-func newExtensionFnContext(ctx EvalContext, sig *extensionFuncSig) extensionFnContext {
-	return extensionFnContext{Context: context.TODO(), ctx: ctx, sig: sig}
+func newExtensionFnContext(ctx EvalContext, vars *variable.SessionVars, sig *extensionFuncSig) extensionFnContext {
+	return extensionFnContext{Context: context.TODO(), ctx: ctx, vars: vars, sig: sig}
 }
 
 func (b extensionFnContext) EvalArgs(row chunk.Row) ([]types.Datum, error) {
@@ -198,15 +214,15 @@ func (b extensionFnContext) EvalArgs(row chunk.Row) ([]types.Datum, error) {
 }
 
 func (b extensionFnContext) ConnectionInfo() *variable.ConnectionInfo {
-	return b.ctx.GetSessionVars().ConnectionInfo
+	return b.vars.ConnectionInfo
 }
 
 func (b extensionFnContext) User() *auth.UserIdentity {
-	return b.ctx.GetSessionVars().User
+	return b.vars.User
 }
 
 func (b extensionFnContext) ActiveRoles() []*auth.RoleIdentity {
-	return b.ctx.GetSessionVars().ActiveRoles
+	return b.vars.ActiveRoles
 }
 
 func (b extensionFnContext) CurrentDB() string {
