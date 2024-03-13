@@ -722,10 +722,6 @@ func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]i
 	panic("TODO")
 }
 
-func (b *Builder) applyCreateTablesV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
 func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	if b.deltaUpdate {
 		b.completeUpdateTablesV2(is)
