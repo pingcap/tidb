@@ -917,10 +917,6 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
 		notInAllTimeRanges := true
-		// TODO: Sometimes it will lose one slow record.
-		// For example, the slow log time span contains in the previous file and the contents are in the second file.
-		// But the first start time in the second file is not in the time range.
-		// The second file will be discard in this function and we lost a record.
 		for _, tr := range e.checker.timeRanges {
 			if start.Compare(tr.endTime) <= 0 {
 				notInAllTimeRanges = false
@@ -973,7 +969,28 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	slices.SortFunc(logFiles, func(i, j logFile) int {
 		return i.start.Compare(j.start)
 	})
-	return logFiles, err
+	// Assume no time range overlap in log files and remove unnecessary log files for compressed files.
+	var ret []logFile
+	for i, file := range logFiles {
+		if i == len(logFiles)-1 || !file.compressed {
+			ret = append(ret, file)
+			continue
+		}
+		start := types.NewTime(types.FromGoTime(logFiles[i].start), mysql.TypeDatetime, types.MaxFsp)
+		// use next file.start as endTime
+		end := types.NewTime(types.FromGoTime(logFiles[i+1].start), mysql.TypeDatetime, types.MaxFsp)
+		inTimeRanges := false
+		for _, tr := range e.checker.timeRanges {
+			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+				inTimeRanges = true
+				break
+			}
+		}
+		if inTimeRanges {
+			ret = append(ret, file)
+		}
+	}
+	return ret, err
 }
 
 func (*slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File, compressed bool) (time.Time, error) {

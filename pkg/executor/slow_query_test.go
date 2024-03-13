@@ -496,11 +496,20 @@ select 7;`
 				}
 			}
 
-			// for compressed file, it will contains more files, so skip check.
 			if k == 0 {
 				require.Equal(t, len(retriever.files), len(cas.files), comment)
 				for i, file := range retriever.files {
-					require.Equal(t, file.file.Name(), cas.files[i])
+					require.Equal(t, file.file.Name(), cas.files[i], comment)
+				}
+			} else {
+				// for compressed file, sometimes it will contains one more file.
+				require.True(t, (len(retriever.files) == len(cas.files)) || (len(retriever.files) == len(cas.files)+1), comment)
+				var fileNames []string
+				for _, file := range retriever.files {
+					fileNames = append(fileNames, strings.TrimSuffix(file.file.Name(), ".gz"))
+				}
+				for _, file := range cas.files {
+					require.Contains(t, fileNames, file, comment)
 				}
 			}
 			require.NoError(t, retriever.close())
