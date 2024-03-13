@@ -529,3 +529,18 @@ func TestPipelinedDMLDisableRetry(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
 }
+
+func TestDuplicateKeyErrorMessage(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	err1 := tk.ExecToErr("insert into t1 values(1, 1)")
+	require.Error(t, err1)
+	tk.MustExec("set session tidb_dml_type = bulk")
+	err2 := tk.ExecToErr("insert into t1 values(1, 1)")
+	require.Error(t, err2)
+	require.Equal(t, err1.Error(), err2.Error())
+}
