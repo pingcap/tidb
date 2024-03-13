@@ -280,6 +280,10 @@ func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, mat
 	return target, ok
 }
 
+func (is *infoschemaV2) base() *infoSchema {
+	return is.infoSchema
+}
+
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	// Get from the cache.
 	key := tableCacheKey{id, is.schemaVersion}
@@ -609,10 +613,6 @@ func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.Sch
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
-func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	return b.applyDropTableOrPartition(m, diff)
-}
-
 func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyRecoverTable(m, diff)
 }
@@ -621,18 +621,12 @@ func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return b.applyCreateTables(m, diff)
 }
 
-func applyReorganizePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func updateInfoSchemaBundles(b *Builder) {
 	if b.enableV2 {
-		return b.applyReorganizePartitionV2(m, diff)
+		b.updateInfoSchemaBundlesV2(&b.infoschemaV2)
+	} else {
+		b.updateInfoSchemaBundles(b.infoSchema)
 	}
-	return b.applyReorganizePartition(m, diff)
-}
-
-func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyExchangeTablePartitionV2(m, diff)
-	}
-	return b.applyExchangeTablePartition(m, diff)
 }
 
 // TODO: more UT to check the correctness.
@@ -724,14 +718,6 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.
 	return nil
 }
 
-func (b *Builder) applyTruncateTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
-func (b *Builder) applyDropTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
 func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	panic("TODO")
 }
@@ -740,10 +726,47 @@ func (b *Builder) applyCreateTablesV2(m *meta.Meta, diff *model.SchemaDiff) ([]i
 	panic("TODO")
 }
 
-func (b *Builder) applyReorganizePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
+func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
+	if b.deltaUpdate {
+		b.completeUpdateTablesV2(is)
+		for tblID := range b.updateTables {
+			b.updateTableBundles(is, tblID)
+		}
+		return
+	}
+
+	// do full update bundles
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	is.ruleBundleMap = make(map[int64]*placement.Bundle)
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			b.updateTableBundles(is, tbl.Meta().ID)
+		}
+	}
 }
 
-func (b *Builder) applyExchangeTablePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
+func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
+	if len(b.updatePolicies) == 0 && len(b.updatePartitions) == 0 {
+		return
+	}
+
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			tblInfo := tbl.Meta()
+			if tblInfo.PlacementPolicyRef != nil {
+				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
+					b.markTableBundleShouldUpdate(tblInfo.ID)
+				}
+			}
+
+			if tblInfo.Partition != nil {
+				for _, par := range tblInfo.Partition.Definitions {
+					if _, ok := b.updatePartitions[par.ID]; ok {
+						b.markTableBundleShouldUpdate(tblInfo.ID)
+					}
+				}
+			}
+		}
+	}
 }

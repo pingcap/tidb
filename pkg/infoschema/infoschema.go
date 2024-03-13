@@ -151,6 +151,10 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 
 var _ InfoSchema = (*infoSchema)(nil)
 
+func (is *infoSchema) base() *infoSchema {
+	return is
+}
+
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
 	tableNames, ok := is.schemaMap[schema.L]
 	if !ok {

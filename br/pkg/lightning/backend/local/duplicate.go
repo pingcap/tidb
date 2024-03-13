@@ -670,7 +670,7 @@ func newErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, 
 }
 
 // ConvertToErrFoundConflictRecords converts ErrFoundDuplicateKeys
-// to ErrFoundDuplicateKeys error.
+// to ErrFoundDataConflictRecords or ErrFoundIndexConflictRecords error.
 func ConvertToErrFoundConflictRecords(originalErr error, tbl table.Table) error {
 	rawKey, rawValue, err := RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	if err != nil {
@@ -1082,6 +1082,7 @@ func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl 
 
 // CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 // the data import by other lightning.
+// TODO: revise the returned arguments to (hasDupe bool, dupInfo *DupInfo, err error) to distinguish the conflict error and the common error
 func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
