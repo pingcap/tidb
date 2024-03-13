@@ -278,7 +278,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
-	var pointExecutor *PointGetExecutor
+	var executor exec.Executor
 	useMaxTS := startTs == math.MaxUint64
 
 	// try to reuse point get executor
@@ -293,24 +293,26 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
 			exec.Init(pointGetPlan)
 			a.PsStmt.Executor = exec
-			pointExecutor = exec
+			executor = exec
 		}
 	}
 
-	if pointExecutor == nil {
+	if executor == nil {
 		b := newExecutorBuilder(a.Ctx, a.InfoSchema)
-		pointExecutor = b.build(a.Plan).(*PointGetExecutor)
+		executor = b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
 		}
+		pointExecutor, ok := executor.(*PointGetExecutor)
 
-		if useMaxTS {
+		// Don't cache the executor for non point-get (table dual) or partitioned tables
+		if ok && useMaxTS && pointExecutor.partitionDefIdx == nil {
 			a.PsStmt.Executor = pointExecutor
 		}
 	}
 
-	if err = exec.Open(ctx, pointExecutor); err != nil {
-		terror.Log(exec.Close(pointExecutor))
+	if err = exec.Open(ctx, executor); err != nil {
+		terror.Log(exec.Close(executor))
 		return nil, err
 	}
 
@@ -330,7 +332,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	return &recordSet{
-		executor:   pointExecutor,
+		executor:   executor,
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
