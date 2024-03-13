@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"runtime/pprof"
 	"strings"
@@ -61,7 +62,7 @@ func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	if err != nil {
 		return nil, err
 	}
-	is := newISBuilder.Build()
+	is := newISBuilder.Build(math.MaxUint64)
 	tbl, err := is.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
