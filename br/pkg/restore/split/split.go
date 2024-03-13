@@ -97,7 +97,7 @@ func PaginateScanRegion(
 	var (
 		lastRegions []*RegionInfo
 		err         error
-		backoffer   = NewWaitRegionOnlineBackoffer().(*WaitRegionOnlineBackoffer)
+		backoffer   = NewWaitRegionOnlineBackoffer()
 	)
 	_ = utils.WithRetry(ctx, func() error {
 		regions := make([]*RegionInfo, 0, 16)
@@ -208,7 +208,7 @@ type WaitRegionOnlineBackoffer struct {
 }
 
 // NewWaitRegionOnlineBackoffer create a backoff to wait region online.
-func NewWaitRegionOnlineBackoffer() utils.Backoffer {
+func NewWaitRegionOnlineBackoffer() *WaitRegionOnlineBackoffer {
 	return &WaitRegionOnlineBackoffer{
 		Stat: utils.InitialRetryState(
 			WaitRegionOnlineAttemptTimes,
@@ -220,6 +220,7 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
+	// TODO(lance6716): why we only backoff when the error is ErrPDBatchScanRegion?
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
