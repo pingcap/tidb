@@ -155,6 +155,10 @@ func mergeUnfinishedPathsWithAND(indexMergePath *unfinishedAccessPath, pathListF
 			if path == nil || pathListFromANDItem[i] == nil {
 				continue
 			}
+			if pathListFromANDItem[i].useFullAccessConds {
+				path.FullAccessConds = append(path.FullAccessConds, pathListFromANDItem[i].FullAccessConds...)
+				continue
+			}
 			for j, tp := range pathListFromANDItem[i].IdxCol2AccessType {
 				// handle the index column where the pathListFromANDItem has point access and the path from partial path
 				// doesn't have point access

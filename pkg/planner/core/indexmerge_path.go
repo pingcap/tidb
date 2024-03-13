@@ -1117,12 +1117,12 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		return nil
 	}
 
-	if len(indexMergeConds) == 1 {
+	for current, filter := range indexMergeConds {
 		// DNF path.
-		sf, ok := indexMergeConds[0].(*expression.ScalarFunction)
+		sf, ok := filter.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			// targeting: cond1 or cond2 or cond3
-			return nil
+			continue
 		}
 		dnfFilters := expression.FlattenDNFConditions(sf)
 
@@ -1166,7 +1166,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		}
 		unfinishedIndexMergePath := unfinishedPathList[0]
 		for i, cnfItem := range indexMergeConds {
-			if i == 0 {
+			if i == current {
 				continue
 			}
 			pathListFromANDItem := generateUnfinishedPathsFromExpr(
@@ -1184,7 +1184,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			candidateAccessPaths,
 			unfinishedIndexMergePath,
 			indexMergeConds,
-			0,
+			current,
 		)
 		if finishedIndexMergePath == nil {
 			return nil
