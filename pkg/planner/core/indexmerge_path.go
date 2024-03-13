@@ -995,7 +995,9 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 				filters,
 				current,
 			)
-			mvIndexPaths = append(mvIndexPaths, finishedIndexMergePath)
+			if finishedIndexMergePath != nil {
+				mvIndexPaths = append(mvIndexPaths, finishedIndexMergePath)
+			}
 
 			// build partial paths for each dnf filter
 			//cannotFit := false
