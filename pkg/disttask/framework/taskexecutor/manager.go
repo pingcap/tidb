@@ -92,25 +92,21 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
 	}
-	if cgroup.InContainer() {
-		limit, version, err := cgroup.GetCgroupMemLimit()
-		if err != nil {
-			return nil, err
-		}
-		if version == cgroup.V2 {
-			// see cgroup.detectMemLimitInV2 for more details.
-			// below are some real memory limits tested on GCP:
-			// node-spec  real-limit  percent
-			// 16c32g        27.83Gi    87%
-			// 32c64g        57.36Gi    89.6%
-			// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
-			// content of 'memory.max' might be 'max', so we use the min of them.
-			adjustedMem := min(totalMem, uint64(float64(limit)*0.88))
-			logger.Info("adjust memory limit for cgroup v2",
-				zap.String("before", units.BytesSize(float64(totalMem))),
-				zap.String("after", units.BytesSize(float64(adjustedMem))))
-			totalMem = adjustedMem
-		}
+	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
+	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
+	if err == nil && version == cgroup.V2 {
+		// see cgroup.detectMemLimitInV2 for more details.
+		// below are some real memory limits tested on GCP:
+		// node-spec  real-limit  percent
+		// 16c32g        27.83Gi    87%
+		// 32c64g        57.36Gi    89.6%
+		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
+		// content of 'memory.max' might be 'max', so we use the min of them.
+		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
+		logger.Info("adjust memory limit for cgroup v2",
+			zap.String("before", units.BytesSize(float64(totalMem))),
+			zap.String("after", units.BytesSize(float64(adjustedMem))))
+		totalMem = adjustedMem
 	}
 	logger.Info("build task executor manager", zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))))
