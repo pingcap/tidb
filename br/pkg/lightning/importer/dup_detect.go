@@ -95,14 +95,6 @@ func makeDupHandlerConstructor(
 			}
 			return &replaceOnDup{w: w}, nil
 		}
-	case config.IgnoreOnDup:
-		return func(ctx context.Context) (duplicate.Handler, error) {
-			w, err := sorter.NewWriter(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return &ignoreOnDup{w: w}, nil
-		}
 	default:
 		panic(fmt.Sprintf("unexpected on-duplicate strategy: %s", onDup))
 	}
@@ -114,7 +106,6 @@ var ErrDuplicateKey = errors.Normalize("duplicate key detected on indexID %d of 
 var (
 	_ duplicate.Handler = &errorOnDup{}
 	_ duplicate.Handler = &replaceOnDup{}
-	_ duplicate.Handler = &ignoreOnDup{}
 )
 
 type errorOnDup struct {
@@ -177,40 +168,6 @@ func (*replaceOnDup) End() error {
 }
 
 func (h *replaceOnDup) Close() error {
-	return h.w.Close()
-}
-
-type ignoreOnDup struct {
-	// All keyIDs except the first one will be written to w.
-	// keyID written to w will be ignored during importing.
-	w     extsort.Writer
-	first bool
-	idxID []byte // Varint encoded indexID
-}
-
-func (h *ignoreOnDup) Begin(key []byte) error {
-	h.first = true
-	idxID, err := decodeIndexID(key)
-	if err != nil {
-		return err
-	}
-	h.idxID = codec.EncodeVarint(nil, idxID)
-	return nil
-}
-
-func (h *ignoreOnDup) Append(keyID []byte) error {
-	if h.first {
-		h.first = false
-		return nil
-	}
-	return h.w.Put(keyID, h.idxID)
-}
-
-func (*ignoreOnDup) End() error {
-	return nil
-}
-
-func (h *ignoreOnDup) Close() error {
 	return h.w.Close()
 }
 
