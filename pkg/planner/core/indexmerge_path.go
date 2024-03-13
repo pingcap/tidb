@@ -1201,10 +1201,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt <= 1 && normalIndexPartialPathCnt == 0) {
 			return nil
 		}
-
-		if finishedIndexMergePath != nil {
-			ds.possibleAccessPaths = append(ds.possibleAccessPaths, finishedIndexMergePath)
-		}
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, finishedIndexMergePath)
 
 		// ****************
 
