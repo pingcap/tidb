@@ -719,9 +719,9 @@ func (e *PartitionedHashJoinExec) createBuildTask(partIdx int, segStartIdx int, 
 	}
 }
 
-func (e *PartitionedHashJoinExec) createTasksForUnbalancedTable(buildTaskCh chan<- *buildTask, partIdx int, segStep int, rowTable *RowTable) {
-	for startIdx := 0; startIdx < len(rowTable.segments); startIdx += segStep {
-		endIdx := mathutil.Min(startIdx+segStep, len(rowTable.segments))
+func (e *PartitionedHashJoinExec) createTasksForUnbalancedTable(buildTaskCh chan<- *buildTask, partIdx int, segStep int, segmentsLen int) {
+	for startIdx := 0; startIdx < segmentsLen; startIdx += segStep {
+		endIdx := mathutil.Min(startIdx+segStep, segmentsLen)
 		buildTaskCh <- e.createBuildTask(partIdx, startIdx, endIdx)
 	}
 }
@@ -733,12 +733,11 @@ func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, tot
 		subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
 
 		for partIdx, subTable := range subTables {
-			rowTable := subTable.rowData
 			if isBalanced {
-				buildTaskCh <- e.createBuildTask(partIdx, 0, len(rowTable.segments))
+				buildTaskCh <- e.createBuildTask(partIdx, 0, len(subTable.rowData.segments))
 				continue
 			}
-			e.createTasksForUnbalancedTable(buildTaskCh, partIdx, segStep, rowTable)
+			e.createTasksForUnbalancedTable(buildTaskCh, partIdx, segStep, len(subTable.rowData.segments))
 		}
 	}
 }
