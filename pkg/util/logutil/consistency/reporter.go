@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -197,7 +198,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 		zap.String("missing_handles", redact.String(rmode, fmt.Sprint(missHd))),
 		zap.String("total_handles", redact.String(rmode, fmt.Sprint(fullHd[:displayFullHdCnt]))),
 	}
-	if rmode != "ON" {
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
 			for i, hd := range missHd {
@@ -224,7 +225,7 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 		zap.Stringer("idxDatum", redact.Stringer(rmode, idxDat)),
 		zap.Stringer("rowDatum", redact.Stringer(rmode, tblDat)),
 	}
-	if rmode != "ON" {
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
 			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
@@ -260,7 +261,7 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		zap.Stringer("index", redact.Stringer(rmode, idxRow)),
 		zap.Stringer("row", redact.Stringer(rmode, tblRow)),
 	}
-	if rmode != "ON" {
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
 			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
