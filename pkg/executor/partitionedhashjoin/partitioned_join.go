@@ -752,7 +752,7 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 			totalRowCnt += int(rt.rowCount())
 		}
 	}
-	e.joinHashTable = newJoinHashTable(e.Concurrency <= uint(e.partitionNumber), rowTables)
+	e.joinHashTable = newJoinHashTable(rowTables)
 	segStep := totalRowCnt / int(e.Concurrency)
 	var buildTaskCh = make(chan *buildTask, e.Concurrency)
 
