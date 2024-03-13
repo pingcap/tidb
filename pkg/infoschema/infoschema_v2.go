@@ -610,23 +610,14 @@ func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.Sch
 }
 
 func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		// return b.applyDropTableOrPartitionV2(m, diff)
-	}
 	return b.applyDropTableOrPartition(m, diff)
 }
 
 func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyRecoverTableV2(m, diff)
-	}
 	return b.applyRecoverTable(m, diff)
 }
 
 func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyCreateTablesV2(m, diff)
-	}
 	return b.applyCreateTables(m, diff)
 }
 
@@ -697,11 +688,40 @@ func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]
 }
 
 func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
-	panic("TODO")
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.Charset = di.Charset
+	newDBInfo.Collate = di.Collate
+	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
 }
 
 func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
-	panic("TODO")
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
 }
 
 func (b *Builder) applyTruncateTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {

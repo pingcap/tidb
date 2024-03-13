@@ -940,6 +940,30 @@ func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 	return tblInfo.ID
 }
 
+func (tc *infoschemaTestContext) runCreateTables(tblNames []string) {
+	if tc.dbInfo == nil {
+		tc.runCreateSchema()
+	}
+	diff := model.SchemaDiff{Type: model.ActionCreateTables, SchemaID: tc.dbInfo.ID}
+	diff.AffectedOpts = make([]*model.AffectedOption, len(tblNames))
+	for i, tblName := range tblNames {
+		tblInfo := internal.MockTableInfo(tc.t, tc.re.Store(), tblName)
+		internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo, tblInfo)
+		diff.AffectedOpts[i] = &model.AffectedOption{
+			SchemaID: tc.dbInfo.ID,
+			TableID:  tblInfo.ID,
+		}
+	}
+
+	tc.applyDiffAndCheck(&diff, func(tc *infoschemaTestContext) {
+		for i, opt := range diff.AffectedOpts {
+			tbl, ok := tc.is.TableByID(opt.TableID)
+			require.True(tc.t, ok)
+			require.Equal(tc.t, tbl.Meta().Name.O, tblNames[i])
+		}
+	})
+}
+
 func (tc *infoschemaTestContext) runDropTable(tblName string) {
 	// createTable
 	tblID := tc.runCreateTable(tblName)
@@ -1021,6 +1045,28 @@ func (tc *infoschemaTestContext) modifyColumn(tblInfo *model.TableInfo) {
 	require.NoError(tc.t, err)
 }
 
+func (tc *infoschemaTestContext) runModifySchemaCharsetAndCollate(charset, collate string) {
+	tc.dbInfo.Charset = charset
+	tc.dbInfo.Collate = collate
+	internal.UpdateDB(tc.t, tc.re.Store(), tc.dbInfo)
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifySchemaCharsetAndCollate, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		schema, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, charset, schema.Charset)
+		require.Equal(tc.t, collate, schema.Collate)
+	})
+}
+
+func (tc *infoschemaTestContext) runModifySchemaDefaultPlacement(policy *model.PolicyRefInfo) {
+	tc.dbInfo.PlacementPolicyRef = policy
+	internal.UpdateDB(tc.t, tc.re.Store(), tc.dbInfo)
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifySchemaDefaultPlacement, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		schema, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, policy, schema.PlacementPolicyRef)
+	})
+}
+
 func (tc *infoschemaTestContext) applyDiffAndCheck(diff *model.SchemaDiff, checkFn func(tc *infoschemaTestContext)) {
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
@@ -1070,6 +1116,13 @@ func TestApplyDiff(t *testing.T) {
 		tc.runCreateTable("test")
 		tc.runModifyTable("test", model.ActionAddColumn)
 		tc.runModifyTable("test", model.ActionModifyColumn)
+
+		tc.runModifySchemaCharsetAndCollate("utf8mb4", "utf8mb4_general_ci")
+		tc.runModifySchemaCharsetAndCollate("utf8", "utf8_unicode_ci")
+		tc.runModifySchemaDefaultPlacement(&model.PolicyRefInfo{
+			Name: model.NewCIStr("test"),
+		})
+		tc.runCreateTables([]string{"test1", "test2"})
 	}
 	// TODO(ywqzzy): check all actions.
 }
