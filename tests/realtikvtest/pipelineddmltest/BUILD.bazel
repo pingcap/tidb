@@ -13,6 +13,7 @@ go_test(
         "//pkg/config",
         "//pkg/kv",
         "//pkg/sessionctx/binloginfo",
+        "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
