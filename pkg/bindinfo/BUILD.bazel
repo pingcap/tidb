@@ -14,6 +14,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/bindinfo",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/bindinfo/internal/logutil",
         "//pkg/bindinfo/norm",
         "//pkg/kv",
         "//pkg/metrics",
@@ -33,7 +34,6 @@ go_library(
         "//pkg/util/hint",
         "//pkg/util/intest",
         "//pkg/util/kvcache",
-        "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/parser",
