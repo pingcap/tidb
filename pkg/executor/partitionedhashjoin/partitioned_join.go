@@ -711,33 +711,23 @@ func (e *PartitionedHashJoinExec) checkBalance(totalSegmentCnt int) bool {
 	return isBalanced
 }
 
-func (e *PartitionedHashJoinExec) createBuildTask(partIdx int, segStartIdx int, segEndIdx int) *buildTask {
-	return &buildTask{
-		partitionIdx: partIdx,
-		segStartIdx:  segStartIdx,
-		segEndIdx:    segEndIdx,
+func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, totalSegmentCnt int) {
+	isBalanced := e.checkBalance(totalSegmentCnt)
+	segStep := totalSegmentCnt / int(e.Concurrency)
+	subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
+	createBuildTask := func(partIdx int, segStartIdx int, segEndIdx int) *buildTask {
+		return &buildTask{partitionIdx: partIdx, segStartIdx: segStartIdx, segEndIdx: segEndIdx}
 	}
-}
 
-func (e *PartitionedHashJoinExec) createTasksForUnbalancedTable(buildTaskCh chan<- *buildTask, partIdx int, segStep int, segmentsLen int) {
-	for startIdx := 0; startIdx < segmentsLen; startIdx += segStep {
-		endIdx := mathutil.Min(startIdx+segStep, segmentsLen)
-		buildTaskCh <- e.createBuildTask(partIdx, startIdx, endIdx)
-	}
-}
-
-func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, totalSegmentCnt int) func() {
-	return func() {
-		isBalanced := e.checkBalance(totalSegmentCnt)
-		segStep := totalSegmentCnt / int(e.Concurrency)
-		subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
-
-		for partIdx, subTable := range subTables {
-			if isBalanced {
-				buildTaskCh <- e.createBuildTask(partIdx, 0, len(subTable.rowData.segments))
-				continue
-			}
-			e.createTasksForUnbalancedTable(buildTaskCh, partIdx, segStep, len(subTable.rowData.segments))
+	for partIdx, subTable := range subTables {
+		segmentsLen := len(subTable.rowData.segments)
+		if isBalanced {
+			buildTaskCh <- createBuildTask(partIdx, 0, segmentsLen)
+			continue
+		}
+		for startIdx := 0; startIdx < segmentsLen; startIdx += segStep {
+			endIdx := mathutil.Min(startIdx+segStep, segmentsLen)
+			buildTaskCh <- createBuildTask(partIdx, startIdx, endIdx)
 		}
 	}
 }
