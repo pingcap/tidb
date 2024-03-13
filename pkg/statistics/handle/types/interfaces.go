@@ -258,10 +258,6 @@ type StatsReadWriter interface {
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
-	// UpdateStatsMetaDelta updates the count and modify_count for the given table in mysql.stats_meta.
-	// It will add the delta to the original count and modify_count. The delta can be positive or negative.
-	UpdateStatsMetaDelta(tableID int64, count, delta int64) (err error)
-
 	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
 	LoadNeededHistograms() (err error)
 

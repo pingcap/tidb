@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -78,11 +79,11 @@ type Data struct {
 	// But this mapping should be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
-	tableCache fifo.Cache[tableCacheKey, table.Table]
-
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
+
+	tableCache fifo.Cache[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -97,7 +98,6 @@ type Data struct {
 func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
 	isd.mu.RLock()
 	defer isd.mu.RUnlock()
-
 	return isd.getVersionByTSNoLock(ts)
 }
 
@@ -162,6 +162,30 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
+func (isd *Data) delete(item tableItem) {
+	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
+}
+
+func (isd *Data) deleteDB(name model.CIStr) {
+	dbInfo, schemaVersion := isd.schemaByName(name)
+	isd.schemaMap.Delete(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+}
+
+func (isd *Data) schemaByName(name model.CIStr) (res *model.DBInfo, schemaVersion int64) {
+	var dbInfo model.DBInfo
+	dbInfo.Name = name
+
+	isd.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
+		if item.Name() != name.L {
+			return false
+		}
+		res = item.dbInfo
+		schemaVersion = item.schemaVersion
+		return false
+	})
+	return res, schemaVersion
+}
+
 func compareByID(a, b tableItem) bool {
 	if a.tableID < b.tableID {
 		return true
@@ -209,6 +233,24 @@ type infoschemaV2 struct {
 	ts            uint64
 	schemaVersion int64
 	*Data
+}
+
+// NewInfoSchemaV2 create infoschemaV2.
+func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
+	return infoschemaV2{
+		infoSchema: &infoSchema{
+			infoSchemaMisc: infoSchemaMisc{
+				policyMap:             map[string]*model.PolicyInfo{},
+				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
+				ruleBundleMap:         map[int64]*placement.Bundle{},
+				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+			},
+			schemaMap:           map[string]*schemaTables{},
+			sortedTablesBuckets: make([]sortedTables, bucketCount),
+		},
+		Data: infoData,
+		r:    r,
+	}
 }
 
 func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, matchFn func(a, b *tableItem) bool) (tableItem, bool) {
@@ -263,11 +305,12 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 
 	// Maybe the table is evicted? need to reload.
 	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.schemaVersion)
-	if err == nil {
-		is.tableCache.Set(key, ret)
-		return ret, true
+	if err != nil || ret == nil {
+		return nil, false
 	}
-	return nil, false
+
+	is.tableCache.Set(key, ret)
+	return ret, true
 }
 
 func isSpecialDB(dbName string) bool {
@@ -343,6 +386,18 @@ func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
 	return
 }
 
+func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
+	rs := make([]model.CIStr, 0, is.Data.schemaMap.Len())
+	is.Data.schemaMap.Scan(func(item schemaItem) bool {
+		rs = append(rs, item.dbInfo.Name)
+		return true
+	})
+	for _, sc := range is.Data.specials {
+		rs = append(rs, sc.dbInfo.Name)
+	}
+	return rs
+}
+
 func (is *infoschemaV2) SchemaMetaVersion() int64 {
 	return is.schemaVersion
 }
@@ -366,7 +421,23 @@ func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	panic("TODO")
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	dbInfos := is.AllSchemas()
+	for _, dbInfo := range dbInfos {
+		tbls := is.SchemaTables(dbInfo.Name)
+		for _, tbl := range tbls {
+			pi := tbl.Meta().GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, p := range pi.Definitions {
+				if p.ID == partitionID {
+					return tbl, dbInfo, &p
+				}
+			}
+		}
+	}
+	return nil, nil, nil
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
@@ -439,32 +510,49 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 
 func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
-	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (ret any, err error) {
+	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
 		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 		m := meta.NewSnapshotMeta(snapshot)
 
-		ret, err = m.GetTable(dbID, tblID)
-		return
+		tblInfo, err := m.GetTable(dbID, tblID)
+
+		if err != nil {
+			// TODO load table panic!!!
+			panic(err)
+		}
+
+		// table removed.
+		if tblInfo == nil {
+			return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+				fmt.Sprintf("(Schema ID %d)", dbID),
+				fmt.Sprintf("(Table ID %d)", tblID),
+			))
+		}
+
+		ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
+		ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
+		allocs := autoid.NewAllocatorsFromTblInfo(r, dbID, tblInfo)
+		// TODO: handle cached table!!!
+		ret, err := tables.TableFromMeta(allocs, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return ret, err
 	})
 
 	if err != nil {
-		// TODO load table panic!!!
-		panic(err)
-	}
-	tblInfo := res.(*model.TableInfo) // TODO: it could be missing!!!
-
-	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
-	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
-	allocs := autoid.NewAllocatorsFromTblInfo(r, dbID, tblInfo)
-	// TODO: handle cached table!!!
-	ret, err := tables.TableFromMeta(allocs, tblInfo)
-	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return ret, nil
+	if res == nil {
+		return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", dbID),
+			fmt.Sprintf("(Table ID %d)", tblID),
+		))
+	}
+	return res.(table.Table), nil
 }
 
 var loadTableSF = &singleflight.Group{}
@@ -480,4 +568,182 @@ func isTableVirtual(id int64) bool {
 func IsV2(is InfoSchema) bool {
 	_, ok := is.(*infoschemaV2)
 	return ok
+}
+
+func applyTableUpdate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyTableUpdateV2(m, diff)
+	}
+	return b.applyTableUpdate(m, diff)
+}
+
+func applyCreateSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	return b.applyCreateSchema(m, diff)
+}
+
+func applyDropSchema(b *Builder, diff *model.SchemaDiff) []int64 {
+	if b.enableV2 {
+		return b.applyDropSchemaV2(diff)
+	}
+	return b.applyDropSchema(diff)
+}
+
+func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyRecoverSchemaV2(m, diff)
+	}
+	return b.applyRecoverSchema(m, diff)
+}
+
+func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
+	}
+	return b.applyModifySchemaCharsetAndCollate(m, diff)
+}
+
+func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaDefaultPlacementV2(m, diff)
+	}
+	return b.applyModifySchemaDefaultPlacement(m, diff)
+}
+
+func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	return b.applyDropTableOrPartition(m, diff)
+}
+
+func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	return b.applyRecoverTable(m, diff)
+}
+
+func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	return b.applyCreateTables(m, diff)
+}
+
+func applyReorganizePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyReorganizePartitionV2(m, diff)
+	}
+	return b.applyReorganizePartition(m, diff)
+}
+
+func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyExchangeTablePartitionV2(m, diff)
+	}
+	return b.applyExchangeTablePartition(m, diff)
+}
+
+// TODO: more UT to check the correctness.
+func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+
+	oldTableID, newTableID := b.getTableIDs(diff)
+	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
+
+	tblIDs, allocs, err := b.dropTableForUpdate(newTableID, oldTableID, oldDBInfo, diff)
+	if err != nil {
+		return nil, err
+	}
+
+	if tableIDIsValid(newTableID) {
+		// All types except DropTableOrView.
+		var err error
+		tblIDs, err = b.applyCreateTable(m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
+	di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok {
+		return nil
+	}
+
+	b.infoData.deleteDB(di.Name)
+	tableIDs := make([]int64, 0, len(di.Tables))
+	for _, tbl := range di.Tables {
+		tableIDs = appendAffectedIDs(tableIDs, tbl)
+	}
+
+	di = di.Clone()
+	for _, id := range tableIDs {
+		b.deleteBundle(b.infoSchema, id)
+		b.applyDropTableV2(diff, di, id, nil)
+	}
+	return tableIDs
+}
+
+func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.Charset = di.Charset
+	newDBInfo.Collate = di.Collate
+	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
+
+func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
+
+func (b *Builder) applyTruncateTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyDropTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyCreateTablesV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyReorganizePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
+}
+
+func (b *Builder) applyExchangeTablePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	panic("TODO")
 }

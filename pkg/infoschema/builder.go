@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -63,40 +62,40 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	b.schemaMetaVersion = diff.Version
 	switch diff.Type {
 	case model.ActionCreateSchema:
-		return nil, b.applyCreateSchema(m, diff)
+		return nil, applyCreateSchema(b, m, diff)
 	case model.ActionDropSchema:
-		return b.applyDropSchema(diff.SchemaID), nil
+		return applyDropSchema(b, diff), nil
 	case model.ActionRecoverSchema:
-		return b.applyRecoverSchema(m, diff)
+		return applyRecoverSchema(b, m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
-		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
+		return nil, applyModifySchemaCharsetAndCollate(b, m, diff)
 	case model.ActionModifySchemaDefaultPlacement:
-		return nil, b.applyModifySchemaDefaultPlacement(m, diff)
+		return nil, applyModifySchemaDefaultPlacement(b, m, diff)
 	case model.ActionCreatePlacementPolicy:
-		return nil, b.applyCreatePolicy(m, diff)
+		return nil, applyCreatePolicy(b, m, diff)
 	case model.ActionDropPlacementPolicy:
-		return b.applyDropPolicy(diff.SchemaID), nil
+		return applyDropPolicy(b, diff.SchemaID), nil
 	case model.ActionAlterPlacementPolicy:
-		return b.applyAlterPolicy(m, diff)
+		return applyAlterPolicy(b, m, diff)
 	case model.ActionCreateResourceGroup:
-		return nil, b.applyCreateOrAlterResourceGroup(m, diff)
+		return nil, applyCreateOrAlterResourceGroup(b, m, diff)
 	case model.ActionAlterResourceGroup:
-		return nil, b.applyCreateOrAlterResourceGroup(m, diff)
+		return nil, applyCreateOrAlterResourceGroup(b, m, diff)
 	case model.ActionDropResourceGroup:
-		return b.applyDropResourceGroup(m, diff), nil
+		return applyDropResourceGroup(b, m, diff), nil
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
-		return b.applyTruncateTableOrPartition(m, diff)
+		return applyTruncateTableOrPartition(b, m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
-		return b.applyDropTableOrPartition(m, diff)
+		return applyDropTableOrPartition(b, m, diff)
 	case model.ActionRecoverTable:
-		return b.applyRecoverTable(m, diff)
+		return applyRecoverTable(b, m, diff)
 	case model.ActionCreateTables:
-		return b.applyCreateTables(m, diff)
+		return applyCreateTables(b, m, diff)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		return b.applyReorganizePartition(m, diff)
+		return applyReorganizePartition(b, m, diff)
 	case model.ActionExchangeTablePartition:
-		return b.applyExchangeTablePartition(m, diff)
+		return applyExchangeTablePartition(b, m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
@@ -108,8 +107,8 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
 }
 
-func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff)
+func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -134,7 +133,7 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 }
 
 func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff)
+	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -148,7 +147,7 @@ func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff
 }
 
 func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff)
+	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -169,7 +168,7 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	// It is not in StatePublic.
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
-		ntIDs, err := b.applyTableUpdate(m, diff)
+		ntIDs, err := applyTableUpdate(b, m, diff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -187,7 +186,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 			OldTableID:  ptID,
 			OldSchemaID: ptSchemaID,
 		}
-		ptIDs, err := b.applyTableUpdate(m, ptDiff)
+		ptIDs, err := applyTableUpdate(b, m, ptDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -220,7 +219,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 		currDiff.OldTableID = ntID
 		currDiff.OldSchemaID = ntSchemaID
 	}
-	ntIDs, err := b.applyTableUpdate(m, currDiff)
+	ntIDs, err := applyTableUpdate(b, m, currDiff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -231,7 +230,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	currDiff.SchemaID = ptSchemaID
 	currDiff.OldTableID = ptID
 	currDiff.OldSchemaID = ptSchemaID
-	ptIDs, err := b.applyTableUpdate(m, currDiff)
+	ptIDs, err := applyTableUpdate(b, m, currDiff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -245,7 +244,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 }
 
 func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff)
+	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -313,7 +312,7 @@ func (b *Builder) applyAffectedOpts(m *meta.Meta, tblIDs []int64, diff *model.Sc
 }
 
 func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff)
+	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -399,9 +398,9 @@ func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model
 				)
 			}
 			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
-			tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
+			tmpIDs = b.applyDropTable(diff, oldDBInfo, oldTableID, tmpIDs)
 		} else {
-			tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
+			tmpIDs = b.applyDropTable(diff, dbInfo, oldTableID, tmpIDs)
 		}
 
 		if oldTableID != newTableID {
@@ -521,8 +520,8 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.Sc
 	return nil
 }
 
-func (b *Builder) applyDropSchema(schemaID int64) []int64 {
-	di, ok := b.infoSchema.SchemaByID(schemaID)
+func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
+	di, ok := b.infoSchema.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil
 	}
@@ -543,9 +542,34 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	di = di.Clone()
 	for _, id := range tableIDs {
 		b.deleteBundle(b.infoSchema, id)
-		b.applyDropTable(di, id, nil)
+		b.applyDropTable(diff, di, id, nil)
 	}
 	return tableIDs
+}
+
+func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+	// Remove the table in temporaryTables
+	if b.infoSchemaMisc.temporaryTableIDs != nil {
+		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
+	}
+
+	table, ok := b.infoschemaV2.TableByID(tableID)
+
+	if !ok {
+		return nil
+	}
+
+	b.infoData.delete(tableItem{
+		dbName:        dbInfo.Name.L,
+		dbID:          dbInfo.ID,
+		tableName:     table.Meta().Name.L,
+		tableID:       table.Meta().ID,
+		schemaVersion: diff.Version,
+	})
+
+	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	b.deleteReferredForeignKeys(dbInfo, tableID)
+	return affected
 }
 
 func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -562,7 +586,7 @@ func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]in
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
 	}
-	return b.applyCreateTables(m, diff)
+	return applyCreateTables(b, m, diff)
 }
 
 // copySortedTables copies sortedTables for old table and new table for later modification.
@@ -726,7 +750,10 @@ func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 	}
 }
 
-func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+	if b.enableV2 {
+		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
+	}
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.infoSchema.sortedTablesBuckets[bucketIdx]
 	idx := sortedTbls.searchTable(tableID)
@@ -745,8 +772,12 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	if b.infoSchema.temporaryTableIDs != nil {
 		delete(b.infoSchema.temporaryTableIDs, tableID)
 	}
-
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	b.deleteReferredForeignKeys(dbInfo, tableID)
+	return affected
+}
+
+func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64) {
 	for i, tblInfo := range dbInfo.Tables {
 		if tblInfo.ID == tableID {
 			if i == len(dbInfo.Tables)-1 {
@@ -758,7 +789,6 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 			break
 		}
 	}
-	return affected
 }
 
 // Build builds and returns the built infoschema.
@@ -781,8 +811,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 	}
 
 	var oldIS *infoSchema
-	if proxy, ok := oldSchema.(*infoschemaV2); ok {
-		oldIS = proxy.infoSchema
+	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
+		oldIS = schemaV2.infoSchema
 	} else {
 		oldIS = oldSchema.(*infoSchema)
 	}
@@ -914,8 +944,8 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			b.addTemporaryTable(tblInfo.ID)
 		}
 	}
-
 	b.addDB(schemaVersion, di, schTbls)
+
 	return nil
 }
 
@@ -961,25 +991,12 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 // NewBuilder creates a new Builder with a Handle.
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
 	return &Builder{
-		enableV2:    variable.SchemaCacheSize.Load() > 0,
-		Requirement: r,
-		infoschemaV2: infoschemaV2{
-			infoSchema: &infoSchema{
-				infoSchemaMisc: infoSchemaMisc{
-					policyMap:             map[string]*model.PolicyInfo{},
-					resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-					ruleBundleMap:         map[int64]*placement.Bundle{},
-					referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
-				},
-				schemaMap:           map[string]*schemaTables{},
-				sortedTablesBuckets: make([]sortedTables, bucketCount),
-			},
-			Data: infoData,
-			r:    r,
-		},
-		dirtyDB:  make(map[string]bool),
-		factory:  factory,
-		infoData: infoData,
+		enableV2:     variable.SchemaCacheSize.Load() > 0,
+		Requirement:  r,
+		infoschemaV2: NewInfoSchemaV2(r, infoData),
+		dirtyDB:      make(map[string]bool),
+		factory:      factory,
+		infoData:     infoData,
 	}
 }
 

@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -306,8 +307,15 @@ func (p *PointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	if p.PartitionDef != nil {
-		res.Partitions = []string{p.PartitionDef.Name.O}
+	if idxPointer := p.PartitionIdx; idxPointer != nil {
+		idx := *idxPointer
+		if idx < 0 {
+			res.Partitions = []string{"dual"}
+		} else {
+			if pi := p.TblInfo.GetPartitionInfo(); pi != nil {
+				res.Partitions = []string{pi.Definitions[idx].Name.O}
+			}
+		}
 	}
 	if p.IndexInfo != nil {
 		index := IndexAccess{
@@ -332,8 +340,19 @@ func (p *BatchPointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	for _, partitionDef := range p.PartitionDefs {
-		res.Partitions = append(res.Partitions, partitionDef.Name.O)
+	uniqueIdx := make(map[int]struct{})
+	for _, idx := range p.PartitionIdxs {
+		uniqueIdx[idx] = struct{}{}
+	}
+	if len(uniqueIdx) > 0 {
+		idxs := make([]int, 0, len(uniqueIdx))
+		for k := range uniqueIdx {
+			idxs = append(idxs, k)
+		}
+		sort.Ints(idxs)
+		for _, idx := range idxs {
+			res.Partitions = append(res.Partitions, p.TblInfo.Partition.Definitions[idx].Name.O)
+		}
 	}
 	if p.IndexInfo != nil {
 		index := IndexAccess{

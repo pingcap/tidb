@@ -217,6 +217,7 @@ go_library(
         "//pkg/util/plancodec",
         "//pkg/util/printer",
         "//pkg/util/ranger",
+        "//pkg/util/redact",
         "//pkg/util/replayer",
         "//pkg/util/resourcegrouptag",
         "//pkg/util/rowDecoder",
