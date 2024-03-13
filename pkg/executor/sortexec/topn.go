@@ -51,12 +51,6 @@ type TopNExec struct {
 	spillAction *topNSpillAction
 }
 
-func (e *TopNExec) keyColumnsCompare(i, j chunk.RowPtr) int {
-	rowI := e.chkHeap.rowChunks.GetRow(i)
-	rowJ := e.chkHeap.rowChunks.GetRow(j)
-	return e.compareRow(rowI, rowJ)
-}
-
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
@@ -79,18 +73,16 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		workers := make([]*topNWorker, concurrency)
 		for i := range workers {
 			chkHeap := &topNChunkHeap{}
-			chkHeap.init(e, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.ByItems, e.keyColumns, e.keyCmpFuncs)
-			workers[i] = newTopNWorker(e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, chkHeap, e)
+			chkHeap.init(e, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow)
+			workers[i] = newTopNWorker(e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap)
 		}
 
 		e.spillHelper = newTopNSpillerHelper(
 			e.finishCh,
 			e.resultChannel,
-			e.keyColumnsCompare,
 			e.memTracker,
 			e.diskTracker,
 			exec.RetTypes(e),
-			exec.TryNewCacheChunk(e.Children(0)),
 			workers,
 			concurrency,
 		)
@@ -119,6 +111,22 @@ func (e *TopNExec) Close() error {
 	e.spillHelper = nil
 	e.spillAction = nil
 	return nil
+}
+
+func (e *TopNExec) greaterRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range e.keyColumns {
+		cmpFunc := e.keyCmpFuncs[i]
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if e.ByItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp > 0 {
+			return true
+		} else if cmp < 0 {
+			return false
+		}
+	}
+	return false
 }
 
 // Next implements the Executor Next interface.
@@ -157,7 +165,7 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.initCompareFuncs()
 	e.buildKeyColumns()
-	e.chkHeap.init(e, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.ByItems, e.keyColumns, e.keyCmpFuncs)
+	e.chkHeap.init(e, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow)
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// adjust required rows by total limit
@@ -207,7 +215,7 @@ func (e *TopNExec) executeTopNNoSpill(ctx context.Context) error {
 		}
 	}
 
-	slices.SortFunc(e.chkHeap.rowPtrs, e.keyColumnsCompare)
+	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
 	return nil
 }
 

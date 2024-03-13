@@ -35,14 +35,14 @@ func newTopNWorker(
 	fetcherAndWorkerSyncer *sync.WaitGroup,
 	errOutputChan chan<- rowWithError,
 	finishChan <-chan struct{},
-	chkHeap *topNChunkHeap,
-	topn *TopNExec) *topNWorker {
+	topn *TopNExec,
+	chkHeap *topNChunkHeap) *topNWorker {
 	return &topNWorker{
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
 		errOutputChan:          errOutputChan,
 		finishChan:             finishChan,
-		topn:                   topn,
 		chkHeap:                chkHeap,
+		topn:                   topn,
 	}
 }
 
@@ -51,7 +51,7 @@ func (t *topNWorker) setChunkChannel(chunkChannel <-chan *chunk.Chunk) {
 }
 
 func (t *topNWorker) fetchChunksAndProcess() {
-	t.chkHeap.init(t.topn, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.ByItems, t.topn.keyColumns, t.topn.keyCmpFuncs)
+	t.chkHeap.init(t.topn, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.greaterRow)
 	for t.fetchChunksAndProcessImpl() {
 	}
 }
@@ -68,7 +68,7 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 
 		if uint64(t.chkHeap.rowChunks.Len()) < t.chkHeap.totalLimit {
 			if !t.chkHeap.isInitialized {
-				t.chkHeap.init(t.topn, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.ByItems, t.topn.keyColumns, t.topn.keyCmpFuncs)
+				t.chkHeap.init(t.topn, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.greaterRow)
 			}
 			t.chkHeap.rowChunks.Add(chk)
 		} else {

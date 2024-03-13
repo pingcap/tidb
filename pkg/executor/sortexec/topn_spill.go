@@ -31,9 +31,8 @@ type topNSpillHelper struct {
 	spillStatus      int
 	sortedRowsInDisk []*chunk.DataInDiskByChunks
 
-	finishCh          <-chan struct{}
-	errOutputChan     chan<- rowWithError
-	keyColumnsCompare func(i, j chunk.RowPtr) int
+	finishCh      <-chan struct{}
+	errOutputChan chan<- rowWithError
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
@@ -41,13 +40,7 @@ type topNSpillHelper struct {
 	fieldTypes         []*types.FieldType
 	tmpSpillChunksChan chan *chunk.Chunk
 
-	// We record max value row in each spill, so that workers
-	// could filter some useless rows.
-	// Though the field type is chunk.Chunk, it contains only one row.
-	// If we set this type as chunk.Row, all rows in the chunk referred
-	// by this row will not release their memory.
-	maxValueRow *chunk.Chunk
-	workers     []*topNWorker
+	workers []*topNWorker
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
@@ -56,11 +49,9 @@ type topNSpillHelper struct {
 func newTopNSpillerHelper(
 	finishCh <-chan struct{},
 	errOutputChan chan<- rowWithError,
-	keyColumnsCompare func(i, j chunk.RowPtr) int,
 	memTracker *memory.Tracker,
 	diskTracker *disk.Tracker,
 	fieldTypes []*types.FieldType,
-	maxValueRow *chunk.Chunk,
 	workers []*topNWorker,
 	concurrencyNum int) *topNSpillHelper {
 	lock := sync.Mutex{}
@@ -70,12 +61,10 @@ func newTopNSpillerHelper(
 		sortedRowsInDisk:   make([]*chunk.DataInDiskByChunks, 0),
 		finishCh:           finishCh,
 		errOutputChan:      errOutputChan,
-		keyColumnsCompare:  keyColumnsCompare,
 		memTracker:         memTracker,
 		diskTracker:        diskTracker,
 		fieldTypes:         fieldTypes,
 		tmpSpillChunksChan: make(chan *chunk.Chunk, concurrencyNum),
-		maxValueRow:        maxValueRow,
 		workers:            workers,
 		bytesConsumed:      atomic.Int64{},
 		bytesLimit:         atomic.Int64{},
@@ -192,9 +181,7 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	if !chkHeap.isRowPtrsInit {
 		chkHeap.initPtrsImpl()
 	}
-	slices.SortFunc(chkHeap.rowPtrs, t.keyColumnsCompare)
-
-	// TODO update maxValueRow
+	slices.SortFunc(chkHeap.rowPtrs, chkHeap.keyColumnsCompare)
 
 	tmpSpillChunk := <-t.tmpSpillChunksChan
 	tmpSpillChunk.Reset()
