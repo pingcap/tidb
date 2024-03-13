@@ -3783,7 +3783,8 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+	if !s.sessionVars.IsAutocommit() || (config.GetGlobalConfig().PessimisticTxn.
+		PessimisticAutoCommit.Load() && !s.GetSessionVars().BulkDMLEnabled) {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			txnMode = ast.Pessimistic
 		}
@@ -3819,7 +3820,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		future:    future,
 		store:     s.store,
 		txnScope:  scope,
-		pipelined: s.isPipelinedDML(),
+		pipelined: s.usePipelinedDmlOrWarn(),
 	})
 	return nil
 }
@@ -4292,8 +4293,8 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 	return indexusage.NewStmtIndexUsageCollector(s.idxUsageCollector)
 }
 
-// isPipelinedDML returns the current statement can be executed as a pipelined DML.
-func (s *session) isPipelinedDML() bool {
+// usePipelinedDmlOrWarn returns the current statement can be executed as a pipelined DML.
+func (s *session) usePipelinedDmlOrWarn() bool {
 	if !s.sessionVars.BulkDMLEnabled {
 		return false
 	}
@@ -4301,19 +4302,46 @@ func (s *session) isPipelinedDML() bool {
 	if stmtCtx == nil {
 		return false
 	}
-	if !stmtCtx.InInsertStmt && !stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt {
-		// not a DML
+	vars := s.GetSessionVars()
+	if (vars.BatchCommit || vars.BatchInsert || vars.BatchDelete) && vars.DMLBatchSize > 0 && variable.EnableBatchDML.Load() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode"))
+		return false
+	}
+	if vars.BinlogClient != nil {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode"))
+		return false
+	}
+	if !(stmtCtx.InInsertStmt || stmtCtx.InDeleteStmt || stmtCtx.InUpdateStmt) {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode"))
 		return false
 	}
 	if s.isInternal() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used for internal SQL. Fallback to standard mode"))
+		return false
+	}
+	if vars.InTxn() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used in transaction. Fallback to standard mode"))
+		return false
+	}
+	if !vars.IsAutocommit() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used in autocommit mode. Fallback to standard mode"))
 		return false
 	}
 	if s.GetSessionVars().ConstraintCheckInPlace {
 		// we enforce that pipelined DML must lazily check key.
 		return false
 	}
-	return s.sessionVars.IsAutocommit() && !s.sessionVars.InTxn() &&
-		!config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() && s.sessionVars.BinlogClient == nil
+
+	// tidb_dml_type=bulk will invalidate the config pessimistic-auto-commit.
+	// The behavior is as if the config is set to false. But we generate a warning for it.
+	if config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+		stmtCtx.AppendWarning(
+			errors.New(
+				"pessimistic-auto-commit config is ignored in favor of Pipelined DML",
+			),
+		)
+	}
+	return true
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
