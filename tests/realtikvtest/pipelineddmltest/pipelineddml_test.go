@@ -128,7 +128,7 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	// not in auto-commit txn
 	tk.MustExec("set session tidb_dml_type = bulk")
 	tk.MustExec("begin")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode.")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode")
 	tk.MustExec("insert into t values(2, 2)")
 	tk.MustExec("commit")
 
@@ -139,13 +139,13 @@ func TestPipelinedDMLNegative(t *testing.T) {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
 	}()
 	tk.MustExec("insert into t values(3, 3)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used in pessimistic autocommit mode. Fallback to standard mode.")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used in pessimistic autocommit mode. Fallback to standard mode")
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(false)
 
 	// binlog is enabled
 	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("insert into t values(4, 4)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode.")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
 	tk.Session().GetSessionVars().BinlogClient = nil
 
 	// in a running txn
@@ -160,7 +160,7 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.Session().GetSessionVars().InRestrictedSQL = true
 	tk.MustExec("insert into t values(6, 6)")
 	tk.Session().GetSessionVars().InRestrictedSQL = false
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used for internal SQL. Fallback to standard mode.")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used for internal SQL. Fallback to standard mode")
 
 	// it's a read statement
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6"))
@@ -170,7 +170,7 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.Session().GetSessionVars().DMLBatchSize = 1
 	variable.EnableBatchDML.Store(true)
 	tk.MustExec("insert into t values(7, 7)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode.")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode")
 	tk.Session().GetSessionVars().BatchDelete = false
 	tk.Session().GetSessionVars().DMLBatchSize = 0
 	variable.EnableBatchDML.Store(false)
