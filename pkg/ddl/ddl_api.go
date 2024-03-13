@@ -4603,38 +4603,35 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 	newPartInfo := newMeta.Partition
 
-	// Only non-partition table to partition table need to check global index.
-	if piOld.Type == model.PartitionTypeNone {
-		for _, index := range newMeta.Indices {
-			if index.Unique {
-				ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
-				if err != nil {
-					return err
-				}
-				if !ck {
-					if ctx.GetSessionVars().EnableGlobalIndex {
-						return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
-					}
-					indexTp := "UNIQUE INDEX"
-					if index.Primary {
-						indexTp = "PRIMARY"
-					}
-					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
-				}
-			}
-		}
-		if newMeta.PKIsHandle {
-			indexCols := []*model.IndexColumn{{
-				Name:   newMeta.GetPkName(),
-				Length: types.UnspecifiedLength,
-			}}
-			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
+	for _, index := range newMeta.Indices {
+		if index.Unique {
+			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
 			if err != nil {
 				return err
 			}
 			if !ck {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+				if ctx.GetSessionVars().EnableGlobalIndex {
+					return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
+				}
+				indexTp := "UNIQUE INDEX"
+				if index.Primary {
+					indexTp = "PRIMARY"
+				}
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 			}
+		}
+	}
+	if newMeta.PKIsHandle {
+		indexCols := []*model.IndexColumn{{
+			Name:   newMeta.GetPkName(),
+			Length: types.UnspecifiedLength,
+		}}
+		ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
+		if err != nil {
+			return err
+		}
+		if !ck {
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 		}
 	}
 
