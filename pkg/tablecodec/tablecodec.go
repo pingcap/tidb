@@ -106,6 +106,11 @@ func CutRowKeyPrefix(key kv.Key) []byte {
 	return key[prefixLen:]
 }
 
+// CutIndexKeyPrefix cuts the index key prefix.
+func CutIndexKeyPrefix(key kv.Key) []byte {
+	return key[len(tablePrefix)+8+len(indexPrefixSep):]
+}
+
 // EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
 func EncodeRecordKey(recordPrefix kv.Key, h kv.Handle) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+h.Len())
