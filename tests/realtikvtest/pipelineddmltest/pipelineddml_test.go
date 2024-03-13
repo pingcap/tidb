@@ -106,6 +106,23 @@ func TestPipelinedDMLPositive(t *testing.T) {
 		require.Error(t, err, stmt)
 		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error(), stmt)
 	}
+
+	// pessimistic-auto-commit is on
+	origPessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+	defer func() {
+		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
+	}()
+	err := panicToErr(
+		func() error {
+			_, err := tk.Exec("insert into t values(3, 3)")
+			return err
+		},
+	)
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+	tk.MustQuery("show warnings").CheckContain("pessimistic-auto-commit config is ignored in favor of Pipelined DML")
+	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(false)
 }
 
 func TestPipelinedDMLNegative(t *testing.T) {
@@ -132,16 +149,6 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2)")
 	tk.MustExec("commit")
 
-	// pessimistic-auto-commit is on
-	origPessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
-	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	defer func() {
-		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
-	}()
-	tk.MustExec("insert into t values(3, 3)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used in pessimistic autocommit mode. Fallback to standard mode")
-	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(false)
-
 	// binlog is enabled
 	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("insert into t values(4, 4)")
@@ -163,7 +170,7 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used for internal SQL. Fallback to standard mode")
 
 	// it's a read statement
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1", "2 2", "4 4", "5 5", "6 6"))
 
 	// for deprecated batch-dml
 	tk.Session().GetSessionVars().BatchDelete = true
