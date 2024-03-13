@@ -67,7 +67,13 @@ func generateUnfinishedPathsFromExpr(
 				continue
 			}
 		}
+		if path.IsTablePath() {
+			continue
+		}
 		idxCols, ok := collectIdxCols(ds.table.Meta(), path.Index, ds.TblCols)
+		if !ok {
+			continue
+		}
 		cnfItems := expression.SplitCNFItems(expr)
 
 		// case 2
@@ -77,23 +83,20 @@ func generateUnfinishedPathsFromExpr(
 				cnfItems,
 				idxCols,
 			)
-			if len(accessFilters) > 0 && tp == 2 {
+			if len(accessFilters) > 0 && (tp == 2 || tp == 4) {
 				ret[i].useFullAccessConds = true
 				ret[i].FullAccessConds = accessFilters
 				ret[i].needRemainFilter = len(remainingFilters) > 0
 				continue
 			}
 		}
-
 		ret[i].IdxCol2AccessType = make([]int, len(idxCols))
+
 		// case 3
 		// todo: invalid handling
-		if !ok {
-			continue
-		}
 		for j, col := range idxCols {
 			for _, cnfItem := range cnfItems {
-				if ok, tp := checkFilter4MVIndexColumn(ds.SCtx(), cnfItem, col); ok && tp == 2 || tp == 1 {
+				if ok, tp := checkFilter4MVIndexColumn(ds.SCtx(), cnfItem, col); ok && tp == 4 || tp == 2 || tp == 1 {
 					ret[i].FullAccessConds = append(ret[i].FullAccessConds, cnfItem)
 					ret[i].IdxCol2AccessType[j] = 2
 					break
@@ -214,7 +217,7 @@ func buildAccessPathFromUnfinishedPath(
 					idxCols,
 					unfinishedPath.Index,
 					ds.tableStats.HistColl)
-				if err != nil || !ok || isIntersection {
+				if err != nil || !ok || (isIntersection && len(paths) > 1) {
 					continue
 				}
 				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.IdxCol2AccessType) > 0
@@ -222,7 +225,12 @@ func buildAccessPathFromUnfinishedPath(
 				// case 2: non-mv index
 				var usedMap []bool
 				paths, needSelection, usedMap = ds.generateNormalIndexPartialPaths4DNF(
-					unfinishedPath.FullAccessConds,
+					[]expression.Expression{
+						expression.ComposeCNFCondition(
+							ds.SCtx().GetExprCtx(),
+							unfinishedPath.FullAccessConds...,
+						),
+					},
 					[]*util.AccessPath{originalPaths[i]},
 				)
 				if len(paths) == 0 || slices.Contains(usedMap, false) {

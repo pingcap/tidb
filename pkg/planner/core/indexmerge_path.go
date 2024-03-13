@@ -1125,49 +1125,114 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			return nil
 		}
 		dnfFilters := expression.FlattenDNFConditions(sf)
-		mvIndexPartialPaths, usedAccessMap, needSelection4MVIndex, err := ds.generateMVIndexPartialPath4Or(normalPathCnt, dnfFilters)
-		if err != nil {
-			return err
+
+		// ++++++++++++++++
+		candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+		for idx := 0; idx < normalPathCnt; idx++ {
+			if ds.possibleAccessPaths[idx].Index != nil && ds.possibleAccessPaths[idx].Index.Global {
+				continue
+			}
+			if (ds.possibleAccessPaths[idx].IsTablePath() &&
+				!ds.isInIndexMergeHints("primary")) ||
+				(!ds.possibleAccessPaths[idx].IsTablePath() &&
+					!ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L)) {
+				continue
+			}
+			candidateAccessPaths = append(candidateAccessPaths, ds.possibleAccessPaths[idx])
 		}
-		if len(mvIndexPartialPaths) == 0 {
-			// no mv index partial paths to be composed of.
+
+		if len(dnfFilters) < 2 {
 			return nil
 		}
-		normalIndexPartialPaths, usedAccessMap, needSelection4NormalIndex, err := ds.generateNormalIndexPartialPath4Or(dnfFilters, usedAccessMap, normalPathCnt)
-		if err != nil {
-			return err
-		}
-		// since multi normal index merge path is handled before, here focus on multi mv index merge, or mv and normal mixed index merge
-		composed := (len(mvIndexPartialPaths) > 1) || (len(mvIndexPartialPaths) == 1 && len(normalIndexPartialPaths) >= 1)
-		if !composed {
-			return nil
-		}
-		// if any cnf item is not used as index partial path, index merge is not valid anymore.
-		if slices.Contains(usedAccessMap, false) {
-			return nil
-		}
-		// todo: make this code as a portal of all index merge path.
-		// if we derive:
-		// 1: some mv index partial path, no normal index path, it means multi mv index merge.
-		// 2: some mv index partial path, some normal index path, it means hybrid index merge.
-		// 3: no mv index partial path, several normal index path, it means multi normal index merge.
-		combinedPartialPaths := append(normalIndexPartialPaths, mvIndexPartialPaths...)
-		if len(combinedPartialPaths) == 0 {
-			return nil
-		}
-		// here we directly use the all index merge conditions as the table filers for simplicity.
-		// todo:  make estimation more correct rather than pruning other index merge path.
-		var indexMergeTableFilters []expression.Expression
-		if needSelection4MVIndex || needSelection4NormalIndex {
-			indexMergeTableFilters = indexMergeConds
-		}
-		mvp := ds.buildPartialPathUp4MVIndex(
-			combinedPartialPaths,
-			false,
-			indexMergeTableFilters,
-			ds.tableStats.HistColl,
+		unfinishedPathList := generateUnfinishedPathsFromExpr(
+			ds,
+			candidateAccessPaths,
+			dnfFilters[0],
 		)
-		ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvp)
+		for i := 1; i < len(dnfFilters); i++ {
+			unfinishedPath2 := generateUnfinishedPathsFromExpr(
+				ds,
+				candidateAccessPaths,
+				dnfFilters[i],
+			)
+			unfinishedPathList = mergeUnfinishedPathsWithOR(unfinishedPathList, unfinishedPath2)
+		}
+		if len(unfinishedPathList) != 1 || len(unfinishedPathList[0].indexMergeOrPartialPaths) == 0 {
+			return nil
+		}
+		unfinishedIndexMergePath := unfinishedPathList[0]
+		for i, cnfItem := range indexMergeConds {
+			if i == 0 {
+				continue
+			}
+			pathListFromANDItem := generateUnfinishedPathsFromExpr(
+				ds,
+				candidateAccessPaths,
+				cnfItem,
+			)
+			unfinishedIndexMergePath = mergeUnfinishedPathsWithAND(unfinishedIndexMergePath, pathListFromANDItem)
+		}
+		if unfinishedIndexMergePath == nil {
+			return nil
+		}
+		finishedIndexMergePath := buildAccessPathFromUnfinishedPath(
+			ds,
+			candidateAccessPaths,
+			unfinishedIndexMergePath,
+			indexMergeConds,
+			0,
+		)
+		if finishedIndexMergePath != nil {
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, finishedIndexMergePath)
+		}
+
+		// ****************
+
+		//mvIndexPartialPaths, usedAccessMap, needSelection4MVIndex, err := ds.generateMVIndexPartialPath4Or(normalPathCnt, dnfFilters)
+		//if err != nil {
+		//	return err
+		//}
+		//if len(mvIndexPartialPaths) == 0 {
+		//	// no mv index partial paths to be composed of.
+		//	return nil
+		//}
+		//normalIndexPartialPaths, usedAccessMap, needSelection4NormalIndex, err := ds.generateNormalIndexPartialPath4Or(dnfFilters, usedAccessMap, normalPathCnt)
+		//if err != nil {
+		//	return err
+		//}
+		//// since multi normal index merge path is handled before, here focus on multi mv index merge, or mv and normal mixed index merge
+		//composed := (len(mvIndexPartialPaths) > 1) || (len(mvIndexPartialPaths) == 1 && len(normalIndexPartialPaths) >= 1)
+		//if !composed {
+		//	return nil
+		//}
+		//// if any cnf item is not used as index partial path, index merge is not valid anymore.
+		//if slices.Contains(usedAccessMap, false) {
+		//	return nil
+		//}
+		//// todo: make this code as a portal of all index merge path.
+		//// if we derive:
+		//// 1: some mv index partial path, no normal index path, it means multi mv index merge.
+		//// 2: some mv index partial path, some normal index path, it means hybrid index merge.
+		//// 3: no mv index partial path, several normal index path, it means multi normal index merge.
+		//combinedPartialPaths := append(normalIndexPartialPaths, mvIndexPartialPaths...)
+		//if len(combinedPartialPaths) == 0 {
+		//	return nil
+		//}
+		//// here we directly use the all index merge conditions as the table filers for simplicity.
+		//// todo:  make estimation more correct rather than pruning other index merge path.
+		//var indexMergeTableFilters []expression.Expression
+		//if needSelection4MVIndex || needSelection4NormalIndex {
+		//	indexMergeTableFilters = indexMergeConds
+		//}
+		//mvp := ds.buildPartialPathUp4MVIndex(
+		//	combinedPartialPaths,
+		//	false,
+		//	indexMergeTableFilters,
+		//	ds.tableStats.HistColl,
+		//)
+		//ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvp)
+		// ++++++++++++++++
+
 		return nil
 	}
 	// CNF path.
@@ -1660,17 +1725,67 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 		if !ok {
 			return false, 0
 		}
+		// tp:
+		// 0: unspecified
+		// 1: non mv-col eq
+		// 2: mv-col multi value or
+		// 3: mv-col multi value and
+		// 4: mv-col single value
+		var virColVals []expression.Expression
+		jsonType := idxCol.GetType().ArrayType()
+		tp := 0
+		var checkOK bool
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
-			return targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]), 2
+			checkOK = targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1])
+			v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
+			if !ok {
+				checkOK = false
+				break
+			}
+			checkOK = true
+			virColVals = append(virColVals, v)
+			tp = 4
 		case ast.JSONContains: // json_contains(a, '1')
-			return targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0]), 3
+			checkOK = targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0])
+			virColVals, ok = jsonArrayExpr2Exprs(sctx.GetExprCtx(), ast.JSONContains, sf.GetArgs()[1], jsonType)
+			if !ok || len(virColVals) == 0 {
+				checkOK = false
+				break
+			}
+			checkOK = true
+			tp = 3
 		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
-			return targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0]) ||
-				targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]), 2
+			var jsonPathIdx int
+			if sf.GetArgs()[0].Equal(sctx.GetExprCtx(), targetJSONPath) {
+				jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+			} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx(), targetJSONPath) {
+				jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
+			} else {
+				checkOK = false
+				break
+			}
+			var ok bool
+			virColVals, ok = jsonArrayExpr2Exprs(sctx.GetExprCtx(), ast.JSONOverlaps, sf.GetArgs()[1-jsonPathIdx], jsonType)
+			if !ok || len(virColVals) == 0 { // forbid empty array for safety
+				checkOK = false
+				break
+			}
+			checkOK = true
+			tp = 2
 		default:
-			return false, 0
+			checkOK = false
+			tp = 0
 		}
+		for _, v := range virColVals {
+			if !isSafeTypeConversion4MVIndexRange(v.GetType(), idxCol.GetType()) {
+				return false, 0
+			}
+		}
+		if (tp == 2 || tp == 3) && len(virColVals) == 1 {
+			tp = 4
+		}
+		return checkOK, tp
 	} else {
 		if sf.FuncName.L != ast.EQ { // only support EQ now
 			return false, 0
