@@ -195,7 +195,7 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	unit := ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit)
 
 	if now.Unix() < 0 {
-		return time.Time{}, errors.Errorf("current time must after UTC time 1970-01-01 00:00:00, but %s", now)
+		return time.Time{}, errors.Errorf("Current time must be after the UTC time January 1, 1970, 00:00:00. Received time: %s.", now)
 	}
 
 	var rows []chunk.Row
