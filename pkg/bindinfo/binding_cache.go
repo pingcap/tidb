@@ -92,7 +92,7 @@ func (fbc *fuzzyBindingCache) shouldMetric() bool {
 func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
 	matchedBinding, isMatched, missingSQLDigest := fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
 	if len(missingSQLDigest) == 0 {
-		if fbc.shouldMetric() {
+		if fbc.shouldMetric() && isMatched {
 			metrics.BindingCacheHitCounter.Inc()
 		}
 		return
