@@ -48,7 +48,7 @@ func TestVariable(t *testing.T) {
 // We limit this feature only for cases meet all the following conditions:
 // 1. tidb_dml_type is set to bulk for the current session
 // 2. the session is running an auto-commit txn
-// 3. pessimistic-auto-commit is turned off
+// 3. (removed, it is now overridden by tidb_dml_type=bulk) pessimistic-auto-commit ~~if off~~
 // 4. binlog is disabled
 // 5. the statement is not running inside a transaction
 // 6. the session is external used
