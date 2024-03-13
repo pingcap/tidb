@@ -350,7 +350,7 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*split.RegionInfo, timeout time.Duration) int {
 	ctx2, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	leftRegions, _ := rs.client.WaitForScatterRegion(ctx2, regionInfos)
+	leftRegions, _ := rs.client.WaitRegionsScattered(ctx2, regionInfos)
 	return leftRegions
 }
 

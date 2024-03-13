@@ -307,13 +307,13 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	}
 
 	startTime := time.Now()
-	notScatterCount, err := local.splitCli.WaitForScatterRegion(ctx, scatterRegions)
-	if notScatterCount == 0 {
+	unScatteredCount, err := local.splitCli.WaitRegionsScattered(ctx, scatterRegions)
+	if unScatteredCount == 0 {
 		log.FromContext(ctx).Info("waiting for scattering regions done",
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
 		log.FromContext(ctx).Info("waiting for scattering regions timeout",
-			zap.Int("notScatterCount", notScatterCount),
+			zap.Int("unScatteredCount", unScatteredCount),
 			zap.Int("allRegionCount", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)),
 			zap.Error(err))

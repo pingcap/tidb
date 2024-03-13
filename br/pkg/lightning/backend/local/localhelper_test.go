@@ -271,7 +271,7 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	return regions, err
 }
 
-func (c *testSplitClient) WaitForScatterRegion(context.Context, []*split.RegionInfo) (int, error) {
+func (c *testSplitClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
 	return 0, nil
 }
 

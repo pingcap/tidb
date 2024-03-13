@@ -78,7 +78,7 @@ type SplitClient interface {
 	// SetStoresLabel add or update specified label of stores. If labelValue
 	// is empty, it clears the label.
 	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
-	// WaitForScatterRegion waits for an already started scatter region action to
+	// WaitRegionsScattered waits for an already started scatter region action to
 	// finish. Internally it will backoff and retry at the maximum internal of 2
 	// seconds. If the scatter makes progress during the retry, it will not decrease
 	// the retry counter. If there's always no progress, it will retry for about 1h.
@@ -86,7 +86,7 @@ type SplitClient interface {
 	//
 	// The first return value is always the number of regions that are not finished
 	// scattering no matter what the error is.
-	WaitForScatterRegion(ctx context.Context, regionInfos []*RegionInfo) (notFinished int, err error)
+	WaitRegionsScattered(ctx context.Context, regionInfos []*RegionInfo) (notFinished int, err error)
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -638,7 +638,7 @@ func (c *pdClient) isScatterRegionFinished(
 	return isScatterRegionFinished(resp)
 }
 
-func (c *pdClient) WaitForScatterRegion(ctx context.Context, regions []*RegionInfo) (int, error) {
+func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionInfo) (int, error) {
 	var (
 		// WithRetry will return multierr which is hard to read, so we use `retErr` to
 		// save the error needed to return.

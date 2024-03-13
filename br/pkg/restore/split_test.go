@@ -232,7 +232,7 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, nil
 }
 
-func (c *TestClient) WaitForScatterRegion(context.Context, []*split.RegionInfo) (int, error) {
+func (c *TestClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
 	return 0, nil
 }
 
@@ -807,7 +807,7 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 	return result, nil
 }
 
-func (f *fakeSplitClient) WaitForScatterRegion(context.Context, []*split.RegionInfo) (int, error) {
+func (f *fakeSplitClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
 	return 0, nil
 }
 
