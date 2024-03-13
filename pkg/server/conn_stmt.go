@@ -581,9 +581,9 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
-	sql := parser.Normalize(cc.preparedStmt2StringNoArgs(stmtID), sv.EnableRedactNew)
-	if m := sv.EnableRedactNew; m != "ON" {
-		sql += redact.Redact(sv.EnableRedactNew, sv.PlanCacheParams.String())
+	sql := parser.Normalize(cc.preparedStmt2StringNoArgs(stmtID), sv.EnableRedactLog)
+	if m := sv.EnableRedactLog; m != errors.RedactLogEnable {
+		sql += redact.String(sv.EnableRedactLog, sv.PlanCacheParams.String())
 	}
 	return sql
 }

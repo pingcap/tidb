@@ -21,6 +21,7 @@ go_library(
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/metrics",
+        "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/cpu",

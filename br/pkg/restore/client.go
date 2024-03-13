@@ -1407,10 +1407,9 @@ func getGroupFiles(files []*backuppb.File, supportMulti bool) [][]*backuppb.File
 // SplitRanges implements TiKVRestorer.
 func (rc *Client) SplitRanges(ctx context.Context,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool) error {
-	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
+	return SplitRanges(ctx, rc, ranges, updateCh, isRawKv)
 }
 
 func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
@@ -1470,7 +1469,6 @@ func (rc *Client) WrapLogFilesIterWithCheckpoint(
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
 	tableIDWithFiles []TableIDWithFiles,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 ) (err error) {
 	start := time.Now()
@@ -1505,6 +1503,7 @@ LOOPFORTABLE:
 	for _, tableIDWithFile := range tableIDWithFiles {
 		tableID := tableIDWithFile.TableID
 		files := tableIDWithFile.Files
+		rules := tableIDWithFile.RewriteRules
 		fileCount += len(files)
 		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
 			filesReplica := rangeFiles
@@ -1520,14 +1519,16 @@ LOOPFORTABLE:
 			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
-					if importErr := func(fs []*backuppb.File) error {
+					if importErr := func(fs []*backuppb.File) (err error) {
 						fileStart := time.Now()
 						defer func() {
-							log.Info("import files done", logutil.Files(filesGroup),
-								zap.Duration("take", time.Since(fileStart)))
-							updateCh.Inc()
+							if err == nil {
+								log.Info("import files done", logutil.Files(filesGroup),
+									zap.Duration("take", time.Since(fileStart)))
+								updateCh.Inc()
+							}
 						}()
-						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
+						return rc.fileImporter.ImportSSTFiles(ectx, fs, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 					}(filesGroup); importErr != nil {
 						return errors.Trace(importErr)
 					}
