@@ -3,6 +3,7 @@ package split
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -314,4 +315,16 @@ func TestWaitForScatterRegions(t *testing.T) {
 	require.Equal(t, 1, left)
 	checkGetOperatorRespsDrained()
 	checkNoRetry()
+}
+
+func TestBackoffOrRetryBackoffer(t *testing.T) {
+	b := NewBackoffOrRetryBackoffer()
+	initVal := b.Attempt()
+
+	b.NextBackoff(ErrBackoffAndDontCount)
+	require.Equal(t, initVal, b.Attempt())
+	b.NextBackoff(ErrBackoff)
+	require.Equal(t, initVal-1, b.Attempt())
+	b.NextBackoff(errors.New("test"))
+	require.Equal(t, 0, b.Attempt())
 }

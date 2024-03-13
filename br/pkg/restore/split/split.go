@@ -232,11 +232,56 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 		})
 		return delayTime
 	}
-	b.Stat.StopRetry()
+	b.Stat.GiveUp()
 	return 0
 }
 
 // Attempt returns the remain attempt times
 func (b *WaitRegionOnlineBackoffer) Attempt() int {
 	return b.Stat.Attempt()
+}
+
+// BackoffOrRetryBackoffer is a backoffer but it may not increase the retry
+// counter. It should be used with ErrBackoff or ErrBackoffAndDontCount.
+type BackoffOrRetryBackoffer struct {
+	state utils.RetryState
+}
+
+var (
+	ErrBackoff             = errors.New("backoff")
+	ErrBackoffAndDontCount = errors.New("backoff and don't count")
+)
+
+// NewBackoffOrRetryBackoffer creates a new backoffer that may backoff or retry.
+//
+// TODO: currently it has the same usage as NewWaitRegionOnlineBackoffer so we
+// don't expose its inner settings.
+func NewBackoffOrRetryBackoffer() *BackoffOrRetryBackoffer {
+	return &BackoffOrRetryBackoffer{
+		state: utils.InitialRetryState(
+			WaitRegionOnlineAttemptTimes,
+			time.Millisecond*10,
+			time.Second*2,
+		),
+	}
+}
+
+// NextBackoff implements utils.Backoffer. For BackoffOrRetryBackoffer, only
+// ErrBackoff and ErrBackoffAndDontCount is meaningful.
+func (b *BackoffOrRetryBackoffer) NextBackoff(err error) time.Duration {
+	if errors.ErrorEqual(err, ErrBackoff) {
+		return b.state.ExponentialBackoff()
+	}
+	if errors.ErrorEqual(err, ErrBackoffAndDontCount) {
+		delay := b.state.ExponentialBackoff()
+		b.state.ReduceRetry()
+		return delay
+	}
+	b.state.GiveUp()
+	return 0
+}
+
+// Attempt implements utils.Backoffer.
+func (b *BackoffOrRetryBackoffer) Attempt() int {
+	return b.state.Attempt()
 }
