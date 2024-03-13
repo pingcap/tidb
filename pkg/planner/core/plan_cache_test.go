@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1796,4 +1797,163 @@ partition by hash (a) partitions 3`)
 	tk.MustQuery(`execute stmt`)
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
+}
+
+func TestPartitionFullCover(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	seed := time.Now().UnixNano()
+	t.Logf("seed: %d", seed)
+	seededRand := rand.New(rand.NewSource(seed))
+	// Ideas for more variations:
+	// - reorder the columns, to test column offsets internally
+	// - Use non-clustered tables
+	// - Use unique key instead of PK
+	// - No unique key / PK
+	tableDefSQL := []struct {
+		sql             string
+		pointGetExplain []string
+	}{
+		{
+			"(a bigint unsigned primary key auto_increment, b varchar(255), c text, key (b))",
+			[]string{"handle:"},
+		},
+		{
+			"(a int primary key auto_increment, b varchar(255), c text, key (b))",
+			[]string{"handle:"},
+		},
+		{
+			"(b varchar(255),a int, c text, key (b), unique key (a))",
+			[]string{"index:a(a)"},
+		},
+	}
+	/* TODO:
+	x HASH partitioning on a single column
+	- HASH partitioning on an expression (one or more columns) NOT SUPPORTED!
+	- KEY partitioning on a single column, int and varchar column types
+	- KEY partitioning on multiple columns NOT SUPPORTED!
+	- LIST partitioning on a single column
+	- LIST partitioning on an expression (one or more columns) NOT SUPPORTED?
+	- LIST COLUMNS partitioning on a single column, varchar
+	- LIST COLUMNS partitioning on multiple columns NOT SUPPORTED!
+	x RANGE partitioning on a single column, int
+	- RANGE partitioning on an expression, unix_timestamp(timestamp_col) Supported?
+	- RANGE partitioning on other expressions or multiple columns NOT SUPPORTED?
+	- RANGE COLUMNS partitioning on a single column, datetime, varchar
+	- RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
+	*/
+	partitionSQL := []string{
+		"partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000))",
+		"partition by hash (a) partitions 7",
+	}
+	rows := 1000
+	rowData := make(map[int]string, rows)
+	ids := make([]int, 0, rows)
+	maxID := 2000000
+	for i := 0; i < rows; i++ {
+		var id int
+		for createNew := true; createNew; _, createNew = rowData[id] {
+			id = seededRand.Intn(maxID)
+		}
+		rowData[id] = randString(seededRand, 1, 20)
+		ids = append(ids, id)
+	}
+	filler := strings.Repeat("Filler", 1024/6)
+
+	for i, testTbl := range tableDefSQL {
+		tblDef := testTbl.sql
+		// Get the non-partitioned results to compare with the partitioned tables ones.
+		tk.MustExec("CREATE TABLE tNorm " + tblDef)
+		for key := range rowData {
+			// TODO: optimize
+			tk.MustExec("INSERT INTO tNorm (a, b, c) VALUES(" + strconv.Itoa(key) + ", '" + rowData[key] + "', '" + filler + "')")
+		}
+		for j, part := range partitionSQL {
+			tk.MustExec("CREATE TABLE t " + tblDef + " " + part)
+			tk.MustExec("insert into t select * from tNorm")
+			// TODO: should we use a failpoint for ignoring global stats instead?
+			tk.MustExec(`analyze table t`)
+
+			/* TODO:
+			- Point get (fast plan)
+			  - Access Condition
+			  - Index lookup - Unique Key lookup
+			  - handle constant - PK Lookup
+			  - IndexConstant
+			- Batch point get (fast plan)
+			  - Via PK/Handle
+			  - Via Index
+			- Table scan
+			- Table Reader (what plan is that? Is always relying on Table scan?)
+			- Index lookup
+			- Index Reader (what plan is that? Is it always relying on Index Lookup?)
+
+			// Possible other variants:
+			// - only a subset of the columns
+			// - columns reordered
+			*/
+
+			// Possible variations:
+			// - static/dynamic tidb_partition_prune_mode
+
+			// Test prepared statements
+			id := ids[seededRand.Intn(len(ids))]
+			idStr := strconv.Itoa(id)
+			tk.MustExec(`prepare stmt from 'select a,b,c from t where a = ?'`)
+			tk.MustExec(`set @a := ` + idStr)
+			tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			id = ids[seededRand.Intn(len(ids))]
+			idStr = strconv.Itoa(id)
+			tk.MustExec(`set @a := ` + idStr)
+			tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			tkProcess := tk.Session().ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+			tk.MustQuery(fmt.Sprintf("explain for connection %d /* i: %d, j:%d */", tkProcess.ID, i, j)).MultiCheckContain(
+				append([]string{"Point_Get"}, testTbl.pointGetExplain...))
+
+			tk.MustQuery(`explain format='brief' select a,b,c from t where a = `+idStr).CheckAt([]int{0}, [][]any{{"Point_Get"}})
+			tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			id = ids[seededRand.Intn(len(ids))]
+			idStr = strconv.Itoa(id)
+			tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+			id = ids[seededRand.Intn(len(ids))]
+			idStr = strconv.Itoa(id)
+			tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			id = ids[seededRand.Intn(len(ids))]
+			idStr = strconv.Itoa(id)
+			tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+			// FastPlan will be used instead of checking plan cache!
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+
+			tk.MustExec("drop table t")
+		}
+		tk.MustExec("DROP TABLE tNorm")
+	}
+}
+
+// randString generates a random string between min and max length
+// with [0-9a-zA-Z]
+// Copy from expression/bench_test.go - randString
+func randString(r *rand.Rand, min, max int) string {
+	n := min + r.Intn(max)
+	buf := make([]byte, n)
+	for i := range buf {
+		x := r.Intn(62)
+		if x < 10 {
+			buf[i] = byte('0' + x)
+		} else if x-10 < 26 {
+			buf[i] = byte('a' + x - 10)
+		} else {
+			buf[i] = byte('A' + x - 10 - 26)
+		}
+	}
+	return string(buf)
 }

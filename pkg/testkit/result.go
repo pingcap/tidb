@@ -156,7 +156,7 @@ func (res *Result) CheckContain(expected string) {
 			}
 		}
 	}
-	comment := fmt.Sprintf("the result doesn't contain the exepected %s\n%s", expected, result.String())
+	comment := fmt.Sprintf("the result doesn't contain the exepected %s\n%s\n%s\n", expected, result.String(), res.comment)
 	res.require.Equal(true, false, comment)
 }
 
