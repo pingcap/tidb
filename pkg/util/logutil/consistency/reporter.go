@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -186,7 +187,7 @@ func decodeMvccRecordValue(bs []byte, colMap map[int64]*types.FieldType, tb *mod
 
 // ReportLookupInconsistent reports inconsistent when index rows is more than record rows.
 func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt int, missHd, fullHd []kv.Handle, missRowIdx []RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactNew
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
 
 	const maxFullHandleCnt = 50
 	displayFullHdCnt := min(len(fullHd), maxFullHandleCnt)
@@ -197,7 +198,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 		zap.String("missing_handles", redact.String(rmode, fmt.Sprint(missHd))),
 		zap.String("total_handles", redact.String(rmode, fmt.Sprint(fullHd[:displayFullHdCnt]))),
 	}
-	if rmode != "ON" {
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
 			for i, hd := range missHd {
@@ -215,7 +216,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 
 // ReportAdminCheckInconsistentWithColInfo reports inconsistent when the value of index row is different from record row.
 func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, handle kv.Handle, colName string, idxDat, tblDat fmt.Stringer, err error, idxRow *RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactNew
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
 	fs := []zap.Field{
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
@@ -224,7 +225,7 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 		zap.Stringer("idxDatum", redact.Stringer(rmode, idxDat)),
 		zap.Stringer("rowDatum", redact.Stringer(rmode, tblDat)),
 	}
-	if rmode != "ON" {
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
 			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
@@ -252,7 +253,7 @@ func (r *RecordData) String() string {
 
 // ReportAdminCheckInconsistent reports inconsistent when single index row not found in record rows.
 func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.Handle, idxRow, tblRow *RecordData) error {
-	rmode := r.Sctx.GetSessionVars().EnableRedactNew
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
 	fs := []zap.Field{
 		zap.String("table_name", r.Tbl.Name.O),
 		zap.String("index_name", r.Idx.Name.O),
@@ -260,7 +261,7 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		zap.Stringer("index", redact.Stringer(rmode, idxRow)),
 		zap.Stringer("row", redact.Stringer(rmode, tblRow)),
 	}
-	if rmode != "ON" {
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
 			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
