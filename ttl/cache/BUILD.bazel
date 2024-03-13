@@ -25,6 +25,7 @@ go_library(
         "//types",
         "//util/chunk",
         "//util/codec",
+        "//util/collate",
         "//util/logutil",
         "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
@@ -47,7 +48,7 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 16,
     deps = [
         "//infoschema",
         "//kv",
