@@ -124,8 +124,8 @@ const (
 )
 
 var (
-	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
-	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
+	minTiKVVersionForConflictStrategy = *semver.New("5.2.0")
+	maxTiKVVersionForConflictStrategy = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
@@ -373,13 +373,13 @@ func NewImportControllerWithPauser(
 			pdhttp.WithTLSConfig(tls.TLSConfig()),
 		).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 
-		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+		if cfg.Conflict.Strategy != config.NoneOnDup {
+			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForConflictStrategy, maxTiKVVersionForConflictStrategy); err != nil {
 				if !berrors.Is(err, berrors.ErrVersionMismatch) {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
 				}
 				log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
-				cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+				cfg.Conflict.Strategy = config.NoneOnDup
 			}
 		}
 
@@ -1530,7 +1530,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
 	defer rc.outputErrorSummary()
 
-	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+	if rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		subCtx, cancel := context.WithCancel(ctx)
 		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
 		if err != nil {

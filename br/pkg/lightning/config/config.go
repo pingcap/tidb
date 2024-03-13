@@ -601,75 +601,6 @@ const (
 	PausePDSchedulerScopeGlobal PausePDSchedulerScope = "global"
 )
 
-// DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
-type DuplicateResolutionAlgorithm int
-
-const (
-	// DupeResAlgNone doesn't detect duplicate.
-	DupeResAlgNone DuplicateResolutionAlgorithm = iota
-
-	// DupeResAlgReplace records all duplicate records like the 'record' algorithm, remove some rows with conflict
-	// and reserve other rows that can be kept and not cause conflict anymore. Users need to analyze the
-	// lightning_task_info.conflict_error_v2 table to check whether the reserved data cater to their need and check whether
-	// they need to add back the correct rows.
-	DupeResAlgReplace
-
-	// DupeResAlgErr reports an error after detecting the first conflict and stops the import process.
-	DupeResAlgErr
-)
-
-// UnmarshalTOML implements the toml.Unmarshaler interface.
-func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v any) error {
-	if val, ok := v.(string); ok {
-		return dra.FromStringValue(val)
-	}
-	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['none', 'replace', 'error']", v)
-}
-
-// MarshalText implements the encoding.TextMarshaler interface.
-func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
-	return []byte(dra.String()), nil
-}
-
-// FromStringValue parses the string value to the DuplicateResolutionAlgorithm.
-func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
-	switch strings.ToLower(s) {
-	case "none":
-		*dra = DupeResAlgNone
-	case "replace":
-		*dra = DupeResAlgReplace
-	case "error":
-		*dra = DupeResAlgErr
-	default:
-		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['none', 'replace', 'error']", s)
-	}
-	return nil
-}
-
-// MarshalJSON implements the json.Marshaler interface.
-func (dra *DuplicateResolutionAlgorithm) MarshalJSON() ([]byte, error) {
-	return []byte(`"` + dra.String() + `"`), nil
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface.
-func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
-	return dra.FromStringValue(strings.Trim(string(data), `"`))
-}
-
-// String implements the fmt.Stringer interface.
-func (dra DuplicateResolutionAlgorithm) String() string {
-	switch dra {
-	case DupeResAlgNone:
-		return "none"
-	case DupeResAlgReplace:
-		return "replace"
-	case DupeResAlgErr:
-		return "error"
-	default:
-		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
-	}
-}
-
 // CompressionType is the config type of compression algorithm.
 type CompressionType int
 
@@ -1056,18 +987,19 @@ type TikvImporter struct {
 	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	// deprecated
-	SendKVPairs             int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	SendKVSize              ByteSize                     `toml:"send-kv-size" json:"send-kv-size"`
-	CompressKVPairs         CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
-	RegionSplitSize         ByteSize                     `toml:"region-split-size" json:"region-split-size"`
-	RegionSplitKeys         int                          `toml:"region-split-keys" json:"region-split-keys"`
-	RegionSplitBatchSize    int                          `toml:"region-split-batch-size" json:"region-split-batch-size"`
-	RegionSplitConcurrency  int                          `toml:"region-split-concurrency" json:"region-split-concurrency"`
-	RegionCheckBackoffLimit int                          `toml:"region-check-backoff-limit" json:"region-check-backoff-limit"`
-	SortedKVDir             string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
-	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
-	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	SendKVPairs             int             `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	SendKVSize              ByteSize        `toml:"send-kv-size" json:"send-kv-size"`
+	CompressKVPairs         CompressionType `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
+	RegionSplitSize         ByteSize        `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys         int             `toml:"region-split-keys" json:"region-split-keys"`
+	RegionSplitBatchSize    int             `toml:"region-split-batch-size" json:"region-split-batch-size"`
+	RegionSplitConcurrency  int             `toml:"region-split-concurrency" json:"region-split-concurrency"`
+	RegionCheckBackoffLimit int             `toml:"region-check-backoff-limit" json:"region-check-backoff-limit"`
+	SortedKVDir             string          `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota               ByteSize        `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency        int             `toml:"range-concurrency" json:"range-concurrency"`
+	// deprecated, use Conflict.Strategy instead.
+	DuplicateResolution string `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	// deprecated, use ParallelImport instead.
 	IncrementalImport bool   `toml:"incremental-import" json:"incremental-import"`
 	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
@@ -1106,7 +1038,6 @@ func (t *TikvImporter) adjust() error {
 				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
 				t.LogicalImportBatchRows)
 		}
-		t.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
 			return common.ErrInvalidConfig.GenWithStack(
@@ -1355,6 +1286,11 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			c.Strategy = i.OnDuplicate
 		}
 	}
+	strategyFromDuplicateResolution := false
+	if c.Strategy == NoneOnDup && i.DuplicateResolution != NoneOnDup {
+		c.Strategy = i.DuplicateResolution
+		strategyFromDuplicateResolution = true
+	}
 	c.Strategy = strings.ToLower(c.Strategy)
 	switch c.Strategy {
 	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, NoneOnDup:
@@ -1368,7 +1304,7 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 				`%s cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`,
 				strategyConfigFrom)
 		}
-		if i.DuplicateResolution != DupeResAlgNone {
+		if !strategyFromDuplicateResolution && i.DuplicateResolution != NoneOnDup {
 			return common.ErrInvalidConfig.GenWithStack(
 				"%s cannot be used with tikv-importer.duplicate-resolution",
 				strategyConfigFrom)
@@ -1392,9 +1328,6 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			c.Threshold = math.MaxInt64
 		case NoneOnDup:
 			c.Threshold = 0
-			if i.DuplicateResolution != DupeResAlgNone {
-				c.Threshold = math.MaxInt64
-			}
 		}
 	}
 	if c.Threshold > 0 && c.Strategy == ErrorOnDup {
@@ -1491,7 +1424,7 @@ func NewConfig() *Config {
 			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
 			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
 			DiskQuota:               ByteSize(math.MaxInt64),
-			DuplicateResolution:     DupeResAlgNone,
+			DuplicateResolution:     NoneOnDup,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 			BlockSize:               16 * 1024,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),

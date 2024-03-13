@@ -42,7 +42,7 @@ func TestInit(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+	cfg.TikvImporter.DuplicateResolution = config.NoneOnDup
 	cfg.Conflict.Strategy = config.ReplaceOnDup
 	cfg.Conflict.PrecheckConflictBeforeImport = true
 	cfg.App.MaxError.Type.Store(10)
@@ -50,7 +50,7 @@ func TestInit(t *testing.T) {
 	cfg.App.TaskInfoSchemaName = "lightning_errors"
 
 	em := New(db, cfg, log.L())
-	require.False(t, em.conflictV1Enabled)
+	require.True(t, em.conflictV1Enabled)
 	require.True(t, em.conflictV2Enabled)
 	require.Equal(t, cfg.App.MaxError.Type.Load(), em.remainingError.Type.Load())
 	require.Equal(t, cfg.Conflict.Threshold, em.conflictErrRemain.Load())
@@ -298,7 +298,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.Conflict.Strategy = config.ReplaceOnDup
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
 	em := New(db, cfg, log.L())
 	err = em.Init(ctx)
@@ -502,7 +502,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.Conflict.Strategy = config.ReplaceOnDup
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
 	em := New(db, cfg, log.L())
 	err = em.Init(ctx)
