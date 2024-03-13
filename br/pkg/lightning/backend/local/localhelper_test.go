@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -272,11 +271,8 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	return regions, err
 }
 
-func (c *testSplitClient) IsScatterRegionFinished(
-	ctx context.Context,
-	regionID uint64,
-) (scatterDone bool, needRescatter bool, scatterErr error) {
-	return true, false, nil
+func (c *testSplitClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
 }
 
 func cloneRegion(region *split.RegionInfo) *split.RegionInfo {
@@ -933,154 +929,4 @@ func TestStoreWriteLimiter(t *testing.T) {
 		}(uint64(i))
 	}
 	wg.Wait()
-}
-
-type scatterRegionCli struct {
-	split.SplitClient
-
-	respM    map[uint64][]*pdpb.GetOperatorResponse
-	scatterM map[uint64]int
-}
-
-func newScatterRegionCli() *scatterRegionCli {
-	return &scatterRegionCli{
-		respM:    make(map[uint64][]*pdpb.GetOperatorResponse),
-		scatterM: make(map[uint64]int),
-	}
-}
-
-func (c *scatterRegionCli) ScatterRegion(_ context.Context, regionInfo *split.RegionInfo) error {
-	c.scatterM[regionInfo.Region.Id]++
-	return nil
-}
-
-func (c *scatterRegionCli) GetOperator(_ context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	ret := c.respM[regionID][0]
-	c.respM[regionID] = c.respM[regionID][1:]
-	return ret, nil
-}
-
-func (c *scatterRegionCli) IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error) {
-	resp, _ := c.GetOperator(ctx, regionID)
-	return split.IsScatterRegionFinished(resp)
-}
-
-func TestWaitForScatterRegions(t *testing.T) {
-	ctx := context.Background()
-
-	regionCnt := 6
-	regions := make([]*split.RegionInfo, 0, regionCnt)
-	for i := 1; i <= regionCnt; i++ {
-		regions = append(regions, &split.RegionInfo{
-			Region: &metapb.Region{
-				Id: uint64(i),
-			},
-		})
-	}
-	checkRespDrained := func(cli *scatterRegionCli) {
-		for i := 1; i <= regionCnt; i++ {
-			require.Len(t, cli.respM[uint64(i)], 0)
-		}
-	}
-	checkNoRetry := func(cli *scatterRegionCli) {
-		for i := 1; i <= regionCnt; i++ {
-			require.Equal(t, 0, cli.scatterM[uint64(i)])
-		}
-	}
-
-	cli := newScatterRegionCli()
-	cli.respM[1] = []*pdpb.GetOperatorResponse{
-		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
-	}
-	cli.respM[2] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("not-scatter-region")},
-	}
-	cli.respM[3] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-	cli.respM[4] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-	cli.respM[5] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("not-scatter-region")},
-	}
-	// should trigger a retry
-	cli.respM[6] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_REPLACE},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-
-	local := &Backend{splitCli: cli}
-	cnt, err := local.waitForScatterRegions(ctx, regions)
-	require.NoError(t, err)
-	require.Equal(t, 6, cnt)
-	for i := 1; i <= 4; i++ {
-		require.Equal(t, 0, cli.scatterM[uint64(i)])
-	}
-	require.Equal(t, 3, cli.scatterM[uint64(5)])
-	require.Equal(t, 1, cli.scatterM[uint64(6)])
-	checkRespDrained(cli)
-
-	// test non-retryable error
-
-	cli = newScatterRegionCli()
-	cli.respM[1] = []*pdpb.GetOperatorResponse{
-		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
-	}
-	cli.respM[2] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("not-scatter-region")},
-	}
-	// mimic non-retryable error
-	cli.respM[3] = []*pdpb.GetOperatorResponse{
-		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_DATA_COMPACTED}}},
-	}
-	local = &Backend{splitCli: cli}
-	cnt, err = local.waitForScatterRegions(ctx, regions)
-	require.ErrorContains(t, err, "get operator error: DATA_COMPACTED")
-	require.Equal(t, 2, cnt)
-	checkRespDrained(cli)
-	checkNoRetry(cli)
-
-	// test backoff is timed-out
-
-	backup := split.WaitRegionOnlineAttemptTimes
-	split.WaitRegionOnlineAttemptTimes = 2
-	t.Cleanup(func() {
-		split.WaitRegionOnlineAttemptTimes = backup
-	})
-
-	cli = newScatterRegionCli()
-	cli.respM[1] = []*pdpb.GetOperatorResponse{
-		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
-	}
-	cli.respM[2] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("not-scatter-region")},
-	}
-	cli.respM[3] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-	cli.respM[4] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING}, // first retry
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING}, // second retry
-	}
-	cli.respM[5] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("not-scatter-region")},
-	}
-	cli.respM[6] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-	local = &Backend{splitCli: cli}
-	cnt, err = local.waitForScatterRegions(ctx, regions)
-	require.ErrorContains(t, err, "wait for scatter region timeout, print the first unfinished region id:4")
-	require.Equal(t, 5, cnt)
-	checkRespDrained(cli)
-	checkNoRetry(cli)
 }

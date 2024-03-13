@@ -1160,7 +1160,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
 					zap.Uint64("timestamp", startTS),
-					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactNew)),
+					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}
 			err1 := cc.writeError(ctx, err)
@@ -1173,7 +1173,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 }
 
 func errStrForLog(err error, redactMode string) string {
-	if redactMode == "ON" {
+	if redactMode == errors.RedactLogEnable {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
 		// password or accesskey
 		if parser.ErrParse.Equal(err) {
@@ -1187,7 +1187,7 @@ func errStrForLog(err error, redactMode string) string {
 	} else {
 		ret = errors.ErrorStack(err)
 	}
-	return redact.Redact(redactMode, ret)
+	return redact.String(redactMode, ret)
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
@@ -2613,7 +2613,7 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		sql = parser.Normalize(sql, cc.ctx.GetSessionVars().EnableRedactNew)
+		sql = parser.Normalize(sql, cc.ctx.GetSessionVars().EnableRedactLog)
 		return executor.FormatSQL(sql).String()
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
@@ -2645,7 +2645,7 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(executor.FormatSQL(string(hack.String(data))).String(), "ON")
+		return parser.Normalize(executor.FormatSQL(string(hack.String(data))).String(), errors.RedactLogEnable)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return executor.FormatSQL(cc.preparedStmt2StringNoArgs(stmtID)).String()
