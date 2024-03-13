@@ -545,7 +545,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindingSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
+func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""

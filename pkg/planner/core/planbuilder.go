@@ -850,7 +850,7 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err = hint.CheckBindingFromHistoryBindable(originNode, bindableStmt.PlanHint); err != nil {
 		return nil, err
 	}
-	bindSQL := bindinfo.GenerateBindingSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
+	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
