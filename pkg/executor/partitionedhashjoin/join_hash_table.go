@@ -87,9 +87,9 @@ func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress unsafe.Pointer)
 	}
 }
 
-func (st *subTable) build(startSegmentIndex int, segmentStep int) {
-	if startSegmentIndex == 0 && segmentStep == 1 {
-		for i := startSegmentIndex; i < len(st.rowData.segments); i += segmentStep {
+func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
+	if startSegmentIndex == 0 && endSegmentIndex == len(st.rowData.segments) {
+		for i := startSegmentIndex; i < endSegmentIndex; i++ {
 			for index := range st.rowData.segments[i].validJoinKeyPos {
 				rowAddress := st.rowData.segments[i].rowLocations[index]
 				hashValue := st.rowData.segments[i].hashValues[index]
@@ -98,7 +98,7 @@ func (st *subTable) build(startSegmentIndex int, segmentStep int) {
 			}
 		}
 	} else {
-		for i := startSegmentIndex; i < len(st.rowData.segments); i += segmentStep {
+		for i := startSegmentIndex; i < endSegmentIndex; i++ {
 			for index := range st.rowData.segments[i].validJoinKeyPos {
 				rowAddress := st.rowData.segments[i].rowLocations[index]
 				hashValue := st.rowData.segments[i].hashValues[index]
