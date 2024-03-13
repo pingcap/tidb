@@ -400,7 +400,7 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	// Prepare a ts collision (currentTxn.StartTS == lastTxn.CommitTS on the same key).
 	// Loop until we successfully prepare one.
 	var lastCommitTS uint64
-	for {
+	for constructionIters := 0; ; constructionIters++ {
 		// Reset the value which might have been updated in the previous attempt.
 		tkPrepare1.MustExec("update t set v = 10 where id = 1")
 
@@ -425,7 +425,6 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 		}
 
 		var err error
-		//tk1.MustQuery("select json_extract(@@tidb_last_txn_info, '$.txn_commit_mode')").Check(testkit.Rows("async_commit"))
 		lastCommitTS, err = strconv.ParseUint(tkPrepare1.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string), 10, 64)
 		assert.NoError(t, err)
 		currentStartTS, err := strconv.ParseUint(tk1.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
@@ -435,6 +434,9 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 		}
 		// Abandon and retry.
 		tk1.MustExec("rollback")
+		if constructionIters >= 1000 {
+			assert.Fail(t, "failed to construct the ts collision situation of async commit transaction")
+		}
 	}
 
 	// Now tk1 is in a transaction whose start ts collides with the commit ts of a previously committed transaction
