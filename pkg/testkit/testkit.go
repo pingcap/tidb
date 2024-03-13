@@ -87,11 +87,6 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		tk.session.SetSessionManager(sm)
 	}
 
-	tk.MustExec("set session tidb_dml_type = bulk")
-	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(1)`))
-	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(1)`))
-	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(1)`))
-
 	return tk
 }
 
