@@ -8,8 +8,14 @@ import (
 
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/engine"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/tikv/client-go/v2/oracle"
+>>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
@@ -46,6 +52,11 @@ type PDRegionScanner struct {
 // If the arguments is `0`, this would remove the service safe point.
 func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
 	return c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
+}
+
+// TODO: It should be able to synchoronize the current TS with the PD.
+func (c PDRegionScanner) FetchCurrentTS(ctx context.Context) (uint64, error) {
+	return oracle.ComposeTS(time.Now().UnixMilli(), 0), nil
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
@@ -152,6 +163,7 @@ type StreamMeta interface {
 	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error
 	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.
 	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
+	PauseTask(ctx context.Context, taskName string) error
 }
 
 var _ tikv.RegionLockResolver = &AdvancerLockResolver{}

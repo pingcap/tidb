@@ -67,7 +67,12 @@ go_test(
         "subscription_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 22,
+=======
+    race = "on",
+    shard_count = 25,
+>>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
@@ -88,8 +93,10 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/logbackuppb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//kv",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
