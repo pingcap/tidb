@@ -78,10 +78,6 @@ func seekPropsOffsets(
 
 			p, err3 := r.nextProp()
 			for {
-				if egCtx.Err() != nil {
-					return egCtx.Err()
-				}
-
 				switch err3 {
 				case nil:
 				case io.EOF:
