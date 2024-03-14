@@ -16,203 +16,82 @@ package priorityqueue
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
-	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
-)
-
-type analyzeType string
-
-const (
-	analyzeTable                analyzeType = "analyzeTable"
-	analyzeIndex                analyzeType = "analyzeIndex"
-	analyzeStaticPartition      analyzeType = "analyzeStaticPartition"
-	analyzeStaticPartitionIndex analyzeType = "analyzeStaticPartitionIndex"
-	analyzePartition            analyzeType = "analyzePartition"
-	analyzePartitionIndex       analyzeType = "analyzePartitionIndex"
 )
 
 // defaultFailedAnalysisWaitTime is the default wait time for the next analysis after a failed analysis.
 // NOTE: this is only used when the average analysis duration is not available.(No successful analysis before)
 const defaultFailedAnalysisWaitTime = 30 * time.Minute
 
-// TableAnalysisJob defines the structure for table analysis job information.
-type TableAnalysisJob struct {
-	// Only set when partitions's indexes need to be analyzed.
-	// It looks like: {"indexName": ["partitionName1", "partitionName2"]}
-	// This is only for newly added indexes.
-	// The reason why we need to record the partition names is that we need to analyze partitions in batch mode
-	// and we don't want to analyze the same partition multiple times.
-	// For example, the user may analyze some partitions manually, and we don't want to analyze them again.
-	PartitionIndexes map[string][]string
+type analyzeType string
 
-	TableSchema string
-	// For physical or global tables.
-	TableName string
-	// For static pruned tables.
-	StaticPartitionName string
-	// Only set when table or static partition's indexes need to be analyzed.
-	// This is only for newly added indexes.
-	Indexes []string
-
-	// Only set when table's partitions need to be analyzed.
-	// This will analyze all indexes and columns of the specified partitions.
-	Partitions []string
-	// The global table ID.
-	TableID int64
-	// The static partition ID.
-	StaticPartitionID int64
-
-	TableStatsVer        int
-	ChangePercentage     float64
-	TableSize            float64
+// Indicators contains some indicators to evaluate the table priority.
+type Indicators struct {
+	// ChangePercentage is the percentage of the changed rows.
+	// Usually, the more the changed rows, the higher the priority.
+	// It is calculated by modifiedCount / last time analysis count.
+	ChangePercentage float64
+	// TableSize is the table size in rows * len(columns).
+	TableSize float64
+	// LastAnalysisDuration is the duration from the last analysis to now.
+	// In seconds.
 	LastAnalysisDuration time.Duration
-	Weight               float64
 }
 
-// NewStaticPartitionTableAnalysisJob creates a new TableAnalysisJob for analyzing the static partition.
-func NewStaticPartitionTableAnalysisJob(
-	schema, globalTableName string,
-	globalTableID int64,
-	partitionName string,
-	partitionID int64,
-	indexes []string,
-	tableStatsVer int,
-	changePercentage float64,
-	tableSize float64,
-	lastAnalysisDuration time.Duration,
-) *TableAnalysisJob {
-	return &TableAnalysisJob{
-		TableSchema:          schema,
-		TableName:            globalTableName,
-		TableID:              globalTableID,
-		StaticPartitionName:  partitionName,
-		StaticPartitionID:    partitionID,
-		Indexes:              indexes,
-		TableStatsVer:        tableStatsVer,
-		ChangePercentage:     changePercentage,
-		TableSize:            tableSize,
-		LastAnalysisDuration: lastAnalysisDuration,
-	}
+// AnalysisJob is the interface for the analysis job.
+type AnalysisJob interface {
+	// IsValidToAnalyze checks whether the table is valid to analyze.
+	// It checks the last failed analysis duration and the average analysis duration.
+	// If the last failed analysis duration is less than 2 times the average analysis duration,
+	// we skip this table to avoid too much failed analysis.
+	IsValidToAnalyze(
+		sctx sessionctx.Context,
+	) (bool, string)
+
+	// Analyze executes the analyze statement within a transaction.
+	Analyze(
+		statsHandle statstypes.StatsHandle,
+		sysProcTracker sessionctx.SysProcTracker,
+	) error
+
+	// SetWeight sets the weight of the job.
+	SetWeight(weight float64)
+
+	// GetWeight gets the weight of the job.
+	GetWeight() float64
+
+	// HasNewlyAddedIndex checks whether the job has newly added index.
+	HasNewlyAddedIndex() bool
+
+	// GetIndicators gets the indicators of the job.
+	GetIndicators() Indicators
+
+	fmt.Stringer
 }
 
-// NewNonPartitionedTableAnalysisJob creates a new TableAnalysisJob for analyzing the table or partition.
-func NewNonPartitionedTableAnalysisJob(
-	schema, tableName string,
-	tableID int64,
-	indexes []string,
-	tableStatsVer int,
-	changePercentage float64,
-	tableSize float64,
-	lastAnalysisDuration time.Duration,
-) *TableAnalysisJob {
-	return &TableAnalysisJob{
-		TableSchema:          schema,
-		TableName:            tableName,
-		TableID:              tableID,
-		Indexes:              indexes,
-		TableStatsVer:        tableStatsVer,
-		ChangePercentage:     changePercentage,
-		TableSize:            tableSize,
-		LastAnalysisDuration: lastAnalysisDuration,
-	}
-}
-
-// NewDynamicPartitionTableAnalysisJob creates a new TableAnalysisJob for analyzing dynamic partitioned table.
-func NewDynamicPartitionTableAnalysisJob(
-	schema, tableName string,
-	tableID int64,
-	partitions []string,
-	partitionIndexes map[string][]string,
-	tableStatsVer int,
-	changePercentage float64,
-	tableSize float64,
-	lastAnalysisDuration time.Duration,
-) *TableAnalysisJob {
-	return &TableAnalysisJob{
-		TableSchema:          schema,
-		TableName:            tableName,
-		TableID:              tableID,
-		Partitions:           partitions,
-		PartitionIndexes:     partitionIndexes,
-		TableStatsVer:        tableStatsVer,
-		ChangePercentage:     changePercentage,
-		TableSize:            tableSize,
-		LastAnalysisDuration: lastAnalysisDuration,
-	}
-}
-
-// HasNewlyAddedIndex checks whether the table has newly added index.
-func (j *TableAnalysisJob) HasNewlyAddedIndex() bool {
-	return len(j.PartitionIndexes) > 0 || len(j.Indexes) > 0
-}
-
-// IsValidToAnalyze checks whether the table is valid to analyze.
-// It checks the last failed analysis duration and the average analysis duration.
-// If the last failed analysis duration is less than 2 times the average analysis duration,
-// we skip this table to avoid too much failed analysis.
-func (j *TableAnalysisJob) IsValidToAnalyze(
-	sctx sessionctx.Context,
-) (bool, string) {
+// Usually, we should not put this kind of table into the queue.
+// This is just a double check.
+func isValidWeight(weight float64) (bool, string) {
 	// No need to analyze this table.
-	// Usually, we should not put this kind of table into the queue.
-	// This is just a double check.
-	if j.Weight <= 0 {
-		return false, fmt.Sprintf("weight is less than or equal to 0: %.4f", j.Weight)
-	}
-
-	// Check whether the table or partition is valid to analyze.
-	if len(j.Partitions) > 0 || len(j.PartitionIndexes) > 0 {
-		// Any partition is invalid to analyze, the whole table is invalid to analyze.
-		// Because we need to analyze partitions in batch mode.
-		partitions := append(j.Partitions, getPartitionNames(j.PartitionIndexes)...)
-		if valid, failReason := isValidToAnalyze(
-			sctx,
-			j.TableSchema,
-			j.TableName,
-			partitions...,
-		); !valid {
-			return false, failReason
-		}
-	} else if j.StaticPartitionName != "" {
-		// For static partition table we only need to check the specified static partition.
-		partitionNames := []string{j.StaticPartitionName}
-		if valid, failReason := isValidToAnalyze(
-			sctx,
-			j.TableSchema,
-			j.TableName,
-			partitionNames...,
-		); !valid {
-			return false, failReason
-		}
-	} else {
-		if valid, failReason := isValidToAnalyze(
-			sctx,
-			j.TableSchema,
-			j.TableName,
-		); !valid {
-			return false, failReason
-		}
+	intest.Assert(weight > 0, "weight is less than or equal to 0")
+	if weight <= 0 {
+		return false, fmt.Sprintf("weight is less than or equal to 0: %.4f", weight)
 	}
 
 	return true, ""
 }
 
-func getPartitionNames(partitionIndexes map[string][]string) []string {
-	names := make([]string, 0, len(partitionIndexes))
-	for _, partitionNames := range partitionIndexes {
-		names = append(names, partitionNames...)
-	}
-	return names
-}
-
+// isValidToAnalyze checks whether the table is valid to analyze.
+// It checks the last failed analysis duration and the average analysis duration.
+// If the last failed analysis duration is less than 2 times the average analysis duration,
+// we skip this table to avoid too much failed analysis. Because the last analysis just failed,
+// we don't want to block the queue by analyzing it again.
 func isValidToAnalyze(
 	sctx sessionctx.Context,
 	schema, table string,
@@ -221,7 +100,7 @@ func isValidToAnalyze(
 	lastFailedAnalysisDuration, err :=
 		GetLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
-		statslogutil.StatsLogger().Warn(
+		logutil.SingletonStatsSamplerLogger().Warn(
 			"Fail to get last failed analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -234,7 +113,7 @@ func isValidToAnalyze(
 	averageAnalysisDuration, err :=
 		GetAverageAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
-		statslogutil.StatsLogger().Warn(
+		logutil.SingletonStatsSamplerLogger().Warn(
 			"Fail to get average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -247,7 +126,7 @@ func isValidToAnalyze(
 	// Last analysis just failed, we should not analyze it again.
 	if lastFailedAnalysisDuration == justFailed {
 		// The last analysis failed, we should not analyze it again.
-		statslogutil.StatsLogger().Info(
+		logutil.SingletonStatsSamplerLogger().Info(
 			"Skip analysis because the last analysis just failed",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -260,7 +139,7 @@ func isValidToAnalyze(
 	// Skip this table to avoid too much failed analysis.
 	onlyFailedAnalysis := lastFailedAnalysisDuration != NoRecord && averageAnalysisDuration == NoRecord
 	if onlyFailedAnalysis && lastFailedAnalysisDuration < defaultFailedAnalysisWaitTime {
-		statslogutil.StatsLogger().Info(
+		logutil.SingletonStatsSamplerLogger().Info(
 			fmt.Sprintf("Skip analysis because the last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime),
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -274,7 +153,7 @@ func isValidToAnalyze(
 	meetSkipCondition := lastFailedAnalysisDuration != NoRecord &&
 		lastFailedAnalysisDuration < 2*averageAnalysisDuration
 	if meetSkipCondition {
-		statslogutil.StatsLogger().Info(
+		logutil.SingletonStatsSamplerLogger().Info(
 			"Skip analysis because the last failed analysis duration is less than 2 times the average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
@@ -286,222 +165,4 @@ func isValidToAnalyze(
 	}
 
 	return true, ""
-}
-
-// Execute executes the analyze statement.
-func (j *TableAnalysisJob) Execute(
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-) error {
-	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		j.Analyze(sctx, statsHandle, sysProcTracker)
-		return nil
-	})
-}
-
-// Analyze performs analysis on the specified table, indexes, partitions, or partition indexes.
-// Exported for testing purposes.
-func (j *TableAnalysisJob) Analyze(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-) {
-	switch j.getAnalyzeType() {
-	case analyzeTable:
-		j.analyzeTable(sctx, statsHandle, sysProcTracker)
-	case analyzeIndex:
-		j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
-	case analyzePartition:
-		j.analyzePartitions(sctx, statsHandle, sysProcTracker)
-	case analyzePartitionIndex:
-		j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
-	case analyzeStaticPartition:
-		j.analyzeStaticPartition(sctx, statsHandle, sysProcTracker)
-	case analyzeStaticPartitionIndex:
-		j.analyzeStaticPartitionIndexes(sctx, statsHandle, sysProcTracker)
-	}
-}
-
-func (j *TableAnalysisJob) getAnalyzeType() analyzeType {
-	switch {
-	case len(j.PartitionIndexes) > 0:
-		return analyzePartitionIndex
-	case len(j.Partitions) > 0:
-		return analyzePartition
-	case len(j.Indexes) > 0:
-		if j.StaticPartitionName != "" {
-			return analyzeStaticPartitionIndex
-		}
-		return analyzeIndex
-	case j.StaticPartitionName != "":
-		return analyzeStaticPartition
-	default:
-		return analyzeTable
-	}
-}
-
-func (j *TableAnalysisJob) analyzeTable(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-) {
-	sql, params := j.GenSQLForAnalyzeTable()
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-}
-
-func (j *TableAnalysisJob) analyzeStaticPartition(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-) {
-	sql, params := j.GenSQLForAnalyzeStaticPartition()
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-}
-
-func (j *TableAnalysisJob) analyzeIndexes(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-) {
-	for _, index := range j.Indexes {
-		sql, params := j.GenSQLForAnalyzeIndex(index)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-	}
-}
-
-func (j *TableAnalysisJob) analyzeStaticPartitionIndexes(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-) {
-	for _, index := range j.Indexes {
-		sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(index)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-	}
-}
-
-// analyzePartitions performs analysis on the specified partitions.
-// This function uses a batch mode for efficiency. After analyzing the partitions,
-// it's necessary to merge their statistics. By analyzing them in batches,
-// we can reduce the overhead of this merging process.
-func (j *TableAnalysisJob) analyzePartitions(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-) {
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	needAnalyzePartitionNames := make([]any, 0, len(j.Partitions))
-	for _, partition := range j.Partitions {
-		needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
-	}
-	for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
-		start := i
-		end := start + analyzePartitionBatchSize
-		if end >= len(needAnalyzePartitionNames) {
-			end = len(needAnalyzePartitionNames)
-		}
-
-		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
-		params := append([]any{j.TableSchema, j.TableName}, needAnalyzePartitionNames[start:end]...)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-	}
-}
-
-// analyzePartitionIndexes performs analysis on the specified partition indexes.
-func (j *TableAnalysisJob) analyzePartitionIndexes(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-) {
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-
-	for indexName, partitionNames := range j.PartitionIndexes {
-		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
-		for _, partition := range partitionNames {
-			needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
-		}
-		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
-			start := i
-			end := start + analyzePartitionBatchSize
-			if end >= len(needAnalyzePartitionNames) {
-				end = len(needAnalyzePartitionNames)
-			}
-
-			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
-			params := append([]any{j.TableSchema, j.TableName}, needAnalyzePartitionNames[start:end]...)
-			params = append(params, indexName)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-		}
-	}
-}
-
-func getPartitionSQL(prefix, suffix string, numPartitions int) string {
-	var sqlBuilder strings.Builder
-	sqlBuilder.WriteString(prefix)
-	for i := 0; i < numPartitions; i++ {
-		if i != 0 {
-			sqlBuilder.WriteString(",")
-		}
-		sqlBuilder.WriteString(" %n")
-	}
-	sqlBuilder.WriteString(suffix)
-	return sqlBuilder.String()
-}
-
-// GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
-func (j *TableAnalysisJob) GenSQLForAnalyzeTable() (string, []any) {
-	sql := "analyze table %n.%n"
-	params := []any{j.TableSchema, j.TableName}
-
-	return sql, params
-}
-
-// GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.
-func (j *TableAnalysisJob) GenSQLForAnalyzeStaticPartition() (string, []any) {
-	sql := "analyze table %n.%n partition %n"
-	params := []any{j.TableSchema, j.TableName, j.StaticPartitionName}
-
-	return sql, params
-}
-
-// GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.
-func (j *TableAnalysisJob) GenSQLForAnalyzeIndex(index string) (string, []any) {
-	sql := "analyze table %n.%n index %n"
-	params := []any{j.TableSchema, j.TableName, index}
-
-	return sql, params
-}
-
-// GenSQLForAnalyzeStaticPartitionIndex generates the SQL for analyzing the specified static partition index.
-func (j *TableAnalysisJob) GenSQLForAnalyzeStaticPartitionIndex(index string) (string, []any) {
-	sql := "analyze table %n.%n partition %n index %n"
-	params := []any{j.TableSchema, j.TableName, j.StaticPartitionName, index}
-
-	return sql, params
-}
-
-func (j *TableAnalysisJob) String() string {
-	analyzeType := j.getAnalyzeType()
-	switch analyzeType {
-	case analyzeTable:
-		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: table, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
-			j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
-	case analyzeIndex:
-		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: index, Indexes: %s, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
-			strings.Join(j.Indexes, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
-	case analyzePartition:
-		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: partition, Partitions: %s, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
-			strings.Join(j.Partitions, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
-	case analyzePartitionIndex:
-		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: partitionIndex, PartitionIndexes: %v, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
-			j.PartitionIndexes, j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
-	case analyzeStaticPartition:
-		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: staticPartition, Schema: %s, Table: %s, TableID: %d, StaticPartition: %s, StaticPartitionID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
-			j.TableSchema, j.TableName, j.TableID, j.StaticPartitionName, j.StaticPartitionID, j.TableStatsVer, j.ChangePercentage, j.Weight)
-	case analyzeStaticPartitionIndex:
-		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: staticPartitionIndex, Indexes: %s, Schema: %s, Table: %s, TableID: %d, StaticPartition: %s, StaticPartitionID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
-			strings.Join(j.Indexes, ", "), j.TableSchema, j.TableName, j.TableID, j.StaticPartitionName, j.StaticPartitionID, j.TableStatsVer, j.ChangePercentage, j.Weight)
-	default:
-		return "TableAnalysisJob: {AnalyzeType: unknown}"
-	}
 }

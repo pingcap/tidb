@@ -415,7 +415,8 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
 	}
-	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
+	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
+	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
 
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
@@ -516,6 +517,9 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	if common.ErrFoundDuplicateKeys.Equal(importErr) {
+		importErr = local.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
+	}
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key
@@ -558,7 +562,7 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	}
 
 	defer unlockDiskQuota()
-
+	ti.logger.Info("start checking disk quota", zap.String("disk-quota", units.BytesSize(float64(ti.diskQuota))))
 	for {
 		select {
 		case <-ctx.Done():
@@ -604,6 +608,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 				int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio),
 				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
 			); err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+				}
 				importErr = multierr.Append(importErr, err)
 			}
 		}
@@ -698,6 +705,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		failpoint.Return(nil, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+		}
 		return nil, err
 	}
 	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
@@ -707,6 +717,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		return nil, err
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+		}
 		return nil, err
 	}
 

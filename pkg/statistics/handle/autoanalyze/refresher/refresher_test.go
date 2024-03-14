@@ -233,6 +233,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	handle := dom.StatsHandle()
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
+	r.RebuildTableAnalysisJobQueue()
 	// No jobs in the queue.
 	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
@@ -244,22 +245,26 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	require.True(t, tblStats1.Pseudo)
 
 	// Add a job to the queue.
-	job1 := &priorityqueue.TableAnalysisJob{
-		TableID:          tbl1.Meta().ID,
-		TableSchema:      "test",
-		TableName:        "t1",
-		ChangePercentage: 0.5,
-		Weight:           1,
+	job1 := &priorityqueue.NonPartitionedTableAnalysisJob{
+		TableID:     tbl1.Meta().ID,
+		TableSchema: "test",
+		TableName:   "t1",
+		Weight:      1,
+		Indicators: priorityqueue.Indicators{
+			ChangePercentage: 0.5,
+		},
 	}
 	r.Jobs.Push(job1)
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
-	job2 := &priorityqueue.TableAnalysisJob{
-		TableID:          tbl2.Meta().ID,
-		TableSchema:      "test",
-		TableName:        "t2",
-		ChangePercentage: 0.5,
-		Weight:           0.9,
+	job2 := &priorityqueue.NonPartitionedTableAnalysisJob{
+		TableID:     tbl2.Meta().ID,
+		TableSchema: "test",
+		TableName:   "t2",
+		Weight:      0.9,
+		Indicators: priorityqueue.Indicators{
+			ChangePercentage: 0.5,
+		},
 	}
 	r.Jobs.Push(job2)
 	// Add a failed job to t1.
@@ -344,10 +349,11 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, r.Jobs.Len())
 	job1 := r.Jobs.Pop()
-	require.Equal(t, 1.2, math.Round(job1.Weight*10)/10)
-	require.Equal(t, float64(1), job1.ChangePercentage)
-	require.Equal(t, float64(6*2), job1.TableSize)
-	require.GreaterOrEqual(t, job1.LastAnalysisDuration, time.Duration(0))
+	indicators := job1.GetIndicators()
+	require.Equal(t, 1.2, math.Round(job1.GetWeight()*10)/10)
+	require.Equal(t, float64(1), indicators.ChangePercentage)
+	require.Equal(t, float64(6*2), indicators.TableSize)
+	require.GreaterOrEqual(t, indicators.LastAnalysisDuration, time.Duration(0))
 }
 
 func TestCalculateChangePercentage(t *testing.T) {
@@ -404,6 +410,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 					Indices:       analyzedIndices,
 					ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
 				},
+				LastAnalyzeVersion: 1,
 			},
 			autoAnalyzeRatio: 0.5,
 			want:             2,
@@ -434,6 +441,7 @@ func TestGetTableLastAnalyzeDuration(t *testing.T) {
 				},
 			},
 		},
+		LastAnalyzeVersion: lastUpdateTs,
 	}
 	// 2024-01-01 10:00:00
 	currentTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
@@ -499,6 +507,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 						},
 					},
 				},
+				LastAnalyzeVersion: 1,
 			},
 			want: []string{"index1"},
 		},
@@ -630,7 +639,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 				{
 					ID:   2,
@@ -655,7 +665,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -718,7 +729,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 				{
 					ID:   2,
@@ -743,7 +755,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:            currentTs,
+					LastAnalyzeVersion: lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -780,6 +793,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			require.Equal(t, tt.wantAvgChangePercentage, gotAvgChangePercentage)
 			require.Equal(t, tt.wantAvgSize, gotAvgSize)
 			require.Equal(t, tt.wantAvgLastAnalyzeDuration, gotAvgLastAnalyzeDuration)
+			// Sort the partitions.
+			sort.Strings(tt.wantPartitions)
+			sort.Strings(gotPartitions)
 			require.Equal(t, tt.wantPartitions, gotPartitions)
 		})
 	}

@@ -1250,6 +1250,7 @@ func (pi *PartitionInfo) Clone() *PartitionInfo {
 }
 
 // GetNameByID gets the partition name by ID.
+// TODO: Remove the need for this function!
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	definitions := pi.Definitions
 	// do not convert this loop to `for _, def := range definitions`.
@@ -1913,6 +1914,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
+	}
+
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
 	}
 
 	return sb.String()

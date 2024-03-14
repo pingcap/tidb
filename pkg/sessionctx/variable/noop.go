@@ -192,7 +192,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: LogQueriesNotUsingIndexes, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_heap_table_size", Value: "16777216", IsHintUpdatableVerfied: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "tmp_table_size", Value: "16777216", Type: TypeUnsigned, MinValue: 1024, MaxValue: math.MaxUint64, IsHintUpdatableVerfied: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: "div_precision_increment", Value: "4", IsHintUpdatableVerfied: true},
 	{Scope: ScopeGlobal, Name: "innodb_lru_scan_depth", Value: "1024"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_rseg_truncate_frequency", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: Off, Type: TypeBool, IsHintUpdatableVerfied: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {

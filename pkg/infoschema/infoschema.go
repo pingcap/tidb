@@ -151,6 +151,10 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 
 var _ InfoSchema = (*infoSchema)(nil)
 
+func (is *infoSchema) base() *infoSchema {
+	return is
+}
+
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
 	tableNames, ok := is.schemaMap[schema.L]
 	if !ok {
@@ -214,17 +218,6 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 	return nil, false
 }
 
-func (is *infoSchema) ResourceGroupByID(id int64) (val *model.ResourceGroupInfo, ok bool) {
-	is.resourceGroupMutex.RLock()
-	defer is.resourceGroupMutex.RUnlock()
-	for _, v := range is.resourceGroupMap {
-		if v.ID == id {
-			return v, true
-		}
-	}
-	return nil, false
-}
-
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	for _, v := range is.schemaMap {
 		if v.dbInfo.ID == id {
@@ -262,9 +255,9 @@ func allocByID(is InfoSchema, id int64) (autoid.Allocators, bool) {
 
 // AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
-	schemas := is.AllSchemas()
+	schemas := is.AllSchemaNames()
 	for _, v := range schemas {
-		names = append(names, v.Name.O)
+		names = append(names, v.O)
 	}
 	return
 }
@@ -274,6 +267,14 @@ func (is *infoSchema) AllSchemas() (schemas []*model.DBInfo) {
 		schemas = append(schemas, v.dbInfo)
 	}
 	return
+}
+
+func (is *infoSchema) AllSchemaNames() (schemas []model.CIStr) {
+	rs := make([]model.CIStr, 0, len(is.schemaMap))
+	for _, v := range is.schemaMap {
+		rs = append(rs, v.dbInfo.Name)
+	}
+	return rs
 }
 
 func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
@@ -382,6 +383,18 @@ func (is *infoSchemaMisc) ResourceGroupByName(name model.CIStr) (*model.Resource
 	defer is.resourceGroupMutex.RUnlock()
 	t, r := is.resourceGroupMap[name.L]
 	return t, r
+}
+
+// ResourceGroupByID is used to find the resource group.
+func (is *infoSchemaMisc) ResourceGroupByID(id int64) (*model.ResourceGroupInfo, bool) {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	for _, v := range is.resourceGroupMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // AllResourceGroups returns all resource groups.

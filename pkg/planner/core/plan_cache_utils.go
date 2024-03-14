@@ -172,6 +172,13 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 
+	if cacheable && destBuilder.optFlag&flagPartitionProcessor > 0 {
+		// dynamic prune mode is not used, could be that global statistics not yet available!
+		cacheable = false
+		reason = "static partition prune mode used"
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
+	}
+
 	features := new(PlanCacheQueryFeatures)
 	paramStmt.Accept(features)
 

@@ -470,15 +470,13 @@ Selection	23.98	root		json_overlaps(json_extract(planner__core__indexmerge_path.
 drop table if exists t;
 create table t(j json, index kj((cast(j as signed array))));
 prepare st from 'select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j))';
-Level	Code	Message
-Warning	1105	skip prepared plan-cache: query accesses generated columns is un-cacheable
 execute st;
 j
 execute st;
 j
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 drop table if exists t;
 create table t(j json, unique kj((cast(j as signed array))));
 explain select j from t where j=1;

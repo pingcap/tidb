@@ -31,10 +31,12 @@ type InfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllSchemas() []*model.DBInfo
+	AllSchemaNames() []model.CIStr
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	Misc
+	base() *infoSchema
 }
 
 // Misc contains the methods that are not closely related to InfoSchema.

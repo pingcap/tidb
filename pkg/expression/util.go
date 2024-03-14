@@ -1348,9 +1348,9 @@ func IsMutableEffectsExpr(expr Expression) bool {
 	return false
 }
 
-// IsInmutableExpr checks whether this expression only consists of foldable functions and inmutable constants.
-// This expression can be evaluated by using `expr.Eval(chunk.Row{})` directly if it's inmutable.
-func IsInmutableExpr(expr Expression) bool {
+// IsImmutableFunc checks whether this expression only consists of foldable functions.
+// This expression can be evaluated by using `expr.Eval(chunk.Row{})` directly and the result won't change if it's immutable.
+func IsImmutableFunc(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
@@ -1360,18 +1360,13 @@ func IsInmutableExpr(expr Expression) bool {
 			return false
 		}
 		for _, arg := range x.GetArgs() {
-			if !IsInmutableExpr(arg) {
+			if !IsImmutableFunc(arg) {
 				return false
 			}
 		}
 		return true
-	case *Constant:
-		if x.DeferredExpr != nil || x.ParamMarker != nil {
-			return false
-		}
-		return true
 	default:
-		return false
+		return true
 	}
 }
 

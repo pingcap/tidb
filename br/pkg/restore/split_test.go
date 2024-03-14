@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore_test
+package restore
 
 import (
 	"bytes"
@@ -19,31 +19,28 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type TestClient struct {
-	mu                  sync.RWMutex
-	stores              map[uint64]*metapb.Store
-	regions             map[uint64]*split.RegionInfo
-	regionsInfo         *pdtypes.RegionTree // For now it's only used in ScanRegions
-	nextRegionID        uint64
-	injectInScatter     func(*split.RegionInfo) error
-	injectInOperator    func(uint64) (*pdpb.GetOperatorResponse, error)
-	supportBatchScatter bool
+	split.SplitClient
+
+	mu              sync.RWMutex
+	stores          map[uint64]*metapb.Store
+	regions         map[uint64]*split.RegionInfo
+	regionsInfo     *pdtypes.RegionTree // For now it's only used in ScanRegions
+	nextRegionID    uint64
+	injectInScatter func(*split.RegionInfo) error
 
 	scattered   map[uint64]bool
 	InjectErr   bool
@@ -69,15 +66,8 @@ func NewTestClient(
 	}
 }
 
-func (c *TestClient) InstallBatchScatterSupport() {
-	c.supportBatchScatter = true
-}
-
 // ScatterRegions scatters regions in a batch.
 func (c *TestClient) ScatterRegions(ctx context.Context, regionInfo []*split.RegionInfo) error {
-	if !c.supportBatchScatter {
-		return status.Error(codes.Unimplemented, "Ah, yep")
-	}
 	regions := map[uint64]*split.RegionInfo{}
 	for _, region := range regionInfo {
 		regions[region.Region.Id] = region
@@ -216,10 +206,7 @@ func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *split.Region
 	return c.injectInScatter(regionInfo)
 }
 
-func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	if c.injectInOperator != nil {
-		return c.injectInOperator(regionID)
-	}
+func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{
 		Header: new(pdpb.ResponseHeader),
 	}, nil
@@ -245,100 +232,21 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, nil
 }
 
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
-	return
+func (c *TestClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
 }
 
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
-	return nil
-}
-
-func (c *TestClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
-	return nil
-}
-
-func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
-	return nil
-}
-
-type assertRetryLessThanBackoffer struct {
-	max     int
-	already int
-	t       *testing.T
-}
-
-func assertRetryLessThan(t *testing.T, times int) utils.Backoffer {
-	return &assertRetryLessThanBackoffer{
-		max:     times,
-		already: 0,
-		t:       t,
-	}
-}
-
-// NextBackoff returns a duration to wait before retrying again
-func (b *assertRetryLessThanBackoffer) NextBackoff(err error) time.Duration {
-	b.already++
-	if b.already >= b.max {
-		b.t.Logf("retry more than %d time: test failed", b.max)
-		b.t.FailNow()
-	}
-	return 0
-}
-
-// Attempt returns the remain attempt times
-func (b *assertRetryLessThanBackoffer) Attempt() int {
-	return b.max - b.already
-}
 func TestScanEmptyRegion(t *testing.T) {
 	client := initTestClient(false)
 	ranges := initRanges()
 	// make ranges has only one
 	ranges = ranges[0:1]
-	rewriteRules := initRewriteRules()
-	regionSplitter := restore.NewRegionSplitter(client)
+	regionSplitter := NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
 	// should not return error with only one range entry
 	require.NoError(t, err)
-}
-
-func TestScatterFinishInTime(t *testing.T) {
-	client := initTestClient(false)
-	ranges := initRanges()
-	rewriteRules := initRewriteRules()
-	regionSplitter := restore.NewRegionSplitter(client)
-
-	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
-	require.NoError(t, err)
-	regions := client.GetAllRegions()
-	if !validateRegions(regions) {
-		for _, region := range regions {
-			t.Logf("region: %v\n", region.Region)
-		}
-		t.Log("get wrong result")
-		t.Fail()
-	}
-
-	regionInfos := make([]*split.RegionInfo, 0, len(regions))
-	for _, info := range regions {
-		regionInfos = append(regionInfos, info)
-	}
-	failed := map[uint64]int{}
-	client.injectInScatter = func(r *split.RegionInfo) error {
-		failed[r.Region.Id]++
-		if failed[r.Region.Id] > 7 {
-			return nil
-		}
-		return status.Errorf(codes.Unknown, "region %d is not fully replicated", r.Region.Id)
-	}
-
-	// When using a exponential backoffer, if we try to backoff more than 40 times in 10 regions,
-	// it would cost time unacceptable.
-	regionSplitter.ScatterRegionsSequentially(ctx,
-		regionInfos,
-		assertRetryLessThan(t, 40))
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
@@ -349,126 +257,18 @@ func TestScatterFinishInTime(t *testing.T) {
 //	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
 //	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
-	t.Run("BatchScatter", func(t *testing.T) {
-		client := initTestClient(false)
-		client.InstallBatchScatterSupport()
-		runTestSplitAndScatterWith(t, client)
-	})
-	t.Run("BackwardCompatibility", func(t *testing.T) {
-		client := initTestClient(false)
-		runTestSplitAndScatterWith(t, client)
-	})
-	t.Run("WaitScatter", func(t *testing.T) {
-		client := initTestClient(false)
-		client.InstallBatchScatterSupport()
-		runWaitScatter(t, client)
-	})
-}
-
-// +------------+----------------------------
-// |   region   | states
-// +------------+----------------------------
-// | [   , aay) | SUCCESS
-// +------------+----------------------------
-// | [aay, bba) | CANCEL, SUCCESS
-// +------------+----------------------------
-// | [bba, bbh) | RUNNING, TIMEOUT, SUCCESS
-// +------------+----------------------------
-// | [bbh, cca) | <NOT_SCATTER_OPEARTOR>
-// +------------+----------------------------
-// | [cca,    ) | CANCEL, RUNNING, SUCCESS
-// +------------+----------------------------
-// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-// states:
-func runWaitScatter(t *testing.T, client *TestClient) {
-	// configuration
-	type Operatorstates struct {
-		index  int
-		status []pdpb.OperatorStatus
-	}
-	results := map[string]*Operatorstates{
-		"": {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_SUCCESS}},
-		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_CANCEL, pdpb.OperatorStatus_SUCCESS}},
-		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_RUNNING, pdpb.OperatorStatus_TIMEOUT, pdpb.OperatorStatus_SUCCESS}},
-		string(codec.EncodeBytesExt([]byte{}, []byte("bbh"), false)): {},
-		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_CANCEL, pdpb.OperatorStatus_RUNNING, pdpb.OperatorStatus_SUCCESS}},
-	}
-	// after test done, the `leftScatterCount` should be empty
-	leftScatterCount := map[string]int{
-		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): 1,
-		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): 1,
-		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): 1,
-	}
-	client.injectInScatter = func(ri *split.RegionInfo) error {
-		states, ok := results[string(ri.Region.StartKey)]
-		require.True(t, ok)
-		require.NotEqual(t, 0, len(states.status))
-		require.NotEqual(t, pdpb.OperatorStatus_SUCCESS, states.status[states.index])
-		states.index += 1
-		cnt, ok := leftScatterCount[string(ri.Region.StartKey)]
-		require.True(t, ok)
-		if cnt == 1 {
-			delete(leftScatterCount, string(ri.Region.StartKey))
-		} else {
-			leftScatterCount[string(ri.Region.StartKey)] = cnt - 1
-		}
-		return nil
-	}
-	regionsMap := client.GetAllRegions()
-	leftOperatorCount := map[string]int{
-		"": 1,
-		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): 2,
-		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): 3,
-		string(codec.EncodeBytesExt([]byte{}, []byte("bbh"), false)): 1,
-		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): 3,
-	}
-	client.injectInOperator = func(u uint64) (*pdpb.GetOperatorResponse, error) {
-		ri := regionsMap[u]
-		cnt, ok := leftOperatorCount[string(ri.Region.StartKey)]
-		require.True(t, ok)
-		if cnt == 1 {
-			delete(leftOperatorCount, string(ri.Region.StartKey))
-		} else {
-			leftOperatorCount[string(ri.Region.StartKey)] = cnt - 1
-		}
-		states, ok := results[string(ri.Region.StartKey)]
-		require.True(t, ok)
-		if len(states.status) == 0 {
-			return &pdpb.GetOperatorResponse{
-				Desc: []byte("other"),
-			}, nil
-		}
-		if states.status[states.index] == pdpb.OperatorStatus_RUNNING {
-			states.index += 1
-			return &pdpb.GetOperatorResponse{
-				Desc:   []byte("scatter-region"),
-				Status: states.status[states.index-1],
-			}, nil
-		}
-		return &pdpb.GetOperatorResponse{
-			Desc:   []byte("scatter-region"),
-			Status: states.status[states.index],
-		}, nil
-	}
-
-	// begin to test
-	ctx := context.Background()
-	regions := make([]*split.RegionInfo, 0, len(regionsMap))
-	for _, info := range regionsMap {
-		regions = append(regions, info)
-	}
-	regionSplitter := restore.NewRegionSplitter(client)
-	leftCnt := regionSplitter.WaitForScatterRegionsTimeout(ctx, regions, 2000*time.Second)
-	require.Equal(t, leftCnt, 0)
-}
-
-func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
+	client := initTestClient(false)
 	ranges := initRanges()
-	rewriteRules := initRewriteRules()
-	regionSplitter := restore.NewRegionSplitter(client)
-
+	regionSplitter := NewRegionSplitter(client)
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 1, false, func(key [][]byte) {})
+
+	rules := initRewriteRules()
+	for i, rg := range ranges {
+		tmp, err := RewriteRange(&rg, rules)
+		require.NoError(t, err)
+		ranges[i] = *tmp
+	}
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -492,7 +292,8 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 		scattered[regionInfo.Region.Id] = true
 		return nil
 	}
-	regionSplitter.ScatterRegions(ctx, regionInfos)
+	err = regionSplitter.client.ScatterRegions(ctx, regionInfos)
+	require.NoError(t, err)
 	for key := range regions {
 		if key == alwaysFailedRegionID {
 			require.Falsef(t, scattered[key], "always failed region %d was scattered successfully", key)
@@ -513,8 +314,8 @@ func TestRawSplit(t *testing.T) {
 	client := initTestClient(true)
 	ctx := context.Background()
 
-	regionSplitter := restore.NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges, nil, 1, true, func(key [][]byte) {})
+	regionSplitter := NewRegionSplitter(client)
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, true, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
@@ -586,7 +387,7 @@ func initRanges() []rtree.Range {
 	return ranges[:]
 }
 
-func initRewriteRules() *restore.RewriteRules {
+func initRewriteRules() *RewriteRules {
 	var rules [2]*import_sstpb.RewriteRule
 	rules[0] = &import_sstpb.RewriteRule{
 		OldKeyPrefix: []byte("aa"),
@@ -596,7 +397,7 @@ func initRewriteRules() *restore.RewriteRules {
 		OldKeyPrefix: []byte("cc"),
 		NewKeyPrefix: []byte("bb"),
 	}
-	return &restore.RewriteRules{
+	return &RewriteRules{
 		Data: rules[:],
 	}
 }
@@ -715,7 +516,7 @@ type fakeRestorer struct {
 	tableIDIsInsequence bool
 }
 
-func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *restore.RewriteRules, updateCh glue.Progress, isRawKv bool) error {
+func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress, isRawKv bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -732,7 +533,7 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, re
 	return nil
 }
 
-func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []restore.TableIDWithFiles, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []TableIDWithFiles, updateCh glue.Progress) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -750,7 +551,7 @@ func (f *fakeRestorer) RestoreSSTFiles(ctx context.Context, tableIDWithFiles []r
 	return err
 }
 
-func fakeRanges(keys ...string) (r restore.DrainResult) {
+func fakeRanges(keys ...string) (r DrainResult) {
 	for i := range keys {
 		if i+1 == len(keys) {
 			return
@@ -761,7 +562,7 @@ func fakeRanges(keys ...string) (r restore.DrainResult) {
 			Files:    []*backuppb.File{{Name: "fake.sst"}},
 		})
 		r.TableEndOffsetInRanges = append(r.TableEndOffsetInRanges, len(r.Ranges))
-		r.TablesToSend = append(r.TablesToSend, restore.CreatedTable{
+		r.TablesToSend = append(r.TablesToSend, CreatedTable{
 			Table: &model.TableInfo{
 				ID: int64(i),
 			},
@@ -776,7 +577,7 @@ type errorInTimeSink struct {
 	t     *testing.T
 }
 
-func (e errorInTimeSink) EmitTables(tables ...restore.CreatedTable) {}
+func (e errorInTimeSink) EmitTables(tables ...CreatedTable) {}
 
 func (e errorInTimeSink) EmitError(err error) {
 	e.errCh <- err
@@ -803,7 +604,7 @@ func assertErrorEmitInTime(ctx context.Context, t *testing.T) errorInTimeSink {
 }
 
 func TestRestoreFailed(t *testing.T) {
-	ranges := []restore.DrainResult{
+	ranges := []DrainResult{
 		fakeRanges("aax", "abx", "abz"),
 		fakeRanges("abz", "bbz", "bcy"),
 		fakeRanges("bcy", "cad", "xxy"),
@@ -811,7 +612,7 @@ func TestRestoreFailed(t *testing.T) {
 	r := &fakeRestorer{
 		tableIDIsInsequence: true,
 	}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, string(restore.FineGrained))
+	sender, err := NewTiKVSender(context.TODO(), r, nil, 1, string(FineGrained))
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -828,13 +629,13 @@ func TestRestoreFailed(t *testing.T) {
 }
 
 func TestSplitFailed(t *testing.T) {
-	ranges := []restore.DrainResult{
+	ranges := []DrainResult{
 		fakeRanges("aax", "abx", "abz"),
 		fakeRanges("abz", "bbz", "bcy"),
 		fakeRanges("bcy", "cad", "xxy"),
 	}
 	r := &fakeRestorer{errorInSplit: true, tableIDIsInsequence: true}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, string(restore.FineGrained))
+	sender, err := NewTiKVSender(context.TODO(), r, nil, 1, string(FineGrained))
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -859,7 +660,7 @@ func TestSplitPoint(t *testing.T) {
 	ctx := context.Background()
 	var oldTableID int64 = 50
 	var tableID int64 = 100
-	rewriteRules := &restore.RewriteRules{
+	rewriteRules := &RewriteRules{
 		Data: []*import_sstpb.RewriteRule{
 			{
 				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
@@ -882,8 +683,8 @@ func TestSplitPoint(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "h"), keyWithTablePrefix(tableID, "j"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "j"), keyWithTablePrefix(tableID+1, "a"))
 
-	iter := restore.NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := restore.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []split.Valued) error {
+	iter := NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
+	err := SplitPoint(ctx, iter, client, func(ctx context.Context, rs *RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []split.Valued) error {
 		require.Equal(t, u, uint64(0))
 		require.Equal(t, o, int64(0))
 		require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
@@ -909,7 +710,7 @@ func TestSplitPoint2(t *testing.T) {
 	ctx := context.Background()
 	var oldTableID int64 = 50
 	var tableID int64 = 100
-	rewriteRules := &restore.RewriteRules{
+	rewriteRules := &RewriteRules{
 		Data: []*import_sstpb.RewriteRule{
 			{
 				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
@@ -940,8 +741,8 @@ func TestSplitPoint2(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "o"), keyWithTablePrefix(tableID+1, "a"))
 
 	firstSplit := true
-	iter := restore.NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := restore.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []split.Valued) error {
+	iter := NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
+	err := SplitPoint(ctx, iter, client, func(ctx context.Context, rs *RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []split.Valued) error {
 		if firstSplit {
 			require.Equal(t, u, uint64(0))
 			require.Equal(t, o, int64(0))
@@ -976,6 +777,7 @@ func TestSplitPoint2(t *testing.T) {
 }
 
 type fakeSplitClient struct {
+	split.SplitClient
 	regions []*split.RegionInfo
 }
 
@@ -994,33 +796,6 @@ func (f *fakeSplitClient) AppendRegion(startKey, endKey []byte) {
 	})
 }
 
-func (*fakeSplitClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) SplitRegion(ctx context.Context, regionInfo *split.RegionInfo, key []byte) (*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) BatchSplitRegions(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
-	return nil, nil, nil
-}
-func (*fakeSplitClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	return nil
-}
-func (*fakeSplitClient) ScatterRegions(ctx context.Context, regionInfo []*split.RegionInfo) error {
-	return nil
-}
-func (*fakeSplitClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	return nil, nil
-}
 func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	result := make([]*split.RegionInfo, 0)
 	count := 0
@@ -1035,22 +810,16 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 	}
 	return result, nil
 }
-func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error) {
-	return nil, nil
-}
-func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error { return nil }
-func (*fakeSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
-	return nil
-}
-func (*fakeSplitClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
-	return nil
+
+func (f *fakeSplitClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
 }
 
 func TestGetRewriteTableID(t *testing.T) {
 	var tableID int64 = 76
 	var oldTableID int64 = 80
 	{
-		rewriteRules := &restore.RewriteRules{
+		rewriteRules := &RewriteRules{
 			Data: []*import_sstpb.RewriteRule{
 				{
 					OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
@@ -1059,12 +828,12 @@ func TestGetRewriteTableID(t *testing.T) {
 			},
 		}
 
-		newTableID := restore.GetRewriteTableID(oldTableID, rewriteRules)
+		newTableID := GetRewriteTableID(oldTableID, rewriteRules)
 		require.Equal(t, tableID, newTableID)
 	}
 
 	{
-		rewriteRules := &restore.RewriteRules{
+		rewriteRules := &RewriteRules{
 			Data: []*import_sstpb.RewriteRule{
 				{
 					OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
@@ -1073,7 +842,7 @@ func TestGetRewriteTableID(t *testing.T) {
 			},
 		}
 
-		newTableID := restore.GetRewriteTableID(oldTableID, rewriteRules)
+		newTableID := GetRewriteTableID(oldTableID, rewriteRules)
 		require.Equal(t, tableID, newTableID)
 	}
 }
@@ -1082,12 +851,12 @@ type mockLogIter struct {
 	next int
 }
 
-func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*restore.LogDataFileInfo] {
+func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*LogDataFileInfo] {
 	if m.next > 10000 {
-		return iter.Done[*restore.LogDataFileInfo]()
+		return iter.Done[*LogDataFileInfo]()
 	}
 	m.next += 1
-	return iter.Emit(&restore.LogDataFileInfo{
+	return iter.Emit(&LogDataFileInfo{
 		DataFileInfo: &backuppb.DataFileInfo{
 			StartKey: []byte(fmt.Sprintf("a%d", m.next)),
 			EndKey:   []byte("b"),
@@ -1099,7 +868,7 @@ func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*restore.LogD
 func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	var tableID int64 = 76
 	var oldTableID int64 = 80
-	rewriteRules := &restore.RewriteRules{
+	rewriteRules := &RewriteRules{
 		Data: []*import_sstpb.RewriteRule{
 			{
 				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
@@ -1107,12 +876,12 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 			},
 		},
 	}
-	rewriteRulesMap := map[int64]*restore.RewriteRules{
+	rewriteRulesMap := map[int64]*RewriteRules{
 		oldTableID: rewriteRules,
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	logIter := restore.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, newFakeSplitClient(), 144*1024*1024, 1440000)
+	logIter := NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, newFakeSplitClient(), 144*1024*1024, 1440000)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)
@@ -1166,7 +935,7 @@ func TestSplitCheckPartRegionConsistency(t *testing.T) {
 }
 
 func TestGetSplitSortedKeysFromSortedRegions(t *testing.T) {
-	splitContext := restore.SplitContext{}
+	splitContext := SplitContext{}
 	sortedKeys := [][]byte{
 		[]byte("b"),
 		[]byte("d"),
@@ -1197,7 +966,7 @@ func TestGetSplitSortedKeysFromSortedRegions(t *testing.T) {
 			},
 		},
 	}
-	result := restore.TestGetSplitSortedKeysFromSortedRegionsTest(splitContext, sortedKeys, sortedRegions)
+	result := TestGetSplitSortedKeysFromSortedRegionsTest(splitContext, sortedKeys, sortedRegions)
 	require.Equal(t, 3, len(result))
 	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[1])
 	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[2])

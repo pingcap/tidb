@@ -18,7 +18,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 
@@ -99,7 +98,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
-		return b.applyDefaultAction(m, diff)
+		return applyDefaultAction(b, m, diff)
 	}
 }
 
@@ -107,7 +106,7 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return b.applyAffectedOpts(m, make([]int64, 0, len(diff.AffectedOpts)), diff, model.ActionCreateTable)
 }
 
-func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyTruncateTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -132,7 +131,7 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -146,7 +145,7 @@ func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff
 	return tblIDs, nil
 }
 
-func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyReorganizePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -165,7 +164,7 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 	return tblIDs, nil
 }
 
-func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	// It is not in StatePublic.
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
 		ntIDs, err := applyTableUpdate(b, m, diff)
@@ -243,7 +242,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	return append(ptIDs, ntIDs...), nil
 }
 
-func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -311,7 +310,7 @@ func (b *Builder) applyAffectedOpts(m *meta.Meta, tblIDs []int64, diff *model.Sc
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyDefaultAction(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -367,7 +366,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 	}
 }
 
-func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff) ([]int64, autoid.Allocators, error) {
+func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff) ([]int64, autoid.Allocators, error) {
 	tblIDs := make([]int64, 0, 2)
 	var newAllocs autoid.Allocators
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
@@ -398,9 +397,9 @@ func (b *Builder) dropTableForUpdate(newTableID, oldTableID int64, dbInfo *model
 				)
 			}
 			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
-			tmpIDs = b.applyDropTable(diff, oldDBInfo, oldTableID, tmpIDs)
+			tmpIDs = applyDropTable(b, diff, oldDBInfo, oldTableID, tmpIDs)
 		} else {
-			tmpIDs = b.applyDropTable(diff, dbInfo, oldTableID, tmpIDs)
+			tmpIDs = applyDropTable(b, diff, dbInfo, oldTableID, tmpIDs)
 		}
 
 		if oldTableID != newTableID {
@@ -423,7 +422,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
 
-	tblIDs, allocs, err := b.dropTableForUpdate(newTableID, oldTableID, dbInfo, diff)
+	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, dbInfo, diff)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +430,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+		tblIDs, err = applyCreateTable(b, m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -547,31 +546,6 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 	return tableIDs
 }
 
-func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
-	// Remove the table in temporaryTables
-	if b.infoSchemaMisc.temporaryTableIDs != nil {
-		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
-	}
-
-	table, ok := b.infoschemaV2.TableByID(tableID)
-
-	if !ok {
-		return nil
-	}
-
-	b.infoData.delete(tableItem{
-		dbName:        dbInfo.Name.L,
-		dbID:          dbInfo.ID,
-		tableName:     table.Meta().Name.L,
-		tableID:       table.Meta().ID,
-		schemaVersion: diff.Version,
-	})
-
-	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	b.deleteReferredForeignKeys(dbInfo, tableID)
-	return affected
-}
-
 func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	if di, ok := b.infoSchema.SchemaByID(diff.SchemaID); ok {
 		return nil, ErrDatabaseExists.GenWithStackByArgs(
@@ -655,7 +629,7 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 	return autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
+func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -751,9 +725,6 @@ func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 }
 
 func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
-	if b.enableV2 {
-		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
-	}
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.infoSchema.sortedTablesBuckets[bucketIdx]
 	idx := sortedTbls.searchTable(tableID)
@@ -792,13 +763,14 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 }
 
 // Build builds and returns the built infoschema.
-func (b *Builder) Build() InfoSchema {
-	b.updateInfoSchemaBundles(b.infoSchema)
+func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	if b.enableV2 {
-		b.infoschemaV2.ts = math.MaxUint64 // TODO: should be the correct TS
+		b.infoschemaV2.ts = schemaTS
 		b.infoschemaV2.schemaVersion = b.infoSchema.SchemaMetaVersion()
+		updateInfoSchemaBundles(b)
 		return &b.infoschemaV2
 	}
+	updateInfoSchemaBundles(b)
 	return b.infoSchema
 }
 
