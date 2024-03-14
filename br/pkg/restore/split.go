@@ -276,13 +276,12 @@ func (rs *RegionSplitter) splitRegions(
 func (rs *RegionSplitter) waitRegionsSplitted(ctx context.Context, splitRegions []*split.RegionInfo) {
 	// Wait for a while until the regions successfully split.
 	for i, region := range splitRegions {
-		// only last region need to report the warning log
-		rs.waitRegionSplitted(ctx, region.Region.Id, i == len(splitRegions)-1)
+		rs.waitRegionSplitted(ctx, region.Region.Id)
 	}
 }
 
 // waitRegionSplitted check single region has finished the split.
-func (rs *RegionSplitter) waitRegionSplitted(ctx context.Context, regionID uint64, isLastRegion bool) {
+func (rs *RegionSplitter) waitRegionSplitted(ctx context.Context, regionID uint64) {
 	state := utils.InitialRetryState(
 		split.SplitCheckMaxRetryTimes,
 		split.SplitCheckInterval,
@@ -301,7 +300,7 @@ func (rs *RegionSplitter) waitRegionSplitted(ctx context.Context, regionID uint6
 	}, &state)
 	// we only care about whether the last region splitted successfully.
 	// because we are waiting region report status *sequentially*.
-	if err != nil && isLastRegion {
+	if err != nil {
 		log.Warn("failed to split regions", zap.Uint64("regionID", regionID))
 	}
 }

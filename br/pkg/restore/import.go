@@ -371,7 +371,7 @@ func (importer *FileImporter) IsFull() bool {
 		defer importer.storeWorkerPoolRWLock.RUnlock()
 		for _, pool := range importer.storeWorkerPoolMap {
 			if len(pool) > 0 {
-				// At leader one store worker pool has available worker
+				// At least one store worker pool has available worker
 				return false
 			}
 		}
