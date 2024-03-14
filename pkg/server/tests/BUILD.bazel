@@ -27,6 +27,7 @@ go_test(
         "//pkg/server/internal/testserverclient",
         "//pkg/server/internal/testutil",
         "//pkg/server/internal/util",
+        "//pkg/server/tests/servertestkit",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
