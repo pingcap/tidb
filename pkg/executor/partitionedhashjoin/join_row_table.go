@@ -16,7 +16,6 @@ package partitionedhashjoin
 
 import (
 	"encoding/binary"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"sync/atomic"
 	"unsafe"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 const SizeOfNextPtr = int(unsafe.Sizeof(*new(unsafe.Pointer)))
@@ -295,21 +295,44 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 
 type rowTableBuilder struct {
 	buildKeyIndex           []int
-	buildSchema             expression.Schema
-	probeKeyIndex           []int
-	probeSchema             expression.Schema
+	buildSchema             *expression.Schema
 	otherConditionColIndex  []int
 	columnsNeedConvertToRow []int
 	needUsedFlag            bool
+	hasNullableKey          bool
 
 	serializedKeyVectorBuffer [][]byte
-	rowTables                 []*rowTable
-	crrntSizeOfRowTable       []int64
+	partIdxVector             []int
+	hashValue                 []uint32
+	filterVector              []bool // if there is filter before probe, filterVector saves the filter result
+	nullKeyVector             []bool // nullKeyVector[i] = true if any of the key is null
+
+	crrntSizeOfRowTable []int64
 	// store the start position of each row in the rawData,
 	// we'll use this temp array to get the address of each row at the end
 	startPosInRawData [][]uint64
-	partIdxVector     []int
-	hashValue         []uint32
+}
+
+func (b *rowTableBuilder) ResetBuffer() {
+	if b.serializedKeyVectorBuffer == nil {
+		b.serializedKeyVectorBuffer = make([][]byte, MAX_ROW_TABLE_SEGMENT_SIZE)
+		b.partIdxVector = make([]int, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
+		b.hashValue = make([]uint32, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
+		b.filterVector = make([]bool, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
+		if b.hasNullableKey {
+			b.nullKeyVector = make([]bool, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
+		}
+		return
+	}
+	for i := range b.serializedKeyVectorBuffer {
+		b.serializedKeyVectorBuffer[i] = b.serializedKeyVectorBuffer[i][:0]
+	}
+	b.partIdxVector = b.partIdxVector[:0]
+	b.hashValue = b.hashValue[:0]
+	b.filterVector = b.filterVector[:0]
+	if b.hasNullableKey {
+		b.nullKeyVector = b.nullKeyVector[:0]
+	}
 }
 
 func newRowTable(meta *JoinTableMeta) *rowTable {
@@ -319,15 +342,7 @@ func newRowTable(meta *JoinTableMeta) *rowTable {
 	}
 }
 
-func (builder *rowTableBuilder) ClearBuffer(rowCnt int) {
-	builder.serializedKeyVectorBuffer = builder.serializedKeyVectorBuffer[:rowCnt]
-	for i := range builder.serializedKeyVectorBuffer {
-		builder.serializedKeyVectorBuffer[i] = builder.serializedKeyVectorBuffer[i][:0]
-	}
-	builder.serializedKeyVectorBuffer = builder.serializedKeyVectorBuffer[:]
-}
-
-func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, rowTableMeta *JoinTableMeta) {
+func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
 	fakeAddrByte := make([]byte, 8)
 	for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 		var (
@@ -336,10 +351,10 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 			startPosInRawData = builder.startPosInRawData[partIdx]
 			seg               *rowTableSegment
 		)
-		if builder.rowTables[partIdx] == nil {
-			builder.rowTables[partIdx] = newRowTable(rowTableMeta)
+		if rowTables[partIdx] == nil {
+			rowTables[partIdx] = newRowTable(rowTableMeta)
 			seg = newRowTableSegment()
-			builder.rowTables[partIdx].segments = append(builder.rowTables[partIdx].segments, seg)
+			rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
 		} else if builder.crrntSizeOfRowTable[partIdx]%MAX_ROW_TABLE_SEGMENT_SIZE == 0 {
 			for _, pos := range startPosInRawData {
 				seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
@@ -347,13 +362,13 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 			builder.startPosInRawData[partIdx] = builder.startPosInRawData[partIdx][:]
 			startPosInRawData = builder.startPosInRawData[partIdx]
 			seg = newRowTableSegment()
-			builder.rowTables[partIdx].segments = append(builder.rowTables[partIdx].segments, seg)
+			rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
 		}
 
 		seg.hashValues = append(seg.hashValues, uint64(builder.hashValue[rowIdx]))
-		// TODO: @XuHuaiyu validJoinKeyPos
-		seg.validJoinKeyPos = append(seg.validJoinKeyPos, rowIdx)
-
+		if !builder.filterVector[rowIdx] && !(builder.hasNullableKey && builder.nullKeyVector[rowIdx]) {
+			seg.validJoinKeyPos[rowIdx] = rowIdx
+		}
 		startPosInRawData = append(startPosInRawData, uint64(len(seg.rawData)))
 		// next_row_ptr
 		seg.rawData = append(seg.rawData, fakeAddrByte...)

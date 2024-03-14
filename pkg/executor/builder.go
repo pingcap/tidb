@@ -1633,13 +1633,7 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, i, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes),
 		}
 
-		e.BuildWorkers[i] = &partitionedhashjoin.BuildWorker{
-			HashJoinCtx:    e.PartitionedHashJoinCtx,
-			BuildSideExec:  buildSideExec,
-			BuildTypes:     exec.RetTypes(buildSideExec),
-			BuildKeyColIdx: buildKeyColIdx,
-			WorkerID:       i,
-		}
+		e.BuildWorkers[i] = partitionedhashjoin.NewJoinBuildWorker(e.PartitionedHashJoinCtx, i, buildKeyColIdx, exec.RetTypes(buildSideExec))
 	}
 	// todo add partition hash join exec
 	executor_metrics.ExecutorCountHashJoinExec.Inc()
