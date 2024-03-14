@@ -108,6 +108,7 @@ const (
 	nmLogLevel         = "L"
 	nmLogFile          = "log-file"
 	nmLogSlowQuery     = "log-slow-query"
+	nmLogGeneral       = "log-general"
 	nmReportStatus     = "report-status"
 	nmStatusHost       = "status-host"
 	nmStatusPort       = "status"
@@ -163,6 +164,7 @@ var (
 	logLevel     *string
 	logFile      *string
 	logSlowQuery *string
+	logGeneral   *string
 
 	// Status
 	reportStatus    *bool
@@ -216,6 +218,7 @@ func initFlagSet() *flag.FlagSet {
 	logLevel = fset.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
 	logFile = fset.String(nmLogFile, "", "log file path")
 	logSlowQuery = fset.String(nmLogSlowQuery, "", "slow query file path")
+	logGeneral = fset.String(nmLogGeneral, "", "general log file path")
 
 	// Status
 	reportStatus = flagBoolean(fset, nmReportStatus, true, "If enable status report HTTP service.")
@@ -579,6 +582,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 	if actualFlags[nmLogSlowQuery] {
 		cfg.Log.SlowQueryFile = *logSlowQuery
+	}
+	if actualFlags[nmLogGeneral] {
+		cfg.Log.GeneralLogFile = *logGeneral
 	}
 
 	// Status
