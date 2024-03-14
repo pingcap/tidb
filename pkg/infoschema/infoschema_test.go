@@ -925,6 +925,17 @@ func (tc *infoschemaTestContext) runDropSchema() {
 	})
 }
 
+func (tc *infoschemaTestContext) runRecoverSchema() {
+	tc.runDropSchema()
+	// recover schema
+	internal.AddDB(tc.t, tc.re.Store(), tc.dbInfo)
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionRecoverSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		dbInfo, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
+	})
+}
+
 func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 	if tc.dbInfo == nil {
 		tc.runCreateSchema()

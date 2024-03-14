@@ -606,6 +606,15 @@ func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return b.applyRecoverSchema(m, diff)
 }
 
+func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID); ok {
+		return nil, ErrDatabaseExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", di.ID),
+		)
+	}
+	return applyCreateTables(b, m, diff)
+}
+
 func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
 	if b.enableV2 {
 		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
@@ -625,10 +634,6 @@ func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, ta
 		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
 	}
 	return b.applyDropTable(diff, dbInfo, tableID, affected)
-}
-
-func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	return b.applyRecoverTable(m, diff)
 }
 
 func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -716,10 +721,6 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	return affected
 }
 
-func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
 func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
@@ -755,14 +756,6 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.
 	b.infoschemaV2.deleteDB(di.Name)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil
-}
-
-func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
-func (b *Builder) applyCreateTablesV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
 }
 
 func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
