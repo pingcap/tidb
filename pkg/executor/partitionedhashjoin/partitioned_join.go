@@ -717,6 +717,9 @@ func (e *PartitionedHashJoinExec) mergeRowTables() ([]*rowTable, int) {
 // checkBalance checks whether the segment count of each partition is balanced.
 func (e *PartitionedHashJoinExec) checkBalance(totalSegmentCnt int) bool {
 	isBalanced := e.Concurrency == uint(e.partitionNumber)
+	if !isBalanced {
+		return false
+	}
 	avgSegCnt := totalSegmentCnt / e.partitionNumber
 	balanceThreshold := int(float64(avgSegCnt) * 0.8)
 	subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
