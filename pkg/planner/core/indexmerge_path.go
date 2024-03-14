@@ -1584,7 +1584,7 @@ func collectFilters4MVIndex(
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
-				if accessTp == UnspecifiedFilterTp || accessTp == EQOnNonMVColTp {
+				if accessTp == unspecifiedFilterTp || accessTp == eqOnNonMVColTp {
 					accessTp = tp
 				}
 				break
@@ -1738,11 +1738,11 @@ func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]st
 }
 
 const (
-	UnspecifiedFilterTp int = iota
-	EQOnNonMVColTp
-	MultiValuesOROnMVColTp
-	MultiValuesANDOnMVColTp
-	SingleValueOnMVColTp
+	unspecifiedFilterTp int = iota
+	eqOnNonMVColTp
+	multiValuesOROnMVColTp
+	multiValuesANDOnMVColTp
+	singleValueOnMVColTp
 )
 
 // checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
@@ -1756,12 +1756,12 @@ func checkFilter4MVIndexColumn(
 ) {
 	sf, ok := filter.(*expression.ScalarFunction)
 	if !ok {
-		return false, UnspecifiedFilterTp
+		return false, unspecifiedFilterTp
 	}
 	if idxCol.VirtualExpr != nil { // the virtual column on the MVIndex
 		targetJSONPath, ok := unwrapJSONCast(idxCol.VirtualExpr)
 		if !ok {
-			return false, UnspecifiedFilterTp
+			return false, unspecifiedFilterTp
 		}
 		var virColVals []expression.Expression
 		jsonType := idxCol.GetType().ArrayType()
@@ -1769,17 +1769,17 @@ func checkFilter4MVIndexColumn(
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
 			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]) {
-				return false, UnspecifiedFilterTp
+				return false, unspecifiedFilterTp
 			}
 			v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
 			if !ok {
-				return false, UnspecifiedFilterTp
+				return false, unspecifiedFilterTp
 			}
 			virColVals = append(virColVals, v)
-			tp = SingleValueOnMVColTp
+			tp = singleValueOnMVColTp
 		case ast.JSONContains: // json_contains(a, '1')
 			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0]) {
-				return false, UnspecifiedFilterTp
+				return false, unspecifiedFilterTp
 			}
 			virColVals, ok = jsonArrayExpr2Exprs(
 				sctx.GetExprCtx(),
@@ -1789,9 +1789,9 @@ func checkFilter4MVIndexColumn(
 				false,
 			)
 			if !ok || len(virColVals) == 0 {
-				return false, UnspecifiedFilterTp
+				return false, unspecifiedFilterTp
 			}
-			tp = MultiValuesANDOnMVColTp
+			tp = multiValuesANDOnMVColTp
 		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
 			var jsonPathIdx int
 			if sf.GetArgs()[0].Equal(sctx.GetExprCtx(), targetJSONPath) {
@@ -1799,7 +1799,7 @@ func checkFilter4MVIndexColumn(
 			} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx(), targetJSONPath) {
 				jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 			} else {
-				return false, UnspecifiedFilterTp
+				return false, unspecifiedFilterTp
 			}
 			var ok bool
 			virColVals, ok = jsonArrayExpr2Exprs(
@@ -1810,25 +1810,25 @@ func checkFilter4MVIndexColumn(
 				false,
 			)
 			if !ok || len(virColVals) == 0 { // forbid empty array for safety
-				return false, UnspecifiedFilterTp
+				return false, unspecifiedFilterTp
 			}
-			tp = MultiValuesOROnMVColTp
+			tp = multiValuesOROnMVColTp
 		default:
-			return false, UnspecifiedFilterTp
+			return false, unspecifiedFilterTp
 		}
 		for _, v := range virColVals {
 			if !isSafeTypeConversion4MVIndexRange(v.GetType(), idxCol.GetType()) {
-				return false, UnspecifiedFilterTp
+				return false, unspecifiedFilterTp
 			}
 		}
-		if (tp == MultiValuesOROnMVColTp || tp == MultiValuesANDOnMVColTp) && len(virColVals) == 1 {
-			tp = SingleValueOnMVColTp
+		if (tp == multiValuesOROnMVColTp || tp == multiValuesANDOnMVColTp) && len(virColVals) == 1 {
+			tp = singleValueOnMVColTp
 		}
 		return true, tp
 	}
 	// else: non virtual column
 	if sf.FuncName.L != ast.EQ { // only support EQ now
-		return false, UnspecifiedFilterTp
+		return false, unspecifiedFilterTp
 	}
 	args := sf.GetArgs()
 	var argCol *expression.Column
@@ -1843,12 +1843,12 @@ func checkFilter4MVIndexColumn(
 		}
 	}
 	if argCol == nil || argConst == nil {
-		return false, UnspecifiedFilterTp
+		return false, unspecifiedFilterTp
 	}
 	if argCol.Equal(sctx.GetExprCtx(), idxCol) {
-		return true, EQOnNonMVColTp
+		return true, eqOnNonMVColTp
 	}
-	return false, UnspecifiedFilterTp
+	return false, unspecifiedFilterTp
 }
 
 // jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}

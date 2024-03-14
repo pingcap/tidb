@@ -75,7 +75,7 @@ func generateUnfinishedPathsFromExpr(
 		// case 2
 		if isMVIndexPath(path) {
 			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols)
-			if len(accessFilters) > 0 && (tp == MultiValuesOROnMVColTp || tp == SingleValueOnMVColTp) {
+			if len(accessFilters) > 0 && (tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 				ret[i].initedAsFinished = true
 				ret[i].accessFilters = accessFilters
 				ret[i].needKeepFilter = len(remainingFilters) > 0
@@ -89,7 +89,7 @@ func generateUnfinishedPathsFromExpr(
 		for j, col := range idxCols {
 			for _, cnfItem := range cnfItems {
 				if ok, tp := checkFilter4MVIndexColumn(ds.SCtx(), cnfItem, col); ok &&
-					(tp == EQOnNonMVColTp || tp == MultiValuesOROnMVColTp || tp == SingleValueOnMVColTp) {
+					(tp == eqOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].accessFilters = append(ret[i].accessFilters, cnfItem)
 					ret[i].IdxColHasAccessFilter[j] = true
 					break
