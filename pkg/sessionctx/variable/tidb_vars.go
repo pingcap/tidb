@@ -1150,8 +1150,6 @@ const (
 	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
 	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
 	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
-	// TiDBEnableParallelSort indicates if parallel sort is enabled.
-	TiDBEnableParallelSort = "enable_parallel_sort"
 	// TiDBLowResolutionTSOUpdateInterval defines how often to refresh low resolution timestamps.
 	TiDBLowResolutionTSOUpdateInterval = "tidb_low_resolution_tso_update_interval"
 	// TiDBDMLType indicates the execution type of DML in TiDB.
@@ -1480,7 +1478,6 @@ const (
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
-	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
 	DefTiDBSchemaCacheSize                            = 0
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
