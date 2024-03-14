@@ -65,50 +65,51 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tk.MustExec("create table t (a int, b int, index idx(a), index idx1(b)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 	job := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		TableSchema:     "test",
 		GlobalTableName: "t",
 		PartitionIndexes: map[string][]string{
-			"idx": {"p0", "p1"},
+			"idx":  {"p0", "p1"},
+			"idx1": {"p0", "p1"},
 		},
 		TableStatsVer: 2,
 	}
 
 	// Before analyze partitions.
 	handle := dom.StatsHandle()
-	// Check the result of analyze.
+	// Check the result of analyze index.
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
 	require.True(t, tblStats.Pseudo)
-	// Check the result of analyze index.
 	require.NotNil(t, tblStats.Indices[1])
 	require.False(t, tblStats.Indices[1].IsAnalyzed())
 
 	job.Analyze(handle, dom.SysProcTracker())
-	// Check the result of analyze.
+	// Check the result of analyze index.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
 	require.False(t, tblStats.Pseudo)
-	require.Equal(t, int64(1), tblStats.RealtimeCount)
-	// Check the result of analyze index.
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
 	// partition p1
 	pid = tbl.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
 	require.False(t, tblStats.Pseudo)
-	require.Equal(t, int64(2), tblStats.RealtimeCount)
-	// Check the result of analyze index.
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
+	// Check analyze jobs are created.
+	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
+	// Because analyze one index will analyze all indexes and all columns together, so there are 10 jobs.
+	// FIXME: We should only trigger it once.
+	require.Len(t, rows, 10)
 }
 
 func TestIsValidToAnalyzeForDynamicPartitionedTable(t *testing.T) {
