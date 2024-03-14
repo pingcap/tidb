@@ -622,7 +622,7 @@ func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
 // FromStringValue parses the string value to the DuplicateResolutionAlgorithm.
 func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
-	case "":
+	case "", "none":
 		*dra = NoneOnDup
 	case "replace":
 		*dra = ReplaceOnDup
@@ -630,6 +630,9 @@ func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 		*dra = IgnoreOnDup
 	case "error":
 		*dra = ErrorOnDup
+	case "remove", "record":
+		log.L().Warn("\"conflict.strategy '%s' is no longer supported, has been converted to 'replace'")
+		*dra = ReplaceOnDup
 	default:
 		return errors.Errorf("invalid conflict.strategy '%s', please choose valid option between ['', 'replace', 'ignore', 'error']", s)
 	}

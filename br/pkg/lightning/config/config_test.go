@@ -739,12 +739,18 @@ func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	var dra DuplicateResolutionAlgorithm
 	require.NoError(t, dra.FromStringValue(""))
 	require.Equal(t, NoneOnDup, dra)
+	require.NoError(t, dra.FromStringValue("none"))
+	require.Equal(t, NoneOnDup, dra)
 	require.NoError(t, dra.FromStringValue("replace"))
 	require.Equal(t, ReplaceOnDup, dra)
 	require.NoError(t, dra.FromStringValue("ignore"))
 	require.Equal(t, IgnoreOnDup, dra)
 	require.NoError(t, dra.FromStringValue("error"))
 	require.Equal(t, ErrorOnDup, dra)
+	require.NoError(t, dra.FromStringValue("remove"))
+	require.Equal(t, ReplaceOnDup, dra)
+	require.NoError(t, dra.FromStringValue("record"))
+	require.Equal(t, ReplaceOnDup, dra)
 
 	require.Equal(t, "", NoneOnDup.String())
 	require.Equal(t, "replace", ReplaceOnDup.String())
