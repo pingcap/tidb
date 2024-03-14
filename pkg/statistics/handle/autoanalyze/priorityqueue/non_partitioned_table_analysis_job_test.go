@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
-	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -144,7 +143,6 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 }
 
 func TestNonPartitionedTableIsValidToAnalyze(t *testing.T) {
-	logger := logutil.StatsSamplerLogger()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -160,7 +158,7 @@ func TestNonPartitionedTableIsValidToAnalyze(t *testing.T) {
 
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	valid, failReason := job.IsValidToAnalyze(sctx, logger)
+	valid, failReason := job.IsValidToAnalyze(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
@@ -169,24 +167,23 @@ func TestNonPartitionedTableIsValidToAnalyze(t *testing.T) {
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", now)
 	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
-	valid, _ = job.IsValidToAnalyze(sctx, logger)
+	valid, _ = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
 	// Failed 10 seconds ago.
 	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx, logger)
+	valid, failReason = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx, logger)
+	valid, failReason = job.IsValidToAnalyze(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 }
 
 func TestIsValidToAnalyzeWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
-	logger := logutil.StatsSamplerLogger()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -198,20 +195,20 @@ func TestIsValidToAnalyzeWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
 	}
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	valid, failReason := job.IsValidToAnalyze(sctx, logger)
+	valid, failReason := job.IsValidToAnalyze(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 	// Failed long long ago.
 	startTime := tk.MustQuery("select now() - interval 30 day").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx, logger)
+	valid, failReason = job.IsValidToAnalyze(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
 	// Failed recently.
 	tenSecondsAgo := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", tenSecondsAgo)
-	valid, failReason = job.IsValidToAnalyze(sctx, logger)
+	valid, failReason = job.IsValidToAnalyze(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 30m0s", failReason)
 }

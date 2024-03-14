@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"go.uber.org/zap"
 )
 
 var _ AnalysisJob = &DynamicPartitionedTableAnalysisJob{}
@@ -114,7 +113,6 @@ func (j *DynamicPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 // We need to check each partition to determine whether the table is valid to analyze.
 func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
 	sctx sessionctx.Context,
-	samplingLogger *zap.Logger,
 ) (bool, string) {
 	if valid, failReason := isValidWeight(j.Weight); !valid {
 		return false, failReason
@@ -125,7 +123,6 @@ func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
 		// Because we need to analyze partitions in batch mode.
 		partitions := append(j.Partitions, getPartitionNames(j.PartitionIndexes)...)
 		if valid, failReason := isValidToAnalyze(
-			samplingLogger,
 			sctx,
 			j.TableSchema,
 			j.GlobalTableName,

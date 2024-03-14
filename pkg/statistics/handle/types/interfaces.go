@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -471,7 +470,4 @@ type StatsHandle interface {
 
 	// DDL is used to handle ddl events.
 	DDL
-
-	// GetSamplingLogger returns the sampling logger.
-	GetSamplingLogger() *zap.Logger
 }

@@ -93,9 +93,6 @@ type Handle struct {
 
 	// StatsCache ...
 	types.StatsCache
-
-	// Use sampling logger to avoid printing too many logs.
-	samplingLogger *zap.Logger
 }
 
 // Clear the statsCache, only for test.
@@ -120,7 +117,6 @@ func NewHandle(
 		InitStatsDone:   make(chan struct{}),
 		TableInfoGetter: util.NewTableInfoGetter(),
 		StatsLock:       lockstats.NewStatsLock(pool),
-		samplingLogger:  statslogutil.StatsSamplerLogger(),
 	}
 	handle.StatsGC = storage.NewStatsGC(handle)
 	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
@@ -145,11 +141,6 @@ func NewHandle(
 		handle.StatsGlobal,
 	)
 	return handle, nil
-}
-
-// GetSamplingLogger returns the sampling logger.
-func (h *Handle) GetSamplingLogger() *zap.Logger {
-	return h.samplingLogger
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.

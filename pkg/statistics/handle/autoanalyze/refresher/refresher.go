@@ -45,9 +45,6 @@ const (
 // Refresher provides methods to refresh stats info.
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
-	// Only use the sampling logger to avoid too many logs.
-	samplingLogger *zap.Logger
-
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sessionctx.SysProcTracker
 	// This will be refreshed every time we rebuild the priority queue.
@@ -66,7 +63,6 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		samplingLogger: statsHandle.GetSamplingLogger(),
 		Jobs:           priorityqueue.NewAnalysisPriorityQueue(),
 	}
 
@@ -94,9 +90,8 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		job := r.Jobs.Pop()
 		if valid, failReason := job.IsValidToAnalyze(
 			sctx,
-			r.samplingLogger,
 		); !valid {
-			r.samplingLogger.Info(
+			statslogutil.StatsSamplerLoggerSingleton().Info(
 				"Table is not ready to analyze",
 				zap.String("failReason", failReason),
 				zap.Stringer("job", job),
@@ -121,7 +116,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		// Only analyze one table each time.
 		return true
 	}
-	r.samplingLogger.Info(
+	statslogutil.StatsSamplerLoggerSingleton().Info(
 		"No table to analyze",
 	)
 	return false

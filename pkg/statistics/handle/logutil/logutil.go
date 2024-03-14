@@ -15,6 +15,7 @@
 package logutil
 
 import (
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -28,16 +29,28 @@ func StatsLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("category", "stats"))
 }
 
-// StatsSamplerLogger with category "stats" is used to log statistic related messages.
+var (
+	initSamplerLoggerOnce sync.Once
+	samplerLogger         *zap.Logger
+)
+
+// StatsSamplerLoggerSingleton with category "stats" is used to log statistic related messages.
 // It is used to sample the log to avoid too many logs.
 // NOTE: Do not create a new logger for each log, it will cause the sampler not work.
 // Because we need to record the log count with the same level and message in this specific logger.
 // Do not use it to log the message that is not related to statistics.
-func StatsSamplerLogger() *zap.Logger {
-	// Create a new zapcore sampler with options
-	// This will log the first 2 log entries with the same level and message in a minute and ignore the rest of the logs.
-	sampler := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		return zapcore.NewSamplerWithOptions(core, time.Minute, 2, 0)
-	})
-	return StatsLogger().WithOptions(sampler)
+func StatsSamplerLoggerSingleton() *zap.Logger {
+	init := func() {
+		if samplerLogger == nil {
+			// Create a new zapcore sampler with options
+			// This will log the first 2 log entries with the same level and message in a minute and ignore the rest of the logs.
+			sampler := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+				return zapcore.NewSamplerWithOptions(core, time.Minute, 2, 0)
+			})
+			samplerLogger = StatsLogger().WithOptions(sampler)
+		}
+	}
+
+	initSamplerLoggerOnce.Do(init)
+	return samplerLogger
 }
