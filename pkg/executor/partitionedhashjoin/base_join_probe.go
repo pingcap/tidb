@@ -142,7 +142,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.serializedKeys = make([][]byte, rows)
 	}
-	if j.ctx.Filter != nil {
+	if j.ctx.Filter != nil && !j.ctx.buildShouldConsiderFilter() {
 		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.Filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
 		if err != nil {
 			return err
