@@ -275,4 +275,12 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1998-12-01 00:00:00", tm.In(tz1).Format(time.DateTime))
 	require.Same(t, time.UTC, tm.Location())
+
+	// time should be truncated to second to make the result simple
+	now, err = time.ParseInLocation("2006-01-02 15:04:05.000000", "2023-01-02 15:00:01.986542", time.UTC)
+	require.NoError(t, err)
+	tm, err = ttlTbl.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2023-01-01 15:00:01.000000", tm.Format("2006-01-02 15:04:05.000000"))
+	require.Same(t, time.UTC, tm.Location())
 }

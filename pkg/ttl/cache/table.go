@@ -208,7 +208,11 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 		return time.Time{}, err
 	}
 
-	expire = now.In(globalTz).
+	expire = now.
+		In(globalTz).
+		// Truncate to second to make sure the precision is always the same with the one stored in a table to avoid some
+		// comparing problems in testing.
+		Truncate(time.Second).
 		AddDate(-int(y), -int(m), -int(d)).
 		Add(-time.Duration(nanosecond)).
 		In(now.Location())
