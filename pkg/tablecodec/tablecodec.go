@@ -58,6 +58,7 @@ const (
 	prefixLen = 1 + idLen /*tableID*/ + 2
 	// RecordRowKeyLen is public for calculating average row size.
 	RecordRowKeyLen       = prefixLen + idLen /*handle*/
+	IndexKeyLen           = prefixLen + idLen
 	tablePrefixLength     = 1
 	recordPrefixSepLength = 2
 	metaPrefixLength      = 1
@@ -104,11 +105,6 @@ func EncodeRowKeyWithHandle(tableID int64, handle kv.Handle) kv.Key {
 // CutRowKeyPrefix cuts the row key prefix.
 func CutRowKeyPrefix(key kv.Key) []byte {
 	return key[prefixLen:]
-}
-
-// CutIndexKeyPrefix cuts the index key prefix.
-func CutIndexKeyPrefix(key kv.Key) []byte {
-	return key[len(tablePrefix)+8+len(indexPrefixSep):]
 }
 
 // EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.

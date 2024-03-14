@@ -128,6 +128,7 @@ type mergeIndexWorker struct {
 	originIdxKeys []kv.Key
 	tmpIdxKeys    []kv.Key
 
+	needValidateKey        bool
 	currentTempIndexPrefix []byte
 	currentIndexID         int64
 	currentIndexColLen     int
@@ -148,8 +149,37 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements
 	}
 }
 
+func (w *mergeIndexWorker) validateTaskRange(taskRange *reorgBackfillTask) (skip bool, err error) {
+	tmpID, err := tablecodec.DecodeIndexID(taskRange.startKey)
+	if err != nil {
+		return false, err
+	}
+	startIndexID := tmpID & tablecodec.IndexIDMask
+	tmpID, err = tablecodec.DecodeIndexID(taskRange.endKey)
+	if err != nil {
+		return false, err
+	}
+	endIndexID := tmpID & tablecodec.IndexIDMask
+
+	w.needValidateKey = startIndexID != endIndexID
+	containsTargetID := false
+	for _, idx := range w.indexes {
+		idxInfo := idx.Meta()
+		if idxInfo.ID == startIndexID || idxInfo.ID == endIndexID {
+			containsTargetID = true
+			break
+		}
+	}
+	return !containsTargetID, nil
+}
+
 // BackfillData merge temp index data in txn.
 func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+	skip, err := w.validateTaskRange(&taskRange)
+	if skip || err != nil {
+		return taskCtx, err
+	}
+
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 
@@ -230,13 +260,16 @@ func (w *mergeIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
+func (w *mergeIndexWorker) prefixIsChanged(newKey kv.Key) bool {
+	return len(w.currentTempIndexPrefix) == 0 || !bytes.HasPrefix(newKey, w.currentTempIndexPrefix)
+}
+
 func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) (skip bool, err error) {
 	tempIdxID, err := tablecodec.DecodeIndexID(newIndexKey)
 	if err != nil {
 		return false, err
 	}
 	idxID := tablecodec.IndexIDMask & tempIdxID
-	pfx := tablecodec.CutIndexKeyPrefix(newIndexKey)
 	var curIdx *model.IndexInfo
 	for _, idx := range w.indexes {
 		if idx.Meta().ID == idxID {
@@ -252,6 +285,7 @@ func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) (skip bool
 		// We should skip these dirty records.
 		return true, nil
 	}
+	pfx := tablecodec.CutIndexPrefix(newIndexKey)
 
 	w.currentTempIndexPrefix = kv.Key(pfx).Clone()
 	w.currentIndexID = idxID
@@ -286,8 +320,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 				return false, nil
 			}
 
-			if len(w.currentTempIndexPrefix) == 0 ||
-				!bytes.HasPrefix(indexKey, w.currentTempIndexPrefix) {
+			if w.needValidateKey && w.prefixIsChanged(indexKey) {
 				skip, err := w.updateCurrentIndexInfo(indexKey)
 				if err != nil || skip {
 					return skip, err
