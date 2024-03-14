@@ -15,8 +15,14 @@
 package redact
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"strings"
+
+	"github.com/pingcap/errors"
 )
 
 var (
@@ -59,4 +65,106 @@ func (s redactStringer) String() string {
 // Stringer will redact the input stringer according to 'mode', similar to String().
 func Stringer(mode string, input fmt.Stringer) redactStringer {
 	return redactStringer{mode, input}
+}
+
+func DeRedactFile(remove bool, input string, output string) error {
+	ifile, err := os.Open(input)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	defer ifile.Close()
+
+	var ofile io.Writer
+	if output == "-" {
+		ofile = os.Stdout
+	} else {
+		file, err := os.OpenFile(output, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		defer file.Close()
+		ofile = file
+	}
+
+	return DeRedact(remove, ifile, ofile, "\n")
+}
+
+func DeRedact(remove bool, input io.Reader, output io.Writer, sep string) error {
+	sc := bufio.NewScanner(input)
+	out := bufio.NewWriter(output)
+	defer out.Flush()
+	buf := bytes.NewBuffer(nil)
+	s := bufio.NewReader(nil)
+
+	for sc.Scan() {
+		s.Reset(strings.NewReader(sc.Text()))
+		start := false
+		for {
+			ch, _, err := s.ReadRune()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			if ch == '‹' {
+				if start {
+					// must be '<'
+					pch, _, err := s.ReadRune()
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					if pch == ch {
+						_, _ = buf.WriteRune(ch)
+					} else {
+						_, _ = buf.WriteRune(ch)
+						_, _ = buf.WriteRune(pch)
+					}
+				} else {
+					start = true
+					buf.Reset()
+				}
+			} else if ch == '›' {
+				if start {
+					// peek the next
+					pch, _, err := s.ReadRune()
+					if err != nil && err != io.EOF {
+						return errors.WithStack(err)
+					}
+					if pch == ch {
+						_, _ = buf.WriteRune(ch)
+					} else {
+						start = false
+						if err != io.EOF {
+							// unpeek it
+							if err := s.UnreadRune(); err != nil {
+								return errors.WithStack(err)
+							}
+						}
+						if remove {
+							_ = out.WriteByte('?')
+						} else {
+							_, err = io.Copy(out, buf)
+							if err != nil {
+								return errors.WithStack(err)
+							}
+						}
+					}
+				} else {
+					_, _ = out.WriteRune(ch)
+				}
+			} else if start {
+				_, _ = buf.WriteRune(ch)
+			} else {
+				_, _ = out.WriteRune(ch)
+			}
+		}
+		if start {
+			_, _ = out.WriteRune('‹')
+			_, _ = out.WriteString(buf.String())
+		}
+		_, _ = out.WriteString(sep)
+	}
+
+	return nil
 }
