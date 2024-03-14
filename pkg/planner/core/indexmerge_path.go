@@ -43,7 +43,7 @@ import (
 func init() {
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = PrepareCols4MVIndex
+	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUncoverArrayType
 }
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -654,7 +654,12 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 	// mm is a map here used for de-duplicate partial paths which is derived from **same** accessFilters, not necessary to keep them both.
 	mm := make(map[string]*record, 0)
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
-		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+			ds.table.Meta(),
+			possibleMVIndexPaths[idx].Index,
+			ds.TblCols,
+			true,
+		)
 		if !ok {
 			continue
 		}
@@ -1049,7 +1054,12 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue
 		}
 
-		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+			ds.table.Meta(),
+			ds.possibleAccessPaths[idx].Index,
+			ds.TblCols,
+			true,
+		)
 		if !ok {
 			continue
 		}
@@ -1242,11 +1252,12 @@ func buildPartialPath4MVIndex(
 	return partialPath, true, nil
 }
 
-// PrepareCols4MVIndex exported for test.
-func PrepareCols4MVIndex(
+// PrepareIdxColsAndUncoverArrayType exported for test.
+func PrepareIdxColsAndUncoverArrayType(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
 	tblCols []*expression.Column,
+	checkOnly1ArrayTypeCol bool,
 ) (idxCols []*expression.Column, ok bool) {
 	var virColNum = 0
 	for i := range mvIndex.Columns {
@@ -1271,7 +1282,7 @@ func PrepareCols4MVIndex(
 		}
 		idxCols = append(idxCols, col)
 	}
-	if virColNum != 1 { // assume only one vir-col in the MVIndex
+	if checkOnly1ArrayTypeCol && virColNum != 1 { // assume only one vir-col in the MVIndex
 		return nil, false
 	}
 	return idxCols, true

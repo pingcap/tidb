@@ -268,12 +268,15 @@ explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 w
 drop table if exists t, t1;
 create table t (a int, b varchar(30), c float, j json, pk int primary key,
 key mvi1(c, (cast(j->'$.a' as unsigned array)), b),
-key mvi2(a, (cast(j->'$.c' as unsigned array)))
+key mvi2(a, (cast(j->'$.c' as unsigned array))),
+key idx(b, c)
 );
 
 explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where (1 member of (j->'$.a') or (2 member of (j->'$.a'))) and c = 10 and a = 20;
-explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, primary) */ * from t where (pk = 2 or json_overlaps(j->'$.a', '[4,5,6]') or json_contains(j->'$.c', '[3]')) and a = 1 and b = '2' and c = 3;
-explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, primary) */ * from t where a = 1 and b = '2' and c = 3 and (pk = 2 or (3 member of (j->'$.a')) or (3 member of (j->'$.c'))) ;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2) */ * from t where (pk = 2 or json_overlaps(j->'$.a', '[4,5,6]') or json_contains(j->'$.c', '[3]')) and a = 1 and b = '2' and c = 3;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2) */ * from t where a = 1 and b = '2' and c = 3 and (pk = 2 or (3 member of (j->'$.a')) or (3 member of (j->'$.c'))) ;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, idx) */ * from t where a = 1 and b = '2' and (c = 20 or (c = 10 and (3 member of (j->'$.a'))) or (3 member of (j->'$.c'))) ;
+
 
 
 

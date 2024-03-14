@@ -19,7 +19,6 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
@@ -95,7 +94,7 @@ func generateUnfinishedPathsFromExpr(
 		if path.IsTablePath() {
 			continue
 		}
-		idxCols, ok := collectIdxCols(ds.table.Meta(), path.Index, ds.TblCols)
+		idxCols, ok := PrepareIdxColsAndUncoverArrayType(ds.table.Meta(), path.Index, ds.TblCols, false)
 		if !ok {
 			continue
 		}
@@ -245,7 +244,12 @@ func buildAccessPathFromUnfinishedPath(
 			var needSelection bool
 			if unfinishedPath.Index != nil && unfinishedPath.Index.MVIndex {
 				// case 1: mv index
-				idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), unfinishedPath.Index, ds.TblCols)
+				idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+					ds.table.Meta(),
+					unfinishedPath.Index,
+					ds.TblCols,
+					true,
+				)
 				if !ok {
 					continue
 				}
@@ -320,33 +324,4 @@ func buildAccessPathFromUnfinishedPath(
 		ds.tableStats.HistColl,
 	)
 	return ret
-}
-
-func collectIdxCols(
-	tableInfo *model.TableInfo,
-	mvIndex *model.IndexInfo,
-	tblCols []*expression.Column,
-) (idxCols []*expression.Column, ok bool) {
-	for i := range mvIndex.Columns {
-		colOffset := mvIndex.Columns[i].Offset
-		colMeta := tableInfo.Cols()[colOffset]
-		var col *expression.Column
-		for _, c := range tblCols {
-			if c.ID == colMeta.ID {
-				col = c
-				break
-			}
-		}
-		if col == nil { // unexpected, no vir-col on this MVIndex
-			return nil, false
-		}
-		if col.GetType().IsArray() {
-			col = col.Clone().(*expression.Column)
-			col.RetType = col.GetType().ArrayType() // use the underlying type directly: JSON-ARRAY(INT) --> INT
-			col.RetType.SetCharset(charset.CharsetBin)
-			col.RetType.SetCollate(charset.CollationBin)
-		}
-		idxCols = append(idxCols, col)
-	}
-	return idxCols, true
 }
