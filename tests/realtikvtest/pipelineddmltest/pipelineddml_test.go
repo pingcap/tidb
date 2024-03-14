@@ -189,6 +189,12 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustExec("explain analyze insert into t values(9, 9)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
 	tk.Session().GetSessionVars().BinlogClient = nil
+
+	// disable MDL
+	tk.MustExec("set global tidb_enable_metadata_lock = off")
+	tk.MustExec("insert into t values(10, 10)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used without Metadata Lock. Fallback to standard mode")
+	tk.MustExec("set global tidb_enable_metadata_lock = on")
 }
 
 func compareTables(t *testing.T, tk *testkit.TestKit, t1, t2 string) {

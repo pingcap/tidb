@@ -570,6 +570,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.GetSessionVars().TxnCtx != nil {
 		needCheckSchema = !s.GetSessionVars().TxnCtx.EnableMDL
 	}
+	if s.txn.IsPipelined() && !s.GetSessionVars().TxnCtx.EnableMDL {
+		return errors.New("cannot commit pipelined transaction without Metadata Lock: MDL is OFF")
+	}
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
@@ -4303,6 +4306,14 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 		return false
 	}
 	vars := s.GetSessionVars()
+	if !vars.TxnCtx.EnableMDL {
+		stmtCtx.AppendWarning(
+			errors.New(
+				"Pipelined DML can not be used without Metadata Lock. Fallback to standard mode",
+			),
+		)
+		return false
+	}
 	if (vars.BatchCommit || vars.BatchInsert || vars.BatchDelete) && vars.DMLBatchSize > 0 && variable.EnableBatchDML.Load() {
 		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode"))
 		return false
