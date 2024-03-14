@@ -3074,7 +3074,7 @@ var defaultSysVars = []*SysVar{
 		SetSession: func(s *SessionVars, val string) error {
 			s.DivPrecisionIncrement = tidbOptPositiveInt32(val, DefDivPrecisionIncrement)
 			return nil
-    }},
+		}},
 	{Scope: ScopeSession, Name: TiDBDMLType, Value: DefTiDBDMLType, Type: TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
 			lowerVal := strings.ToLower(val)
