@@ -292,6 +292,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	txn.SetOption(kv.ResourceGroupTagger, p.sctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
