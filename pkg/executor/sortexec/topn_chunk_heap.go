@@ -41,7 +41,9 @@ type topNChunkHeap struct {
 	idx        int
 }
 
-func (h *topNChunkHeap) init(topnExec *TopNExec, totalLimit uint64, idx int, greaterRow func(chunk.Row, chunk.Row) bool) {
+func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, totalLimit uint64, idx int, greaterRow func(chunk.Row, chunk.Row) bool) {
+	h.memTracker = memTracker
+
 	h.rowChunks = chunk.NewList(exec.RetTypes(topnExec), topnExec.InitCap(), topnExec.MaxChunkSize())
 	h.rowChunks.GetMemTracker().AttachTo(h.memTracker)
 	h.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)

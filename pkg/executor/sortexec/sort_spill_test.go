@@ -16,11 +16,13 @@ package sortexec_test
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
@@ -98,10 +100,13 @@ func (r *resultChecker) initRowPtrs() {
 	}
 }
 
-func (r *resultChecker) check(resultChunks []*chunk.Chunk) bool {
+func (r *resultChecker) check(resultChunks []*chunk.Chunk, isTopN bool, offset uint64, count uint64) bool {
 	if r.rowPtrs == nil {
 		r.initRowPtrs()
 		sort.Slice(r.rowPtrs, r.keyColumnsLess)
+		if isTopN {
+			r.rowPtrs = r.rowPtrs[offset : offset+count]
+		}
 	}
 
 	cursor := 0
@@ -127,6 +132,8 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk) bool {
 
 			expectRow := r.savedChunks[r.rowPtrs[cursor].ChkIdx].GetRow(int(r.rowPtrs[cursor].RowIdx))
 			expect := expectRow.ToString(fieldTypes)
+
+			log.Info(fmt.Sprintf("res: %s, expect: %s", res, expect))
 
 			if res != expect {
 				return false
@@ -212,7 +219,7 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk) bool {
 	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
 	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.GenData)
-	return checker.check(resultChunks)
+	return checker.check(resultChunks, false, 0, 0)
 }
 
 func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {

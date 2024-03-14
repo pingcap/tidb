@@ -73,8 +73,8 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		workers := make([]*topNWorker, concurrency)
 		for i := range workers {
 			chkHeap := &topNChunkHeap{}
-			chkHeap.init(e, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow)
-			workers[i] = newTopNWorker(e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap)
+			chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow)
+			workers[i] = newTopNWorker(e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap, e.memTracker)
 		}
 
 		e.spillHelper = newTopNSpillerHelper(
@@ -97,7 +97,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 func (e *TopNExec) Close() error {
 	close(e.finishCh)
 	if e.fetched.CompareAndSwap(false, true) {
-		close(e.Parallel.resultChannel)
+		close(e.resultChannel)
 		return nil
 	}
 
@@ -110,7 +110,12 @@ func (e *TopNExec) Close() error {
 	e.chkHeap = nil
 	e.spillHelper = nil
 	e.spillAction = nil
-	return nil
+
+	if e.memTracker != nil {
+		e.memTracker.ReplaceBytesUsed(0)
+	}
+
+	return exec.Close(e.Children(0))
 }
 
 func (e *TopNExec) greaterRow(rowI, rowJ chunk.Row) bool {
@@ -165,7 +170,7 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.initCompareFuncs()
 	e.buildKeyColumns()
-	e.chkHeap.init(e, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow)
+	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow)
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// adjust required rows by total limit
@@ -324,7 +329,13 @@ func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
 }
 
 func (e *TopNExec) executeTopN(ctx context.Context) {
-	defer close(e.resultChannel)
+	defer func() {
+		if r := recover(); r != nil {
+			processPanicAndLog(e.resultChannel, r)
+		}
+
+		close(e.resultChannel)
+	}()
 
 	heap.Init(e.chkHeap)
 	for uint64(len(e.chkHeap.rowPtrs)) > e.chkHeap.totalLimit {
@@ -398,14 +409,6 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 }
 
 func (e *TopNExec) generateTopNResults() {
-	defer func() {
-		if r := recover(); r != nil {
-			processPanicAndLog(e.resultChannel, r)
-		}
-
-		close(e.resultChannel)
-	}()
-
 	if !e.spillHelper.isSpillTriggered() {
 		if !e.generateTopNResultsWithNoSpill() {
 			return
@@ -418,6 +421,10 @@ func (e *TopNExec) generateTopNResults() {
 	}
 
 	e.generateTopNResultsWithSpill()
+}
+
+func (e *TopNExec) IsSpillTriggeredForTest() bool {
+	return e.spillHelper.isSpillTriggered()
 }
 
 func injectTopNRandomFail(triggerFactor int32) {
