@@ -174,7 +174,7 @@ func handleTopLevelANDListAndGenFinishedPath(
 			candidateAccessPaths,
 			cnfItem,
 		)
-		unfinishedIndexMergePath = tryMergeUnfinishedIndexMergePathWithAND(unfinishedIndexMergePath, pathListFromANDItem)
+		unfinishedIndexMergePath = mergeANDItemIntoUnfinishedIndexMergePath(unfinishedIndexMergePath, pathListFromANDItem)
 	}
 	if unfinishedIndexMergePath == nil {
 		return nil
@@ -188,7 +188,7 @@ func handleTopLevelANDListAndGenFinishedPath(
 	)
 }
 
-func tryMergeUnfinishedIndexMergePathWithAND(indexMergePath *unfinishedAccessPath, pathListFromANDItem unfinishedAccessPathList) *unfinishedAccessPath {
+func mergeANDItemIntoUnfinishedIndexMergePath(indexMergePath *unfinishedAccessPath, pathListFromANDItem unfinishedAccessPathList) *unfinishedAccessPath {
 	// currently, we only handle the case where indexMergePath is an index merge OR unfinished path and
 	// pathListFromANDItem is a normal unfinished path or nil
 	if indexMergePath == nil || len(indexMergePath.indexMergeOrPartialPaths) == 0 {

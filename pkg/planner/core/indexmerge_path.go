@@ -1307,6 +1307,7 @@ func collectFilters4MVIndex(
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
+				// access filter type on mv col overrides normal col for the return value of this function
 				if accessTp == unspecifiedFilterTp || accessTp == eqOnNonMVColTp {
 					accessTp = tp
 				}
