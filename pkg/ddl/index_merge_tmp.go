@@ -163,9 +163,13 @@ func (w *mergeIndexWorker) validateTaskRange(taskRange *reorgBackfillTask) (skip
 	containsTargetID := false
 	for _, idx := range w.indexes {
 		idxInfo := idx.Meta()
-		if idxInfo.ID == startIndexID || idxInfo.ID == endIndexID {
+		if idxInfo.ID == startIndexID {
 			containsTargetID = true
+			w.currentIndex = idxInfo
 			break
+		}
+		if idxInfo.ID == endIndexID {
+			containsTargetID = true
 		}
 	}
 	return !containsTargetID, nil
