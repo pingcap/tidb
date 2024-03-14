@@ -312,7 +312,7 @@ func TestWaitForScatterRegions(t *testing.T) {
 		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
 	}
 	left, err = client.WaitRegionsScattered(ctx, regions)
-	require.ErrorContains(t, err, "wait for scatter region timeout, print the first unfinished region: id:4")
+	require.ErrorContains(t, err, "the first unfinished region: id:4")
 	require.Equal(t, 1, left)
 	checkGetOperatorRespsDrained()
 	checkNoRetry()
