@@ -53,6 +53,9 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 		if err := e.checkTotalFileSize(); err != nil {
 			return err
 		}
+		if e.IsGlobalSort() && e.ThreadCnt < 16 {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("global sort requires at least 16 threads")
+		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
