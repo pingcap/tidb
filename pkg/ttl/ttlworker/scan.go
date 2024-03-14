@@ -111,7 +111,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	}
 	defer rawSess.Close()
 
-	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, time.Now())
+	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, rawSess.Now())
 	if err != nil {
 		return t.result(err)
 	}

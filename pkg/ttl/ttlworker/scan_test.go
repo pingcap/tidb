@@ -412,7 +412,10 @@ func TestScanTaskDoScan(t *testing.T) {
 func TestScanTaskCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	pool := newMockSessionPool(t, tbl)
-	pool.se.evalExpire = time.UnixMilli(100)
+	pool.se.now = func() time.Time {
+		// make expire time time.UnixMilli(100)
+		return time.UnixMilli(100).Add(time.Second)
+	}
 	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
 
 	task := &ttlScanTask{

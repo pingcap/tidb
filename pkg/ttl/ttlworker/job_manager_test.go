@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
@@ -366,7 +367,7 @@ func TestLockTable(t *testing.T) {
 	oldJobExpireTime := now.Add(-time.Hour)
 	oldJobStartTime := now.Add(-30 * time.Minute)
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: model.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: model.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: "1h"}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: model.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: model.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
 
 	type executeInfo struct {
 		sql  string
@@ -600,7 +601,9 @@ func TestLockTable(t *testing.T) {
 				sqlCounter += 1
 				return
 			}
-			se.evalExpire = newJobExpireTime
+			se.now = func() time.Time {
+				return now
+			}
 
 			var job *ttlJob
 			if c.isCreate {

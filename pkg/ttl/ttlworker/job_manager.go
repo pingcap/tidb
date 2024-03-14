@@ -201,7 +201,7 @@ func (m *JobManager) jobLoop() error {
 		case <-m.ctx.Done():
 			return nil
 		case <-timerTicker:
-			m.onTimerTick(se, timerRT, timerSyncer, time.Now())
+			m.onTimerTick(se, timerRT, timerSyncer, now)
 		case jobReq := <-jobRequestCh:
 			m.handleSubmitJobRequest(se, jobReq)
 		case <-infoSchemaCacheUpdateTicker:
@@ -327,7 +327,7 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
-	_, err := m.lockNewJob(m.ctx, se, tbl, time.Now(), jobReq.RequestID, false)
+	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false)
 	jobReq.RespCh <- err
 }
 
