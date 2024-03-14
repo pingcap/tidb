@@ -85,8 +85,8 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20240227073058-929ab83f9754
-	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
-	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
+	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
+	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20240305085524-87f5b80908ab
 	github.com/prometheus/client_golang v1.19.0

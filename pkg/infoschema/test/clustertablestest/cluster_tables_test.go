@@ -714,6 +714,8 @@ select * from t1;
 	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
 	defer tk.MustExec("set global tidb_mem_oom_action='LOG'")
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	// Align with the timezone in slow log files
+	tk.MustExec("set @@time_zone='+08:00'")
 	checkFn := func(quota int) {
 		tk.MustExec("set tidb_mem_quota_query=" + strconv.Itoa(quota)) // session
 
