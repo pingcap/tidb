@@ -784,7 +784,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
 		if idxInfo.MVIndex {
-			cols, ok := PrepareCols4MVIndex(tblInfo, idxInfo, columns)
+			cols, ok := PrepareCols4MVIndex(tblInfo, idxInfo, columns, true)
 			if ok {
 				mvIdx2Columns[id] = cols
 			}
@@ -875,4 +875,5 @@ var PrepareCols4MVIndex func(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
 	tblCols []*expression.Column,
+	checkOnly1ArrayTypeCol bool,
 ) (idxCols []*expression.Column, ok bool)
