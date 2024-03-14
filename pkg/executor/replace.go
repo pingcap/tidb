@@ -73,12 +73,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 		if err != nil {
 			return err
 		}
-
-		if txn.IsPipelined() {
-			_, err = txn.GetFromPrefetchCache(ctx, r.handleKey.newKey)
-		} else {
-			_, err = txn.Get(ctx, r.handleKey.newKey)
-		}
+		_, err = txn.Get(ctx, r.handleKey.newKey)
 		if err == nil {
 			rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 			if err != nil {

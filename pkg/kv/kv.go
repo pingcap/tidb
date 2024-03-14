@@ -195,8 +195,8 @@ type MemBuffer interface {
 	// GetLocal checks if the key exists in the buffer in local memory.
 	GetLocal(context.Context, []byte) ([]byte, error)
 
-	// GetPrefetchCache gets keys from the prefetch cache, the keys must be prefetched before unless it panics.
-	GetPrefetchCache(context.Context, [][]byte) map[string][]byte
+	// BatchGet gets values from the memory buffer.
+	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
@@ -264,11 +264,6 @@ type Transaction interface {
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
-	// Prefetch gets kv from the local/remote memory buffer of pipelined DML, and the kv storage.
-	// It also caches the result to the local/remote memory buffer of pipelined DML to avoid remote read in rows processing.
-	Prefetch(ctx context.Context, keys []Key) (map[string][]byte, error)
-	// GetFromPrefetchCache gets the kv from prefetch cache, the key must be prefetched before unless it panics.
-	GetFromPrefetchCache(ctx context.Context, key Key) ([]byte, error)
 	IsPessimistic() bool
 	// CacheTableInfo caches the index name.
 	// PresumeKeyNotExists will use this to help decode error message.

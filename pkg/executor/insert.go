@@ -149,9 +149,6 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 			batchKeys = append(batchKeys, k.newKey)
 		}
 	}
-	if txn.IsPipelined() {
-		return txn.Prefetch(ctx, batchKeys)
-	}
 	return txn.BatchGet(ctx, batchKeys)
 }
 
@@ -177,12 +174,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 			}
 		}
 	}
-	var err error
-	if txn.IsPipelined() {
-		_, err = txn.Prefetch(ctx, batchKeys)
-	} else {
-		_, err = txn.BatchGet(ctx, batchKeys)
-	}
+	_, err := txn.BatchGet(ctx, batchKeys)
 	return err
 }
 
