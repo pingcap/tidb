@@ -954,46 +954,18 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			dnfFilters := expression.SplitDNFItems(sf) // [(1 member of (a) and b=1), (2 member of (a) and b=2)]
 
 			// --------------
-			if len(dnfFilters) < 2 {
-				continue
-			}
-			unfinishedPathList := generateUnfinishedPathsFromExpr(
+
+			unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
 				ds,
+				dnfFilters,
 				[]*util.AccessPath{ds.possibleAccessPaths[idx]},
-				dnfFilters[0],
 			)
-			for i := 1; i < len(dnfFilters); i++ {
-				unfinishedPath2 := generateUnfinishedPathsFromExpr(
-					ds,
-					[]*util.AccessPath{ds.possibleAccessPaths[idx]},
-					dnfFilters[i],
-				)
-				unfinishedPathList = mergeUnfinishedPathsWithOR(unfinishedPathList, unfinishedPath2)
-			}
-			if len(unfinishedPathList) != 1 || len(unfinishedPathList[0].indexMergeOrPartialPaths) == 0 {
-				continue
-			}
-			unfinishedIndexMergePath := unfinishedPathList[0]
-			for i, cnfItem := range filters {
-				if i == current {
-					continue
-				}
-				pathListFromANDItem := generateUnfinishedPathsFromExpr(
-					ds,
-					[]*util.AccessPath{ds.possibleAccessPaths[idx]},
-					cnfItem,
-				)
-				unfinishedIndexMergePath = mergeUnfinishedPathsWithAND(unfinishedIndexMergePath, pathListFromANDItem)
-			}
-			if unfinishedIndexMergePath == nil {
-				break
-			}
-			finishedIndexMergePath := buildAccessPathFromUnfinishedPath(
+			finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
 				ds,
-				[]*util.AccessPath{ds.possibleAccessPaths[idx]},
-				unfinishedIndexMergePath,
 				filters,
 				current,
+				[]*util.AccessPath{ds.possibleAccessPaths[idx]},
+				unfinishedIndexMergePath,
 			)
 			if finishedIndexMergePath != nil {
 				mvIndexPaths = append(mvIndexPaths, finishedIndexMergePath)
@@ -1124,7 +1096,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			// targeting: cond1 or cond2 or cond3
 			continue
 		}
-		dnfFilters := expression.FlattenDNFConditions(sf)
+		dnfFilters := expression.SplitDNFItems(sf)
 
 		// ++++++++++++++++
 		var mvIndexPathCnt int
@@ -1144,47 +1116,21 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			}
 			candidateAccessPaths = append(candidateAccessPaths, ds.possibleAccessPaths[idx])
 		}
+		if mvIndexPathCnt == 0 {
+			return nil
+		}
 
-		if len(dnfFilters) < 2 || mvIndexPathCnt == 0 {
-			return nil
-		}
-		unfinishedPathList := generateUnfinishedPathsFromExpr(
+		unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
 			ds,
+			dnfFilters,
 			candidateAccessPaths,
-			dnfFilters[0],
 		)
-		for i := 1; i < len(dnfFilters); i++ {
-			unfinishedPath2 := generateUnfinishedPathsFromExpr(
-				ds,
-				candidateAccessPaths,
-				dnfFilters[i],
-			)
-			unfinishedPathList = mergeUnfinishedPathsWithOR(unfinishedPathList, unfinishedPath2)
-		}
-		if len(unfinishedPathList) != 1 || len(unfinishedPathList[0].indexMergeOrPartialPaths) == 0 {
-			return nil
-		}
-		unfinishedIndexMergePath := unfinishedPathList[0]
-		for i, cnfItem := range indexMergeConds {
-			if i == current {
-				continue
-			}
-			pathListFromANDItem := generateUnfinishedPathsFromExpr(
-				ds,
-				candidateAccessPaths,
-				cnfItem,
-			)
-			unfinishedIndexMergePath = mergeUnfinishedPathsWithAND(unfinishedIndexMergePath, pathListFromANDItem)
-		}
-		if unfinishedIndexMergePath == nil {
-			return nil
-		}
-		finishedIndexMergePath := buildAccessPathFromUnfinishedPath(
+		finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
 			ds,
-			candidateAccessPaths,
-			unfinishedIndexMergePath,
 			indexMergeConds,
 			current,
+			candidateAccessPaths,
+			unfinishedIndexMergePath,
 		)
 		if finishedIndexMergePath == nil {
 			return nil
@@ -1198,6 +1144,8 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 				normalIndexPartialPathCnt++
 			}
 		}
+
+		// Keep the same behavior with previous implementation, we only handle the "composed" case here.
 		if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt <= 1 && normalIndexPartialPathCnt == 0) {
 			return nil
 		}

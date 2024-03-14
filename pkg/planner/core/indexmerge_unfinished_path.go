@@ -38,6 +38,35 @@ type unfinishedAccessPath struct {
 	indexMergeOrPartialPaths []unfinishedAccessPathList
 }
 
+func generateUnfinishedIndexMergePathFromORList(
+	ds *DataSource,
+	dnfFilters []expression.Expression,
+	candidateAccessPaths []*util.AccessPath,
+) *unfinishedAccessPath {
+	if len(dnfFilters) < 2 {
+		return nil
+	}
+	unfinishedPathList := generateUnfinishedPathsFromExpr(
+		ds,
+		candidateAccessPaths,
+		dnfFilters[0],
+	)
+	for i := 1; i < len(dnfFilters); i++ {
+		unfinishedPathList2 := generateUnfinishedPathsFromExpr(
+			ds,
+			candidateAccessPaths,
+			dnfFilters[i],
+		)
+		unfinishedPathList = mergeUnfinishedPathsWithOR(unfinishedPathList, unfinishedPathList2)
+	}
+	// The current implementation is limited to handle only this case, where we must build an unfinished
+	// index merge OR path from the logic above.
+	if len(unfinishedPathList) != 1 || len(unfinishedPathList[0].indexMergeOrPartialPaths) == 0 {
+		return nil
+	}
+	return unfinishedPathList[0]
+}
+
 func generateUnfinishedPathsFromExpr(
 	ds *DataSource,
 	originalPaths []*util.AccessPath,
@@ -130,7 +159,37 @@ func mergeUnfinishedPathsWithOR(path1, path2 unfinishedAccessPathList) unfinishe
 	return unfinishedAccessPathList{ret}
 }
 
-func mergeUnfinishedPathsWithAND(indexMergePath *unfinishedAccessPath, pathListFromANDItem unfinishedAccessPathList) *unfinishedAccessPath {
+func handleTopLevelANDListAndGenFinishedPath(
+	ds *DataSource,
+	indexMergeConds []expression.Expression,
+	current int,
+	candidateAccessPaths []*util.AccessPath,
+	unfinishedIndexMergePath *unfinishedAccessPath,
+) *util.AccessPath {
+	for i, cnfItem := range indexMergeConds {
+		if i == current {
+			continue
+		}
+		pathListFromANDItem := generateUnfinishedPathsFromExpr(
+			ds,
+			candidateAccessPaths,
+			cnfItem,
+		)
+		unfinishedIndexMergePath = tryMergeUnfinishedIndexMergePathWithAND(unfinishedIndexMergePath, pathListFromANDItem)
+	}
+	if unfinishedIndexMergePath == nil {
+		return nil
+	}
+	return buildAccessPathFromUnfinishedPath(
+		ds,
+		candidateAccessPaths,
+		unfinishedIndexMergePath,
+		indexMergeConds,
+		current,
+	)
+}
+
+func tryMergeUnfinishedIndexMergePathWithAND(indexMergePath *unfinishedAccessPath, pathListFromANDItem unfinishedAccessPathList) *unfinishedAccessPath {
 	// currently, we only handle the case where indexMergePath is an index merge OR unfinished path and
 	// pathListFromANDItem is a normal unfinished path or nil
 	if indexMergePath == nil || len(indexMergePath.indexMergeOrPartialPaths) == 0 {
