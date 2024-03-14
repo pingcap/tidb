@@ -1574,22 +1574,22 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		if v.InnerChildIdx == 1 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
-			e.PartitionedHashJoinCtx.Filter = v.LeftConditions
+			e.PartitionedHashJoinCtx.BuildFilter = v.LeftConditions
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.PartitionedHashJoinCtx.Filter = v.RightConditions
+			e.PartitionedHashJoinCtx.BuildFilter = v.RightConditions
 			leftIsBuildSide = false
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
-			e.PartitionedHashJoinCtx.Filter = v.RightConditions
+			e.PartitionedHashJoinCtx.ProbeFilter = v.RightConditions
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.PartitionedHashJoinCtx.Filter = v.LeftConditions
+			e.PartitionedHashJoinCtx.ProbeFilter = v.LeftConditions
 			leftIsBuildSide = false
 		}
 	}
