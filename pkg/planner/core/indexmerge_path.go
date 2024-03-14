@@ -1478,6 +1478,7 @@ func collectFilters4MVIndex(
 	filters []expression.Expression,
 	idxCols []*expression.Column,
 ) (accessFilters, remainingFilters []expression.Expression, accessTp int) {
+	accessTp = unspecifiedFilterTp
 	usedAsAccess := make([]bool, len(filters))
 	for _, col := range idxCols {
 		found := false
@@ -1651,7 +1652,9 @@ const (
 	singleValueOnMVColTp
 )
 
-// checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
+// checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column, and
+// which type the access filter is, as defined above.
+// If the return value ok is false, the type must be unspecifiedFilterTp.
 func checkFilter4MVIndexColumn(
 	sctx PlanContext,
 	filter expression.Expression,
