@@ -176,7 +176,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	if len(j.Indexes) == 0 {
 		return
 	}
-	// Halt execution after analyzing one index.
+	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same table.
 	firstIndex := j.Indexes[0]
