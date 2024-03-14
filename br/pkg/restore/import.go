@@ -311,16 +311,72 @@ func (ic *importClient) SupportMultiIngest(ctx context.Context, stores []uint64)
 	return true, nil
 }
 
+type StoreWorkerPoolMap struct {
+	sync.RWMutex
+	workers map[uint64]chan struct{}
+}
+
+func (s *StoreWorkerPoolMap) acquireWorker(storeID uint64, bufferSize uint) chan struct{} {
+	s.RLock()
+	workerCh, ok := s.workers[storeID]
+	// handle the case that the store is new-scaled in the cluster
+	if !ok {
+		s.RUnlock()
+		s.Lock()
+		// Notice: worker channel can't replaced, because it is still used after unlock.
+		if workerCh, ok = s.workers[storeID]; !ok {
+			workerCh = utils.BuildWorkerTokenChannel(bufferSize)
+			s.workers[storeID] = workerCh
+		}
+		s.Unlock()
+	} else {
+		s.RUnlock()
+	}
+	return workerCh
+}
+
+func (s *StoreWorkerPoolMap) ShouldBlock() bool {
+	s.RLock()
+	defer s.RUnlock()
+	if len(s.workers) == 0 {
+		// never block if there is no store worker pool
+		return false
+	}
+	for _, pool := range s.workers {
+		if len(pool) > 0 {
+			// At least one store worker pool has available worker
+			return false
+		}
+	}
+	return true
+}
+
+func NewStoreWorkerPoolMap(stores []*metapb.Store, bufferSize uint) *StoreWorkerPoolMap {
+	storeWorkerPoolMap := &StoreWorkerPoolMap{
+		sync.RWMutex{},
+		make(map[uint64]chan struct{}),
+	}
+	if bufferSize == 0 {
+		return storeWorkerPoolMap
+	}
+	for _, store := range stores {
+		ch := utils.BuildWorkerTokenChannel(bufferSize)
+		storeWorkerPoolMap.workers[store.Id] = ch
+	}
+	return storeWorkerPoolMap
+}
+
 // FileImporter used to import a file to TiKV.
 type FileImporter struct {
 	metaClient   split.SplitClient
 	importClient ImporterClient
 	backend      *backuppb.StorageBackend
 
-	storeWorkerPoolRWLock sync.RWMutex
-	storeWorkerPoolMap    map[uint64]chan struct{}
-	concurrencyPerStore   uint
-	useTokenBucket        bool
+	downloadWorkersMap *StoreWorkerPoolMap
+	ingestWorkersMap   *StoreWorkerPoolMap
+
+	concurrencyPerStore uint
+	useTokenBucket      bool
 
 	kvMode             KvMode
 	rawStartKey        []byte
@@ -339,7 +395,7 @@ func NewFileImporter(
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
 	isTxnKvMode bool,
-	storeWorkerPoolMap map[uint64]chan struct{},
+	stores []*metapb.Store,
 	rewriteMode RewriteMode,
 	concurrencyPerStore uint,
 	useTokenBucket bool,
@@ -351,11 +407,20 @@ func NewFileImporter(
 	if isTxnKvMode {
 		kvMode = Txn
 	}
+
+	downloadWorkersMap := NewStoreWorkerPoolMap(stores, 0)
+	ingestWorkersMap := NewStoreWorkerPoolMap(stores, 0)
+
+	if useTokenBucket {
+		downloadWorkersMap = NewStoreWorkerPoolMap(stores, concurrencyPerStore)
+		ingestWorkersMap = NewStoreWorkerPoolMap(stores, concurrencyPerStore)
+	}
 	return FileImporter{
 		metaClient:          metaClient,
 		backend:             backend,
 		importClient:        importClient,
-		storeWorkerPoolMap:  storeWorkerPoolMap,
+		downloadWorkersMap:  downloadWorkersMap,
+		ingestWorkersMap:    ingestWorkersMap,
 		kvMode:              kvMode,
 		rewriteMode:         rewriteMode,
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
@@ -365,19 +430,19 @@ func NewFileImporter(
 	}
 }
 
-func (importer *FileImporter) IsFull() bool {
+func (importer *FileImporter) ShouldBlock() bool {
 	if importer != nil {
-		importer.storeWorkerPoolRWLock.RLock()
-		defer importer.storeWorkerPoolRWLock.RUnlock()
-		for _, pool := range importer.storeWorkerPoolMap {
-			if len(pool) > 0 {
-				// At least one store worker pool has available worker
-				return false
-			}
-		}
-		return true
+		return importer.downloadWorkersMap.ShouldBlock() || importer.ingestWorkersMap.ShouldBlock()
 	}
 	return false
+}
+
+func (importer *FileImporter) releaseWorker(workerCh chan struct{}) {
+	workerCh <- struct{}{}
+	// finish the task, notify the main goroutine to continue
+	importer.cond.L.Lock()
+	importer.cond.Signal()
+	importer.cond.L.Unlock()
 }
 
 func (importer *FileImporter) Close() error {
@@ -1048,32 +1113,14 @@ func (importer *FileImporter) downloadSSTV2(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			importer.storeWorkerPoolRWLock.RLock()
-			workerCh, ok := importer.storeWorkerPoolMap[peer.GetStoreId()]
-			// handle the case that the store is new-scaled in the cluster
-			if !ok {
-				importer.storeWorkerPoolRWLock.RUnlock()
-				importer.storeWorkerPoolRWLock.Lock()
-				// Notice: worker channel can't replaced, because it is still used after unlock.
-				if workerCh, ok = importer.storeWorkerPoolMap[peer.GetStoreId()]; !ok {
-					workerCh = utils.BuildWorkerTokenChannel(importer.concurrencyPerStore)
-					importer.storeWorkerPoolMap[peer.GetStoreId()] = workerCh
-				}
-				importer.storeWorkerPoolRWLock.Unlock()
-			} else {
-				importer.storeWorkerPoolRWLock.RUnlock()
-			}
+			workerCh := importer.downloadWorkersMap.acquireWorker(peer.GetStoreId(), importer.concurrencyPerStore)
 			select {
 			case <-ectx.Done():
 				return ectx.Err()
 			case <-workerCh:
 			}
 			defer func() {
-				workerCh <- struct{}{}
-				// finish the download, notify the main goroutine to continue
-				importer.cond.L.Lock()
-				importer.cond.Signal()
-				importer.cond.L.Unlock()
+				importer.releaseWorker(workerCh)
 			}()
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]
@@ -1212,6 +1259,15 @@ func (importer *FileImporter) ingest(
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
+	workerCh := importer.ingestWorkersMap.acquireWorker(info.Leader.GetStoreId(), importer.concurrencyPerStore)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-workerCh:
+	}
+	defer func() {
+		importer.releaseWorker(workerCh)
+	}()
 	for {
 		ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		if errIngest != nil {
