@@ -175,9 +175,9 @@ max-days = 0
 # Maximum number of old log files to retain. No clean up by default.
 max-backups = 0
 
-# Compress function for rotated files.
+# Compression function for rotated files.
 # It can be empty or "gzip", empty means compression disabled.
-compress = ""
+compression = ""
 
 [security]
 # Path of file that contains list of trusted SSL CAs for connection with mysql client.
