@@ -590,9 +590,6 @@ func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) (
 		s.logger.Warn("get previous succeed subtask failed", zap.String("step", proto.Step2Str(s.GetTask().Type, step)))
 		return nil, err
 	}
-	if previousSubtasks == nil {
-		return [][]byte{}, nil
-	}
 	previousSubtaskMetas := make([][]byte, 0, len(previousSubtasks))
 	for _, subtask := range previousSubtasks {
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
