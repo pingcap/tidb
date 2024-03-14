@@ -2658,6 +2658,114 @@
           }
         },
         {
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "axisSoftMin": 2,
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "unit",
+                    "value": "bytes"
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 17
+          },
+          "id": 292,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "rate(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}[1m])",
+              "legendFormat": "gc-rate - {{instance}}",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "go_gc_gomemlimit_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "hide": false,
+              "legendFormat": "gomemlimit - {{instance}}",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Runtime GC rate and GOMEMLIMIT",
+          "type": "timeseries"
+        },
+        {
           "aliasColors": {},
           "bars": false,
           "dashLength": 10,
@@ -11419,6 +11527,188 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The slow score calculated by time cost of some specific TiKV RPC requests.",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 36
+          },
+          "hiddenSeries": false,
+          "id": 337,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "editorMode": "code",
+              "exemplar": true,
+              "expr": "max(tidb_tikvclient_store_slow_score{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (store)",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "store-{{store}}",
+              "range": true,
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Client-side slow score",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:327",
+              "format": "none",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:328",
+              "format": "Bps",
+              "logBase": 1,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The slow score calculated by TiKV rafstore and sent to TiDB via health feedback.",
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 36
+          },
+          "hiddenSeries": false,
+          "id": 338,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "8.5.27",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "editorMode": "code",
+              "exemplar": true,
+              "expr": "max(tidb_tikvclient_feedback_slow_score{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (store)",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "store-{{store}}",
+              "range": true,
+              "refId": "A",
+              "step": 30
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "TiKV-side slow score",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "mode": "time",
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:327",
+              "format": "none",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:328",
+              "format": "Bps",
+              "logBase": 1,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
         }
       ],
       "repeat": null,
@@ -15682,8 +15972,8 @@
           },
           "yaxes": [
             {
-	      "$$hashKey": "object:354",
-	      "format": "s",
+              "$$hashKey": "object:354",
+              "format": "s",
               "label": null,
               "logBase": 2,
               "max": null,
@@ -15691,7 +15981,7 @@
               "show": true
             },
             {
-	      "$$hashKey": "object:355",
+              "$$hashKey": "object:355",
               "label": null,
               "logBase": 1,
               "max": null,
@@ -16874,7 +17164,7 @@
             "alignLevel": null
           }
         },
-                {
+        {
           "aliasColors": {},
           "bars": false,
           "dashLength": 10,
@@ -17071,10 +17361,317 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "type": "graph",
+          "title": "Binding Cache Memory Usage",
+          "gridPos": {
+            "x": 0,
+            "y": 56,
+            "w": 8,
+            "h": 8
+          },
+          "id": 23763572008,
+          "targets": [
+            {
+              "expr": "tidb_server_binding_cache_mem_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "legendFormat": "{{instance}} usage",
+              "interval": "",
+              "exemplar": true,
+              "refId": "A",
+              "queryType": "randomWalk"
+            },
+            {
+              "expr": "tidb_server_binding_cache_mem_limit{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "legendFormat": "{{instance}} limit",
+              "interval": "",
+              "exemplar": true,
+              "refId": "B",
+              "hide": false
+            }
+          ],
+          "options": {
+            "alertThreshold": true
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "pluginVersion": "7.5.10",
+          "renderer": "flot",
+          "yaxes": [
+            {
+              "label": null,
+              "show": true,
+              "logBase": 1,
+              "min": null,
+              "max": null,
+              "format": "bytes",
+              "$$hashKey": "object:80"
+            },
+            {
+              "label": null,
+              "show": true,
+              "logBase": 1,
+              "min": null,
+              "max": null,
+              "format": "short",
+              "$$hashKey": "object:81"
+            }
+          ],
+          "xaxis": {
+            "show": true,
+            "mode": "time",
+            "name": null,
+            "values": [],
+            "buckets": null
+          },
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "lines": true,
+          "fill": 1,
+          "linewidth": 1,
+          "dashLength": 10,
+          "spaceLength": 10,
+          "pointradius": 2,
+          "legend": {
+            "show": true,
+            "values": false,
+            "min": false,
+            "max": false,
+            "current": false,
+            "total": false,
+            "avg": false
+          },
+          "nullPointMode": "null",
+          "tooltip": {
+            "value_type": "individual",
+            "shared": true,
+            "sort": 0
+          },
+          "aliasColors": {},
+          "seriesOverrides": [],
+          "thresholds": [],
+          "timeRegions": [],
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fillGradient": 0,
+          "dashes": false,
+          "hiddenSeries": false,
+          "points": false,
+          "bars": false,
+          "stack": false,
+          "percentage": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        },
+        {
+          "type": "graph",
+          "title": "Binding Cache Hit / Miss OPS",
+          "gridPos": {
+            "x": 8,
+            "y": 56,
+            "w": 8,
+            "h": 8
+          },
+          "id": 23763572009,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_server_binding_cache_hit_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "legendFormat": "{{instance}} hit",
+              "interval": "",
+              "exemplar": true,
+              "refId": "A",
+              "queryType": "randomWalk"
+            },
+            {
+              "expr": "sum(rate(tidb_server_binding_cache_miss_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "legendFormat": "{{instance}} miss",
+              "interval": "",
+              "exemplar": true,
+              "refId": "B",
+              "hide": false
+            }
+          ],
+          "options": {
+            "alertThreshold": true
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "pluginVersion": "7.5.10",
+          "renderer": "flot",
+          "yaxes": [
+            {
+              "label": null,
+              "show": true,
+              "logBase": 1,
+              "min": null,
+              "max": null,
+              "format": "short",
+              "$$hashKey": "object:80"
+            },
+            {
+              "label": null,
+              "show": true,
+              "logBase": 1,
+              "min": null,
+              "max": null,
+              "format": "short",
+              "$$hashKey": "object:81"
+            }
+          ],
+          "xaxis": {
+            "show": true,
+            "mode": "time",
+            "name": null,
+            "values": [],
+            "buckets": null
+          },
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "lines": true,
+          "fill": 1,
+          "linewidth": 1,
+          "dashLength": 10,
+          "spaceLength": 10,
+          "pointradius": 2,
+          "legend": {
+            "show": true,
+            "values": false,
+            "min": false,
+            "max": false,
+            "current": false,
+            "total": false,
+            "avg": false
+          },
+          "nullPointMode": "null",
+          "tooltip": {
+            "value_type": "individual",
+            "shared": true,
+            "sort": 0
+          },
+          "aliasColors": {},
+          "seriesOverrides": [],
+          "thresholds": [],
+          "timeRegions": [],
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fillGradient": 0,
+          "dashes": false,
+          "hiddenSeries": false,
+          "points": false,
+          "bars": false,
+          "stack": false,
+          "percentage": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        },
+        {
+          "type": "graph",
+          "title": "Number of Bindings in Cache",
+          "gridPos": {
+            "x": 16,
+            "y": 56,
+            "w": 8,
+            "h": 8
+          },
+          "id": 23763572010,
+          "targets": [
+            {
+              "expr": "tidb_server_binding_cache_num_bindings{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "legendFormat": "{{instance}}",
+              "interval": "",
+              "exemplar": true,
+              "refId": "A",
+              "queryType": "randomWalk"
+            }
+          ],
+          "options": {
+            "alertThreshold": true
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "pluginVersion": "7.5.10",
+          "renderer": "flot",
+          "yaxes": [
+            {
+              "label": null,
+              "show": true,
+              "logBase": 1,
+              "min": null,
+              "max": null,
+              "format": "short",
+              "$$hashKey": "object:80"
+            },
+            {
+              "label": null,
+              "show": true,
+              "logBase": 1,
+              "min": null,
+              "max": null,
+              "format": "short",
+              "$$hashKey": "object:81"
+            }
+          ],
+          "xaxis": {
+            "show": true,
+            "mode": "time",
+            "name": null,
+            "values": [],
+            "buckets": null
+          },
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "lines": true,
+          "fill": 1,
+          "linewidth": 1,
+          "dashLength": 10,
+          "spaceLength": 10,
+          "pointradius": 2,
+          "legend": {
+            "show": true,
+            "values": false,
+            "min": false,
+            "max": false,
+            "current": false,
+            "total": false,
+            "avg": false
+          },
+          "nullPointMode": "null",
+          "tooltip": {
+            "value_type": "individual",
+            "shared": true,
+            "sort": 0
+          },
+          "aliasColors": {},
+          "seriesOverrides": [],
+          "thresholds": [],
+          "timeRegions": [],
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fillGradient": 0,
+          "dashes": false,
+          "hiddenSeries": false,
+          "points": false,
+          "bars": false,
+          "stack": false,
+          "percentage": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
         }
       ],
       "repeat": null,
-      "title": "Statistics",
+      "title": "Statistics & Plan Management",
       "type": "row"
     },
     {

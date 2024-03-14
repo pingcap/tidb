@@ -111,7 +111,9 @@ func (j *DynamicPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the table or partition is valid to analyze.
 // We need to check each partition to determine whether the table is valid to analyze.
-func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
 	if valid, failReason := isValidWeight(j.Weight); !valid {
 		return false, failReason
 	}

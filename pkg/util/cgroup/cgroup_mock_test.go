@@ -211,14 +211,14 @@ func TestCgroupsGetMemoryInactiveFileUsage(t *testing.T) {
 
 func TestCgroupsGetMemoryLimit(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		paths  map[string]string
-		errMsg string
-		limit  uint64
-		warn   string
+		name    string
+		paths   map[string]string
+		errMsg  string
+		limit   uint64
+		warn    string
+		version Version
 	}{
 		{
-
 			errMsg: "failed to read memory cgroup from cgroups file:",
 		},
 		{
@@ -248,7 +248,8 @@ func TestCgroupsGetMemoryLimit(t *testing.T) {
 				"/proc/self/mountinfo":              v1MountsWithMemController,
 				"/sys/fs/cgroup/memory/memory.stat": v1MemoryStat,
 			},
-			limit: 2936016896,
+			limit:   2936016896,
+			version: V1,
 		},
 		{
 			paths: map[string]string{
@@ -256,7 +257,8 @@ func TestCgroupsGetMemoryLimit(t *testing.T) {
 				"/proc/self/mountinfo":                          v1MountsWithMemControllerNS,
 				"/sys/fs/cgroup/memory/cgroup_test/memory.stat": v1MemoryStat,
 			},
-			limit: 2936016896,
+			limit:   2936016896,
+			version: V1,
 		},
 		{
 			paths: map[string]string{
@@ -279,7 +281,8 @@ func TestCgroupsGetMemoryLimit(t *testing.T) {
 				"/proc/self/mountinfo": v2Mounts,
 				"/sys/fs/cgroup/machine.slice/libpod-f1c6b44c0d61f273952b8daecf154cee1be2d503b7e9184ebf7fcaf48e139810.scope/memory.max": "1073741824\n",
 			},
-			limit: 1073741824,
+			limit:   1073741824,
+			version: V2,
 		},
 		{
 			paths: map[string]string{
@@ -287,7 +290,8 @@ func TestCgroupsGetMemoryLimit(t *testing.T) {
 				"/proc/self/mountinfo": v2Mounts,
 				"/sys/fs/cgroup/machine.slice/libpod-f1c6b44c0d61f273952b8daecf154cee1be2d503b7e9184ebf7fcaf48e139810.scope/memory.max": "max\n",
 			},
-			limit: 9223372036854775807,
+			limit:   9223372036854775807,
+			version: V2,
 		},
 		{
 			paths: map[string]string{
@@ -295,14 +299,18 @@ func TestCgroupsGetMemoryLimit(t *testing.T) {
 				"/proc/self/mountinfo":              v1MountsWithEccentricMemController,
 				"/sys/fs/cgroup/memory/memory.stat": v1MemoryStat,
 			},
-			limit: 2936016896,
+			limit:   2936016896,
+			version: V1,
 		},
 	} {
 		dir := createFiles(t, tc.paths)
-		limit, err := getCgroupMemLimit(dir)
+		limit, version, err := getCgroupMemLimit(dir)
 		require.True(t, isError(err, tc.errMsg),
 			"%v %v", err, tc.errMsg)
 		require.Equal(t, tc.limit, limit)
+		if err == nil {
+			require.Equal(t, tc.version, version)
+		}
 	}
 }
 

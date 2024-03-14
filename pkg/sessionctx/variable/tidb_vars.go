@@ -948,6 +948,10 @@ const (
 
 	// TiDBSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
 	TiDBSchemaCacheSize = "tidb_schema_cache_size"
+
+	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result of
+	// division operations performed with the / operator.
+	DivPrecisionIncrement = "div_precision_increment"
 )
 
 // TiDB vars that have only global scope
@@ -1484,6 +1488,7 @@ const (
 	DefTiDBTxnEntrySizeLimit                          = 0
 	DefTiDBSchemaCacheSize                            = 0
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
+	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
 )
 

@@ -2585,13 +2585,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		PartitionName:    task.PartitionName,
 		SampleRateReason: sampleRateReason,
 	}
-	var concurrency int
-	if b.ctx.GetSessionVars().InRestrictedSQL {
-		// In restricted SQL, we use the default value of DistSQLScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
-		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
-	} else {
-		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-	}
+	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2725,13 +2719,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	var concurrency int
-	if b.ctx.GetSessionVars().InRestrictedSQL {
-		// In restricted SQL, we use the default value of DistSQLScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
-		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
-	} else {
-		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-	}
+	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,

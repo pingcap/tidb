@@ -91,7 +91,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		if valid, failReason := job.IsValidToAnalyze(
 			sctx,
 		); !valid {
-			statslogutil.StatsLogger().Info(
+			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table is not ready to analyze",
 				zap.String("failReason", failReason),
 				zap.Stringer("job", job),
@@ -116,7 +116,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		// Only analyze one table each time.
 		return true
 	}
-	statslogutil.StatsLogger().Debug(
+	statslogutil.SingletonStatsSamplerLogger().Info(
 		"No table to analyze",
 	)
 	return false

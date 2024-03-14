@@ -847,8 +847,8 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
-	if err = hint.CheckBindingFromHistoryBindable(originNode, bindableStmt.PlanHint); err != nil {
-		return nil, err
+	if complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint); !complete {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(reason))
 	}
 	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode

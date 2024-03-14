@@ -1580,6 +1580,10 @@ type SessionVars struct {
 	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
 	// overwritten if this value is not 0.
 	TxnEntrySizeLimit uint64
+
+	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result
+	// of division operations performed with the / operator.
+	DivPrecisionIncrement int
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2620,6 +2624,11 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
 	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
 	return s.prevStmtDigest
+}
+
+// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
+func (s *SessionVars) GetDivPrecisionIncrement() int {
+	return s.DivPrecisionIncrement
 }
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
