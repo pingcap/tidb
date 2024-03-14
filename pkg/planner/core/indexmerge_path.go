@@ -1572,7 +1572,7 @@ func collectFilters4MVIndex(
 	sctx context.PlanContext,
 	filters []expression.Expression,
 	idxCols []*expression.Column,
-) (accessFilters, remainingFilters []expression.Expression, condTp int) {
+) (accessFilters, remainingFilters []expression.Expression, accessTp int) {
 	usedAsAccess := make([]bool, len(filters))
 	for _, col := range idxCols {
 		found := false
@@ -1584,8 +1584,8 @@ func collectFilters4MVIndex(
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
-				if condTp == 0 || condTp == 1 {
-					condTp = tp
+				if accessTp == UnspecifiedFilterTp || accessTp == EQOnNonMVColTp {
+					accessTp = tp
 				}
 				break
 			}
@@ -1599,7 +1599,7 @@ func collectFilters4MVIndex(
 			remainingFilters = append(remainingFilters, filters[i])
 		}
 	}
-	return accessFilters, remainingFilters, condTp
+	return accessFilters, remainingFilters, accessTp
 }
 
 // CollectFilters4MVIndexMutations exported for unit test.
@@ -1737,45 +1737,49 @@ func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]st
 	return false
 }
 
+const (
+	UnspecifiedFilterTp int = iota
+	EQOnNonMVColTp
+	MultiValuesOROnMVColTp
+	MultiValuesANDOnMVColTp
+	SingleValueOnMVColTp
+)
+
 // checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
-func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, idxCol *expression.Column) (bool, int) {
+func checkFilter4MVIndexColumn(
+	sctx PlanContext,
+	filter expression.Expression,
+	idxCol *expression.Column,
+) (
+	ok bool,
+	accessFilterTp int,
+) {
 	sf, ok := filter.(*expression.ScalarFunction)
 	if !ok {
-		return false, 0
+		return false, UnspecifiedFilterTp
 	}
 	if idxCol.VirtualExpr != nil { // the virtual column on the MVIndex
 		targetJSONPath, ok := unwrapJSONCast(idxCol.VirtualExpr)
 		if !ok {
-			return false, 0
+			return false, UnspecifiedFilterTp
 		}
-		// tp:
-		// 0: unspecified
-		// 1: non mv-col eq
-		// 2: mv-col multi value or
-		// 3: mv-col multi value and
-		// 4: mv-col single value
 		var virColVals []expression.Expression
 		jsonType := idxCol.GetType().ArrayType()
-		tp := 0
-		var checkOK bool
+		tp := UnspecifiedFilterTp
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
-			checkOK = targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1])
-			if !checkOK {
-				break
+			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]) {
+				return false, UnspecifiedFilterTp
 			}
 			v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
 			if !ok {
-				checkOK = false
-				break
+				return false, UnspecifiedFilterTp
 			}
-			checkOK = true
 			virColVals = append(virColVals, v)
-			tp = 4
+			tp = SingleValueOnMVColTp
 		case ast.JSONContains: // json_contains(a, '1')
-			checkOK = targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0])
-			if !checkOK {
-				break
+			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0]) {
+				return false, UnspecifiedFilterTp
 			}
 			virColVals, ok = jsonArrayExpr2Exprs(
 				sctx.GetExprCtx(),
@@ -1785,11 +1789,9 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 				false,
 			)
 			if !ok || len(virColVals) == 0 {
-				checkOK = false
-				break
+				return false, UnspecifiedFilterTp
 			}
-			checkOK = true
-			tp = 3
+			tp = MultiValuesANDOnMVColTp
 		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
 			var jsonPathIdx int
 			if sf.GetArgs()[0].Equal(sctx.GetExprCtx(), targetJSONPath) {
@@ -1797,8 +1799,7 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 			} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx(), targetJSONPath) {
 				jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 			} else {
-				checkOK = false
-				break
+				return false, UnspecifiedFilterTp
 			}
 			var ok bool
 			virColVals, ok = jsonArrayExpr2Exprs(
@@ -1809,28 +1810,25 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 				false,
 			)
 			if !ok || len(virColVals) == 0 { // forbid empty array for safety
-				checkOK = false
-				break
+				return false, UnspecifiedFilterTp
 			}
-			checkOK = true
-			tp = 2
+			tp = MultiValuesOROnMVColTp
 		default:
-			checkOK = false
-			tp = 0
+			return false, UnspecifiedFilterTp
 		}
 		for _, v := range virColVals {
 			if !isSafeTypeConversion4MVIndexRange(v.GetType(), idxCol.GetType()) {
-				return false, 0
+				return false, UnspecifiedFilterTp
 			}
 		}
-		if (tp == 2 || tp == 3) && len(virColVals) == 1 {
-			tp = 4
+		if (tp == MultiValuesOROnMVColTp || tp == MultiValuesANDOnMVColTp) && len(virColVals) == 1 {
+			tp = SingleValueOnMVColTp
 		}
-		return checkOK, tp
+		return true, tp
 	}
 	// else: non virtual column
 	if sf.FuncName.L != ast.EQ { // only support EQ now
-		return false, 0
+		return false, UnspecifiedFilterTp
 	}
 	args := sf.GetArgs()
 	var argCol *expression.Column
@@ -1845,13 +1843,12 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 		}
 	}
 	if argCol == nil || argConst == nil {
-		return false, 0
+		return false, UnspecifiedFilterTp
 	}
 	if argCol.Equal(sctx.GetExprCtx(), idxCol) {
-		return true, 1
+		return true, EQOnNonMVColTp
 	}
-
-	return false, 0
+	return false, UnspecifiedFilterTp
 }
 
 // jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}

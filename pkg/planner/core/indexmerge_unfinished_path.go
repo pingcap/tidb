@@ -29,15 +29,11 @@ type unfinishedAccessPathList []*unfinishedAccessPath
 type unfinishedAccessPath struct {
 	Index *model.IndexInfo
 
-	// 0: no access
-	// 1: range access
-	// 2: point access
-	IdxCol2AccessType []int
+	accessFilters         []expression.Expression
+	IdxColHasAccessFilter []bool
+	initedAsFinished      bool
 
-	FullAccessConds    []expression.Expression
-	useFullAccessConds bool
-
-	needRemainFilter bool
+	needKeepFilter bool
 
 	indexMergeOrPartialPaths []unfinishedAccessPathList
 }
@@ -61,9 +57,9 @@ func generateUnfinishedPathsFromExpr(
 				[]*util.AccessPath{path},
 			)
 			if len(usedMap) == 1 && usedMap[0] && len(paths) == 1 {
-				ret[i].useFullAccessConds = true
-				ret[i].FullAccessConds = paths[0].AccessConds
-				ret[i].needRemainFilter = needSelection
+				ret[i].initedAsFinished = true
+				ret[i].accessFilters = paths[0].AccessConds
+				ret[i].needKeepFilter = needSelection
 				continue
 			}
 		}
@@ -78,27 +74,24 @@ func generateUnfinishedPathsFromExpr(
 
 		// case 2
 		if isMVIndexPath(path) {
-			accessFilters, remainingFilters, tp := collectFilters4MVIndex(
-				ds.SCtx(),
-				cnfItems,
-				idxCols,
-			)
-			if len(accessFilters) > 0 && (tp == 2 || tp == 4) {
-				ret[i].useFullAccessConds = true
-				ret[i].FullAccessConds = accessFilters
-				ret[i].needRemainFilter = len(remainingFilters) > 0
+			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols)
+			if len(accessFilters) > 0 && (tp == MultiValuesOROnMVColTp || tp == SingleValueOnMVColTp) {
+				ret[i].initedAsFinished = true
+				ret[i].accessFilters = accessFilters
+				ret[i].needKeepFilter = len(remainingFilters) > 0
 				continue
 			}
 		}
-		ret[i].IdxCol2AccessType = make([]int, len(idxCols))
+		ret[i].IdxColHasAccessFilter = make([]bool, len(idxCols))
 
 		// case 3
 		// todo: invalid handling
 		for j, col := range idxCols {
 			for _, cnfItem := range cnfItems {
-				if ok, tp := checkFilter4MVIndexColumn(ds.SCtx(), cnfItem, col); ok && tp == 4 || tp == 2 || tp == 1 {
-					ret[i].FullAccessConds = append(ret[i].FullAccessConds, cnfItem)
-					ret[i].IdxCol2AccessType[j] = 2
+				if ok, tp := checkFilter4MVIndexColumn(ds.SCtx(), cnfItem, col); ok &&
+					(tp == EQOnNonMVColTp || tp == MultiValuesOROnMVColTp || tp == SingleValueOnMVColTp) {
+					ret[i].accessFilters = append(ret[i].accessFilters, cnfItem)
+					ret[i].IdxColHasAccessFilter[j] = true
 					break
 				}
 			}
@@ -108,9 +101,8 @@ func generateUnfinishedPathsFromExpr(
 	validCnt := 0
 	// reset useless paths
 	for i, path := range ret {
-		if !path.useFullAccessConds &&
-			!slices.Contains(path.IdxCol2AccessType, 2) &&
-			!slices.Contains(path.IdxCol2AccessType, 1) {
+		if !path.initedAsFinished &&
+			!slices.Contains(path.IdxColHasAccessFilter, true) {
 			ret[i] = nil
 		} else {
 			validCnt++
@@ -155,16 +147,16 @@ func mergeUnfinishedPathsWithAND(indexMergePath *unfinishedAccessPath, pathListF
 			if path == nil || pathListFromANDItem[i] == nil {
 				continue
 			}
-			if pathListFromANDItem[i].useFullAccessConds {
-				path.FullAccessConds = append(path.FullAccessConds, pathListFromANDItem[i].FullAccessConds...)
+			if pathListFromANDItem[i].initedAsFinished {
+				path.accessFilters = append(path.accessFilters, pathListFromANDItem[i].accessFilters...)
 				continue
 			}
-			for j, tp := range pathListFromANDItem[i].IdxCol2AccessType {
+			for j, hasAccessFilter := range pathListFromANDItem[i].IdxColHasAccessFilter {
 				// handle the index column where the pathListFromANDItem has point access and the path from partial path
 				// doesn't have point access
-				if tp == 2 && path.IdxCol2AccessType[j] != 2 {
+				if hasAccessFilter == true && path.IdxColHasAccessFilter[j] == false {
 					// append access cond
-					path.FullAccessConds = append(path.FullAccessConds, pathListFromANDItem[i].FullAccessConds...)
+					path.accessFilters = append(path.accessFilters, pathListFromANDItem[i].accessFilters...)
 					break
 				}
 			}
@@ -208,7 +200,7 @@ func buildAccessPathFromUnfinishedPath(
 				// remainingFilters is not cared here, because it will be all suspended on the table side.
 				accessFilters, remainingFilters, _ := collectFilters4MVIndex(
 					ds.SCtx(),
-					unfinishedPath.FullAccessConds,
+					unfinishedPath.accessFilters,
 					idxCols)
 				if len(accessFilters) == 0 {
 					continue
@@ -224,7 +216,7 @@ func buildAccessPathFromUnfinishedPath(
 				if err != nil || !ok || (isIntersection && len(paths) > 1) {
 					continue
 				}
-				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.IdxCol2AccessType) > 0
+				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.IdxColHasAccessFilter) > 0
 			} else {
 				// case 2: non-mv index
 				var usedMap []bool
@@ -232,7 +224,7 @@ func buildAccessPathFromUnfinishedPath(
 					[]expression.Expression{
 						expression.ComposeCNFCondition(
 							ds.SCtx().GetExprCtx(),
-							unfinishedPath.FullAccessConds...,
+							unfinishedPath.accessFilters...,
 						),
 					},
 					[]*util.AccessPath{originalPaths[i]},
@@ -241,7 +233,7 @@ func buildAccessPathFromUnfinishedPath(
 					continue
 				}
 			}
-			needSelection = needSelection || unfinishedPath.needRemainFilter
+			needSelection = needSelection || unfinishedPath.needKeepFilter
 			maxCountAfterAccess := -1.0
 			for _, p := range paths {
 				maxCountAfterAccess = math.Max(maxCountAfterAccess, p.CountAfterAccess)
