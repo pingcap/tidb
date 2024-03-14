@@ -746,7 +746,7 @@ key idx(b, c)
 );
 explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where
 (
-(json_overlaps(j->'$.a', '[4,5,6]')) or
+json_overlaps(j->'$.a', '[4,5,6]') or
 (2 member of (j->'$.a'))
 ) and
 c = 10 and
@@ -766,7 +766,7 @@ c = 1 or
 c = 2 or
 c = 3
 ) and
-(json_overlaps(j->'$.a', '[4,5,6]'));
+json_overlaps(j->'$.a', '[4,5,6]');
 id	estRows	task	access object	operator info
 Selection	0.72	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
 └─IndexMerge	0.90	root		type: union
@@ -781,12 +781,24 @@ Selection	0.72	root		json_overlaps(json_extract(planner__core__indexmerge_path.t
   ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 6,3 6], keep order:false, stats:pseudo
   └─Selection(Probe)	0.90	cop[tikv]		or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
     └─TableRowIDScan	0.90	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where (c = 1 or c = 2 or c = 3) and (json_contains(j->'$.a', '[4,5,6]'));
+explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where
+(
+c = 1 or
+c = 2 or
+c = 3
+) and
+(json_contains(j->'$.a', '[4,5,6]'));
 id	estRows	task	access object	operator info
 TableReader	24.00	root		data:Selection
 └─Selection	24.00	cop[tikv]		json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY)), or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where (c = 1 or c = 2 or c = 3) and (json_contains(j->'$.a', '[2]'));
+explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where
+(
+c = 1 or
+c = 2 or
+c = 3
+) and
+json_contains(j->'$.a', '[2]');
 id	estRows	task	access object	operator info
 IndexMerge	0.30	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 2,1 2], keep order:false, stats:pseudo
@@ -794,26 +806,51 @@ IndexMerge	0.30	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 2,3 2], keep order:false, stats:pseudo
 └─Selection(Probe)	0.30	cop[tikv]		json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[2]", json BINARY)), or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
   └─TableRowIDScan	0.30	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where (1 member of (j->'$.a') or (2 member of (j->'$.a'))) and c = 10 and a = 20;
+explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where
+(
+1 member of (j->'$.a') or
+2 member of (j->'$.a')
+) and
+c = 10 and
+a = 20;
 id	estRows	task	access object	operator info
 IndexMerge	0.20	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 1,10 1], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 2,10 2], keep order:false, stats:pseudo
 └─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 20), eq(planner__core__indexmerge_path.t.c, 10), or(json_memberof(cast(1, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(2, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")))
   └─TableRowIDScan	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t1, mvi1, mvi1) */ * from t where (1 member of (j->'$.a') or (2 member of (j->'$.d'))) and a = 20;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi1) */ * from t where
+(
+1 member of (j->'$.a') or
+2 member of (j->'$.d')
+) and
+a = 20;
 id	estRows	task	access object	operator info
 TableReader	8.00	root		data:Selection
 └─Selection	8.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 20), or(json_memberof(cast(1, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(2, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.d")))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t1, mvi1, mvi3) */ * from t where c = 5 and (1 member of (j->'$.a') or (2 member of (j->'$.d'))) and a = 20;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi3) */ * from t where
+c = 5 and
+(
+1 member of (j->'$.a') or
+2 member of (j->'$.d')
+) and
+a = 20;
 id	estRows	task	access object	operator info
 IndexMerge	0.20	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[5 1,5 1], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi3(cast(json_extract(`j`, _utf8mb4'$.d') as unsigned array), c)	range:[2 5,2 5], keep order:false, stats:pseudo
 └─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 20), eq(planner__core__indexmerge_path.t.c, 5), or(json_memberof(cast(1, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(2, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.d")))
   └─TableRowIDScan	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2) */ * from t where (pk = 2 or json_overlaps(j->'$.a', '[4,5,6]') or json_contains(j->'$.c', '[3]')) and a = 1 and b = '2' and c = 3;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2) */ * from t where
+(
+pk = 2 or
+json_overlaps(j->'$.a', '[4,5,6]') or
+json_contains(j->'$.c', '[3]')
+) and
+a = 1 and
+b = '2' and
+c = 3;
 id	estRows	task	access object	operator info
 Selection	0.00	root		or(eq(planner__core__indexmerge_path.t.pk, 2), or(json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY)), json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.c"), cast("[3]", json BINARY))))
 └─IndexMerge	0.00	root		type: union
@@ -824,7 +861,15 @@ Selection	0.00	root		or(eq(planner__core__indexmerge_path.t.pk, 2), or(json_over
   ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi2(a, cast(json_extract(`j`, _utf8mb4'$.c') as unsigned array))	range:[1 3,1 3], keep order:false, stats:pseudo
   └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, "2"), eq(planner__core__indexmerge_path.t.c, 3)
     └─TableRowIDScan	1.10	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2) */ * from t where a = 1 and b = '2' and c = 3 and (pk = 2 or (3 member of (j->'$.a')) or (3 member of (j->'$.c'))) ;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2) */ * from t where
+a = 1 and
+b = '2' and
+c = 3 and
+(
+pk = 2 or
+(3 member of (j->'$.a')) or
+(3 member of (j->'$.c'))
+);
 id	estRows	task	access object	operator info
 IndexMerge	0.00	root		type: union
 ├─TableRangeScan(Build)	1.00	cop[tikv]	table:t	range:[2,2], keep order:false, stats:pseudo
@@ -832,7 +877,14 @@ IndexMerge	0.00	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi2(a, cast(json_extract(`j`, _utf8mb4'$.c') as unsigned array))	range:[1 3,1 3], keep order:false, stats:pseudo
 └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, "2"), eq(planner__core__indexmerge_path.t.c, 3), or(eq(planner__core__indexmerge_path.t.pk, 2), or(json_memberof(cast(3, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(3, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.c"))))
   └─TableRowIDScan	1.10	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, idx) */ * from t where a = 1 and b = '2' and (c = 20 or (c = 10 and (3 member of (j->'$.a'))) or (3 member of (j->'$.c'))) ;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, idx) */ * from t where
+a = 1 and
+b = '2' and
+(
+c = 20 or
+(c = 10 and 3 member of (j->'$.a')) or
+3 member of (j->'$.c')
+);
 id	estRows	task	access object	operator info
 IndexMerge	0.20	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(b, c)	range:["2" 20,"2" 20], keep order:false, stats:pseudo
@@ -843,7 +895,11 @@ IndexMerge	0.20	root		type: union
 explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 (json_overlaps(j->'$.a', '[4,5,6]')) and
-((b = '2' and c > 20) or (c = 10) or (3 member of (j->'$.c')));
+(
+(b = '2' and c > 20) or
+c = 10 or
+3 member of (j->'$.c')
+);
 id	estRows	task	access object	operator info
 Selection	6.41	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
 └─IndexMerge	0.03	root		type: union
@@ -857,7 +913,11 @@ Selection	6.41	root		json_overlaps(json_extract(planner__core__indexmerge_path.t
 explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 (json_overlaps(j->'$.a', '[4,5,6]')) and
-((b > '2' and c = 20) or (c = 10) or (3 member of (j->'$.c')));
+(
+(b > '2' and c = 20) or
+(c = 10) or
+(3 member of (j->'$.c'))
+);
 id	estRows	task	access object	operator info
 Selection	0.56	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
 └─IndexMerge	0.70	root		type: union
