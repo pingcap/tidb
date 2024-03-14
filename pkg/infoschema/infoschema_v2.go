@@ -162,7 +162,7 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
-func (isd *Data) delete(item tableItem) {
+func (isd *Data) remove(item tableItem) {
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
@@ -212,7 +212,14 @@ func compareByName(a, b tableItem) bool {
 		return false
 	}
 
-	return a.tableID < b.tableID
+	if a.tableID < b.tableID {
+		return true
+	}
+	if a.tableID > b.tableID {
+		return false
+	}
+
+	return a.schemaVersion < b.schemaVersion
 }
 
 func compareSchemaItem(a, b schemaItem) bool {
@@ -613,6 +620,13 @@ func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.Sch
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
+func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+	if b.enableV2 {
+		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
+	}
+	return b.applyDropTable(diff, dbInfo, tableID, affected)
+}
+
 func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyRecoverTable(m, diff)
 }
@@ -641,7 +655,7 @@ func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	oldTableID, newTableID := b.getTableIDs(diff)
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 
-	tblIDs, allocs, err := b.dropTableForUpdate(newTableID, oldTableID, oldDBInfo, diff)
+	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, oldDBInfo, diff)
 	if err != nil {
 		return nil, err
 	}
@@ -649,7 +663,7 @@ func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+		tblIDs, err = applyCreateTable(b, m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -675,6 +689,31 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 		b.applyDropTableV2(diff, di, id, nil)
 	}
 	return tableIDs
+}
+
+func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+	// Remove the table in temporaryTables
+	if b.infoSchemaMisc.temporaryTableIDs != nil {
+		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
+	}
+
+	table, ok := b.infoschemaV2.TableByID(tableID)
+
+	if !ok {
+		return nil
+	}
+
+	b.infoData.remove(tableItem{
+		dbName:        dbInfo.Name.L,
+		dbID:          dbInfo.ID,
+		tableName:     table.Meta().Name.L,
+		tableID:       table.Meta().ID,
+		schemaVersion: diff.Version,
+	})
+
+	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	b.deleteReferredForeignKeys(dbInfo, tableID)
+	return affected
 }
 
 func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
