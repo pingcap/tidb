@@ -2678,7 +2678,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		PartitionName:    task.PartitionName,
 		SampleRateReason: sampleRateReason,
 	}
+<<<<<<< HEAD
 
+=======
+	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+>>>>>>> 1f58dd5d51b (*: set right concurrency when to auto-analyze (#51748))
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2812,7 +2816,11 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+<<<<<<< HEAD
 
+=======
+	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+>>>>>>> 1f58dd5d51b (*: set right concurrency when to auto-analyze (#51748))
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
