@@ -185,10 +185,15 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 ) {
-	for _, index := range j.Indexes {
-		sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(index)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	if len(j.Indexes) == 0 {
+		return
 	}
+	// Only analyze the first index.
+	// This is because analyzing a single index also analyzes all other indexes and columns.
+	// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
+	firstIndex := j.Indexes[0]
+	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
+	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.
