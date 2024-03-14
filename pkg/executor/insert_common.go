@@ -1220,7 +1220,7 @@ CheckAndInsert:
 			continue
 		}
 		if r.handleKey != nil {
-			_, err = txn.Get(ctx, r.handleKey.newKey)
+			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				if !replace {
 					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
@@ -1251,7 +1251,7 @@ CheckAndInsert:
 		}
 
 		for _, uk := range r.uniqueKeys {
-			_, err = txn.Get(ctx, uk.newKey)
+			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
 				if !replace {
 					// If duplicate keys were found in BatchGet, mark row = nil.

@@ -176,14 +176,12 @@ func (t *mockTxn) Mem() uint64 {
 	return 0
 }
 
-func (t *mockTxn) StartFairLocking() error                                          { return nil }
-func (t *mockTxn) RetryFairLocking(_ context.Context) error                         { return nil }
-func (t *mockTxn) CancelFairLocking(_ context.Context) error                        { return nil }
-func (t *mockTxn) DoneFairLocking(_ context.Context) error                          { return nil }
-func (t *mockTxn) IsInFairLockingMode() bool                                        { return false }
-func (t *mockTxn) IsPipelined() bool                                                { return false }
-func (t *mockTxn) Prefetch(ctx context.Context, k []Key) (map[string][]byte, error) { return nil, nil }
-func (t *mockTxn) GetFromPrefetchCache(ctx context.Context, k Key) ([]byte, error)  { return nil, nil }
+func (t *mockTxn) StartFairLocking() error                   { return nil }
+func (t *mockTxn) RetryFairLocking(_ context.Context) error  { return nil }
+func (t *mockTxn) CancelFairLocking(_ context.Context) error { return nil }
+func (t *mockTxn) DoneFairLocking(_ context.Context) error   { return nil }
+func (t *mockTxn) IsInFairLockingMode() bool                 { return false }
+func (t *mockTxn) IsPipelined() bool                         { return false }
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {

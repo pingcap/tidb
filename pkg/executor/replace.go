@@ -73,8 +73,8 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 		if err != nil {
 			return err
 		}
-		_, err = txn.Get(ctx, r.handleKey.newKey)
-		if err == nil {
+
+		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
 			rowUnchanged, err := e.removeRow(ctx, txn, handle, r, true)
 			if err != nil {
 				return err
