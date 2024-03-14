@@ -599,9 +599,14 @@ func (importer *FileImporter) ImportSSTFiles(
 	}
 
 	err = utils.WithRetry(ctx, func() error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		// Scan regions covered by the file range
+		sctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
+		defer cancel()
 		regionInfos, errScanRegion := split.PaginateScanRegion(
-			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+			sctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
 		if errScanRegion != nil {
 			return errors.Trace(errScanRegion)
 		}

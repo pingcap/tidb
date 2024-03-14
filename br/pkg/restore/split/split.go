@@ -99,16 +99,14 @@ func PaginateScanRegion(
 		err         error
 		backoffer   = NewWaitRegionOnlineBackoffer()
 	)
-	_ = utils.WithRetry(ctx, func() error {
+	err = utils.WithRetry(ctx, func() error {
 		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
-			var batch []*RegionInfo
-			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
-			if err != nil {
-				err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
-					redact.Key(scanStartKey), err.Error())
-				return err
+			batch, errScan := client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			if errScan != nil {
+				return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
+					redact.Key(scanStartKey), errScan.Error())
 			}
 			regions = append(regions, batch...)
 			if len(batch) < limit {
@@ -129,15 +127,15 @@ func PaginateScanRegion(
 		}
 		lastRegions = regions
 
-		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
+		if errCheck := CheckRegionConsistency(startKey, endKey, regions); errCheck != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
 				zap.Int("regionLength", len(regions)))
-			return err
+			return errCheck
 		}
 		return nil
 	}, backoffer)
-
+	log.Warn("return backoffer", zap.Error(err), zap.Int("retry cnt", backoffer.Attempt()), zap.Int("len", len(lastRegions)))
 	return lastRegions, err
 }
 
@@ -184,7 +182,7 @@ func ScanRegionsWithRetry(
 	// actually we'd better remove all multierr in br/lightning.
 	// because it's not easy to check multierr equals normal error.
 	// see https://github.com/pingcap/tidb/issues/33419.
-	_ = utils.WithRetry(ctx, func() error {
+	err = utils.WithRetry(ctx, func() error {
 		regions, err = client.ScanRegions(ctx, startKey, endKey, limit)
 		if err != nil {
 			err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
@@ -232,6 +230,7 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 		})
 		return delayTime
 	}
+	// unreachable
 	b.Stat.StopRetry()
 	return 0
 }
