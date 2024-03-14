@@ -80,7 +80,7 @@ func TestGetRegionsTableInfo(t *testing.T) {
 	h := helper.NewHelper(store)
 	regionsInfo := getMockTiKVRegionsInfo()
 	schemas := getMockRegionsTableInfoSchema()
-	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas, mockInfoschema{schemas})
+	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas)
 	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
 }
 
@@ -210,19 +210,6 @@ func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		log.Panic("write http response failed", zap.Error(err))
 	}
-}
-
-type mockInfoschema struct {
-	dbs []*model.DBInfo
-}
-
-func (m mockInfoschema) SchemaTables(schema model.CIStr) []*model.TableInfo {
-	for _, db := range m.dbs {
-		if schema.L == db.Name.L {
-			return db.Tables
-		}
-	}
-	return nil
 }
 
 func getMockRegionsTableInfoSchema() []*model.DBInfo {
