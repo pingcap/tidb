@@ -43,7 +43,7 @@ import (
 func init() {
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUncoverArrayType
+	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType
 }
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -654,7 +654,7 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 	// mm is a map here used for de-duplicate partial paths which is derived from **same** accessFilters, not necessary to keep them both.
 	mm := make(map[string]*record, 0)
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
-		idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.table.Meta(),
 			possibleMVIndexPaths[idx].Index,
 			ds.TblCols,
@@ -1054,7 +1054,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue
 		}
 
-		idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.table.Meta(),
 			ds.possibleAccessPaths[idx].Index,
 			ds.TblCols,
@@ -1252,8 +1252,8 @@ func buildPartialPath4MVIndex(
 	return partialPath, true, nil
 }
 
-// PrepareIdxColsAndUncoverArrayType exported for test.
-func PrepareIdxColsAndUncoverArrayType(
+// PrepareIdxColsAndUnwrapArrayType exported for test.
+func PrepareIdxColsAndUnwrapArrayType(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
 	tblCols []*expression.Column,

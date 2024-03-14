@@ -72,7 +72,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	cnfs := ds.GetAllConds()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	idxCols, ok := core.PrepareIdxColsAndUncoverArrayType(
+	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),
 		tbl.Meta().FindIndexByName("a_domains_b"),
 		ds.TblCols,
