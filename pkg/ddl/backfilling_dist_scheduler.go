@@ -101,24 +101,9 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		}
 		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
 	case proto.BackfillStepMergeSort:
-		res, err := generateMergePlan(taskHandle, task, logger)
-		if err != nil {
-			return nil, err
-		}
-		if len(res) > 0 {
-			backfillMeta.UseMergeSort = true
-			if err := updateMeta(task, &backfillMeta); err != nil {
-				return nil, err
-			}
-		}
-		return res, nil
+		return generateMergePlan(taskHandle, task, logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
-			prevStep := proto.BackfillStepReadIndex
-			if backfillMeta.UseMergeSort {
-				prevStep = proto.BackfillStepMergeSort
-			}
-
 			failpoint.Inject("mockWriteIngest", func() {
 				m := &BackfillSubTaskMeta{
 					MetaGroups: []*external.SortedKVMeta{},
@@ -134,22 +119,12 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
-				prevStep,
 				logger)
 		}
 		return nil, nil
 	default:
 		return nil, nil
 	}
-}
-
-func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
-	bs, err := json.Marshal(taskMeta)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	task.Meta = bs
-	return nil
 }
 
 // GetNextStep implements scheduler.Extension interface.
@@ -369,24 +344,33 @@ func generateGlobalSortIngestPlan(
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	cloudStorageURI string,
-	step proto.Step,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	var kvMetaGroups []*external.SortedKVMeta
-	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
-		if kvMetaGroups == nil {
-			kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
-		}
-		for i, cur := range subtask.MetaGroups {
-			if kvMetaGroups[i] == nil {
-				kvMetaGroups[i] = &external.SortedKVMeta{}
+	for _, step := range []proto.Step{proto.BackfillStepMergeSort, proto.BackfillStepReadIndex} {
+		hasSubtasks := false
+		err := forEachBackfillSubtaskMeta(taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
+			hasSubtasks = true
+			if kvMetaGroups == nil {
+				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
 			}
-			kvMetaGroups[i].Merge(cur)
+			for i, cur := range subtask.MetaGroups {
+				if kvMetaGroups[i] == nil {
+					kvMetaGroups[i] = &external.SortedKVMeta{}
+				}
+				kvMetaGroups[i].Merge(cur)
+			}
+		})
+		if err != nil {
+			return nil, err
 		}
-	})
-	if err != nil {
-		return nil, err
+		if hasSubtasks {
+			break
+		}
+		// If there is no subtask for merge sort step,
+		// it means the merge sort step is skipped.
 	}
+
 	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
 	if err != nil {
 		return nil, err
