@@ -473,7 +473,6 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	primaryReqCount := 0
 	onRPCFinishedHook := func(req *tikvrpc.Request, resp *tikvrpc.Response, err error) (*tikvrpc.Response, error) {
 		if req.Type == tikvrpc.CmdPrewrite {
-
 			prewriteReq := req.Prewrite()
 			// The failpoint "twoPCRequestBatchSizeLimit" must takes effect
 			require.Equal(t, 1, len(prewriteReq.GetMutations()))
