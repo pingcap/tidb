@@ -3,7 +3,7 @@ backend = 'local'
 incremental-import = true
 
 [conflict]
-strategy = "replace"
+strategy = ""
 
 [post-restore]
 checksum = "required"
