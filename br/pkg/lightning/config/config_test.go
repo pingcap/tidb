@@ -737,7 +737,7 @@ func TestDurationMarshalJSON(t *testing.T) {
 
 func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	var dra DuplicateResolutionAlgorithm
-	require.NoError(t, dra.FromStringValue("none"))
+	require.NoError(t, dra.FromStringValue(""))
 	require.Equal(t, NoneOnDup, dra)
 	require.NoError(t, dra.FromStringValue("replace"))
 	require.Equal(t, ReplaceOnDup, dra)
@@ -746,7 +746,7 @@ func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	require.NoError(t, dra.FromStringValue("error"))
 	require.Equal(t, ErrorOnDup, dra)
 
-	require.Equal(t, "none", NoneOnDup.String())
+	require.Equal(t, "", NoneOnDup.String())
 	require.Equal(t, "replace", ReplaceOnDup.String())
 	require.Equal(t, "ignore", IgnoreOnDup.String())
 	require.Equal(t, "error", ErrorOnDup.String())

@@ -1,6 +1,6 @@
 [tikv-importer]
 backend = 'local'
-duplicate-resolution = 'none'
+duplicate-resolution = ''
 incremental-import = true
 
 [post-restore]

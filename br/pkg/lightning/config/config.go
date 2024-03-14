@@ -611,7 +611,7 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v any) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
 	}
-	return errors.Errorf("invalid conflict.strategy '%v', please choose valid option between ['none', 'replace', 'ignore', 'error']", v)
+	return errors.Errorf("invalid conflict.strategy '%v', please choose valid option between ['', 'replace', 'ignore', 'error']", v)
 }
 
 // MarshalText implements the encoding.TextMarshaler interface.
@@ -622,7 +622,7 @@ func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
 // FromStringValue parses the string value to the DuplicateResolutionAlgorithm.
 func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
-	case "none":
+	case "":
 		*dra = NoneOnDup
 	case "replace":
 		*dra = ReplaceOnDup
@@ -631,7 +631,7 @@ func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	case "error":
 		*dra = ErrorOnDup
 	default:
-		return errors.Errorf("invalid conflict.strategy '%s', please choose valid option between ['none', 'replace', 'ignore', 'error']", s)
+		return errors.Errorf("invalid conflict.strategy '%s', please choose valid option between ['', 'replace', 'ignore', 'error']", s)
 	}
 	return nil
 }
@@ -650,7 +650,7 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
 func (dra DuplicateResolutionAlgorithm) String() string {
 	switch dra {
 	case NoneOnDup:
-		return "none"
+		return ""
 	case ReplaceOnDup:
 		return "replace"
 	case IgnoreOnDup:

@@ -1,6 +1,6 @@
 [tikv-importer]
 backend = "local"
-duplicate-resolution = "none"
+duplicate-resolution = ""
 
 [post-restore]
 checksum = "required"
