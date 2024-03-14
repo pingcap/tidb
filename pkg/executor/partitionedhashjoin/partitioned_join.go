@@ -111,17 +111,27 @@ type BuildWorker struct {
 	BuildSideExec  exec.Executor
 	BuildTypes     []*types.FieldType
 	BuildKeyColIdx []int
+	HasNullableKey bool
 	WorkerID       uint
-	rowTable       *rowTable
-	partition      *chunk.List
 	rtBuilder      *rowTableBuilder
+	rowTables      []*rowTable
 }
 
-// preBuild split the build side data into multiple partitions.
-func (w *BuildWorker) preBuild() {
-	if w.partition != nil {
-		w.partition = chunk.NewList(w.BuildTypes, w.HashJoinCtx.SessCtx.GetSessionVars().InitChunkSize, w.HashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize)
-
+func NewJoinBuildWorker(ctx *PartitionedHashJoinCtx, workID uint, buildSideExec exec.Executor, keyIndex []int, buildTypes []*types.FieldType) *BuildWorker {
+	hasNullableKey := false
+	for _, idx := range buildKeyColIdx {
+		if !mysql.HasNotNullFlag(buildTypes[idx].GetFlag()) {
+			hasNullableKey = true
+			break
+		}
+	}
+	return &BuildWorker{
+		HashJoinCtx:    ctx,
+		BuildSideExec:  buildSideExec,
+		BuildTypes:     buildTypes,
+		BuildKeyColIdx: buildKeyColIdx,
+		WorkerID:       workID,
+		HasNullableKey: hasNullableKey,
 	}
 }
 
@@ -140,6 +150,11 @@ type PartitionedHashJoinExec struct {
 
 	prepared        bool
 	partitionNumber int
+}
+
+func (ctx *PartitionedHashJoinCtx) buildShouldConsiderFilter() bool {
+	return ctx.JoinType == plannercore.LeftOuterJoin && !ctx.RightAsBuildSide ||
+		ctx.JoinType == plannercore.RightOuterJoin && ctx.RightAsBuildSide
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -203,9 +218,6 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 	} else {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
 			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, false)
-	}
-	for _, buildWorker := range e.BuildWorkers {
-		buildWorker.rowTable = newRowTable(e.hashTableMeta)
 	}
 	e.PartitionedHashJoinCtx.allocPool = e.AllocPool
 	if e.PartitionedHashJoinCtx.memTracker != nil {
@@ -324,24 +336,37 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (skipProbe bool, err erro
 	return false, nil
 }
 
-func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) error {
-	builder := w.rtBuilder
+func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) (err error) {
 	partitionNumber := w.HashJoinCtx.joinHashTable.partitionNumber
 	hashTableMeta := w.HashJoinCtx.hashTableMeta
-	serializedKeyVectorBuffer := make([][]byte, 1024)
-	builder.hashValue = make([]uint32, 0, 1024)
-	builder.partIdxVector = make([]int, 0, 1024)
-	builder.rowTables = make([]*rowTable, partitionNumber)
+	w.rowTables = make([]*rowTable, partitionNumber)
+
+	builder := &rowTableBuilder{
+		buildKeyIndex:       w.BuildKeyColIdx,
+		buildSchema:         w.BuildSideExec.Schema(),
+		crrntSizeOfRowTable: make([]int64, w.HashJoinCtx.joinHashTable.partitionNumber),
+		startPosInRawData:   make([][]uint64, w.HashJoinCtx.joinHashTable.partitionNumber),
+		hasNullableKey:      w.HasNullableKey,
+	}
+	if w.HashJoinCtx.RightAsBuildSide {
+		builder.otherConditionColIndex = w.HashJoinCtx.RUsedInOtherCondition
+		builder.columnsNeedConvertToRow = w.HashJoinCtx.RUsed
+	} else {
+		builder.otherConditionColIndex = w.HashJoinCtx.LUsedInOtherCondition
+		builder.columnsNeedConvertToRow = w.HashJoinCtx.LUsed
+	}
+
 	for chk := range srcChkCh {
-		serializedKeyBuf := serializedKeyVectorBuffer[:chk.NumRows()]
-		for i := range serializedKeyBuf {
-			serializedKeyBuf[i] = serializedKeyBuf[i][:]
+		builder.ResetBuffer()
+		if w.HashJoinCtx.Filter != nil && w.HashJoinCtx.buildShouldConsiderFilter() {
+			builder.filterVector, err = expression.VectorizedFilter(w.HashJoinCtx.SessCtx.GetExprCtx(), w.HashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, w.HashJoinCtx.Filter, chunk.NewIterator4Chunk(chk), builder.filterVector)
+			if err != nil {
+				return err
+			}
 		}
-		builder.hashValue = builder.hashValue[:]
-		builder.partIdxVector = builder.partIdxVector[:]
 		// split partition
 		for _, colIdx := range builder.buildKeyIndex {
-			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, nil /*TODO: @XuHuaiyu filterVector*/, nil /*TODO: @XuHuaiyu nullVector*/, hashTableMeta.ignoreIntegerKeySignFlag[colIdx], serializedKeyBuf)
+			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, builder.filterVector, builder.nullKeyVector, hashTableMeta.ignoreIntegerKeySignFlag[colIdx], builder.serializedKeyVectorBuffer)
 			if err != nil {
 				return err
 			}
@@ -349,7 +374,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 
 		builder.partIdxVector = builder.partIdxVector[:]
 		h := fnv.New32a()
-		for _, key := range serializedKeyBuf {
+		for _, key := range builder.serializedKeyVectorBuffer {
 			h.Write(key)
 			hash := h.Sum32()
 			builder.hashValue = append(builder.hashValue, hash)
@@ -358,21 +383,11 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		}
 
 		// 2. build rowtable
-		builder.appendToRowTable(typeCtx, chk, hashTableMeta)
+		builder.appendToRowTable(typeCtx, chk, w.rowTables, hashTableMeta)
 	}
 	return nil
 }
 
-// partitionWorker 各自持有一个 channel，等待 fetcher 发送的 chunk，然后处理 chunk
-// 1. 从 channel 中获取 chunk
-// 2. 切分 partition
-// 3. 获得所有数据后，构造 rowtable
-// 4. 分发 partition 和 rowtable 到不同的 build worker
-
-// buildWorker 等 partitionWorker 分发的 chunk，然后构造 hashtable
-
-// fetchBuildSideRows fetches all rows from build side executor, and append them
-// to e.buildSideResult.
 func (w *BuildSideTupleFetcher) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
@@ -703,7 +718,7 @@ func (e *PartitionedHashJoinExec) mergeRowTables() ([]*rowTable, int) {
 		rowTables[i] = newRowTable(e.hashTableMeta)
 	}
 	for _, w := range e.BuildWorkers {
-		for partIdx, rt := range w.rtBuilder.rowTables {
+		for partIdx, rt := range w.rowTables {
 			if rt == nil {
 				continue
 			}
