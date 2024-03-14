@@ -200,7 +200,7 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	// Different timezones may have different results event with the same "now" time and TTL expression.
 	// Consider a TTL setting with the expiration `INTERVAL 1 MONTH`.
 	// If the current timezone is `Asia/Shanghai` and now is `2021-03-01 00:00:00 +0800`
-	// the expired time should be `2022-02-01 00:00:00 +0800`, corresponding to UTC time `2022-01-31 16:00:00 UTC`.
+	// the expired time should be `2021-02-01 00:00:00 +0800`, corresponding to UTC time `2021-01-31 16:00:00 UTC`.
 	// But if we use the `UTC` time zone, the current time is `2021-02-28 16:00:00 UTC`,
 	// and the expired time should be `2021-01-28 16:00:00 UTC` that is not the same the previous one.
 	globalTz, err := se.GlobalTimeZone(ctx)
