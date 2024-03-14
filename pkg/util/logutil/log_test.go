@@ -231,7 +231,7 @@ func TestCompressedLog(t *testing.T) {
 			MaxSize:    10,
 			MaxDays:    10,
 			MaxBackups: 10,
-			Compress:   "xxx",
+			Compression:   "xxx",
 		},
 	}
 	conf := NewLogConfig(level, DefaultLogFormat, "test.log", "", fileConf, false)
@@ -244,7 +244,7 @@ func TestCompressedLog(t *testing.T) {
 			MaxSize:    10,
 			MaxDays:    10,
 			MaxBackups: 10,
-			Compress:   "gzip",
+			Compression:   "gzip",
 		},
 	}
 	conf = NewLogConfig(level, DefaultLogFormat, "test.log", "", fileConf, false)
