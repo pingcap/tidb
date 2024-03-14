@@ -230,10 +230,10 @@ func (w *mergeIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
-func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) error {
+func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) (skip bool, err error) {
 	tempIdxID, err := tablecodec.DecodeIndexID(newIndexKey)
 	if err != nil {
-		return err
+		return false, err
 	}
 	idxID := tablecodec.IndexIDMask & tempIdxID
 	pfx := tablecodec.CutIndexKeyPrefix(newIndexKey)
@@ -244,11 +244,13 @@ func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) error {
 		}
 	}
 	if curIdx == nil {
-		allIdxIDs := make([]int64, 0, len(w.indexes))
-		for _, idx := range w.indexes {
-			allIdxIDs = append(allIdxIDs, idx.Meta().ID)
-		}
-		return errors.Errorf("index %d not found in %v", idxID, allIdxIDs)
+		// Index IDs are always increasing, but not always continuous:
+		// if DDL adds another index between these indexes, it is possible that:
+		//   multi-schema add index IDs = [1, 2, 4, 5]
+		//   another index ID = [3]
+		// If the new index get rollback, temp index 0xFFxxx03 may have dirty records.
+		// We should skip these dirty records.
+		return true, nil
 	}
 
 	w.currentTempIndexPrefix = kv.Key(pfx).Clone()
@@ -256,7 +258,7 @@ func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) error {
 	w.currentIndexColLen = len(curIdx.Columns)
 	w.currentIndexIsUnique = curIdx.Unique
 
-	return nil
+	return false, nil
 }
 
 func (w *mergeIndexWorker) fetchTempIndexVals(
@@ -284,10 +286,11 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 				return false, nil
 			}
 
-			if !bytes.HasPrefix(indexKey, w.currentTempIndexPrefix) {
-				err := w.updateCurrentIndexInfo(indexKey)
-				if err != nil {
-					return false, err
+			if len(w.currentTempIndexPrefix) == 0 ||
+				!bytes.HasPrefix(indexKey, w.currentTempIndexPrefix) {
+				skip, err := w.updateCurrentIndexInfo(indexKey)
+				if err != nil || skip {
+					return skip, err
 				}
 			}
 
