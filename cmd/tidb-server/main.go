@@ -122,7 +122,7 @@ const (
 	nmRepairList       = "repair-list"
 	nmTempDir          = "temp-dir"
 
-	nmRedact       = "redact"
+	nmRedact = "redact"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
