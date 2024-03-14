@@ -37,7 +37,7 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 	txn kv.Transaction,
 	idxRecords []*temporaryIndexRecord,
 ) error {
-	if !w.currentIndexIsUnique {
+	if !w.currentIndex.Unique {
 		// non-unique key need no check, just overwrite it,
 		// because in most case, backfilling indices is not exists.
 		return nil
@@ -54,7 +54,7 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 			err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) {
-					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), w.currentIndexID)
+					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), w.currentIndex.ID)
 				}
 				return errors.Trace(err)
 			}
@@ -130,9 +130,7 @@ type mergeIndexWorker struct {
 
 	needValidateKey        bool
 	currentTempIndexPrefix []byte
-	currentIndexID         int64
-	currentIndexColLen     int
-	currentIndexIsUnique   bool
+	currentIndex           *model.IndexInfo
 }
 
 func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) *mergeIndexWorker {
@@ -288,9 +286,7 @@ func (w *mergeIndexWorker) updateCurrentIndexInfo(newIndexKey kv.Key) (skip bool
 	pfx := tablecodec.CutIndexPrefix(newIndexKey)
 
 	w.currentTempIndexPrefix = kv.Key(pfx).Clone()
-	w.currentIndexID = idxID
-	w.currentIndexColLen = len(curIdx.Columns)
-	w.currentIndexIsUnique = curIdx.Unique
+	w.currentIndex = curIdx
 
 	return false, nil
 }
@@ -331,7 +327,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 			if err != nil {
 				return false, err
 			}
-			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, w.currentIndexColLen)
+			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, len(w.currentIndex.Columns))
 			if err != nil {
 				return false, err
 			}
