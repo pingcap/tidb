@@ -67,7 +67,8 @@ type PartitionedHashJoinCtx struct {
 	diskTracker   *disk.Tracker   // track disk usage.
 
 	RightAsBuildSide bool
-	Filter           expression.CNFExprs
+	BuildFilter      expression.CNFExprs
+	ProbeFilter      expression.CNFExprs
 	OtherCondition   expression.CNFExprs
 	joinHashTable    *JoinHashTable
 	hashTableMeta    *JoinTableMeta
