@@ -3,10 +3,11 @@ package split
 
 import (
 	"context"
-	"errors"
+	goerrors "errors"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -323,8 +324,13 @@ func TestBackoffOrRetryBackoffer(t *testing.T) {
 
 	b.NextBackoff(ErrBackoffAndDontCount)
 	require.Equal(t, initVal, b.Attempt())
+	// test Annotate, which is the real usage in caller
+	b.NextBackoff(errors.Annotate(ErrBackoffAndDontCount, "caller message"))
+	require.Equal(t, initVal, b.Attempt())
+
 	b.NextBackoff(ErrBackoff)
 	require.Equal(t, initVal-1, b.Attempt())
-	b.NextBackoff(errors.New("test"))
+
+	b.NextBackoff(goerrors.New("test"))
 	require.Equal(t, 0, b.Attempt())
 }

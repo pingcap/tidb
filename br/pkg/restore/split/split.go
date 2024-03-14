@@ -248,8 +248,8 @@ type BackoffOrRetryBackoffer struct {
 }
 
 var (
-	ErrBackoff             = errors.New("backoff")
-	ErrBackoffAndDontCount = errors.New("backoff and don't count")
+	ErrBackoff             = errors.New("found backoff error")
+	ErrBackoffAndDontCount = errors.New("found backoff error but don't count")
 )
 
 // NewBackoffOrRetryBackoffer creates a new backoffer that may backoff or retry.

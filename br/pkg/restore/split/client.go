@@ -640,17 +640,13 @@ func (c *pdClient) isScatterRegionFinished(
 
 func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionInfo) (int, error) {
 	var (
-		// WithRetry will return multierr which is hard to read, so we use `retErr` to
-		// save the error needed to return.
-		// TODO(lance6716): implement WithRetryReturnLastErr
-		retErr        error
-		backoffer     = NewWaitRegionOnlineBackoffer()
+		backoffer     = NewBackoffOrRetryBackoffer()
 		retryCnt      = -1
 		needRescatter = make([]*RegionInfo, 0, len(regions))
 		needRecheck   = make([]*RegionInfo, 0, len(regions))
 	)
 
-	_ = utils.WithRetry(ctx, func() error {
+	err := utils.WithRetryReturnLastErr(ctx, func() error {
 		retryCnt++
 		loggedInThisRound := false
 		needRecheck = needRecheck[:0]
@@ -679,10 +675,8 @@ func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionIn
 						logutil.Region(region.Region),
 						zap.Error(err),
 					)
-					retErr = err
 					needRecheck = append(needRecheck, regions[i:]...)
-					// return nil to stop utils.WithRetry, the error is saved in `retErr`
-					return nil
+					return err
 				}
 				// if meet retryable error, recheck this region in next round
 				brlog.FromContext(ctx).Warn(
@@ -706,38 +700,35 @@ func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionIn
 		}
 
 		if len(needRecheck) == 0 {
-			retErr = nil
 			return nil
 		}
+
+		backoffErr := ErrBackoff
+		// if made progress in this round, don't increase the retryCnt
 		if len(needRecheck) < len(regions) {
-			// if scatter has progress, we should not increase the retry counter
-			backoffer.Stat.ReduceRetry()
+			backoffErr = ErrBackoffAndDontCount
 		}
+
 		regions = slices.Clone(needRecheck)
 
 		if len(needRescatter) > 0 {
 			scatterErr := c.ScatterRegions(ctx, needRescatter)
 			if scatterErr != nil {
 				if !common.IsRetryableError(scatterErr) {
-					retErr = scatterErr
-					return nil
+					return scatterErr
 				}
-				if retErr == nil {
-					retErr = scatterErr
-				}
+
+				return errors.Annotate(backoffErr, scatterErr.Error())
 			}
 		}
-
-		return berrors.ErrPDBatchScanRegion
+		return errors.Annotatef(
+			backoffErr,
+			"scatter region not finished, retryCnt: %d, needRecheck: %d, needRescatter: %d, the first unfinished region: %s",
+			retryCnt, len(needRecheck), len(needRescatter), needRecheck[0].Region.String(),
+		)
 	}, backoffer)
 
-	if len(needRecheck) > 0 && retErr == nil {
-		retErr = errors.Errorf(
-			"wait for scatter region timeout, print the first unfinished region: %v",
-			needRecheck[0].Region.String(),
-		)
-	}
-	return len(needRecheck), retErr
+	return len(needRecheck), err
 }
 
 // isScatterRegionFinished checks whether the scatter region operator is
