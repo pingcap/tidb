@@ -362,7 +362,7 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 			seg.rawData = append(seg.rawData, make([]byte, len)...)
 		}
 		// if join_key is not inlined: `key_length + serialized_key`
-		// if join_key is inlined: `join_key`` (NOTE: use `key_length + join_key` if the key with variable length can be inlined)
+		// if join_key is inlined: `join_key` (TODO: @XuHuaiyu use `key_length + join_key` if the key with variable length can be inlined)
 		if rowTableMeta.isJoinKeysInlined {
 			for _, colIdx := range builder.buildKeyIndex {
 				seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
