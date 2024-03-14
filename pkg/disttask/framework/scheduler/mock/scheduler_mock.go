@@ -56,7 +56,7 @@ func (mr *MockExtensionMockRecorder) GetEligibleInstances(arg0, arg1 any) *gomoc
 }
 
 // GetNextStep mocks base method.
-func (m *MockExtension) GetNextStep(arg0 *proto.Task) proto.Step {
+func (m *MockExtension) GetNextStep(arg0 *proto.TaskBase) proto.Step {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetNextStep", arg0)
 	ret0, _ := ret[0].(proto.Step)

@@ -62,6 +62,8 @@ type Table struct {
 	Name          string
 	HistColl
 	Version uint64
+	// It's the timestamp of the last analyze time.
+	LastAnalyzeVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
@@ -115,6 +117,8 @@ type HistColl struct {
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
 
+	// The version of the statistics, refer to Version0, Version1, Version2 and so on.
+	StatsVer int
 	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
@@ -287,6 +291,7 @@ func (t *Table) Copy() *Table {
 		Indices:        make(map[int64]*Index, len(t.Indices)),
 		Pseudo:         t.Pseudo,
 		ModifyCount:    t.ModifyCount,
+		StatsVer:       t.StatsVer,
 	}
 	for id, col := range t.Columns {
 		newHistColl.Columns[id] = col.Copy()
@@ -295,10 +300,11 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx.Copy()
 	}
 	nt := &Table{
-		HistColl:        newHistColl,
-		Version:         t.Version,
-		Name:            t.Name,
-		TblInfoUpdateTS: t.TblInfoUpdateTS,
+		HistColl:           newHistColl,
+		Version:            t.Version,
+		Name:               t.Name,
+		TblInfoUpdateTS:    t.TblInfoUpdateTS,
+		LastAnalyzeVersion: t.LastAnalyzeVersion,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -325,13 +331,15 @@ func (t *Table) ShallowCopy() *Table {
 		Indices:        t.Indices,
 		Pseudo:         t.Pseudo,
 		ModifyCount:    t.ModifyCount,
+		StatsVer:       t.StatsVer,
 	}
 	nt := &Table{
-		HistColl:        newHistColl,
-		Version:         t.Version,
-		Name:            t.Name,
-		TblInfoUpdateTS: t.TblInfoUpdateTS,
-		ExtendedStats:   t.ExtendedStats,
+		HistColl:           newHistColl,
+		Version:            t.Version,
+		Name:               t.Name,
+		TblInfoUpdateTS:    t.TblInfoUpdateTS,
+		ExtendedStats:      t.ExtendedStats,
+		LastAnalyzeVersion: t.LastAnalyzeVersion,
 	}
 	return nt
 }
@@ -406,6 +414,12 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 	}
 	// newly added column which is not analyzed yet
 	return nil, nil, nil, nil, false
+}
+
+// IsAnalyzed checks whether the table is analyzed or not by checking its last analyze's timestamp value.
+// A valid timestamp must be greater than 0.
+func (t *Table) IsAnalyzed() bool {
+	return t.LastAnalyzeVersion > 0
 }
 
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
@@ -493,7 +507,7 @@ func (n *neededStatsMap) AllItems() []model.TableItemID {
 	return keys
 }
 
-func (n *neededStatsMap) insert(col model.TableItemID) {
+func (n *neededStatsMap) Insert(col model.TableItemID) {
 	n.m.Lock()
 	n.items[col] = struct{}{}
 	n.m.Unlock()
@@ -693,29 +707,10 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 // If not, it will return false and set the version to the tbl's.
 // We use this check to make sure all the statistics of the table are in the same version.
 func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
-	for _, col := range tbl.Columns {
-		if !col.IsAnalyzed() {
-			continue
-		}
-		if col.StatsVer != int64(*version) {
-			*version = int(col.StatsVer)
-			return false
-		}
-		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
-		return true
+	if tbl.StatsVer != Version0 && tbl.StatsVer != *version {
+		*version = tbl.StatsVer
+		return false
 	}
-	for _, idx := range tbl.Indices {
-		if !idx.IsAnalyzed() {
-			continue
-		}
-		if idx.StatsVer != int64(*version) {
-			*version = int(idx.StatsVer)
-			return false
-		}
-		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
-		return true
-	}
-	// This table has no statistics yet. We can directly return true.
 	return true
 }
 

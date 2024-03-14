@@ -379,6 +379,174 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	return fields
 }
 
+// SyncExecDetails is a synced version of `ExecDetails` and its `P90Summary`
+type SyncExecDetails struct {
+	mu sync.Mutex
+
+	execDetails    ExecDetails
+	detailsSummary P90Summary
+}
+
+// MergeExecDetails merges a single region execution details into self, used to print
+// the information in slow query log.
+func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *util.CommitDetails) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if details != nil {
+		s.execDetails.CopTime += details.CopTime
+		s.execDetails.BackoffTime += details.BackoffTime
+		s.execDetails.RequestCount++
+		s.mergeScanDetail(details.ScanDetail)
+		s.mergeTimeDetail(details.TimeDetail)
+		detail := &DetailsNeedP90{
+			BackoffSleep:  details.BackoffSleep,
+			BackoffTimes:  details.BackoffTimes,
+			CalleeAddress: details.CalleeAddress,
+			TimeDetail:    details.TimeDetail,
+		}
+		s.detailsSummary.Merge(detail)
+	}
+	if commitDetails != nil {
+		if s.execDetails.CommitDetail == nil {
+			s.execDetails.CommitDetail = commitDetails
+		} else {
+			s.execDetails.CommitDetail.Merge(commitDetails)
+		}
+	}
+}
+
+// mergeScanDetail merges scan details into self.
+func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
+	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
+	if scanDetail == nil {
+		return
+	}
+	if s.execDetails.ScanDetail == nil {
+		s.execDetails.ScanDetail = &util.ScanDetail{}
+	}
+	s.execDetails.ScanDetail.Merge(scanDetail)
+}
+
+// MergeTimeDetail merges time details into self.
+func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
+	s.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
+	s.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
+}
+
+// MergeLockKeysExecDetails merges lock keys execution details into self.
+func (s *SyncExecDetails) MergeLockKeysExecDetails(lockKeys *util.LockKeysDetails) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.execDetails.LockKeysDetail == nil {
+		s.execDetails.LockKeysDetail = lockKeys
+	} else {
+		s.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
+}
+
+// Reset resets the content inside
+func (s *SyncExecDetails) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.execDetails = ExecDetails{}
+	s.detailsSummary.Reset()
+}
+
+// GetExecDetails returns the exec details inside.
+// It's actually not safe, because the `ExecDetails` still contains some reference, which is not protected after returning
+// outside.
+func (s *SyncExecDetails) GetExecDetails() ExecDetails {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.execDetails
+}
+
+// CopTasksDetails returns some useful information of cop-tasks during execution.
+func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.detailsSummary.NumCopTasks
+	d := &CopTasksDetails{
+		NumCopTasks:       n,
+		MaxBackoffTime:    make(map[string]time.Duration),
+		AvgBackoffTime:    make(map[string]time.Duration),
+		P90BackoffTime:    make(map[string]time.Duration),
+		TotBackoffTime:    make(map[string]time.Duration),
+		TotBackoffTimes:   make(map[string]int),
+		MaxBackoffAddress: make(map[string]string),
+	}
+	if n == 0 {
+		return d
+	}
+	d.AvgProcessTime = s.execDetails.TimeDetail.ProcessTime / time.Duration(n)
+	d.AvgWaitTime = s.execDetails.TimeDetail.WaitTime / time.Duration(n)
+
+	d.P90ProcessTime = time.Duration((s.detailsSummary.ProcessTimePercentile.GetPercentile(0.9)))
+	d.MaxProcessTime = s.detailsSummary.ProcessTimePercentile.GetMax().D
+	d.MaxProcessAddress = s.detailsSummary.ProcessTimePercentile.GetMax().Addr
+
+	d.P90WaitTime = time.Duration((s.detailsSummary.WaitTimePercentile.GetPercentile(0.9)))
+	d.MaxWaitTime = s.detailsSummary.WaitTimePercentile.GetMax().D
+	d.MaxWaitAddress = s.detailsSummary.WaitTimePercentile.GetMax().Addr
+
+	for backoff, items := range s.detailsSummary.BackoffInfo {
+		if items == nil {
+			continue
+		}
+		n := items.ReqTimes
+		d.MaxBackoffAddress[backoff] = items.BackoffPercentile.GetMax().Addr
+		d.MaxBackoffTime[backoff] = items.BackoffPercentile.GetMax().D
+		d.P90BackoffTime[backoff] = time.Duration(items.BackoffPercentile.GetPercentile(0.9))
+
+		d.AvgBackoffTime[backoff] = items.TotBackoffTime / time.Duration(n)
+		d.TotBackoffTime[backoff] = items.TotBackoffTime
+		d.TotBackoffTimes[backoff] = items.TotBackoffTimes
+	}
+	return d
+}
+
+// CopTasksDetails collects some useful information of cop-tasks during execution.
+type CopTasksDetails struct {
+	NumCopTasks int
+
+	AvgProcessTime    time.Duration
+	P90ProcessTime    time.Duration
+	MaxProcessAddress string
+	MaxProcessTime    time.Duration
+
+	AvgWaitTime    time.Duration
+	P90WaitTime    time.Duration
+	MaxWaitAddress string
+	MaxWaitTime    time.Duration
+
+	MaxBackoffTime    map[string]time.Duration
+	MaxBackoffAddress map[string]string
+	AvgBackoffTime    map[string]time.Duration
+	P90BackoffTime    map[string]time.Duration
+	TotBackoffTime    map[string]time.Duration
+	TotBackoffTimes   map[string]int
+}
+
+// ToZapFields wraps the CopTasksDetails as zap.Fileds.
+func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
+	if d.NumCopTasks == 0 {
+		return
+	}
+	fields = make([]zap.Field, 0, 10)
+	fields = append(fields, zap.Int("num_cop_tasks", d.NumCopTasks))
+	fields = append(fields, zap.String("process_avg_time", strconv.FormatFloat(d.AvgProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_p90_time", strconv.FormatFloat(d.P90ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_max_time", strconv.FormatFloat(d.MaxProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("process_max_addr", d.MaxProcessAddress))
+	fields = append(fields, zap.String("wait_avg_time", strconv.FormatFloat(d.AvgWaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_p90_time", strconv.FormatFloat(d.P90WaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
+	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
+	return fields
+}
+
 type basicCopRuntimeStats struct {
 	storeType string
 	BasicRuntimeStats

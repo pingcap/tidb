@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"runtime/pprof"
 	"strings"
@@ -56,11 +57,12 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 }
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
-	newISBuilder, err := infoschema.NewBuilder(nil, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	data := infoschema.NewData()
+	newISBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
-	is := newISBuilder.Build()
+	is := newISBuilder.Build(math.MaxUint64)
 	tbl, err := is.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err

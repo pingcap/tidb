@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -90,7 +91,7 @@ type recordSet struct {
 	fields     []*ast.ResultField
 	executor   exec.Executor
 	stmt       *ExecStmt
-	lastErr    error
+	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
 }
@@ -156,7 +157,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
-		a.lastErr = err
+		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}
 	numRows := req.NumRows()
@@ -194,7 +195,7 @@ func (a *recordSet) Finish() error {
 		}
 	})
 	if err != nil {
-		a.lastErr = err
+		a.lastErrs = append(a.lastErrs, err)
 	}
 	return err
 }
@@ -204,13 +205,13 @@ func (a *recordSet) Close() error {
 	if err != nil {
 		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
 	}
-	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
 	return err
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
 func (a *recordSet) OnFetchReturned() {
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
+	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -278,7 +279,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
-	var pointExecutor *PointGetExecutor
+	var executor exec.Executor
 	useMaxTS := startTs == math.MaxUint64
 
 	// try to reuse point get executor
@@ -293,24 +294,26 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
 			exec.Init(pointGetPlan)
 			a.PsStmt.Executor = exec
-			pointExecutor = exec
+			executor = exec
 		}
 	}
 
-	if pointExecutor == nil {
+	if executor == nil {
 		b := newExecutorBuilder(a.Ctx, a.InfoSchema)
-		pointExecutor = b.build(a.Plan).(*PointGetExecutor)
+		executor = b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
 		}
+		pointExecutor, ok := executor.(*PointGetExecutor)
 
-		if useMaxTS {
+		// Don't cache the executor for non point-get (table dual) or partitioned tables
+		if ok && useMaxTS && pointExecutor.partitionDefIdx == nil {
 			a.PsStmt.Executor = pointExecutor
 		}
 	}
 
-	if err = exec.Open(ctx, pointExecutor); err != nil {
-		terror.Log(exec.Close(pointExecutor))
+	if err = exec.Open(ctx, executor); err != nil {
+		terror.Log(exec.Close(executor))
 		return nil, err
 	}
 
@@ -330,7 +333,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	return &recordSet{
-		executor:   pointExecutor,
+		executor:   executor,
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
@@ -963,10 +966,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
-			stmtText := a.OriginText()
-			if sctx.GetSessionVars().EnableRedactLog {
-				stmtText = parser.Normalize(stmtText)
-			}
+			stmtText := parser.Normalize(a.OriginText(), sctx.GetSessionVars().EnableRedactLog)
 			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
 				"Note this may not be a uniqueness violation.",
 				zap.Error(err),
@@ -1953,7 +1953,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	var sql string
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.EnableRedactLog {
+	rmode := sessVars.EnableRedactLog
+	if rmode == errors.RedactLogEnable {
 		if keepHint {
 			sql = parser.NormalizeKeepHint(sessVars.StmtCtx.OriginalSQL)
 		} else {
@@ -1962,7 +1963,7 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {
-		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PlanCacheParams.String()
+		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
 }

@@ -74,8 +74,10 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 31,
     deps = [
+        "//br/pkg/lightning/backend/encode",
+        "//br/pkg/lightning/backend/kv",
         "//pkg/ddl",
         "//pkg/ddl/util/callback",
         "//pkg/domain",
