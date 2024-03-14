@@ -34,12 +34,12 @@ var (
 	samplerLogger         *zap.Logger
 )
 
-// StatsSamplerLoggerSingleton with category "stats" is used to log statistic related messages.
+// SingletonStatsSamplerLogger with category "stats" is used to log statistic related messages.
 // It is used to sample the log to avoid too many logs.
 // NOTE: Do not create a new logger for each log, it will cause the sampler not work.
 // Because we need to record the log count with the same level and message in this specific logger.
 // Do not use it to log the message that is not related to statistics.
-func StatsSamplerLoggerSingleton() *zap.Logger {
+func SingletonStatsSamplerLogger() *zap.Logger {
 	init := func() {
 		if samplerLogger == nil {
 			// Create a new zapcore sampler with options
