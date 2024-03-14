@@ -16,13 +16,11 @@ package sortexec_test
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
@@ -132,8 +130,6 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, isTopN bool, offset u
 
 			expectRow := r.savedChunks[r.rowPtrs[cursor].ChkIdx].GetRow(int(r.rowPtrs[cursor].RowIdx))
 			expect := expectRow.ToString(fieldTypes)
-
-			log.Info(fmt.Sprintf("res: %s, expect: %s", res, expect))
 
 			if res != expect {
 				return false

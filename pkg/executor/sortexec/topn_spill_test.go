@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
@@ -96,23 +95,34 @@ func topNNoSpillCase(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.So
 //  2. Updating heap, in this stage only rows that is smaller than the heap top could be inserted and we will drop the heap top.
 //
 // Case1 means that we will trigger spill in stage 1
-func topNSpillCase1(t *testing.T, ctx *mock.Context, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+func topNSpillCase1(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
+	if exe == nil {
+		exe = buildTopNExec(sortCase, dataSource, offset, count)
+	}
+	dataSource.PrepareChunks()
+	resultChunks := executeTopNExecutor(t, exe)
 
+	require.True(t, exe.IsSpillTriggeredForTest())
+	require.True(t, exe.GetIsInStage1ForTest())
+
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.True(t, checkTopNCorrectness(schema, exe, dataSource, resultChunks, offset, count))
 }
 
 // Case2 means that we will trigger spill in stage 2
-func topNSpillCase2(t *testing.T, ctx *mock.Context, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+func topNSpillCase2(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
 
 }
 
 // After sorted all rows are in memory and the spill is triggered after some chunks have been fetched
-func topNInMemoryThenSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+func topNInMemoryThenSpillCase(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
 
 }
 
-// TODO test offset not 0
 func TestTopNSpillDisk(t *testing.T) {
-	totalRowNum := 100
+	totalRowNum := 10000
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
 	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
@@ -129,19 +139,20 @@ func TestTopNSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(ctx, topNCase, schema)
 	exe := buildTopNExec(topNCase, dataSource, offset, count)
-	for i := 0; i < 1; i++ {
-		log.Info("xzxdebug 1---------")
-		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
-		log.Info("xzxdebug 2---------")
-		topNNoSpillCase(t, exe, topNCase, schema, dataSource, 12, count)
-	}
+	// for i := 0; i < 5; i++ {
+	// 	topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
+	// 	topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
+	// }
 
 	// TODO add slow random fail point for topn failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
-	// ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
-	// ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	// for i := 0; i < 10; i++ {
-
-	// }
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	count = uint64(totalRowNum - totalRowNum/10)
+	exe = buildTopNExec(topNCase, dataSource, offset, count)
+	for i := 0; i < 5; i++ {
+		// topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
+		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
+	}
 }
 
 func TestTopNSpillDiskFailpoint(t *testing.T) {

@@ -15,10 +15,13 @@
 package sortexec
 
 import (
+	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -47,6 +50,7 @@ type topNSpillHelper struct {
 }
 
 func newTopNSpillerHelper(
+	topn *TopNExec,
 	finishCh <-chan struct{},
 	errOutputChan chan<- rowWithError,
 	memTracker *memory.Tracker,
@@ -55,6 +59,11 @@ func newTopNSpillerHelper(
 	workers []*topNWorker,
 	concurrencyNum int) *topNSpillHelper {
 	lock := sync.Mutex{}
+	tmpSpillChunksChan := make(chan *chunk.Chunk, concurrencyNum)
+	for i := 0; i < len(workers); i++ {
+		tmpSpillChunksChan <- exec.TryNewCacheChunk(topn.Children(0))
+	}
+
 	return &topNSpillHelper{
 		cond:               sync.NewCond(&lock),
 		spillStatus:        notSpilled,
@@ -64,7 +73,7 @@ func newTopNSpillerHelper(
 		memTracker:         memTracker,
 		diskTracker:        diskTracker,
 		fieldTypes:         fieldTypes,
-		tmpSpillChunksChan: make(chan *chunk.Chunk, concurrencyNum),
+		tmpSpillChunksChan: tmpSpillChunksChan,
 		workers:            workers,
 		bytesConsumed:      atomic.Int64{},
 		bytesLimit:         atomic.Int64{},
@@ -174,20 +183,25 @@ func (t *topNSpillHelper) spill() (err error) {
 }
 
 func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
-	if chkHeap.Len() <= 0 {
-		return nil
-	}
-
 	if !chkHeap.isRowPtrsInit {
 		chkHeap.initPtrsImpl()
 	}
 	slices.SortFunc(chkHeap.rowPtrs, chkHeap.keyColumnsCompare)
 
+	if chkHeap.Len() <= 0 {
+		return nil
+	}
+
 	tmpSpillChunk := <-t.tmpSpillChunksChan
 	tmpSpillChunk.Reset()
+	defer func() {
+		t.tmpSpillChunksChan <- tmpSpillChunk
+	}()
 
 	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(t.diskTracker)
+
+	spilledNum := 0
 
 	rowPtrNum := len(chkHeap.rowPtrs)
 	for ; chkHeap.idx < rowPtrNum; chkHeap.idx++ {
@@ -197,6 +211,7 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 				return err
 			}
 		}
+		spilledNum++
 		tmpSpillChunk.AppendRow(chkHeap.rowChunks.GetRow(chkHeap.rowPtrs[chkHeap.idx]))
 	}
 
@@ -208,9 +223,12 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 		}
 	}
 
-	t.addInDisk(inDisk)
+	log.Info(fmt.Sprintf("spilled num %d", spilledNum))
 
-	t.tmpSpillChunksChan <- tmpSpillChunk
+	if inDisk.NumChunks() > 0 {
+		t.addInDisk(inDisk)
+	}
+
 	chkHeap.clear()
 	return nil
 }

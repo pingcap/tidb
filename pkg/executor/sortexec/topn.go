@@ -49,6 +49,14 @@ type TopNExec struct {
 
 	spillHelper *topNSpillHelper
 	spillAction *topNSpillAction
+
+	// Topn executor has two stage:
+	//  1. Building heap, in this stage all received rows will be inserted into heap.
+	//  2. Updating heap, in this stage only rows that is smaller than the heap top could be inserted and we will drop the heap top.
+	//
+	// isInStage1ForTest will be set to false if we step into stage 2.
+	// This variable is only used for test.
+	isInStage1ForTest bool
 }
 
 // Open implements the Executor Open interface.
@@ -63,6 +71,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 	e.finishCh = make(chan struct{}, 1)
 	e.resultChannel = make(chan rowWithError, e.MaxChunkSize())
+	e.isInStage1ForTest = true
 
 	if variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
@@ -78,6 +87,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		}
 
 		e.spillHelper = newTopNSpillerHelper(
+			e,
 			e.finishCh,
 			e.resultChannel,
 			e.memTracker,
@@ -180,6 +190,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 			return err
 		}
 		if srcChk.NumRows() == 0 {
+			e.isInStage1ForTest = false
 			break
 		}
 		e.chkHeap.rowChunks.Add(srcChk)
@@ -244,15 +255,15 @@ func (e *TopNExec) fetchChunksFromChild(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(e.resultChannel, r)
-
-			e.fetcherAndWorkerSyncer.Wait()
-			err := e.spillRemainingRowsWhenNeeded()
-			if err != nil {
-				e.resultChannel <- rowWithError{err: err}
-			}
-
-			close(e.chunkChannel)
 		}
+
+		e.fetcherAndWorkerSyncer.Wait()
+		err := e.spillRemainingRowsWhenNeeded()
+		if err != nil {
+			e.resultChannel <- rowWithError{err: err}
+		}
+
+		close(e.chunkChannel)
 	}()
 
 	for {
@@ -425,6 +436,10 @@ func (e *TopNExec) generateTopNResults() {
 
 func (e *TopNExec) IsSpillTriggeredForTest() bool {
 	return e.spillHelper.isSpillTriggered()
+}
+
+func (e *TopNExec) GetIsInStage1ForTest() bool {
+	return e.isInStage1ForTest
 }
 
 func injectTopNRandomFail(triggerFactor int32) {
