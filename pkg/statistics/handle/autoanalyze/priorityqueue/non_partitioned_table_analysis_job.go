@@ -91,7 +91,9 @@ func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the table is valid to analyze.
 // We will check the last failed job and average analyze duration to determine whether the table is valid to analyze.
-func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
 	if valid, failReason := isValidWeight(j.Weight); !valid {
 		return false, failReason
 	}
