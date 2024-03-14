@@ -72,7 +72,12 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	cnfs := ds.GetAllConds()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	idxCols, ok := core.PrepareCols4MVIndex(tbl.Meta(), tbl.Meta().FindIndexByName("a_domains_b"), ds.TblCols)
+	idxCols, ok := core.PrepareIdxColsAndUncoverArrayType(
+		tbl.Meta(),
+		tbl.Meta().FindIndexByName("a_domains_b"),
+		ds.TblCols,
+		true,
+	)
 	require.True(t, ok)
 	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
 
