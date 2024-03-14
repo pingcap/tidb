@@ -1546,7 +1546,13 @@ LOOPFORTABLE:
 				return nil
 			}
 			if rc.granularity == string(CoarseGrained) {
+				rc.fileImporter.cond.L.Lock()
+				for rc.fileImporter.IsFull() {
+					// wait for download worker notified
+					rc.fileImporter.cond.Wait()
+				}
 				eg.Go(restoreFn)
+				rc.fileImporter.cond.L.Unlock()
 			} else {
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files

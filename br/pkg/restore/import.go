@@ -329,6 +329,7 @@ type FileImporter struct {
 	rewriteMode        RewriteMode
 
 	cacheKey string
+	cond     *sync.Cond
 }
 
 // NewFileImporter returns a new file importClient.
@@ -360,7 +361,27 @@ func NewFileImporter(
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 		concurrencyPerStore: concurrencyPerStore,
 		useTokenBucket:      useTokenBucket,
+		cond:                sync.NewCond(new(sync.Mutex)),
 	}
+}
+
+func (importer *FileImporter) IsFull() bool {
+	if importer != nil {
+		importer.storeWorkerPoolRWLock.RLock()
+		defer importer.storeWorkerPoolRWLock.RUnlock()
+		for _, pool := range importer.storeWorkerPoolMap {
+			if len(pool) > 0 {
+				// At leader one store worker pool has available worker
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func (importer *FileImporter) Cond() *sync.Cond {
+	return importer.cond
 }
 
 func (importer *FileImporter) Close() error {
@@ -1053,6 +1074,8 @@ func (importer *FileImporter) downloadSSTV2(
 			}
 			defer func() {
 				workerCh <- struct{}{}
+				// finish the download, notify the main goroutine to continue
+				importer.cond.Signal()
 			}()
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]

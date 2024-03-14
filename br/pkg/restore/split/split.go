@@ -30,7 +30,7 @@ const (
 	SplitMaxRetryInterval = 4 * time.Second
 
 	SplitCheckMaxRetryTimes = 64
-	SplitCheckInterval      = 8 * time.Millisecond
+	SplitCheckInterval      = 100 * time.Millisecond
 	SplitMaxCheckInterval   = time.Second
 
 	ScatterWaitMaxRetryTimes = 64
