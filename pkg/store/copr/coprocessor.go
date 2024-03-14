@@ -1106,7 +1106,7 @@ type HasUnconsumedCopRuntimeStats interface {
 }
 
 func (it *copIterator) CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats {
-	if it == nil {
+	if it == nil || it.unconsumedStats == nil {
 		return nil
 	}
 	it.unconsumedStats.Lock()
