@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -69,7 +70,7 @@ func Stringer(mode string, input fmt.Stringer) redactStringer {
 
 // DeRedactFile will deredact the input file, either removing marked contents, or remove the marker. It works line by line.
 func DeRedactFile(remove bool, input string, output string) error {
-	ifile, err := os.Open(input)
+	ifile, err := os.Open(filepath.Clean(input))
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -79,7 +80,8 @@ func DeRedactFile(remove bool, input string, output string) error {
 	if output == "-" {
 		ofile = os.Stdout
 	} else {
-		file, err := os.OpenFile(output, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+		//nolint: gosec
+		file, err := os.OpenFile(filepath.Clean(output), os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return errors.WithStack(err)
 		}
