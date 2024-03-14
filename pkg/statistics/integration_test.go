@@ -482,6 +482,46 @@ func TestIssue44369(t *testing.T) {
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
 }
 
+// Test the case that after ALTER TABLE happens, the pointer to the column info/index info should be refreshed.
+func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index iab(a,b));")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t value(1,1);")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t;")
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	statsTbl := h.GetTableStats(tblInfo)
+	colA := tblInfo.Columns[0]
+	colInfo := statsTbl.ColAndIdxExistenceMap.GetCol(colA.ID)
+	require.Equal(t, colA, colInfo)
+
+	tk.MustExec("alter table t modify column a double")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is = dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	newColA := tblInfo.Columns[0]
+	require.NotEqual(t, colA.ID, newColA.ID)
+	statsTbl = h.GetTableStats(tblInfo)
+	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
+	require.Equal(t, newColA, colInfo)
+	tk.MustExec("analyze table t;")
+	require.NoError(t, h.Update(is))
+	statsTbl = h.GetTableStats(tblInfo)
+	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
+	require.Equal(t, newColA, colInfo)
+}
+
 func TestTableLastAnalyzeVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
