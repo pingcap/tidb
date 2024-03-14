@@ -1105,13 +1105,15 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 	defer s.rwlock.RUnlock()
 
 	printLog := false
-	if time.Since(s.printMDLLogTime) > 10*time.Second {
+	if time.Since(s.printMDLLogTime) > 1*time.Second {
 		printLog = true
 		s.printMDLLogTime = time.Now()
 	}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
+		} else {
+			logutil.BgLogger().Warn("session is nil", zap.Uint64("conn", client.connectionID))
 		}
 	}
 }

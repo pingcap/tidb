@@ -4320,6 +4320,7 @@ func RemoveLockDDLJobs(s types.Session, job2ver map[int64]int64, job2ids map[int
 	sv.TxnCtxMu.Lock()
 	defer sv.TxnCtxMu.Unlock()
 	if sv.TxnCtx == nil {
+		logutil.BgLogger().Warn("txnCtx is nil, maybe the session is invalid", zap.String("session", s.String()))
 		return
 	}
 	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
@@ -4333,6 +4334,8 @@ func RemoveLockDDLJobs(s types.Session, job2ver map[int64]int64, job2ids map[int
 				} else {
 					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
 				}
+			} else if ok {
+				logutil.BgLogger().Warn("version greater than job", zap.Int64("job ver", value.(int64)), zap.Int64("ver", ver), zap.String("session", s.String()))
 			}
 		}
 		return true
