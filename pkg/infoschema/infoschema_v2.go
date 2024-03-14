@@ -612,6 +612,11 @@ func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]
 			fmt.Sprintf("(Schema ID %d)", di.ID),
 		)
 	}
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b.infoschemaV2.addDB(diff.Version, di)
 	return applyCreateTables(b, m, diff)
 }
 

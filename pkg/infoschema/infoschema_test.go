@@ -1116,6 +1116,8 @@ func TestApplyDiff(t *testing.T) {
 			ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
 			data: infoschema.NewData(),
 		}
+		tc.runRecoverSchema()
+		tc.clear()
 		tc.runCreateSchema()
 		tc.clear()
 		tc.runDropSchema()
