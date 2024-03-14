@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
-	"github.com/pingcap/tidb/pkg/table"
+	// "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -718,15 +718,14 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 }
 
 type infoschema interface {
-	SchemaTables(schema model.CIStr) []table.Table
+	SchemaTables(schema model.CIStr) []*model.TableInfo
 }
 
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
 func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo, is infoschema) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
 	for _, db := range schemas {
-		for _, tbl := range is.SchemaTables(db.Name) {
-			table := tbl.Meta()
+		for _, table := range is.SchemaTables(db.Name) {
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
 					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))

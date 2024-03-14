@@ -1724,6 +1724,19 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 	return rows
 }
 
+type wrapForHelper struct {
+	is infoschema.InfoSchema
+}
+
+func (w wrapForHelper) SchemaTables(schema model.CIStr) []*model.TableInfo {
+	tbls := w.is.SchemaTables(schema)
+	res := make([]*model.TableInfo, 0, len(tbls))
+	for _, tbl := range tbls {
+		res = append(res, tbl.Meta())
+	}
+	return res
+}
+
 func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var extractorTableIDs []int64
@@ -1765,7 +1778,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			return err
 		}
 	}
-	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas(), is)
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas(), wrapForHelper{is})
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(regionTableList) == 0 {
