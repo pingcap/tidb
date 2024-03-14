@@ -9,6 +9,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/store/driver/error",
+        "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",

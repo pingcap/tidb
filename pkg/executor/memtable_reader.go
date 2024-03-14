@@ -790,9 +790,10 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 	tz := sctx.GetSessionVars().Location()
-	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas()
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	allSchemas := is.AllSchemas()
 	schemas := tikvHelper.FilterMemDBs(allSchemas)
-	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
+	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas, is)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)
 		rows, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, tables, tz)
