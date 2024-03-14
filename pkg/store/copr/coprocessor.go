@@ -1102,6 +1102,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.
 type HasUnconsumedCopRuntimeStats interface {
+	// CollectUnconsumedCopRuntimeStats returns unconsumed CopRuntimeStats.
 	CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats
 }
 
