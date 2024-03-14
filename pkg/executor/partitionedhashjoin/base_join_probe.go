@@ -120,7 +120,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.matchedRowsHeaders = make([]unsafe.Pointer, rows)
 	}
-	if j.ctx.Filter != nil {
+	if j.ctx.ProbeFilter != nil {
 		if cap(j.filterVector) >= rows {
 			j.filterVector = j.filterVector[:rows]
 		} else {
@@ -142,8 +142,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.serializedKeys = make([][]byte, rows)
 	}
-	if j.ctx.Filter != nil && !j.ctx.buildShouldConsiderFilter() {
-		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.Filter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
+	if j.ctx.ProbeFilter != nil {
+		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.ProbeFilter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
 		if err != nil {
 			return err
 		}
@@ -302,7 +302,7 @@ func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinTy
 	}
 	base.matchedRowsHeaders = make([]unsafe.Pointer, 0, chunk.InitialCapacity)
 	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)
-	if base.ctx.Filter != nil {
+	if base.ctx.ProbeFilter != nil {
 		base.filterVector = make([]bool, 0, chunk.InitialCapacity)
 	}
 	if base.hasNullableKey {
