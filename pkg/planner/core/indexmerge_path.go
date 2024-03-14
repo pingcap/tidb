@@ -43,7 +43,7 @@ import (
 func init() {
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUncoverArrayType
+	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType
 }
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -715,7 +715,7 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 			bestNeedSelection    bool
 		)
 		for _, onePossibleMVIndexPath := range possibleMVIndexPaths {
-			idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+			idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 				ds.table.Meta(),
 				onePossibleMVIndexPath.Index,
 				ds.TblCols,
@@ -801,7 +801,7 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 	// mm is a map here used for de-duplicate partial paths which is derived from **same** accessFilters, not necessary to keep them both.
 	mm := make(map[string]*record, 0)
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
-		idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.table.Meta(),
 			possibleMVIndexPaths[idx].Index,
 			ds.TblCols,
@@ -953,7 +953,7 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			continue
 		}
 
-		idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.table.Meta(),
 			ds.possibleAccessPaths[idx].Index,
 			ds.TblCols,
@@ -1224,7 +1224,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue
 		}
 
-		idxCols, ok := PrepareIdxColsAndUncoverArrayType(
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.table.Meta(),
 			ds.possibleAccessPaths[idx].Index,
 			ds.TblCols,
@@ -1428,8 +1428,14 @@ func buildPartialPath4MVIndex(
 	return partialPath, true, nil
 }
 
-// PrepareIdxColsAndUncoverArrayType exported for test.
-func PrepareIdxColsAndUncoverArrayType(
+// PrepareIdxColsAndUnwrapArrayType collects columns for an index and returns them as []*expression.Column.
+// If any column of them is an array type, we will use it's underlying FieldType in the returned Column.RetType.
+// If checkOnly1ArrayTypeCol is true, we will check if this index contains only one array type column. If not, it will
+// return (nil, false). This check works as a sanity check for an MV index.
+// Though this function is introduced for MV index, it can also be used for normal index if you pass false to
+// checkOnly1ArrayTypeCol.
+// This function is exported for test.
+func PrepareIdxColsAndUnwrapArrayType(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
 	tblCols []*expression.Column,
@@ -1721,6 +1727,8 @@ func checkFilter4MVIndexColumn(
 				return false, unspecifiedFilterTp
 			}
 		}
+		// If json_contains or json_overlaps only contains one value, like json_overlaps(a,'[1]') or
+		// json_contains(a,'[1]'), we can just ignore the AND/OR semantic, and treat them like 1 member of (a).
 		if (tp == multiValuesOROnMVColTp || tp == multiValuesANDOnMVColTp) && len(virColVals) == 1 {
 			tp = singleValueOnMVColTp
 		}
