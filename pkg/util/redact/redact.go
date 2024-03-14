@@ -67,6 +67,7 @@ func Stringer(mode string, input fmt.Stringer) redactStringer {
 	return redactStringer{mode, input}
 }
 
+// DeRedactFile will deredact the input file, either removing marked contents, or remove the marker. It works line by line.
 func DeRedactFile(remove bool, input string, output string) error {
 	ifile, err := os.Open(input)
 	if err != nil {
@@ -89,6 +90,7 @@ func DeRedactFile(remove bool, input string, output string) error {
 	return DeRedact(remove, ifile, ofile, "\n")
 }
 
+// DeRedact is similar to DeRedactFile, but act on reader/writer, it works line by line.
 func DeRedact(remove bool, input io.Reader, output io.Writer, sep string) error {
 	sc := bufio.NewScanner(input)
 	out := bufio.NewWriter(output)
