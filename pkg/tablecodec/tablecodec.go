@@ -58,7 +58,6 @@ const (
 	prefixLen = 1 + idLen /*tableID*/ + 2
 	// RecordRowKeyLen is public for calculating average row size.
 	RecordRowKeyLen       = prefixLen + idLen /*handle*/
-	IndexKeyLen           = prefixLen + idLen
 	tablePrefixLength     = 1
 	recordPrefixSepLength = 2
 	metaPrefixLength      = 1
