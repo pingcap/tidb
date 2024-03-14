@@ -1765,7 +1765,7 @@ func checkFilter4MVIndexColumn(
 		}
 		var virColVals []expression.Expression
 		jsonType := idxCol.GetType().ArrayType()
-		tp := UnspecifiedFilterTp
+		var tp int
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
 			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]) {
