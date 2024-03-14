@@ -210,14 +210,8 @@ func tryMergeUnfinishedIndexMergePathWithAND(indexMergePath *unfinishedAccessPat
 				path.accessFilters = append(path.accessFilters, pathListFromANDItem[i].accessFilters...)
 				continue
 			}
-			for j, hasAccessFilter := range pathListFromANDItem[i].IdxColHasAccessFilter {
-				// handle the index column where the pathListFromANDItem has point access and the path from partial path
-				// doesn't have point access
-				if hasAccessFilter && !path.IdxColHasAccessFilter[j] {
-					// append access cond
-					path.accessFilters = append(path.accessFilters, pathListFromANDItem[i].accessFilters...)
-					break
-				}
+			if slices.Contains(pathListFromANDItem[i].IdxColHasAccessFilter, true) {
+				path.accessFilters = append(path.accessFilters, pathListFromANDItem[i].accessFilters...)
 			}
 		}
 	}

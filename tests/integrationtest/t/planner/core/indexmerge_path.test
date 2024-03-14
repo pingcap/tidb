@@ -263,3 +263,18 @@ select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
 create table t1 (j json, a bigint(20), b int, primary key(a,b), key mvi((cast(j as unsigned array))));
 explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where a = 1 or json_contains(j, '1');
 explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where (a = 1 and b = 2) or json_contains(j, '1');
+
+# TestExpandANDListWithNestedORList
+drop table if exists t, t1;
+create table t (a int, b varchar(30), c float, j json, pk int primary key,
+key mvi1(c, (cast(j->'$.a' as unsigned array)), b),
+key mvi2(a, (cast(j->'$.c' as unsigned array)))
+);
+
+explain format=brief select /*+ use_index_merge(t1, mvi1) */ * from t where (1 member of (j->'$.a') or (2 member of (j->'$.a'))) and c = 10 and a = 20;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, primary) */ * from t where (pk = 2 or json_overlaps(j->'$.a', '[4,5,6]') or json_contains(j->'$.c', '[3]')) and a = 1 and b = '2' and c = 3;
+explain format=brief select /*+ use_index_merge(t1, mvi1, mvi2, primary) */ * from t where a = 1 and b = '2' and c = 3 and (pk = 2 or (3 member of (j->'$.a')) or (3 member of (j->'$.c'))) ;
+
+
+
+
