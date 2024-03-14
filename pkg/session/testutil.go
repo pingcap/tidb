@@ -55,6 +55,7 @@ func CreateSessionAndSetID(t *testing.T, store kv.Storage) sessiontypes.Session 
 	se, err := CreateSession4Test(store)
 	se.SetConnectionID(sessionKitIDGenerator.Inc())
 	require.NoError(t, err)
+	se.GetSessionVars().InRestrictedSQL = true
 	return se
 }
 

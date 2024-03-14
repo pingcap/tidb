@@ -29,6 +29,7 @@ type SchemaChecker struct {
 	schemaVer       int64
 	relatedTableIDs []int64
 	needCheckSchema bool
+	isInternal      bool
 }
 
 type intSchemaVer int64
@@ -45,12 +46,13 @@ var (
 )
 
 // NewSchemaChecker creates a new schema checker.
-func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64, needCheckSchema bool) *SchemaChecker {
+func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64, needCheckSchema, isInternal bool) *SchemaChecker {
 	return &SchemaChecker{
 		SchemaValidator: do.SchemaValidator,
 		schemaVer:       schemaVer,
 		relatedTableIDs: relatedTableIDs,
 		needCheckSchema: needCheckSchema,
+		isInternal:      isInternal,
 	}
 }
 
@@ -72,6 +74,10 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return relatedChange, ErrInfoSchemaChanged
 		case ResultUnknown:
+			if !s.isInternal {
+				metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
+				return nil, ErrInfoSchemaExpired
+			}
 			time.Sleep(schemaOutOfDateRetryInterval)
 		}
 	}
