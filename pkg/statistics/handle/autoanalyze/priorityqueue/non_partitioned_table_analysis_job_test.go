@@ -120,9 +120,8 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 	require.True(t, tblStats.Indices[2].IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
-	// Because analyze one index will analyze all indexes and all columns together, so there are 2 jobs.
-	// FIXME: We should only trigger it once.
-	require.Len(t, rows, 2)
+	// Because analyze one index will analyze all indexes and all columns together, so there is only 1 job.
+	require.Len(t, rows, 1)
 }
 
 func TestNonPartitionedTableIsValidToAnalyze(t *testing.T) {

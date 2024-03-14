@@ -130,9 +130,8 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	require.True(t, tblStats.Indices[2].IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
-	// Because analyze one index will analyze all indexes and all columns together, so there are 8 jobs.
-	// FIXME: We should only trigger it once.
-	require.Len(t, rows, 10)
+	// Because analyze one index will analyze all indexes and all columns together, so there are 4 jobs.
+	require.Len(t, rows, 4)
 }
 
 func TestStaticPartitionedTableIsValidToAnalyze(t *testing.T) {

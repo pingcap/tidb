@@ -99,17 +99,20 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 	require.False(t, tblStats.Pseudo)
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
+	require.NotNil(t, tblStats.Indices[2])
+	require.True(t, tblStats.Indices[2].IsAnalyzed())
 	// partition p1
 	pid = tbl.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
 	require.False(t, tblStats.Pseudo)
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
+	require.NotNil(t, tblStats.Indices[2])
+	require.True(t, tblStats.Indices[2].IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
-	// Because analyze one index will analyze all indexes and all columns together, so there are 10 jobs.
-	// FIXME: We should only trigger it once.
-	require.Len(t, rows, 10)
+	// Because analyze one index will analyze all indexes and all columns together, so there are 5 jobs.
+	require.Len(t, rows, 5)
 }
 
 func TestIsValidToAnalyzeForDynamicPartitionedTable(t *testing.T) {
