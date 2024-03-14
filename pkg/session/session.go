@@ -4312,7 +4312,9 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 		return false
 	}
 	if !(stmtCtx.InInsertStmt || stmtCtx.InDeleteStmt || stmtCtx.InUpdateStmt) {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode"))
+		if !stmtCtx.IsReadOnly {
+			stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode"))
+		}
 		return false
 	}
 	if s.isInternal() {
