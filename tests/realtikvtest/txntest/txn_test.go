@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -405,7 +404,7 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 		tkPrepare1.MustExec("update t set v = 10 where id = 1")
 
 		// Update row 1 in async commit mode
-		assert.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
+		require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
 		tkPrepapre1Ch := make(chan struct{})
 		go func() {
 			tkPrepare1.MustExec("update t set v = v + 1 where id = 1")
@@ -417,25 +416,25 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 		tkPrepare2.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
 		tk1.MustExec("begin optimistic")
 
-		assert.NoError(t, failpoint.Disable("tikvclient/beforePrewrite"))
+		require.NoError(t, failpoint.Disable("tikvclient/beforePrewrite"))
 		select {
 		case <-tkPrepapre1Ch:
 		case <-time.After(time.Second):
-			assert.Fail(t, "tkPrepare1 not resumed after unsetting failpoint")
+			require.Fail(t, "tkPrepare1 not resumed after unsetting failpoint")
 		}
 
 		var err error
 		lastCommitTS, err = strconv.ParseUint(tkPrepare1.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string), 10, 64)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		currentStartTS, err := strconv.ParseUint(tk1.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		if currentStartTS == lastCommitTS {
 			break
 		}
 		// Abandon and retry.
 		tk1.MustExec("rollback")
 		if constructionIters >= 1000 {
-			assert.Fail(t, "failed to construct the ts collision situation of async commit transaction")
+			require.Fail(t, "failed to construct the ts collision situation of async commit transaction")
 		}
 	}
 
@@ -457,16 +456,16 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	// when committing that makes the first prewrite on tk1's primary fail, and blocks until signaled by the channel
 	// `continueCommittingSignalCh`.
 
-	assert.NoError(t, failpoint.Enable("tikvclient/twoPCShortLockTTL", "return"))
-	assert.NoError(t, failpoint.Enable("tikvclient/doNotKeepAlive", "return"))
-	assert.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", "return"))
-	assert.NoError(t, failpoint.Enable("tikvclient/onRPCFinishedHook", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCShortLockTTL", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/doNotKeepAlive", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", "return"))
+	require.NoError(t, failpoint.Enable("tikvclient/onRPCFinishedHook", "return"))
 
 	defer func() {
-		assert.NoError(t, failpoint.Disable("tikvclient/twoPCShortLockTTL"))
-		assert.NoError(t, failpoint.Disable("tikvclient/doNotKeepAlive"))
-		assert.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
-		assert.NoError(t, failpoint.Disable("tikvclient/onRPCFinishedHook"))
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCShortLockTTL"))
+		require.NoError(t, failpoint.Disable("tikvclient/doNotKeepAlive"))
+		require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+		require.NoError(t, failpoint.Disable("tikvclient/onRPCFinishedHook"))
 	}()
 
 	continueCommittingSignalCh := make(chan struct{})
@@ -477,7 +476,7 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 
 			prewriteReq := req.Prewrite()
 			// The failpoint "twoPCRequestBatchSizeLimit" must takes effect
-			assert.Equal(t, 1, len(prewriteReq.GetMutations()))
+			require.Equal(t, 1, len(prewriteReq.GetMutations()))
 			if prewriteReq.GetStartVersion() == lastCommitTS &&
 				bytes.Equal(prewriteReq.GetMutations()[0].Key, prewriteReq.PrimaryLock) &&
 				isRequestHandled(resp, err) {
@@ -503,7 +502,7 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	// tk1 must be blocked by the hook function.
 	select {
 	case err := <-resCh:
-		assert.Fail(t, "tk1 not blocked, result: "+fmt.Sprintf("%+q", err))
+		require.Fail(t, "tk1 not blocked, result: "+fmt.Sprintf("%+q", err))
 	case <-time.After(time.Millisecond * 50):
 	}
 
@@ -514,7 +513,7 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	// tk1 must still be blocked
 	select {
 	case err := <-resCh:
-		assert.Fail(t, "tk1 not blocked, result: "+fmt.Sprintf("%+q", err))
+		require.Fail(t, "tk1 not blocked, result: "+fmt.Sprintf("%+q", err))
 	case <-time.After(time.Millisecond * 50):
 	}
 
@@ -525,11 +524,11 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	select {
 	case err = <-resCh:
 	case <-time.After(time.Second):
-		assert.Fail(t, "tk1 not resumed")
+		require.Fail(t, "tk1 not resumed")
 	}
 
-	assert.Error(t, err)
-	assert.Equal(t, errno.ErrWriteConflict, int(errors.Cause(err).(*errors.Error).Code()))
+	require.Error(t, err)
+	require.Equal(t, errno.ErrWriteConflict, int(errors.Cause(err).(*errors.Error).Code()))
 	tk2.MustQuery("select * from t order by id").Check(testkit.Rows("1 11", "2 21"))
 	tk2.MustExec("admin check table t2")
 	tk2.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 10", "2 11"))
