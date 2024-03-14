@@ -4302,6 +4302,9 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 	if stmtCtx == nil {
 		return false
 	}
+	if stmtCtx.IsReadOnly {
+		return false
+	}
 	vars := s.GetSessionVars()
 	if (vars.BatchCommit || vars.BatchInsert || vars.BatchDelete) && vars.DMLBatchSize > 0 && variable.EnableBatchDML.Load() {
 		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode"))
