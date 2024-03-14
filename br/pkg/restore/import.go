@@ -1075,7 +1075,9 @@ func (importer *FileImporter) downloadSSTV2(
 			defer func() {
 				workerCh <- struct{}{}
 				// finish the download, notify the main goroutine to continue
+				importer.cond.L.Lock()
 				importer.cond.Signal()
+				importer.cond.L.Unlock()
 			}()
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]
