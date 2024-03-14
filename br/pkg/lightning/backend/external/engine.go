@@ -227,7 +227,7 @@ func getFilesReadConcurrency(
 	startKey, endKey []byte,
 ) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
-	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage, false)
+	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -398,7 +398,7 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		logger.Info("no stats files",
 			zap.String("startKey", hex.EncodeToString(start)))
 	} else {
-		offs, err := seekPropsOffsets(ctx, []kv.Key{start}, e.statsFiles, e.storage, e.checkHotspot)
+		offs, err := seekPropsOffsets(ctx, []kv.Key{start}, e.statsFiles, e.storage)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
