@@ -907,7 +907,8 @@ func (em *ErrorManager) LogErrorDetails() {
 	if errCnt := em.conflictError(); errCnt > 0 {
 		if em.conflictV1Enabled {
 			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
-		} else {
+		}
+		if em.conflictV2Enabled {
 			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTable))
 		}
 	}
@@ -953,7 +954,8 @@ func (em *ErrorManager) Output() string {
 		count++
 		if em.conflictV1Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictErrorTableName)})
-		} else {
+		}
+		if em.conflictV2Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTable)})
 		}
 	}
