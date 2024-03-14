@@ -275,7 +275,7 @@ func (rs *RegionSplitter) splitRegions(
 // waitRegionsSplitted check multiple regions have finished the split.
 func (rs *RegionSplitter) waitRegionsSplitted(ctx context.Context, splitRegions []*split.RegionInfo) {
 	// Wait for a while until the regions successfully split.
-	for i, region := range splitRegions {
+	for _, region := range splitRegions {
 		rs.waitRegionSplitted(ctx, region.Region.Id)
 	}
 }

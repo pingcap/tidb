@@ -380,10 +380,6 @@ func (importer *FileImporter) IsFull() bool {
 	return false
 }
 
-func (importer *FileImporter) Cond() *sync.Cond {
-	return importer.cond
-}
-
 func (importer *FileImporter) Close() error {
 	if importer != nil && importer.importClient != nil {
 		return importer.importClient.CloseGrpcClient()
