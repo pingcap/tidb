@@ -1,4 +1,5 @@
 set tidb_cost_model_version=2;
+delete from mysql.bind_info;
 drop table if exists t;
 create table t(a varchar(10), b int, c int);
 show columns from t where true;
