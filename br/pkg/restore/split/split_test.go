@@ -318,8 +318,8 @@ func TestWaitForScatterRegions(t *testing.T) {
 	checkNoRetry()
 }
 
-func TestBackoffOrRetryBackoffer(t *testing.T) {
-	b := NewBackoffOrRetryBackoffer()
+func TestBackoffMayNotCountBackoffer(t *testing.T) {
+	b := NewBackoffMayNotCountBackoffer()
 	initVal := b.Attempt()
 
 	b.NextBackoff(ErrBackoffAndDontCount)

@@ -241,9 +241,9 @@ func (b *WaitRegionOnlineBackoffer) Attempt() int {
 	return b.Stat.Attempt()
 }
 
-// BackoffOrRetryBackoffer is a backoffer but it may not increase the retry
+// BackoffMayNotCountBackoffer is a backoffer but it may not increase the retry
 // counter. It should be used with ErrBackoff or ErrBackoffAndDontCount.
-type BackoffOrRetryBackoffer struct {
+type BackoffMayNotCountBackoffer struct {
 	state utils.RetryState
 }
 
@@ -252,12 +252,12 @@ var (
 	ErrBackoffAndDontCount = errors.New("found backoff error but don't count")
 )
 
-// NewBackoffOrRetryBackoffer creates a new backoffer that may backoff or retry.
+// NewBackoffMayNotCountBackoffer creates a new backoffer that may backoff or retry.
 //
 // TODO: currently it has the same usage as NewWaitRegionOnlineBackoffer so we
 // don't expose its inner settings.
-func NewBackoffOrRetryBackoffer() *BackoffOrRetryBackoffer {
-	return &BackoffOrRetryBackoffer{
+func NewBackoffMayNotCountBackoffer() *BackoffMayNotCountBackoffer {
+	return &BackoffMayNotCountBackoffer{
 		state: utils.InitialRetryState(
 			WaitRegionOnlineAttemptTimes,
 			time.Millisecond*10,
@@ -266,9 +266,9 @@ func NewBackoffOrRetryBackoffer() *BackoffOrRetryBackoffer {
 	}
 }
 
-// NextBackoff implements utils.Backoffer. For BackoffOrRetryBackoffer, only
+// NextBackoff implements utils.Backoffer. For BackoffMayNotCountBackoffer, only
 // ErrBackoff and ErrBackoffAndDontCount is meaningful.
-func (b *BackoffOrRetryBackoffer) NextBackoff(err error) time.Duration {
+func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
 	if errors.ErrorEqual(err, ErrBackoff) {
 		return b.state.ExponentialBackoff()
 	}
@@ -282,6 +282,6 @@ func (b *BackoffOrRetryBackoffer) NextBackoff(err error) time.Duration {
 }
 
 // Attempt implements utils.Backoffer.
-func (b *BackoffOrRetryBackoffer) Attempt() int {
+func (b *BackoffMayNotCountBackoffer) Attempt() int {
 	return b.state.Attempt()
 }

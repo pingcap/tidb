@@ -640,7 +640,7 @@ func (c *pdClient) isScatterRegionFinished(
 
 func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionInfo) (int, error) {
 	var (
-		backoffer     = NewBackoffOrRetryBackoffer()
+		backoffer     = NewBackoffMayNotCountBackoffer()
 		retryCnt      = -1
 		needRescatter = make([]*RegionInfo, 0, len(regions))
 		needRecheck   = make([]*RegionInfo, 0, len(regions))
