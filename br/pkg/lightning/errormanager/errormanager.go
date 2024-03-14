@@ -208,7 +208,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 		taskID:                cfg.TaskID,
 		configError:           &cfg.App.MaxError,
 		remainingError:        cfg.App.MaxError,
-		conflictV1Enabled:     cfg.Conflict.Strategy != config.NoneOnDup,
+		conflictV1Enabled:     cfg.TikvImporter.Backend == config.BackendLocal && cfg.Conflict.Strategy != config.NoneOnDup,
 		configConflict:        &cfg.Conflict,
 		conflictErrRemain:     conflictErrRemain,
 		conflictRecordsRemain: conflictRecordsRemain,

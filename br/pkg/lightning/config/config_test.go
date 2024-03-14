@@ -735,6 +735,23 @@ func TestDurationMarshalJSON(t *testing.T) {
 	require.Equal(t, `"13m20s"`, string(result))
 }
 
+func TestDuplicateResolutionAlgorithm(t *testing.T) {
+	var dra DuplicateResolutionAlgorithm
+	require.NoError(t, dra.FromStringValue("none"))
+	require.Equal(t, NoneOnDup, dra)
+	require.NoError(t, dra.FromStringValue("replace"))
+	require.Equal(t, ReplaceOnDup, dra)
+	require.NoError(t, dra.FromStringValue("ignore"))
+	require.Equal(t, IgnoreOnDup, dra)
+	require.NoError(t, dra.FromStringValue("error"))
+	require.Equal(t, ErrorOnDup, dra)
+
+	require.Equal(t, "none", NoneOnDup.String())
+	require.Equal(t, "replace", ReplaceOnDup.String())
+	require.Equal(t, "ignore", IgnoreOnDup.String())
+	require.Equal(t, "error", ErrorOnDup.String())
+}
+
 func TestLoadConfig(t *testing.T) {
 	cfg, err := LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
 	require.EqualError(t, err, `[Lightning:Common:ErrInvalidArgument]invalid argument: invalid value "sss" for flag -tidb-port: parse error`)
@@ -1256,14 +1273,15 @@ func TestCompressionType(t *testing.T) {
 func TestAdjustConflict(t *testing.T) {
 	cfg := NewConfig()
 	assignMinimalLegalValue(cfg)
-	cfg.Conflict.Strategy = "123"
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), "unsupported `conflict.strategy` (123)")
+	var dra DuplicateResolutionAlgorithm
 
-	cfg.Conflict.Strategy = "REPLACE"
+	require.NoError(t, dra.FromStringValue("REPLACE"))
+	cfg.Conflict.Strategy = dra
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
 	require.Equal(t, int64(math.MaxInt64), cfg.Conflict.Threshold)
 
-	cfg.Conflict.Strategy = "IGNORE"
+	require.NoError(t, dra.FromStringValue("IGNORE"))
+	cfg.Conflict.Strategy = dra
 	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
 
 	cfg.Conflict.Strategy = ErrorOnDup

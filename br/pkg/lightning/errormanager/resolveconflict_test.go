@@ -197,6 +197,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
 	em := errormanager.New(db, cfg, log.L())
 	err = em.Init(ctx)
@@ -364,6 +365,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
 	em := errormanager.New(db, cfg, log.L())
 	err = em.Init(ctx)
@@ -547,6 +549,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
 	em := errormanager.New(db, cfg, log.L())
 	err = em.Init(ctx)
@@ -749,6 +752,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
 	em := errormanager.New(db, cfg, log.L())
 	err = em.Init(ctx)

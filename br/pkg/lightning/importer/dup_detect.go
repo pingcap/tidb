@@ -80,7 +80,7 @@ func (d *dupDetector) run(
 }
 
 func makeDupHandlerConstructor(
-	sorter extsort.ExternalSorter, onDup string,
+	sorter extsort.ExternalSorter, onDup config.DuplicateResolutionAlgorithm,
 ) duplicate.HandlerConstructor {
 	switch onDup {
 	case config.ErrorOnDup:
@@ -96,7 +96,7 @@ func makeDupHandlerConstructor(
 			return &replaceOnDup{w: w}, nil
 		}
 	default:
-		panic(fmt.Sprintf("unexpected on-duplicate strategy: %s", onDup))
+		panic(fmt.Sprintf("unexpected conflict.strategy: %s", onDup))
 	}
 }
 

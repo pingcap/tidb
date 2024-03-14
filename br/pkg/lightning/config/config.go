@@ -63,21 +63,6 @@ const (
 	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
 	CheckpointDriverFile = "file"
 
-	// NoneOnDup does nothing when detecting duplicate.
-	NoneOnDup = ""
-	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
-	// ReplaceOnDup records all duplicate records, remove some rows with conflict
-	// and reserve other rows that can be kept and not cause conflict anymore for local backend.
-	// Users need to analyze the lightning_task_info.conflict_error_v2 table to check whether the reserved data
-	// cater to their need and check whether they need to add back the correct rows.
-	ReplaceOnDup = "replace"
-	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
-	// Local backend does not support IgnoreOnDup.
-	IgnoreOnDup = "ignore"
-	// ErrorOnDup indicates using INSERT INTO to insert data for TiDB backend, which would violate PK or UNIQUE constraint when detecting duplicate.
-	// ErrorOnDup reports an error after detecting the first conflict and stops the import process for local backend.
-	ErrorOnDup = "error"
-
 	// KVWriteBatchSize batch size when write to TiKV.
 	// this is the default value of linux send buffer size(net.ipv4.tcp_wmem) too.
 	KVWriteBatchSize        = 16 * units.KiB
@@ -601,6 +586,82 @@ const (
 	PausePDSchedulerScopeGlobal PausePDSchedulerScope = "global"
 )
 
+// DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
+type DuplicateResolutionAlgorithm int
+
+const (
+	// NoneOnDup does nothing when detecting duplicate.
+	NoneOnDup DuplicateResolutionAlgorithm = iota
+	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
+	// ReplaceOnDup records all duplicate records, remove some rows with conflict
+	// and reserve other rows that can be kept and not cause conflict anymore for local backend.
+	// Users need to analyze the lightning_task_info.conflict_error_v2 table to check whether the reserved data
+	// cater to their need and check whether they need to add back the correct rows.
+	ReplaceOnDup
+	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
+	// Local backend does not support IgnoreOnDup.
+	IgnoreOnDup
+	// ErrorOnDup indicates using INSERT INTO to insert data for TiDB backend, which would violate PK or UNIQUE constraint when detecting duplicate.
+	// ErrorOnDup reports an error after detecting the first conflict and stops the import process for local backend.
+	ErrorOnDup
+)
+
+// UnmarshalTOML implements the toml.Unmarshaler interface.
+func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v any) error {
+	if val, ok := v.(string); ok {
+		return dra.FromStringValue(val)
+	}
+	return errors.Errorf("invalid conflict.strategy '%v', please choose valid option between ['none', 'replace', 'ignore', 'error']", v)
+}
+
+// MarshalText implements the encoding.TextMarshaler interface.
+func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
+	return []byte(dra.String()), nil
+}
+
+// FromStringValue parses the string value to the DuplicateResolutionAlgorithm.
+func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	case "none":
+		*dra = NoneOnDup
+	case "replace":
+		*dra = ReplaceOnDup
+	case "ignore":
+		*dra = IgnoreOnDup
+	case "error":
+		*dra = ErrorOnDup
+	default:
+		return errors.Errorf("invalid conflict.strategy '%s', please choose valid option between ['none', 'replace', 'ignore', 'error']", s)
+	}
+	return nil
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (dra *DuplicateResolutionAlgorithm) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + dra.String() + `"`), nil
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
+	return dra.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+// String implements the fmt.Stringer interface.
+func (dra DuplicateResolutionAlgorithm) String() string {
+	switch dra {
+	case NoneOnDup:
+		return "none"
+	case ReplaceOnDup:
+		return "replace"
+	case IgnoreOnDup:
+		return "ignore"
+	case ErrorOnDup:
+		return "error"
+	default:
+		panic(fmt.Sprintf("invalid conflict.strategy type '%d'", dra))
+	}
+}
+
 // CompressionType is the config type of compression algorithm.
 type CompressionType int
 
@@ -984,8 +1045,8 @@ type TikvImporter struct {
 	Addr    string `toml:"addr" json:"addr"`
 	Backend string `toml:"backend" json:"backend"`
 	// deprecated, use Conflict.Strategy instead.
-	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	OnDuplicate DuplicateResolutionAlgorithm `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs  int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	// deprecated
 	SendKVPairs             int             `toml:"send-kv-pairs" json:"send-kv-pairs"`
 	SendKVSize              ByteSize        `toml:"send-kv-size" json:"send-kv-size"`
@@ -999,7 +1060,7 @@ type TikvImporter struct {
 	DiskQuota               ByteSize        `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency        int             `toml:"range-concurrency" json:"range-concurrency"`
 	// deprecated, use Conflict.Strategy instead.
-	DuplicateResolution string `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	// deprecated, use ParallelImport instead.
 	IncrementalImport bool   `toml:"incremental-import" json:"incremental-import"`
 	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
@@ -1267,10 +1328,10 @@ func ParseCharset(dataCharacterSet string) (Charset, error) {
 
 // Conflict is the config section for PK/UK conflict related configurations.
 type Conflict struct {
-	Strategy                     string `toml:"strategy" json:"strategy"`
-	PrecheckConflictBeforeImport bool   `toml:"precheck-conflict-before-import" json:"precheck-conflict-before-import"`
-	Threshold                    int64  `toml:"threshold" json:"threshold"`
-	MaxRecordRows                int64  `toml:"max-record-rows" json:"max-record-rows"`
+	Strategy                     DuplicateResolutionAlgorithm `toml:"strategy" json:"strategy"`
+	PrecheckConflictBeforeImport bool                         `toml:"precheck-conflict-before-import" json:"precheck-conflict-before-import"`
+	Threshold                    int64                        `toml:"threshold" json:"threshold"`
+	MaxRecordRows                int64                        `toml:"max-record-rows" json:"max-record-rows"`
 }
 
 // adjust assigns default values and check illegal values. The arguments must be
@@ -1291,7 +1352,6 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 		c.Strategy = i.DuplicateResolution
 		strategyFromDuplicateResolution = true
 	}
-	c.Strategy = strings.ToLower(c.Strategy)
 	switch c.Strategy {
 	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, NoneOnDup:
 	default:
@@ -1328,6 +1388,9 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			c.Threshold = math.MaxInt64
 		case NoneOnDup:
 			c.Threshold = 0
+			if i.Backend == BackendLocal && c.Strategy != NoneOnDup {
+				c.Threshold = math.MaxInt64
+			}
 		}
 	}
 	if c.Threshold > 0 && c.Strategy == ErrorOnDup {
