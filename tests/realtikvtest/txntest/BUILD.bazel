@@ -12,6 +12,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+<<<<<<< HEAD
         "//expression",
         "//kv",
         "//parser",
@@ -20,8 +21,22 @@ go_test(
         "//testkit",
         "//tests/realtikvtest",
         "//util",
+=======
+        "//pkg/config",
+        "//pkg/errno",
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/parser",
+        "//pkg/session/txninfo",
+        "//pkg/store/driver",
+        "//pkg/testkit",
+        "//pkg/util",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_errors//:errors",
+>>>>>>> 3da9e0489b7 (txn: Add test case to cover the case that check_txn_status on primary lock of primary txn may affect transaction correctness (#51667))
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikvrpc",
         "@io_opencensus_go//stats/view",
     ],
 )
