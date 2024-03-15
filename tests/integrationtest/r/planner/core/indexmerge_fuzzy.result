@@ -1,0 +1,257 @@
+drop table if exists t;
+create table t(a int, j json, b int, index idx((cast(j as char(10) array))), index idx1(a, (cast(j as char(10) array))), index idx2(a, (cast(j as char(10) array)), b));
+insert into t values(1, "[\"11\", \"12\", \"22\"]", 1),(2, "[\"113\", \"123\", \"223\", \"1132\"]", 2);
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ a, j from t where ("1%" member of (j));
+id	estRows	task	access object	operator info
+IndexMerge	250.00	root		type: union
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["1","2"), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx1) */ a, j from t where ("1%" member of (j));
+a	j
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ a, j from t where ("113%" member of (j));
+id	estRows	task	access object	operator info
+IndexMerge	250.00	root		type: union
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["113","114"), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx1) */ a, j from t where ("113%" member of (j));
+a	j
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ a, j from t where ("113%" member of (j)) and a=2;
+id	estRows	task	access object	operator info
+IndexMerge	2.50	root		type: union
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[2 "113",2 "114"), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx2) */ a, j from t where ("113%" member of (j)) and a=2;
+a	j
+2	["113", "123", "223", "1132"]
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ a, j from t where ("113%" member of (j)) and a=1;
+id	estRows	task	access object	operator info
+IndexMerge	2.50	root		type: union
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "113",1 "114"), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx2) */ a, j from t where ("113%" member of (j)) and a=1;
+a	j
+explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: union
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	range:[2 "113",2 "114"), keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_fuzzy.t.b, 2)
+  └─TableRowIDScan	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx3) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+a	j	b
+2	["113", "123", "223", "1132"]	2
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: union
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[2 "113",2 "114"), keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_fuzzy.t.b, 2)
+  └─TableRowIDScan	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx3) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+a	j	b
+2	["113", "123", "223", "1132"]	2
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: union
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["113","114"), keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_fuzzy.t.a, 2), eq(planner__core__indexmerge_fuzzy.t.b, 2)
+  └─TableRowIDScan	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select /*+ use_index_merge(t, idx3) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+a	j	b
+2	["113", "123", "223", "1132"]	2
+drop table if exists t;
+create table t(a int, j json, b int, index idx((cast(j as char(10) array))), index idx1(a, (cast(j as char(10) array))), index idx2(a, (cast(j as char(10) array)), b));
+insert into t values(1, "[\"11\", \"12\", \"22\"]", 1),(2, "[\"113\", \"123\", \"223\", \"1132\"]", 2);
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+id	estRows	task	access object	operator info
+IndexMerge	6.25	root		type: intersection
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["11","12"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["22","23"), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	6.25	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_8	6.25	2	root		time:1.43ms, loops:2, RU:1.428677, index_task:{fetch_handle:1.146959ms, merge:849.792µs}, table_task:{num:1, concurrency:5, fetch_row:511.458µs, wait_time:843.833µs}	type: intersection	1.14 KB	N/A
+├─IndexRangeScan_5(Build)	250.00	3	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:610µs, loops:3, cop_task: {num: 1, max: 433.8µs, proc_keys: 0, rpc_num: 1, rpc_time: 385.9µs, copr_cache_hit_ratio: 0.00, build_task_duration: 31.2µs, max_distsql_concurrency: 1}, tikv_task:{time:320.3µs, loops:0}	range:["11","12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	250.00	2	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:524.9µs, loops:3, cop_task: {num: 1, max: 391.5µs, proc_keys: 0, rpc_num: 1, rpc_time: 347.1µs, copr_cache_hit_ratio: 0.00, build_task_duration: 28.6µs, max_distsql_concurrency: 1}, tikv_task:{time:290µs, loops:0}	range:["22","23"), keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_7(Probe)	6.25	2	cop[tikv]	table:t	time:373µs, loops:2, cop_task: {num: 1, max: 262µs, proc_keys: 0, rpc_num: 1, rpc_time: 232µs, copr_cache_hit_ratio: 0.00, build_task_duration: 15.9µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:190.2µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+a	j
+1	["11", "12", "22"]
+2	["113", "123", "223", "1132"]
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: intersection
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "11",1 "12"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "22",1 "23"), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_8	0.00	1	root		time:1.46ms, loops:2, RU:1.427335, index_task:{fetch_handle:1.186584ms, merge:797.792µs}, table_task:{num:1, concurrency:5, fetch_row:571.375µs, wait_time:812.916µs}	type: intersection	1.06 KB	N/A
+├─IndexRangeScan_5(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:578.5µs, loops:3, cop_task: {num: 1, max: 409.1µs, proc_keys: 0, rpc_num: 1, rpc_time: 363.8µs, copr_cache_hit_ratio: 0.00, build_task_duration: 28.9µs, max_distsql_concurrency: 1}, tikv_task:{time:305.9µs, loops:0}	range:[1 "11",1 "12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:603.2µs, loops:3, cop_task: {num: 1, max: 405.2µs, proc_keys: 0, rpc_num: 1, rpc_time: 357.9µs, copr_cache_hit_ratio: 0.00, build_task_duration: 25.1µs, max_distsql_concurrency: 1}, tikv_task:{time:296.3µs, loops:0}	range:[1 "22",1 "23"), keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_7(Probe)	0.00	1	cop[tikv]	table:t	time:415µs, loops:2, cop_task: {num: 1, max: 256µs, proc_keys: 0, rpc_num: 1, rpc_time: 220.8µs, copr_cache_hit_ratio: 0.00, build_task_duration: 16µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:178.1µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+a	j
+1	["11", "12", "22"]
+explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: intersection
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	range:[1 "11",1 "12"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	range:[1 "22",1 "23"), keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_fuzzy.t.b, 1)
+  └─TableRowIDScan	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx2) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_9	0.00	1	root		time:1.63ms, loops:2, RU:1.427731, index_task:{fetch_handle:1.174208ms, merge:771.5µs}, table_task:{num:1, concurrency:5, fetch_row:807.334µs, wait_time:728.625µs}	type: intersection	1.19 KB	N/A
+├─IndexRangeScan_5(Build)	2.50	1	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	time:586.9µs, loops:3, cop_task: {num: 1, max: 407.8µs, proc_keys: 0, rpc_num: 1, rpc_time: 360.7µs, copr_cache_hit_ratio: 0.00, build_task_duration: 23µs, max_distsql_concurrency: 1}, tikv_task:{time:298.6µs, loops:0}	range:[1 "11",1 "12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	2.50	1	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	time:572.1µs, loops:3, cop_task: {num: 1, max: 398.6µs, proc_keys: 0, rpc_num: 1, rpc_time: 344.3µs, copr_cache_hit_ratio: 0.00, build_task_duration: 27µs, max_distsql_concurrency: 1}, tikv_task:{time:283.4µs, loops:0}	range:[1 "22",1 "23"), keep order:false, stats:pseudo	N/A	N/A
+└─Selection_8(Probe)	0.00	1	cop[tikv]		time:557.5µs, loops:2, cop_task: {num: 1, max: 386.3µs, proc_keys: 0, rpc_num: 1, rpc_time: 349µs, copr_cache_hit_ratio: 0.00, build_task_duration: 16.5µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:287.8µs, loops:0}	eq(planner__core__indexmerge_fuzzy.t.b, 1)	N/A	N/A
+  └─TableRowIDScan_7	0.00	1	cop[tikv]	table:t	tikv_task:{time:287.8µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx2) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+a	j	b
+1	["11", "12", "22"]	1
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: intersection
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "11",1 "12"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "22",1 "23"), keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_fuzzy.t.b, 1)
+  └─TableRowIDScan	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_9	0.00	1	root		time:1.61ms, loops:2, RU:1.427731, index_task:{fetch_handle:1.179417ms, merge:764.709µs}, table_task:{num:1, concurrency:5, fetch_row:712.75µs, wait_time:824.5µs}	type: intersection	1.19 KB	N/A
+├─IndexRangeScan_5(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:605.2µs, loops:3, cop_task: {num: 1, max: 431.1µs, proc_keys: 0, rpc_num: 1, rpc_time: 385.4µs, copr_cache_hit_ratio: 0.00, build_task_duration: 30.6µs, max_distsql_concurrency: 1}, tikv_task:{time:324.3µs, loops:0}	range:[1 "11",1 "12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:565.2µs, loops:3, cop_task: {num: 1, max: 405.5µs, proc_keys: 0, rpc_num: 1, rpc_time: 353.6µs, copr_cache_hit_ratio: 0.00, build_task_duration: 27.1µs, max_distsql_concurrency: 1}, tikv_task:{time:287.7µs, loops:0}	range:[1 "22",1 "23"), keep order:false, stats:pseudo	N/A	N/A
+└─Selection_8(Probe)	0.00	1	cop[tikv]		time:569.2µs, loops:2, cop_task: {num: 1, max: 436.3µs, proc_keys: 0, rpc_num: 1, rpc_time: 405.2µs, copr_cache_hit_ratio: 0.00, build_task_duration: 17µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:356.8µs, loops:0}	eq(planner__core__indexmerge_fuzzy.t.b, 1)	N/A	N/A
+  └─TableRowIDScan_7	0.00	1	cop[tikv]	table:t	tikv_task:{time:356.8µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+a	j	b
+1	["11", "12", "22"]	1
+drop table if exists t;
+create table t(a int, j json, b int, index idx((cast(j as char(10) array))), index idx1(a, (cast(j as char(10) array))), index idx2(a, (cast(j as char(10) array)), b));
+insert into t values(1, "[\"11\", \"12\", \"22\"]", 1),(2, "[\"113\", \"123\", \"223\", \"1132\"]", 2);
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ a, j from t where (json_overlaps(j, '["11%", "22%"]'));
+id	estRows	task	access object	operator info
+Selection	395.00	root		json_overlaps(planner__core__indexmerge_fuzzy.t.j, cast("["11%", "22%"]", json BINARY))
+└─IndexMerge	493.75	root		type: union
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["11","12"), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["22","23"), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	493.75	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_8	6.25	2	root		time:1.58ms, loops:2, RU:1.428677, index_task:{fetch_handle:1.203459ms, merge:833.417µs}, table_task:{num:1, concurrency:5, fetch_row:702.125µs, wait_time:808.75µs}	type: intersection	1.14 KB	N/A
+├─IndexRangeScan_5(Build)	250.00	3	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:550.9µs, loops:3, cop_task: {num: 1, max: 406.7µs, proc_keys: 0, rpc_num: 1, rpc_time: 361µs, copr_cache_hit_ratio: 0.00, build_task_duration: 29.9µs, max_distsql_concurrency: 1}, tikv_task:{time:302.1µs, loops:0}	range:["11","12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	250.00	2	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:635.3µs, loops:3, cop_task: {num: 1, max: 447.4µs, proc_keys: 0, rpc_num: 1, rpc_time: 394.8µs, copr_cache_hit_ratio: 0.00, build_task_duration: 19.5µs, max_distsql_concurrency: 1}, tikv_task:{time:331.4µs, loops:0}	range:["22","23"), keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_7(Probe)	6.25	2	cop[tikv]	table:t	time:550.3µs, loops:2, cop_task: {num: 1, max: 451.3µs, proc_keys: 0, rpc_num: 1, rpc_time: 405.7µs, copr_cache_hit_ratio: 0.00, build_task_duration: 16.4µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:351.5µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+a	j
+1	["11", "12", "22"]
+2	["113", "123", "223", "1132"]
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1;
+id	estRows	task	access object	operator info
+Selection	4.00	root		json_overlaps(planner__core__indexmerge_fuzzy.t.j, cast("["11%", "22%"]", json BINARY))
+└─IndexMerge	5.00	root		type: union
+  ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "11",1 "12"), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "22",1 "23"), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_8	0.00	1	root		time:1.52ms, loops:2, RU:1.427335, index_task:{fetch_handle:1.465291ms, merge:932.708µs}, table_task:{num:1, concurrency:5, fetch_row:539.625µs, wait_time:910.166µs}	type: intersection	1.06 KB	N/A
+├─IndexRangeScan_5(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:756.7µs, loops:3, cop_task: {num: 1, max: 558.4µs, proc_keys: 0, rpc_num: 1, rpc_time: 516.7µs, copr_cache_hit_ratio: 0.00, build_task_duration: 28.8µs, max_distsql_concurrency: 1}, tikv_task:{time:399.6µs, loops:0}	range:[1 "11",1 "12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:698.2µs, loops:3, cop_task: {num: 1, max: 533µs, proc_keys: 0, rpc_num: 1, rpc_time: 491.1µs, copr_cache_hit_ratio: 0.00, build_task_duration: 16.8µs, max_distsql_concurrency: 1}, tikv_task:{time:414.6µs, loops:0}	range:[1 "22",1 "23"), keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_7(Probe)	0.00	1	cop[tikv]	table:t	time:393.3µs, loops:2, cop_task: {num: 1, max: 244.2µs, proc_keys: 0, rpc_num: 1, rpc_time: 211µs, copr_cache_hit_ratio: 0.00, build_task_duration: 20.4µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:173.2µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+a	j
+1	["11", "12", "22"]
+explain format = 'brief' select /*+ use_index_merge(t, idx2) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1 and b=1;
+id	estRows	task	access object	operator info
+Projection	0.01	root		planner__core__indexmerge_fuzzy.t.a, planner__core__indexmerge_fuzzy.t.j
+└─Selection	0.01	root		json_overlaps(planner__core__indexmerge_fuzzy.t.j, cast("["11%", "22%"]", json BINARY))
+  └─IndexMerge	0.00	root		type: union
+    ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	range:[1 "11",1 "12"), keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	range:[1 "22",1 "23"), keep order:false, stats:pseudo
+    └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_fuzzy.t.b, 1)
+      └─TableRowIDScan	5.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx2) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Projection_4	0.00	1	root		time:1.57ms, loops:2, RU:1.427731, Concurrency:OFF	planner__core__indexmerge_fuzzy.t.a, planner__core__indexmerge_fuzzy.t.j	435 Bytes	N/A
+└─IndexMerge_9	0.00	1	root		time:1.55ms, loops:2, index_task:{fetch_handle:963.458µs, merge:788.083µs}, table_task:{num:1, concurrency:5, fetch_row:601.958µs, wait_time:874.458µs}	type: intersection	1.19 KB	N/A
+  ├─IndexRangeScan_5(Build)	2.50	1	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	time:427.3µs, loops:3, cop_task: {num: 1, max: 311.7µs, proc_keys: 0, rpc_num: 1, rpc_time: 280.2µs, copr_cache_hit_ratio: 0.00, build_task_duration: 15.5µs, max_distsql_concurrency: 1}, tikv_task:{time:232.5µs, loops:0}	range:[1 "11",1 "12"), keep order:false, stats:pseudo	N/A	N/A
+  ├─IndexRangeScan_6(Build)	2.50	1	cop[tikv]	table:t, index:idx2(a, cast(`j` as char(10) array), b)	time:521.3µs, loops:3, cop_task: {num: 1, max: 355.6µs, proc_keys: 0, rpc_num: 1, rpc_time: 323.6µs, copr_cache_hit_ratio: 0.00, build_task_duration: 17.4µs, max_distsql_concurrency: 1}, tikv_task:{time:233.6µs, loops:0}	range:[1 "22",1 "23"), keep order:false, stats:pseudo	N/A	N/A
+  └─Selection_8(Probe)	0.00	1	cop[tikv]		time:433.5µs, loops:2, cop_task: {num: 1, max: 313.4µs, proc_keys: 0, rpc_num: 1, rpc_time: 278.4µs, copr_cache_hit_ratio: 0.00, build_task_duration: 18.3µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:235.3µs, loops:0}	eq(planner__core__indexmerge_fuzzy.t.b, 1)	N/A	N/A
+    └─TableRowIDScan_7	0.00	1	cop[tikv]	table:t	tikv_task:{time:235.3µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx2) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+a	j
+1	["11", "12", "22"]
+drop table if exists t;
+create table t(a int, j json, b int, index idx((cast(j as char(10) array))), index idx1(a, (cast(j as char(10) array))), index idx2(a, (cast(j as char(10) array)), b));
+insert into t values(1, "[\"11\", \"12\", \"22\"]", 1),(2, "[\"113\", \"123\", \"223\", \"1132\"]", 2);
+explain format = 'brief' select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: intersection
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["11","12"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["22","23"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["1","2"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "11",1 "12"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "22",1 "23"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "1",1 "2"), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_12	0.00	1	root		time:1.36ms, loops:2, RU:3.330264, index_task:{fetch_handle:3.662124ms, merge:684.75µs}, table_task:{num:1, concurrency:5, fetch_row:464.375µs, wait_time:831.792µs}	type: intersection	2.55 KB	N/A
+├─IndexRangeScan_5(Build)	250.00	3	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:674.7µs, loops:3, cop_task: {num: 1, max: 532.3µs, proc_keys: 0, rpc_num: 1, rpc_time: 488.5µs, copr_cache_hit_ratio: 0.00, build_task_duration: 27.8µs, max_distsql_concurrency: 1}, tikv_task:{time:349.6µs, loops:0}	range:["11","12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	250.00	2	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:572.5µs, loops:3, cop_task: {num: 1, max: 399.8µs, proc_keys: 0, rpc_num: 1, rpc_time: 354.2µs, copr_cache_hit_ratio: 0.00, build_task_duration: 17.5µs, max_distsql_concurrency: 1}, tikv_task:{time:301.8µs, loops:0}	range:["22","23"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_7(Build)	250.00	5	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:563.7µs, loops:3, cop_task: {num: 1, max: 395.3µs, proc_keys: 0, rpc_num: 1, rpc_time: 358µs, copr_cache_hit_ratio: 0.00, build_task_duration: 19.5µs, max_distsql_concurrency: 1}, tikv_task:{time:308.9µs, loops:0}	range:["1","2"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_8(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:500µs, loops:3, cop_task: {num: 1, max: 377µs, proc_keys: 0, rpc_num: 1, rpc_time: 340.8µs, copr_cache_hit_ratio: 0.00, build_task_duration: 23.3µs, max_distsql_concurrency: 1}, tikv_task:{time:264µs, loops:0}	range:[1 "11",1 "12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_9(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:635.1µs, loops:3, cop_task: {num: 1, max: 470µs, proc_keys: 0, rpc_num: 1, rpc_time: 426.3µs, copr_cache_hit_ratio: 0.00, build_task_duration: 16.4µs, max_distsql_concurrency: 1}, tikv_task:{time:378.7µs, loops:0}	range:[1 "22",1 "23"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_10(Build)	2.50	2	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:658.2µs, loops:3, cop_task: {num: 1, max: 453.5µs, proc_keys: 0, rpc_num: 1, rpc_time: 419.7µs, copr_cache_hit_ratio: 0.00, build_task_duration: 19.6µs, max_distsql_concurrency: 1}, tikv_task:{time:354.5µs, loops:0}	range:[1 "1",1 "2"), keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_11(Probe)	0.00	1	cop[tikv]	table:t	time:334.5µs, loops:2, cop_task: {num: 1, max: 238.7µs, proc_keys: 0, rpc_num: 1, rpc_time: 211.5µs, copr_cache_hit_ratio: 0.00, build_task_duration: 16.5µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:172.5µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+a	j
+1	["11", "12", "22"]
+explain format = 'brief' select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%", "22%"]')) and a=1) or ("1%" member of (j));
+id	estRows	task	access object	operator info
+IndexMerge	6.49	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["1","2"), keep order:false, stats:pseudo
+└─Selection(Probe)	6.49	cop[tikv]		or(and(json_contains(planner__core__indexmerge_fuzzy.t.j, cast("["11%", "22%"]", json BINARY)), eq(planner__core__indexmerge_fuzzy.t.a, 1)), json_memberof(cast("1%", json BINARY), planner__core__indexmerge_fuzzy.t.j))
+  └─TableRowIDScan	259.75	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%", "22%"]')) and a=1) or ("1%" member of (j));
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_9	6.49	0	root		time:1.65ms, loops:1, RU:1.902380, index_task:{fetch_handle:1.264041ms, merge:21.75µs}, table_task:{num:2, concurrency:5, fetch_row:1.5525ms, wait_time:1.591083ms}	type: union	1.24 KB	N/A
+├─IndexRangeScan_5(Build)	10.00	3	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:570.8µs, loops:3, cop_task: {num: 1, max: 428.2µs, proc_keys: 0, rpc_num: 1, rpc_time: 392.3µs, copr_cache_hit_ratio: 0.00, build_task_duration: 17.1µs, max_distsql_concurrency: 1}, tikv_task:{time:293.3µs, loops:0}	range:[1,1], keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	250.00	5	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:675.3µs, loops:3, cop_task: {num: 1, max: 499.8µs, proc_keys: 0, rpc_num: 1, rpc_time: 462.3µs, copr_cache_hit_ratio: 0.00, build_task_duration: 33.5µs, max_distsql_concurrency: 1}, tikv_task:{time:395µs, loops:0}	range:["1","2"), keep order:false, stats:pseudo	N/A	N/A
+└─Selection_8(Probe)	6.49	0	cop[tikv]		time:1.23ms, loops:2, cop_task: {num: 2, max: 563µs, min: 438.4µs, avg: 500.7µs, p95: 563µs, rpc_num: 2, rpc_time: 932.6µs, copr_cache_hit_ratio: 0.00, build_task_duration: 33.1µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{proc max:477.8µs, min:362.4µs, avg: 420.1µs, p80:477.8µs, p95:477.8µs, iters:0, tasks:2}	or(and(json_contains(planner__core__indexmerge_fuzzy.t.j, cast("["11%", "22%"]", json BINARY)), eq(planner__core__indexmerge_fuzzy.t.a, 1)), json_memberof(cast("1%", json BINARY), planner__core__indexmerge_fuzzy.t.j))	N/A	N/A
+  └─TableRowIDScan_7	259.75	2	cop[tikv]	table:t	tikv_task:{proc max:477.8µs, min:362.4µs, avg: 420.1µs, p80:477.8µs, p95:477.8µs, iters:0, tasks:2}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%", "22%"]')) and a=1) or ("1%" member of (j));
+a	j
+explain format = 'brief' select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%"]')) and a=1) or ("1%" member of (j));
+id	estRows	task	access object	operator info
+IndexMerge	252.44	root		type: union
+├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "11",1 "12"), keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["1","2"), keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	252.44	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%"]')) and a=1) or ("1%" member of (j));
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+IndexMerge_8	252.44	2	root		time:1.25ms, loops:2, RU:1.428799, index_task:{fetch_handle:1.129541ms, merge:16.542µs}, table_task:{num:1, concurrency:5, fetch_row:523.875µs, wait_time:670.75µs}	type: union	1.24 KB	N/A
+├─IndexRangeScan_5(Build)	2.50	1	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:578.9µs, loops:3, cop_task: {num: 1, max: 441.1µs, proc_keys: 0, rpc_num: 1, rpc_time: 313.8µs, copr_cache_hit_ratio: 0.00, build_task_duration: 25.1µs, max_distsql_concurrency: 1}, tikv_task:{time:255.1µs, loops:0}	range:[1 "11",1 "12"), keep order:false, stats:pseudo	N/A	N/A
+├─IndexRangeScan_6(Build)	250.00	5	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:534.7µs, loops:3, cop_task: {num: 1, max: 423.6µs, proc_keys: 0, rpc_num: 1, rpc_time: 381µs, copr_cache_hit_ratio: 0.00, build_task_duration: 19.6µs, max_distsql_concurrency: 1}, tikv_task:{time:245.6µs, loops:0}	range:["1","2"), keep order:false, stats:pseudo	N/A	N/A
+└─TableRowIDScan_7(Probe)	252.44	2	cop[tikv]	table:t	time:371.9µs, loops:2, cop_task: {num: 1, max: 244.7µs, proc_keys: 0, rpc_num: 1, rpc_time: 214.5µs, copr_cache_hit_ratio: 0.00, build_task_duration: 43.6µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:160µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%"]')) and a=1) or ("1%" member of (j));
+a	j
+1	["11", "12", "22"]
+2	["113", "123", "223", "1132"]
+explain format = 'brief' select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+id	estRows	task	access object	operator info
+Selection	2.00	root		json_overlaps(planner__core__indexmerge_fuzzy.t.j, cast("["11%", "22%"]", json BINARY))
+└─IndexMerge	0.06	root		type: intersection
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	range:["1","2"), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	range:[1 "1",1 "2"), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	0.06	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain analyze select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Selection_5	2.00	0	root		time:1.46ms, loops:1, RU:1.427945	json_overlaps(planner__core__indexmerge_fuzzy.t.j, cast("["11%", "22%"]", json BINARY))	306 Bytes	N/A
+└─IndexMerge_9	0.06	1	root		time:1.31ms, loops:2, index_task:{fetch_handle:944.541µs, merge:700.542µs}, table_task:{num:1, concurrency:5, fetch_row:504.583µs, wait_time:737.25µs}	type: intersection	1.06 KB	N/A
+  ├─IndexRangeScan_6(Build)	250.00	5	cop[tikv]	table:t, index:idx(cast(`j` as char(10) array))	time:517.2µs, loops:3, cop_task: {num: 1, max: 375.9µs, proc_keys: 0, rpc_num: 1, rpc_time: 329.4µs, copr_cache_hit_ratio: 0.00, build_task_duration: 25.1µs, max_distsql_concurrency: 1}, tikv_task:{time:268.2µs, loops:0}	range:["1","2"), keep order:false, stats:pseudo	N/A	N/A
+  ├─IndexRangeScan_7(Build)	2.50	2	cop[tikv]	table:t, index:idx1(a, cast(`j` as char(10) array))	time:409.1µs, loops:3, cop_task: {num: 1, max: 320.7µs, proc_keys: 0, rpc_num: 1, rpc_time: 285.2µs, copr_cache_hit_ratio: 0.00, build_task_duration: 22.9µs, max_distsql_concurrency: 1}, tikv_task:{time:235µs, loops:0}	range:[1 "1",1 "2"), keep order:false, stats:pseudo	N/A	N/A
+  └─TableRowIDScan_8(Probe)	0.06	1	cop[tikv]	table:t	time:381.3µs, loops:2, cop_task: {num: 1, max: 291.1µs, proc_keys: 0, rpc_num: 1, rpc_time: 255µs, copr_cache_hit_ratio: 0.00, build_task_duration: 20.4µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:213.3µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+a	j

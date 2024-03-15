@@ -1346,9 +1346,10 @@ func (w *intersectionCollectWorker) doIntersectionLimitAndDispatch(ctx context.C
 }
 
 type intersectionProcessWorker struct {
-	// key: parTblIdx, val: HandleMap
+	// key: parTblIdx, val: map (which stores handleMap for this partial ID plan)
+	// key: parPlanID, val: handleMap
 	// Value of MemAwareHandleMap is *int to avoid extra Get().
-	handleMapsPerWorker map[int]*kv.MemAwareHandleMap[*int]
+	handleMapsPerWorker map[int]*kv.MemAwareHandleMap[map[int]struct{}]
 	workerID            int
 	workerCh            chan *indexMergeTableTask
 	indexMerge          *IndexMergeReaderExecutor
@@ -1373,21 +1374,32 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	defer w.memTracker.Detach()
 
 	for task := range w.workerCh {
+		// since workerCh is unified channel for all partial plans, for index merge fuzzy matching
+		// one partial plan may generate the same handle out (because multi same prefix value in array)
+		// for case as below:
+		// partial-plan1: GET {1,2,2}
+		// partial-plan2: GET {1,2}
+		// we should distinguish the valid handle 2 is indeed counted from two different partial plan
+		// rather than be counted more than once in each of them.
 		var ok bool
-		var hMap *kv.MemAwareHandleMap[*int]
+		var hMap *kv.MemAwareHandleMap[map[int]struct{}]
 		if hMap, ok = w.handleMapsPerWorker[task.parTblIdx]; !ok {
-			hMap = kv.NewMemAwareHandleMap[*int]()
+			hMap = kv.NewMemAwareHandleMap[map[int]struct{}]()
 			w.handleMapsPerWorker[task.parTblIdx] = hMap
 		}
 		var mapDelta int64
 		var rowDelta int64
 		for _, h := range task.handles {
-			// Use *int to avoid Get() again.
-			if cntPtr, ok := hMap.Get(h); ok {
-				(*cntPtr)++
+			// get partialPlanIDMap here, recording partial plan id inside.
+			if partialPlanIDMap, ok := hMap.Get(h); ok {
+				partialPlanIDMap[task.partialPlanID] = struct{}{}
 			} else {
-				cnt := 1
-				mapDelta += hMap.Set(h, &cnt) + int64(h.ExtraMemSize())
+				// otherwise, new a partialPlanIDMap here.
+				// since not every handle are all matched with N partial plan ids,
+				// here we don't assign a capacity param here to save memory.
+				partialPlanIDMap = make(map[int]struct{})
+				partialPlanIDMap[task.partialPlanID] = struct{}{}
+				mapDelta += hMap.Set(h, partialPlanIDMap) + int64(h.ExtraMemSize())
 				rowDelta++
 			}
 		}
@@ -1409,8 +1421,8 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	// We assume the result of intersection is small, so no need to track memory.
 	intersectedMap := make(map[int][]kv.Handle, len(w.handleMapsPerWorker))
 	for parTblIdx, hMap := range w.handleMapsPerWorker {
-		hMap.Range(func(h kv.Handle, val *int) bool {
-			if *(val) == len(w.indexMerge.partialPlans) {
+		hMap.Range(func(h kv.Handle, partialPlanIDMap map[int]struct{}) bool {
+			if len(partialPlanIDMap) == len(w.indexMerge.partialPlans) {
 				// Means all partial paths have this handle.
 				intersectedMap[parTblIdx] = append(intersectedMap[parTblIdx], h)
 			}
@@ -1560,7 +1572,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		tracker.AttachTo(w.indexMerge.memTracker)
 		worker := &intersectionProcessWorker{
 			workerID:            i,
-			handleMapsPerWorker: make(map[int]*kv.MemAwareHandleMap[*int]),
+			handleMapsPerWorker: make(map[int]*kv.MemAwareHandleMap[map[int]struct{}]),
 			workerCh:            make(chan *indexMergeTableTask, maxChannelSize),
 			indexMerge:          w.indexMerge,
 			memTracker:          tracker,

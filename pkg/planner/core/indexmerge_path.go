@@ -16,6 +16,7 @@ package core
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -84,6 +85,9 @@ func (ds *DataSource) generateIndexMergePath() error {
 
 	regularPathCount := len(ds.possibleAccessPaths)
 	var err error
+	if strings.HasPrefix(ds.SCtx().GetExprCtx().GetSessionVars().StmtCtx.OriginalSQL, "select /*+ use_index_merge(t1, idx3) */") {
+		fmt.Print(1)
+	}
 	if warningMsg, err = ds.generateIndexMerge4NormalIndex(regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
@@ -794,14 +798,34 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 		if !ok {
 			continue
 		}
-		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols)
+		accessFilters, _, mvColOffset, mvFilterMutations, mvFilterFuzziness := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
 		// record the all hashcodes before accessFilters is mutated.
 		allHashCodes := make([]string, 0, len(accessFilters)+len(mvFilterMutations)-1)
-		for _, accessF := range accessFilters {
-			allHashCodes = append(allHashCodes, string(accessF.HashCode()))
+		// for index(a, json, b)
+		// a_filter, json_filter_mutation_1, b_filter
+		//                  ...
+		//           json_filter_mutation_N
+		// when all the json filters are all fuzzy, filter in b is not seen as access filter anymore.
+		allFuzzy := true
+		for _, one := range mvFilterFuzziness {
+			if !one {
+				allFuzzy = false
+			}
+		}
+		if allFuzzy {
+			// if all fuzzy is true, it means only filters with offset >= mvColOffset is used as access filters.
+			for _, accessF := range accessFilters[:mvColOffset+1] {
+				allHashCodes = append(allHashCodes, string(accessF.HashCode()))
+			}
+
+		} else {
+			// if all fuzzy is false, it means all accessFilters is used.
+			for _, accessF := range accessFilters {
+				allHashCodes = append(allHashCodes, string(accessF.HashCode()))
+			}
 		}
 		for i, mvF := range mvFilterMutations {
 			if i == 0 {
@@ -813,11 +837,16 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 		// in traveling of these mv index conditions, we can only use one of them to build index merge path, just fetch it out first.
 		// build index merge partial path for every mutation combination access filters.
 		var partialPaths4ThisMvIndex []*util.AccessPath
-		for _, mvFilterMu := range mvFilterMutations {
+		for mIdx, mvFilterMu := range mvFilterMutations {
 			// derive each mutation access filters
 			accessFilters[mvColOffset] = mvFilterMu
-
-			partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, possibleMVIndexPaths[idx].Index, ds.tableStats.HistColl)
+			truncatedAccessFilters := accessFilters[:]
+			if mvFilterFuzziness[mIdx] {
+				// index(a, json, b)
+				// when filter on json is fuzzing matching like "1%" member of json, conditions in b couldn't be used as access filters anymore.
+				truncatedAccessFilters = accessFilters[:mvColOffset+1]
+			}
+			partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), truncatedAccessFilters, idxCols, possibleMVIndexPaths[idx].Index, ds.tableStats.HistColl)
 			if err != nil {
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, err
@@ -832,7 +861,7 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 			// 2: it's an original intersection type:
 			//		And(path1, path2, And(path3, path4)) => And(path1, path2, path3, path4, merge(table-action like filter)
 			if len(partialPaths) == 1 || isIntersection {
-				for _, accessF := range accessFilters {
+				for _, accessF := range truncatedAccessFilters {
 					usedAccessCondsMap[string(accessF.HashCode())] = accessF
 				}
 				partialPaths4ThisMvIndex = append(partialPaths4ThisMvIndex, partialPaths...)
@@ -1338,14 +1367,28 @@ func buildPartialPaths4MVIndex(
 	}
 
 	for _, v := range virColVals {
-		// rewrite json functions to EQ to calculate range, `(1 member of j)` -> `j=1`.
-		eq, err := expression.NewFunction(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
-		if err != nil {
-			return nil, false, false, err
+		var (
+			err   error
+			equiv expression.Expression
+		)
+		if strings.Contains(v.String(), "%") {
+			// rewrite json functions to LIKE to calculate range, `("1%" member of j)` -> `j=1`.
+			// currently, for default escape character, we use int64('\\').
+			equiv, err = expression.NewFunction(sctx.GetExprCtx(), ast.Like, types.NewFieldType(mysql.TypeTiny), virCol, v, expression.NewInt64Const(int64('\\')))
+			if err != nil {
+				return nil, false, false, err
+			}
+		} else {
+			// rewrite json functions to EQ to calculate range, `(1 member of j)` -> `j=1`.
+			equiv, err = expression.NewFunction(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
+			if err != nil {
+				return nil, false, false, err
+			}
 		}
+
 		newAccessFilters := make([]expression.Expression, len(accessFilters))
 		copy(newAccessFilters, accessFilters)
-		newAccessFilters[virColID] = eq
+		newAccessFilters[virColID] = equiv
 
 		partialPath, ok, err := buildPartialPath4MVIndex(sctx, newAccessFilters, idxCols, mvIndex, histColl)
 		if !ok || err != nil {
@@ -1432,18 +1475,22 @@ func collectFilters4MVIndex(sctx context.PlanContext, filters []expression.Expre
 	usedAsAccess := make([]bool, len(filters))
 	for _, col := range idxCols {
 		found := false
+		encounterFuzzy := false
 		for i, f := range filters {
 			if usedAsAccess[i] {
 				continue
 			}
-			if checkFilter4MVIndexColumn(sctx, f, col) {
+			if ok, fuzzyMatching := checkFilter4MVIndexColumn(sctx, f, col); ok {
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
+				encounterFuzzy = fuzzyMatching
 				break
 			}
 		}
-		if !found {
+		if !found || encounterFuzzy {
+			// for an index column, if we don't find a filter seated, out.
+			// for an index column, if we find a fuzzy filter seated, out for the next.
 			break
 		}
 	}
@@ -1493,12 +1540,14 @@ func collectFilters4MVIndex(sctx context.PlanContext, filters []expression.Expre
 //
 // the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
 func CollectFilters4MVIndexMutations(sctx PlanContext, filters []expression.Expression,
-	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
+	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression,
+	mvFilterMutationFuzzings []bool) {
 	usedAsAccess := make([]bool, len(filters))
 	// accessFilters [x, a<json>, z]
 	//                    |
 	//                    +----> it may have several substitutions in mvFilterMutations if it's json col.
 	mvFilterMutations = make([]expression.Expression, 0, 1)
+	mvFilterMutationFuzzings = make([]bool, 0, 1)
 	mvColOffset = -1
 	for z, col := range idxCols {
 		found := false
@@ -1506,11 +1555,12 @@ func CollectFilters4MVIndexMutations(sctx PlanContext, filters []expression.Expr
 			if usedAsAccess[i] {
 				continue
 			}
-			if checkFilter4MVIndexColumn(sctx, f, col) {
+			if ok, fuzzying := checkFilter4MVIndexColumn(sctx, f, col); ok {
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
 					mvFilterMutations = append(mvFilterMutations, f)
+					mvFilterMutationFuzzings = append(mvFilterMutationFuzzings, fuzzying)
 					if mvColOffset == -1 {
 						// means first encountering, recording offset pos, and append it as occupation of access filter.
 						mvColOffset = z
@@ -1536,7 +1586,7 @@ func CollectFilters4MVIndexMutations(sctx PlanContext, filters []expression.Expr
 			remainingFilters = append(remainingFilters, filters[i])
 		}
 	}
-	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations
+	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations, mvFilterMutationFuzzings
 }
 
 // cleanAccessPathForMVIndexHint removes all other access path if there is a multi-valued index hint, and this hint
@@ -1591,30 +1641,33 @@ func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]st
 }
 
 // checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
-func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, idxCol *expression.Column) bool {
+func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, idxCol *expression.Column) (bool, bool) {
 	sf, ok := filter.(*expression.ScalarFunction)
 	if !ok {
-		return false
+		return false, false
 	}
 	if idxCol.VirtualExpr != nil { // the virtual column on the MVIndex
 		targetJSONPath, ok := unwrapJSONCast(idxCol.VirtualExpr)
 		if !ok {
-			return false
+			return false, false
 		}
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
-			return targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1])
+			fuzzyMatching := strings.Contains(sf.GetArgs()[0].String(), "%")
+			return targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]), fuzzyMatching
 		case ast.JSONContains: // json_contains(a, '1')
-			return targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0])
+			fuzzyMatching := strings.Contains(sf.GetArgs()[1].String(), "%")
+			return targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0]), fuzzyMatching
 		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
+			fuzzyMatching := strings.Contains(sf.GetArgs()[0].String(), "%") || strings.Contains(sf.GetArgs()[1].String(), "%")
 			return targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0]) ||
-				targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1])
+				targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]), fuzzyMatching
 		default:
-			return false
+			return false, false
 		}
 	} else {
 		if sf.FuncName.L != ast.EQ { // only support EQ now
-			return false
+			return false, false
 		}
 		args := sf.GetArgs()
 		var argCol *expression.Column
@@ -1629,13 +1682,13 @@ func checkFilter4MVIndexColumn(sctx PlanContext, filter expression.Expression, i
 			}
 		}
 		if argCol == nil || argConst == nil {
-			return false
+			return false, false
 		}
 		if argCol.Equal(sctx.GetExprCtx(), idxCol) {
-			return true
+			return true, false
 		}
 	}
-	return false
+	return false, false
 }
 
 // jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}

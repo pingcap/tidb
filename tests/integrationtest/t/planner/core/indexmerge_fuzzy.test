@@ -1,0 +1,84 @@
+# TestIndexMergeWithPrefixFuzzyPattern4MemberOf
+drop table if exists t;
+create table t(a int, j json, b int, index idx((cast(j as char(10) array))), index idx1(a, (cast(j as char(10) array))), index idx2(a, (cast(j as char(10) array)), b));
+insert into t values(1, "[\"11\", \"12\", \"22\"]", 1),(2, "[\"113\", \"123\", \"223\", \"1132\"]", 2);
+
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ a, j from t where ("1%" member of (j));
+select /*+ use_index_merge(t, idx1) */ a, j from t where ("1%" member of (j));
+
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ a, j from t where ("113%" member of (j));
+select /*+ use_index_merge(t, idx1) */ a, j from t where ("113%" member of (j));
+
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ a, j from t where ("113%" member of (j)) and a=2;
+select /*+ use_index_merge(t, idx2) */ a, j from t where ("113%" member of (j)) and a=2;
+
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ a, j from t where ("113%" member of (j)) and a=1;
+select /*+ use_index_merge(t, idx2) */ a, j from t where ("113%" member of (j)) and a=1;
+
+explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+select /*+ use_index_merge(t, idx3) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+select /*+ use_index_merge(t, idx3) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+select /*+ use_index_merge(t, idx3) */ * from t where ("113%" member of (j)) and a=2 and b=2;
+
+# TestIndexMergeWithPrefixFuzzyPattern4JsonContains
+drop table if exists t;
+create table t(a int, j json, b int, index idx((cast(j as char(10) array))), index idx1(a, (cast(j as char(10) array))), index idx2(a, (cast(j as char(10) array)), b));
+insert into t values(1, "[\"11\", \"12\", \"22\"]", 1),(2, "[\"113\", \"123\", \"223\", \"1132\"]", 2);
+
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+explain analyze select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+explain analyze select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+
+explain format = 'brief' select /*+ use_index_merge(t, idx2) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+explain analyze select /*+ use_index_merge(t, idx2) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+select /*+ use_index_merge(t, idx2) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+explain analyze select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+
+# TestIndexMergeWithPrefixFuzzyPattern4JsonOverlaps
+drop table if exists t;
+create table t(a int, j json, b int, index idx((cast(j as char(10) array))), index idx1(a, (cast(j as char(10) array))), index idx2(a, (cast(j as char(10) array)), b));
+insert into t values(1, "[\"11\", \"12\", \"22\"]", 1),(2, "[\"113\", \"123\", \"223\", \"1132\"]", 2);
+
+explain format = 'brief' select /*+ use_index_merge(t, idx) */ a, j from t where (json_overlaps(j, '["11%", "22%"]'));
+explain analyze select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+select /*+ use_index_merge(t, idx) */ a, j from t where (json_contains(j, '["11%", "22%"]'));
+
+explain format = 'brief' select /*+ use_index_merge(t, idx1) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1;
+explain analyze select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+select /*+ use_index_merge(t, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1;
+
+explain format = 'brief' select /*+ use_index_merge(t, idx2) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1 and b=1;
+explain analyze select /*+ use_index_merge(t, idx2) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+select /*+ use_index_merge(t, idx2) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and b=1;
+
+# TestIndexMergeWithPrefixFuzzyPattern4CompositionCase
+drop table if exists t;
+create table t(a int, j json, b int, index idx((cast(j as char(10) array))), index idx1(a, (cast(j as char(10) array))), index idx2(a, (cast(j as char(10) array)), b));
+insert into t values(1, "[\"11\", \"12\", \"22\"]", 1),(2, "[\"113\", \"123\", \"223\", \"1132\"]", 2);
+
+explain format = 'brief' select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+explain analyze select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_contains(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+
+explain format = 'brief' select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%", "22%"]')) and a=1) or ("1%" member of (j));
+explain analyze select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%", "22%"]')) and a=1) or ("1%" member of (j));
+select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%", "22%"]')) and a=1) or ("1%" member of (j));
+
+explain format = 'brief' select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%"]')) and a=1) or ("1%" member of (j));
+explain analyze select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%"]')) and a=1) or ("1%" member of (j));
+select /*+ use_index_merge(t, idx, idx1) */ a, j from t where ((json_contains(j, '["11%"]')) and a=1) or ("1%" member of (j));
+
+explain format = 'brief' select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+explain analyze select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
+select /*+ use_index_merge(t, idx, idx1) */ a, j from t where (json_overlaps(j, '["11%", "22%"]')) and a=1 and ("1%" member of (j));
