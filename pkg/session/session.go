@@ -4305,6 +4305,9 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 	if stmtCtx == nil {
 		return false
 	}
+	if stmtCtx.IsReadOnly {
+		return false
+	}
 	vars := s.GetSessionVars()
 	if !vars.TxnCtx.EnableMDL {
 		stmtCtx.AppendWarning(
