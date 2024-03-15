@@ -55,19 +55,10 @@ type DeleteExec struct {
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	var err error
 	if e.IsMultiTable {
-		err = e.deleteMultiTablesByChunk(ctx)
-	} else {
-		err = e.deleteSingleTableByChunk(ctx)
+		return e.deleteMultiTablesByChunk(ctx)
 	}
-	if err != nil {
-		return err
-	}
-	if txn, _ := e.Ctx().Txn(false); txn != nil {
-		return txn.GetMemBuffer().MayFlush()
-	}
-	return nil
+	return e.deleteSingleTableByChunk(ctx)
 }
 
 func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
@@ -153,6 +144,11 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			rowCount++
 		}
 		chk = chunk.Renew(chk, e.MaxChunkSize())
+		if txn, _ := e.Ctx().Txn(false); txn != nil {
+			if err := txn.GetMemBuffer().MayFlush(); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -231,6 +227,11 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			}
 		}
 		chk = exec.TryNewCacheChunk(e.Children(0))
+		if txn, _ := e.Ctx().Txn(false); txn != nil {
+			if err := txn.GetMemBuffer().MayFlush(); err != nil {
+				return err
+			}
+		}
 	}
 
 	return e.removeRowsInTblRowMap(tblRowMap)
