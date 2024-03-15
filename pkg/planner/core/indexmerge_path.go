@@ -813,8 +813,6 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			}
 			dnfFilters := expression.SplitDNFItems(sf) // [(1 member of (a) and b=1), (2 member of (a) and b=2)]
 
-			// --------------
-
 			unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
 				ds,
 				dnfFilters,
@@ -1163,7 +1161,13 @@ func buildPartialPaths4MVIndex(
 		virColVals = append(virColVals, v)
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
-		virColVals, ok = jsonArrayExpr2Exprs(sctx.GetExprCtx(), ast.JSONContains, sf.GetArgs()[1], jsonType, true)
+		virColVals, ok = jsonArrayExpr2Exprs(
+			sctx.GetExprCtx(),
+			ast.JSONContains,
+			sf.GetArgs()[1],
+			jsonType,
+			true,
+		)
 		if !ok || len(virColVals) == 0 {
 			// json_contains(JSON, '[]') is TRUE. If the row has an empty array, it'll not exist on multi-valued index,
 			// but the `json_contains(array, '[]')` is still true, so also don't try to scan on the index.
@@ -1252,7 +1256,13 @@ func buildPartialPath4MVIndex(
 	return partialPath, true, nil
 }
 
-// PrepareIdxColsAndUnwrapArrayType exported for test.
+// PrepareIdxColsAndUnwrapArrayType collects columns for an index and returns them as []*expression.Column.
+// If any column of them is an array type, we will use it's underlying FieldType in the returned Column.RetType.
+// If checkOnly1ArrayTypeCol is true, we will check if this index contains only one array type column. If not, it will
+// return (nil, false). This check works as a sanity check for an MV index.
+// Though this function is introduced for MV index, it can also be used for normal index if you pass false to
+// checkOnly1ArrayTypeCol.
+// This function is exported for test.
 func PrepareIdxColsAndUnwrapArrayType(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
@@ -1296,6 +1306,7 @@ func collectFilters4MVIndex(
 	filters []expression.Expression,
 	idxCols []*expression.Column,
 ) (accessFilters, remainingFilters []expression.Expression, accessTp int) {
+	accessTp = unspecifiedFilterTp
 	usedAsAccess := make([]bool, len(filters))
 	for _, col := range idxCols {
 		found := false
@@ -1469,7 +1480,9 @@ const (
 	singleValueOnMVColTp
 )
 
-// checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
+// checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column, and
+// which type the access filter is, as defined above.
+// If the return value ok is false, the type must be unspecifiedFilterTp.
 func checkFilter4MVIndexColumn(
 	sctx PlanContext,
 	filter expression.Expression,
@@ -1545,11 +1558,14 @@ func checkFilter4MVIndexColumn(
 				return false, unspecifiedFilterTp
 			}
 		}
+		// If json_contains or json_overlaps only contains one value, like json_overlaps(a,'[1]') or
+		// json_contains(a,'[1]'), we can just ignore the AND/OR semantic, and treat them like 1 member of (a).
 		if (tp == multiValuesOROnMVColTp || tp == multiValuesANDOnMVColTp) && len(virColVals) == 1 {
 			tp = singleValueOnMVColTp
 		}
 		return true, tp
 	}
+
 	// else: non virtual column
 	if sf.FuncName.L != ast.EQ { // only support EQ now
 		return false, unspecifiedFilterTp

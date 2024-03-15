@@ -1759,3 +1759,34 @@ func TestSetTopSQLVariables(t *testing.T) {
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 }
+
+func TestDivPrecisionIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Default is 4.
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("4"))
+
+	tk.MustExec("set @@div_precision_increment = 4")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("4"))
+	// Min val is 0.
+	tk.MustExec("set @@div_precision_increment = -1")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@div_precision_increment = 0")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@div_precision_increment = 30")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("30"))
+
+	tk.MustExec("set @@div_precision_increment = 8")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("8"))
+
+	// Max val is 30.
+	tk.MustExec("set @@div_precision_increment = 31")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("30"))
+
+	// Test set global.
+	tk.MustExec("set global div_precision_increment = 4")
+}
