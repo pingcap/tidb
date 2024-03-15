@@ -1593,7 +1593,8 @@ var (
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	SchemaCacheSize = atomic.NewInt64(DefTiDBSchemaCacheSize)
+	SchemaCacheSize     = atomic.NewInt64(DefTiDBSchemaCacheSize)
+	fakeSchemaCacheSize = atomic.NewInt64(DefTiDBSchemaCacheSize)
 )
 
 var (
