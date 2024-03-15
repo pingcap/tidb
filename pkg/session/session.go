@@ -108,6 +108,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -165,7 +166,7 @@ func (h *StmtHistory) Count() int {
 
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
-	processInfo atomic.Value
+	processInfo atomic.Pointer[util.ProcessInfo]
 	txn         LazyTxn
 
 	mu struct {
@@ -569,6 +570,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.GetSessionVars().TxnCtx != nil {
 		needCheckSchema = !s.GetSessionVars().TxnCtx.EnableMDL
 	}
+	if s.txn.IsPipelined() && !s.GetSessionVars().TxnCtx.EnableMDL {
+		return errors.New("cannot commit pipelined transaction without Metadata Lock: MDL is OFF")
+	}
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
@@ -684,7 +688,8 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 		assertionFailure.ExistingStartTs, assertionFailure.ExistingCommitTs,
 	)
 
-	if s.GetSessionVars().EnableRedactLog {
+	rmode := s.GetSessionVars().EnableRedactLog
+	if rmode == errors.RedactLogEnable {
 		return newErr
 	}
 
@@ -726,7 +731,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	}
 	if store, ok := s.store.(helper.Storage); ok {
 		content := consistency.GetMvccByKey(store, key, decodeFunc)
-		logutil.Logger(ctx).Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", content))
+		logutil.Logger(ctx).Error("assertion failed", zap.String("message", redact.String(rmode, newErr.Error())), zap.String("mvcc history", redact.String(rmode, content)))
 	}
 	return newErr
 }
@@ -870,6 +875,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	var err error
 	txnSize := s.txn.Size()
 	isPessimistic := s.txn.IsPessimistic()
+	isPipelined := s.txn.IsPipelined()
 	r, ctx := tracing.StartRegionEx(ctx, "session.doCommitWithRetry")
 	defer r.End()
 
@@ -888,7 +894,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic {
+		if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic && !isPipelined {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.GetSQLLabel()),
 				zap.Error(err),
@@ -931,7 +937,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	if !kv.ErrWriteConflict.Equal(oldErr) {
 		return nil
 	}
-	if errors.RedactLogEnabled.Load() {
+	if errors.RedactLogEnabled.Load() == errors.RedactLogEnable {
 		return nil
 	}
 	originErr := errors.Cause(oldErr)
@@ -1171,8 +1177,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
 				sql := sqlForLog(st.GetTextToLog(false))
-				if !sessVars.EnableRedactLog {
-					sql += sessVars.PlanCacheParams.String()
+				if sessVars.EnableRedactLog != errors.RedactLogEnable {
+					sql += redact.String(sessVars.EnableRedactLog, sessVars.PlanCacheParams.String())
 				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -1652,6 +1658,13 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
+
+	// Load the session variables to the context.
+	// This is necessary for the parser to get the current sql_mode.
+	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
+		return nil, err
+	}
+
 	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1660,11 +1673,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
-			if s.sessionVars.EnableRedactLog {
-				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			} else {
-				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			}
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.String(s.sessionVars.EnableRedactLog, sql)))
 			s.sessionVars.StmtCtx.AppendError(err)
 		}
 		return nil, err
@@ -1714,11 +1723,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 	if err != nil {
 		s.rollbackOnError(ctx)
 		logSQL := sql[:min(500, len(sql))]
-		if s.sessionVars.EnableRedactLog {
-			logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
-		} else {
-			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
-		}
+		logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", redact.String(s.sessionVars.EnableRedactLog, logSQL)))
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
@@ -2206,9 +2211,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		if !s.sessionVars.InRestrictedSQL {
 			if !variable.ErrUnknownSystemVar.Equal(err) {
 				sql := stmtNode.Text()
-				if s.sessionVars.EnableRedactLog {
-					sql = parser.Normalize(sql)
-				}
+				sql = parser.Normalize(sql, s.sessionVars.EnableRedactLog)
 				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
 					zap.String("SQL", sql))
 			}
@@ -3783,7 +3786,8 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	}
 
 	txnMode := ast.Optimistic
-	if !s.sessionVars.IsAutocommit() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+	if !s.sessionVars.IsAutocommit() || (config.GetGlobalConfig().PessimisticTxn.
+		PessimisticAutoCommit.Load() && !s.GetSessionVars().BulkDMLEnabled) {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			txnMode = ast.Pessimistic
 		}
@@ -3816,9 +3820,10 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	})
 
 	s.txn.changeToPending(&txnFuture{
-		future:   future,
-		store:    s.store,
-		txnScope: scope,
+		future:    future,
+		store:     s.store,
+		txnScope:  scope,
+		pipelined: s.usePipelinedDmlOrWarn(),
 	})
 	return nil
 }
@@ -3855,12 +3860,7 @@ func (s *session) GetStore() kv.Storage {
 }
 
 func (s *session) ShowProcess() *util.ProcessInfo {
-	var pi *util.ProcessInfo
-	tmp := s.processInfo.Load()
-	if tmp != nil {
-		pi = tmp.(*util.ProcessInfo)
-	}
-	return pi
+	return s.processInfo.Load()
 }
 
 // GetStartTSFromSession returns the startTS in the session `se`
@@ -3939,10 +3939,10 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		}
 
 		query = executor.QueryReplacer.Replace(query)
-		if !vars.EnableRedactLog {
-			query += vars.PlanCacheParams.String()
+		if vars.EnableRedactLog != errors.RedactLogEnable {
+			query += redact.String(vars.EnableRedactLog, vars.PlanCacheParams.String())
 		}
-		logutil.BgLogger().Info("GENERAL_LOG",
+		logutil.GeneralLogger.Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.String("session_alias", vars.SessionAlias),
 			zap.String("user", vars.User.LoginString()),
@@ -4294,6 +4294,61 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 	}
 
 	return indexusage.NewStmtIndexUsageCollector(s.idxUsageCollector)
+}
+
+// usePipelinedDmlOrWarn returns the current statement can be executed as a pipelined DML.
+func (s *session) usePipelinedDmlOrWarn() bool {
+	if !s.sessionVars.BulkDMLEnabled {
+		return false
+	}
+	stmtCtx := s.sessionVars.StmtCtx
+	if stmtCtx == nil {
+		return false
+	}
+	vars := s.GetSessionVars()
+	if !vars.TxnCtx.EnableMDL {
+		stmtCtx.AppendWarning(
+			errors.New(
+				"Pipelined DML can not be used without Metadata Lock. Fallback to standard mode",
+			),
+		)
+		return false
+	}
+	if (vars.BatchCommit || vars.BatchInsert || vars.BatchDelete) && vars.DMLBatchSize > 0 && variable.EnableBatchDML.Load() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode"))
+		return false
+	}
+	if vars.BinlogClient != nil {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode"))
+		return false
+	}
+	if !(stmtCtx.InInsertStmt || stmtCtx.InDeleteStmt || stmtCtx.InUpdateStmt) {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode"))
+		return false
+	}
+	if s.isInternal() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used for internal SQL. Fallback to standard mode"))
+		return false
+	}
+	if vars.InTxn() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used in transaction. Fallback to standard mode"))
+		return false
+	}
+	if !vars.IsAutocommit() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used in autocommit mode. Fallback to standard mode"))
+		return false
+	}
+
+	// tidb_dml_type=bulk will invalidate the config pessimistic-auto-commit.
+	// The behavior is as if the config is set to false. But we generate a warning for it.
+	if config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+		stmtCtx.AppendWarning(
+			errors.New(
+				"pessimistic-auto-commit config is ignored in favor of Pipelined DML",
+			),
+		)
+	}
+	return true
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.

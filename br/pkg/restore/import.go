@@ -113,15 +113,22 @@ type ImporterClient interface {
 		storeID uint64,
 	) (import_sstpb.ImportSSTClient, error)
 
+	CloseGrpcClient() error
+
 	SupportMultiIngest(ctx context.Context, stores []uint64) (bool, error)
 }
 
 type importClient struct {
-	mu         sync.Mutex
 	metaClient split.SplitClient
-	clients    map[uint64]import_sstpb.ImportSSTClient
-	tlsConf    *tls.Config
+	mu         sync.Mutex
+	// Notice: In order to avoid leak for BRIE via SQL, it needs to close grpc client connection before br task exits.
+	// So it caches the grpc connection instead of import_sstpb.ImportSSTClient.
+	// used for any request except the ingest reqeust
+	conns map[uint64]*grpc.ClientConn
+	// used for ingest request
+	ingestConns map[uint64]*grpc.ClientConn
 
+	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 }
 
@@ -129,7 +136,8 @@ type importClient struct {
 func NewImportClient(metaClient split.SplitClient, tlsConf *tls.Config, keepaliveConf keepalive.ClientParameters) ImporterClient {
 	return &importClient{
 		metaClient:    metaClient,
-		clients:       make(map[uint64]import_sstpb.ImportSSTClient),
+		conns:         make(map[uint64]*grpc.ClientConn),
+		ingestConns:   make(map[uint64]*grpc.ClientConn),
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 	}
@@ -188,7 +196,7 @@ func (ic *importClient) IngestSST(
 	storeID uint64,
 	req *import_sstpb.IngestRequest,
 ) (*import_sstpb.IngestResponse, error) {
-	client, err := ic.GetImportClient(ctx, storeID)
+	client, err := ic.GetIngestClient(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -200,23 +208,17 @@ func (ic *importClient) MultiIngest(
 	storeID uint64,
 	req *import_sstpb.MultiIngestRequest,
 ) (*import_sstpb.IngestResponse, error) {
-	client, err := ic.GetImportClient(ctx, storeID)
+	client, err := ic.GetIngestClient(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return client.MultiIngest(ctx, req)
 }
 
-func (ic *importClient) GetImportClient(
+func (ic *importClient) createGrpcConn(
 	ctx context.Context,
 	storeID uint64,
-) (import_sstpb.ImportSSTClient, error) {
-	ic.mu.Lock()
-	defer ic.mu.Unlock()
-	client, ok := ic.clients[storeID]
-	if ok {
-		return client, nil
-	}
+) (*grpc.ClientConn, error) {
 	store, err := ic.metaClient.GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -240,12 +242,58 @@ func (ic *importClient) GetImportClient(
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(ic.keepaliveConf),
 	)
+	return conn, errors.Trace(err)
+}
+
+func (ic *importClient) cachedConnectionFrom(
+	ctx context.Context,
+	storeID uint64,
+	caches map[uint64]*grpc.ClientConn,
+) (import_sstpb.ImportSSTClient, error) {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+	conn, ok := caches[storeID]
+	if ok {
+		return import_sstpb.NewImportSSTClient(conn), nil
+	}
+	conn, err := ic.createGrpcConn(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	client = import_sstpb.NewImportSSTClient(conn)
-	ic.clients[storeID] = client
-	return client, errors.Trace(err)
+	caches[storeID] = conn
+	return import_sstpb.NewImportSSTClient(conn), nil
+}
+
+func (ic *importClient) GetImportClient(
+	ctx context.Context,
+	storeID uint64,
+) (import_sstpb.ImportSSTClient, error) {
+	return ic.cachedConnectionFrom(ctx, storeID, ic.conns)
+}
+
+func (ic *importClient) GetIngestClient(
+	ctx context.Context,
+	storeID uint64,
+) (import_sstpb.ImportSSTClient, error) {
+	return ic.cachedConnectionFrom(ctx, storeID, ic.ingestConns)
+}
+
+func (ic *importClient) CloseGrpcClient() error {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+	for id, conn := range ic.conns {
+		if err := conn.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		delete(ic.conns, id)
+	}
+	for id, conn := range ic.ingestConns {
+		if err := conn.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		delete(ic.ingestConns, id)
+	}
+	return nil
 }
 
 func (ic *importClient) SupportMultiIngest(ctx context.Context, stores []uint64) (bool, error) {
@@ -263,16 +311,72 @@ func (ic *importClient) SupportMultiIngest(ctx context.Context, stores []uint64)
 	return true, nil
 }
 
+type storeTokenChannelMap struct {
+	sync.RWMutex
+	tokens map[uint64]chan struct{}
+}
+
+func (s *storeTokenChannelMap) acquireTokenCh(storeID uint64, bufferSize uint) chan struct{} {
+	s.RLock()
+	tokenCh, ok := s.tokens[storeID]
+	// handle the case that the store is new-scaled in the cluster
+	if !ok {
+		s.RUnlock()
+		s.Lock()
+		// Notice: worker channel can't replaced, because it is still used after unlock.
+		if tokenCh, ok = s.tokens[storeID]; !ok {
+			tokenCh = utils.BuildWorkerTokenChannel(bufferSize)
+			s.tokens[storeID] = tokenCh
+		}
+		s.Unlock()
+	} else {
+		s.RUnlock()
+	}
+	return tokenCh
+}
+
+func (s *storeTokenChannelMap) ShouldBlock() bool {
+	s.RLock()
+	defer s.RUnlock()
+	if len(s.tokens) == 0 {
+		// never block if there is no store worker pool
+		return false
+	}
+	for _, pool := range s.tokens {
+		if len(pool) > 0 {
+			// At least one store worker pool has available worker
+			return false
+		}
+	}
+	return true
+}
+
+func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeTokenChannelMap {
+	storeTokenChannelMap := &storeTokenChannelMap{
+		sync.RWMutex{},
+		make(map[uint64]chan struct{}),
+	}
+	if bufferSize == 0 {
+		return storeTokenChannelMap
+	}
+	for _, store := range stores {
+		ch := utils.BuildWorkerTokenChannel(bufferSize)
+		storeTokenChannelMap.tokens[store.Id] = ch
+	}
+	return storeTokenChannelMap
+}
+
 // FileImporter used to import a file to TiKV.
 type FileImporter struct {
 	metaClient   split.SplitClient
 	importClient ImporterClient
 	backend      *backuppb.StorageBackend
 
-	storeWorkerPoolRWLock sync.RWMutex
-	storeWorkerPoolMap    map[uint64]chan struct{}
-	concurrencyPerStore   uint
-	useTokenBucket        bool
+	downloadTokensMap *storeTokenChannelMap
+	ingestTokensMap   *storeTokenChannelMap
+
+	concurrencyPerStore uint
+	useTokenBucket      bool
 
 	kvMode             KvMode
 	rawStartKey        []byte
@@ -281,6 +385,7 @@ type FileImporter struct {
 	rewriteMode        RewriteMode
 
 	cacheKey string
+	cond     *sync.Cond
 }
 
 // NewFileImporter returns a new file importClient.
@@ -290,7 +395,7 @@ func NewFileImporter(
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
 	isTxnKvMode bool,
-	storeWorkerPoolMap map[uint64]chan struct{},
+	stores []*metapb.Store,
 	rewriteMode RewriteMode,
 	concurrencyPerStore uint,
 	useTokenBucket bool,
@@ -302,17 +407,49 @@ func NewFileImporter(
 	if isTxnKvMode {
 		kvMode = Txn
 	}
+
+	downloadTokensMap := newStoreTokenChannelMap(stores, 0)
+	ingestTokensMap := newStoreTokenChannelMap(stores, 0)
+
+	if useTokenBucket {
+		downloadTokensMap = newStoreTokenChannelMap(stores, concurrencyPerStore)
+		ingestTokensMap = newStoreTokenChannelMap(stores, concurrencyPerStore)
+	}
 	return FileImporter{
 		metaClient:          metaClient,
 		backend:             backend,
 		importClient:        importClient,
-		storeWorkerPoolMap:  storeWorkerPoolMap,
+		downloadTokensMap:   downloadTokensMap,
+		ingestTokensMap:     ingestTokensMap,
 		kvMode:              kvMode,
 		rewriteMode:         rewriteMode,
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 		concurrencyPerStore: concurrencyPerStore,
 		useTokenBucket:      useTokenBucket,
+		cond:                sync.NewCond(new(sync.Mutex)),
 	}
+}
+
+func (importer *FileImporter) ShouldBlock() bool {
+	if importer != nil {
+		return importer.downloadTokensMap.ShouldBlock() || importer.ingestTokensMap.ShouldBlock()
+	}
+	return false
+}
+
+func (importer *FileImporter) releaseToken(tokenCh chan struct{}) {
+	tokenCh <- struct{}{}
+	// finish the task, notify the main goroutine to continue
+	importer.cond.L.Lock()
+	importer.cond.Signal()
+	importer.cond.L.Unlock()
+}
+
+func (importer *FileImporter) Close() error {
+	if importer != nil && importer.importClient != nil {
+		return importer.importClient.CloseGrpcClient()
+	}
+	return nil
 }
 
 // CheckMultiIngestSupport checks whether all stores support multi-ingest
@@ -967,6 +1104,7 @@ func (importer *FileImporter) downloadSSTV2(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		sstMeta.ApiVersion = apiVersion
 		downloadMetasMap[file.Name] = sstMeta
 		downloadReqsMap[file.Name] = req
 	}
@@ -975,28 +1113,14 @@ func (importer *FileImporter) downloadSSTV2(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			importer.storeWorkerPoolRWLock.RLock()
-			workerCh, ok := importer.storeWorkerPoolMap[peer.GetStoreId()]
-			// handle the case that the store is new-scaled in the cluster
-			if !ok {
-				importer.storeWorkerPoolRWLock.RUnlock()
-				importer.storeWorkerPoolRWLock.Lock()
-				// Notice: worker channel can't replaced, because it is still used after unlock.
-				if workerCh, ok = importer.storeWorkerPoolMap[peer.GetStoreId()]; !ok {
-					workerCh = utils.BuildWorkerTokenChannel(importer.concurrencyPerStore)
-					importer.storeWorkerPoolMap[peer.GetStoreId()] = workerCh
-				}
-				importer.storeWorkerPoolRWLock.Unlock()
-			} else {
-				importer.storeWorkerPoolRWLock.RUnlock()
-			}
+			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
 			select {
 			case <-ectx.Done():
 				return ectx.Err()
-			case <-workerCh:
+			case <-tokenCh:
 			}
 			defer func() {
-				workerCh <- struct{}{}
+				importer.releaseToken(tokenCh)
 			}()
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]
@@ -1095,7 +1219,7 @@ func (importer *FileImporter) downloadRawKVSSTV2(
 		}
 		log.Debug("download SST", logutil.SSTMeta(sstMeta), logutil.Region(regionInfo.Region))
 
-		var atomicResp atomic.Value
+		var atomicResp atomic.Pointer[import_sstpb.DownloadResponse]
 		eg, ectx := errgroup.WithContext(ctx)
 		for _, p := range regionInfo.Region.GetPeers() {
 			peer := p
@@ -1120,7 +1244,7 @@ func (importer *FileImporter) downloadRawKVSSTV2(
 			return nil, err
 		}
 
-		downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
+		downloadResp := atomicResp.Load()
 		sstMeta.Range.Start = downloadResp.Range.GetStart()
 		sstMeta.Range.End = downloadResp.Range.GetEnd()
 		sstMeta.ApiVersion = apiVersion
@@ -1130,13 +1254,20 @@ func (importer *FileImporter) downloadRawKVSSTV2(
 }
 
 func (importer *FileImporter) ingest(
-	c context.Context,
+	ctx context.Context,
 	files []*backuppb.File,
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
-	ctx, cancel := context.WithTimeout(c, gRPCTimeOut)
-	defer cancel()
+	tokenCh := importer.ingestTokensMap.acquireTokenCh(info.Leader.GetStoreId(), importer.concurrencyPerStore)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-tokenCh:
+	}
+	defer func() {
+		importer.releaseToken(tokenCh)
+	}()
 	for {
 		ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		if errIngest != nil {

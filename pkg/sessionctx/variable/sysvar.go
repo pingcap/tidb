@@ -1480,6 +1480,11 @@ var defaultSysVars = []*SysVar{
 		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBLoadBindingTimeout, Value: "200", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatableVerfied: false, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		timeoutMS := tidbOptPositiveInt32(s, 0)
+		vars.LoadBindingTimeout = uint64(timeoutMS)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: MaxExecutionTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatableVerfied: true, SetSession: func(s *SessionVars, val string) error {
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -2151,9 +2156,9 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableRedactLog = TiDBOptOn(val)
-		errors.RedactLogEnabled.Store(s.EnableRedactLog)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: DefTiDBRedactLog, Type: TypeEnum, PossibleValues: []string{Off, On, Marker}, SetSession: func(s *SessionVars, val string) error {
+		s.EnableRedactLog = val
+		errors.RedactLogEnabled.Store(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
@@ -3060,10 +3065,23 @@ var defaultSysVars = []*SysVar{
 			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableParallelSort, Value: BoolToOnOff(DefEnableParallelSort), Type: TypeBool,
-		SetSession: func(vars *SessionVars, s string) error {
-			vars.EnableParallelSort = TiDBOptOn(s)
+	{Scope: ScopeGlobal | ScopeSession, Name: DivPrecisionIncrement, Value: strconv.Itoa(DefDivPrecisionIncrement), Type: TypeUnsigned, MinValue: 0, MaxValue: 30,
+		SetSession: func(s *SessionVars, val string) error {
+			s.DivPrecisionIncrement = tidbOptPositiveInt32(val, DefDivPrecisionIncrement)
 			return nil
+		}},
+	{Scope: ScopeSession, Name: TiDBDMLType, Value: DefTiDBDMLType, Type: TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			lowerVal := strings.ToLower(val)
+			if strings.EqualFold(lowerVal, "standard") {
+				s.BulkDMLEnabled = false
+				return nil
+			}
+			if strings.EqualFold(lowerVal, "bulk") {
+				s.BulkDMLEnabled = true
+				return nil
+			}
+			return errors.Errorf("unsupport DML type: %s", val)
 		}},
 }
 
@@ -3407,6 +3425,8 @@ const (
 	MaxExecutionTime = "max_execution_time"
 	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
+	// TiDBLoadBindingTimeout is the name of the 'tidb_load_binding_timeout' system variable.
+	TiDBLoadBindingTimeout = "tidb_load_binding_timeout"
 	// ReadOnly is the name of the 'read_only' system variable.
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.

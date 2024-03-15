@@ -408,6 +408,7 @@ func TestGlobalIndexPointGet(t *testing.T) {
 	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b > 10)").Sort().Check(
 		testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
 
+	tk.MustQuery("explain format='brief' select * from t partition(p1) use index(idx) where b = 3").Check(testkit.Rows("Point_Get 1.00 root table:t, index:idx(b) "))
 	tk.MustQuery("select * from t partition(p1) use index(idx) where b = 3").Check(testkit.Rows())
 	tk.MustQuery("select * from t partition(p1) use index(idx) where b in (15, 25, 35)").Check(testkit.Rows("15 15 0"))
 }

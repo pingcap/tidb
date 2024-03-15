@@ -633,9 +633,7 @@ func TestLoadHistCorrelation(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
-	// After https://github.com/pingcap/tidb/pull/37444, `show stats_histograms` displays the columns whose hist/topn/cmsketch
-	// are not loaded and their stats status is allEvicted.
-	require.Len(t, result.Rows(), 1)
+	require.Len(t, result.Rows(), 0)
 	testKit.MustExec("explain select * from t where c = 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'")

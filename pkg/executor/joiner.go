@@ -261,7 +261,7 @@ func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row
 // indicates whether the outer row matches any inner rows.
 func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColLen int, lUsed, rUsed []int) (bool, error) {
 	var err error
-	j.selected, err = expression.VectorizedFilter(j.ctx.GetExprCtx(), j.conditions, chunk.NewIterator4Chunk(input), j.selected)
+	j.selected, err = expression.VectorizedFilter(j.ctx.GetExprCtx(), j.ctx.GetSessionVars().EnableVectorizedExpression, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
 		return false, err
 	}
@@ -301,7 +301,7 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(
 	input, output *chunk.Chunk, innerColsLen int, outerRowStatus []outerRowStatusFlag,
 	lUsed, rUsed []int) ([]outerRowStatusFlag, error) {
 	var err error
-	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx.GetExprCtx(), j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
+	j.selected, j.isNull, err = expression.VectorizedFilterConsiderNull(j.ctx.GetExprCtx(), j.ctx.GetSessionVars().EnableVectorizedExpression, j.conditions, chunk.NewIterator4Chunk(input), j.selected, j.isNull)
 	if err != nil {
 		return nil, err
 	}

@@ -259,23 +259,6 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-// parseAnalyzePeriod parses the start and end time for auto analyze.
-// It parses the times in UTC location.
-func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
-	if start == "" {
-		start = variable.DefAutoAnalyzeStartTime
-	}
-	if end == "" {
-		end = variable.DefAutoAnalyzeEndTime
-	}
-	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
-	if err != nil {
-		return s, s, errors.Trace(err)
-	}
-	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
-	return s, e, err
-}
-
 // HandleAutoAnalyze analyzes the newly created table or index.
 func HandleAutoAnalyze(
 	sctx sessionctx.Context,
@@ -303,8 +286,8 @@ func HandleAutoAnalyze(
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	// Get the available time period for auto analyze and check if the current time is in the period.
-	start, end, err := parseAnalyzePeriod(
+	// Determine the time window for auto-analysis and verify if the current time falls within this range.
+	start, end, err := exec.ParseAutoAnalysisWindow(
 		parameters[variable.TiDBAutoAnalyzeStartTime],
 		parameters[variable.TiDBAutoAnalyzeEndTime],
 	)
@@ -504,7 +487,7 @@ func tryAutoAnalyzeTable(
 
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+		if _, ok := statsTbl.Indices[idx.ID]; !ok && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
@@ -533,7 +516,7 @@ func tryAutoAnalyzeTable(
 //
 // Exposed for test.
 func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
-	analyzed := exec.TableAnalyzed(tbl)
+	analyzed := tbl.IsAnalyzed()
 	if !analyzed {
 		return true, "table unanalyzed"
 	}
@@ -651,7 +634,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				continue
 			}
 			// 2. If the index is not analyzed, we need to analyze it.
-			if _, ok := partitionStats.Indices[idx.ID]; !ok {
+			if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
 				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 			}

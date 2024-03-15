@@ -32,41 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-// InfoSchema is the interface used to retrieve the schema information.
-// It works as a in memory cache and doesn't handle any schema change.
-// InfoSchema is read-only, and the returned value is a copy.
-type InfoSchema interface {
-	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
-	SchemaExists(schema model.CIStr) bool
-	TableByName(schema, table model.CIStr) (table.Table, error)
-	TableExists(schema, table model.CIStr) bool
-	SchemaByID(id int64) (*model.DBInfo, bool)
-	TableByID(id int64) (table.Table, bool)
-	AllSchemas() []*model.DBInfo
-	SchemaTables(schema model.CIStr) []table.Table
-	SchemaMetaVersion() int64
-	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
-	Misc
-}
-
-// Misc contains the methods that are not closely related to InfoSchema.
-type Misc interface {
-	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
-	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
-	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
-	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
-	// AllPlacementBundles is used to get all placement bundles
-	AllPlacementBundles() []*placement.Bundle
-	// AllPlacementPolicies returns all placement policies
-	AllPlacementPolicies() []*model.PolicyInfo
-	// AllResourceGroups returns all resource groups
-	AllResourceGroups() []*model.ResourceGroupInfo
-	// HasTemporaryTable returns whether information schema has temporary table
-	HasTemporaryTable() bool
-	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
-}
-
 var _ Misc = &infoSchemaMisc{}
 
 type sortedTables []table.Table
@@ -94,12 +59,12 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
-
-	// schemaMetaVersion is the version of schema, and we should check version when change schema.
-	schemaMetaVersion int64
 }
 
 type infoSchemaMisc struct {
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
+	schemaMetaVersion int64
+
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
 
@@ -186,16 +151,16 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 
 var _ InfoSchema = (*infoSchema)(nil)
 
+func (is *infoSchema) base() *infoSchema {
+	return is
+}
+
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
 	tableNames, ok := is.schemaMap[schema.L]
 	if !ok {
 		return
 	}
 	return tableNames.dbInfo, true
-}
-
-func (is *infoSchema) SchemaMetaVersion() int64 {
-	return is.schemaMetaVersion
 }
 
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
@@ -249,17 +214,6 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 	return nil, false
 }
 
-func (is *infoSchema) ResourceGroupByID(id int64) (val *model.ResourceGroupInfo, ok bool) {
-	is.resourceGroupMutex.RLock()
-	defer is.resourceGroupMutex.RUnlock()
-	for _, v := range is.resourceGroupMap {
-		if v.ID == id {
-			return v, true
-		}
-	}
-	return nil, false
-}
-
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	for _, v := range is.schemaMap {
 		if v.dbInfo.ID == id {
@@ -287,7 +241,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 }
 
 // allocByID returns the Allocators of a table.
-func allocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
+func allocByID(is InfoSchema, id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return autoid.Allocators{}, false
@@ -297,9 +251,9 @@ func allocByID(is *infoSchema, id int64) (autoid.Allocators, bool) {
 
 // AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
-	schemas := is.AllSchemas()
+	schemas := is.AllSchemaNames()
 	for _, v := range schemas {
-		names = append(names, v.Name.O)
+		names = append(names, v.O)
 	}
 	return
 }
@@ -309,6 +263,14 @@ func (is *infoSchema) AllSchemas() (schemas []*model.DBInfo) {
 		schemas = append(schemas, v.dbInfo)
 	}
 	return
+}
+
+func (is *infoSchema) AllSchemaNames() (schemas []model.CIStr) {
+	rs := make([]model.CIStr, 0, len(is.schemaMap))
+	for _, v := range is.schemaMap {
+		rs = append(rs, v.dbInfo.Name)
+	}
+	return rs
 }
 
 func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
@@ -344,6 +306,10 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 // HasTemporaryTable returns whether information schema has temporary table
 func (is *infoSchemaMisc) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
+}
+
+func (is *infoSchemaMisc) SchemaMetaVersion() int64 {
+	return is.schemaMetaVersion
 }
 
 // GetSequenceByName gets the sequence by name.
@@ -417,6 +383,18 @@ func (is *infoSchemaMisc) ResourceGroupByName(name model.CIStr) (*model.Resource
 	defer is.resourceGroupMutex.RUnlock()
 	t, r := is.resourceGroupMap[name.L]
 	return t, r
+}
+
+// ResourceGroupByID is used to find the resource group.
+func (is *infoSchemaMisc) ResourceGroupByID(id int64) (*model.ResourceGroupInfo, bool) {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	for _, v := range is.resourceGroupMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // AllResourceGroups returns all resource groups.

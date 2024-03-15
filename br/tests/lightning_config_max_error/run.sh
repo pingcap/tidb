@@ -81,6 +81,12 @@ check_contains "COUNT(*): ${duplicated_row_count}"
 run_sql 'SELECT COUNT(*) FROM mytest.testtbl'
 check_contains "COUNT(*): ${remaining_row_count}"
 
+# import a fourth time
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records'
+! run_lightning --backend local --config "${mydir}/ignore_config.toml"
+[ $? -eq 0 ]
+tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Config:ErrInvalidConfig]conflict.strategy cannot be set to \\\"ignore\\\" when use tikv-importer.backend = \\\"local\\\""
+
 # Check tidb backend record duplicate entry in conflict_records table
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records'
 run_lightning --backend tidb --config "${mydir}/tidb.toml"

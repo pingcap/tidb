@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -425,9 +424,6 @@ func TestGlobalBinding(t *testing.T) {
 		tk.MustExec("create table t1(i int, s varchar(20))")
 		tk.MustExec("create index index_t on t(i,s)")
 
-		metrics.BindTotalGauge.Reset()
-		metrics.BindMemoryUsage.Reset()
-
 		_, err := tk.Exec("create global " + testSQL.createSQL)
 		require.NoError(t, err, "err %v", err)
 
@@ -489,7 +485,6 @@ func TestGlobalBinding(t *testing.T) {
 		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 		_, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.False(t, matched) // dropped
-
 		bindHandle = bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 		err = bindHandle.LoadFromStorageToCache(true)
 		require.NoError(t, err)

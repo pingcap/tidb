@@ -395,7 +395,9 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 	return gcRatio, nil
 }
 
-func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+// AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
+// the download stage.
+func (rc *Client) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
 	rc.preallocedTableIDs = tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
@@ -518,6 +520,10 @@ func (rc *Client) Close() {
 		rc.rawKVClient.Close()
 	}
 
+	if err := rc.fileImporter.Close(); err != nil {
+		log.Warn("failed to close file improter")
+	}
+
 	log.Info("Restore client closed")
 }
 
@@ -535,7 +541,6 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
-	storeWorkerPoolMap := make(map[uint64]chan struct{})
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
@@ -548,15 +553,11 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		// ToDo remove it when token bucket is stable enough.
 		log.Info("use token bucket to control download and ingest flow")
 		useTokenBucket = true
-		for _, store := range stores {
-			ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
-			storeWorkerPoolMap[store.Id] = ch
-		}
 	}
 
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -672,13 +673,6 @@ func (rc *Client) SetConcurrency(c uint) {
 func (rc *Client) SetConcurrencyPerStore(c uint) {
 	log.Info("per-store download worker pool", zap.Uint("size", c))
 	rc.concurrencyPerStore = c
-}
-
-func (rc *Client) GetTotalDownloadConcurrency() uint {
-	if rc.storeCount <= 0 {
-		log.Fatal("uninitialize store count", zap.Int("storeCount", rc.storeCount))
-	}
-	return rc.concurrencyPerStore * uint(rc.storeCount)
 }
 
 func (rc *Client) GetConcurrencyPerStore() uint {
@@ -1029,11 +1023,6 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	if err := rc.allocTableIDs(ctx, tables); err != nil {
-		errCh <- err
-		close(outCh)
-		return outCh
-	}
 
 	var err error
 
@@ -1410,10 +1399,9 @@ func getGroupFiles(files []*backuppb.File, supportMulti bool) [][]*backuppb.File
 // SplitRanges implements TiKVRestorer.
 func (rc *Client) SplitRanges(ctx context.Context,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool) error {
-	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
+	return SplitRanges(ctx, rc, ranges, updateCh, isRawKv)
 }
 
 func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
@@ -1473,7 +1461,6 @@ func (rc *Client) WrapLogFilesIterWithCheckpoint(
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
 	tableIDWithFiles []TableIDWithFiles,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 ) (err error) {
 	start := time.Now()
@@ -1508,6 +1495,7 @@ LOOPFORTABLE:
 	for _, tableIDWithFile := range tableIDWithFiles {
 		tableID := tableIDWithFile.TableID
 		files := tableIDWithFile.Files
+		rules := tableIDWithFile.RewriteRules
 		fileCount += len(files)
 		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
 			filesReplica := rangeFiles
@@ -1523,14 +1511,16 @@ LOOPFORTABLE:
 			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
-					if importErr := func(fs []*backuppb.File) error {
+					if importErr := func(fs []*backuppb.File) (err error) {
 						fileStart := time.Now()
 						defer func() {
-							log.Info("import files done", logutil.Files(filesGroup),
-								zap.Duration("take", time.Since(fileStart)))
-							updateCh.Inc()
+							if err == nil {
+								log.Info("import files done", logutil.Files(filesGroup),
+									zap.Duration("take", time.Since(fileStart)))
+								updateCh.Inc()
+							}
 						}()
-						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
+						return rc.fileImporter.ImportSSTFiles(ectx, fs, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 					}(filesGroup); importErr != nil {
 						return errors.Trace(importErr)
 					}
@@ -1548,7 +1538,13 @@ LOOPFORTABLE:
 				return nil
 			}
 			if rc.granularity == string(CoarseGrained) {
+				rc.fileImporter.cond.L.Lock()
+				for rc.fileImporter.ShouldBlock() {
+					// wait for download worker notified
+					rc.fileImporter.cond.Wait()
+				}
 				eg.Go(restoreFn)
+				rc.fileImporter.cond.L.Unlock()
 			} else {
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
@@ -2160,7 +2156,7 @@ func (rc *Client) ResetRestoreLabels(ctx context.Context) error {
 	if !rc.isOnline {
 		return nil
 	}
-	log.Info("start reseting store labels")
+	log.Info("start resetting store labels")
 	return rc.toolClient.SetStoresLabel(ctx, rc.restoreStores, restoreLabelKey, "")
 }
 
@@ -2259,7 +2255,7 @@ func (rc *Client) ResetPlacementRules(ctx context.Context, tables []*model.Table
 	if !rc.isOnline || len(rc.restoreStores) == 0 {
 		return nil
 	}
-	log.Info("start reseting placement rules")
+	log.Info("start resetting placement rules")
 	var failedTables []int64
 	for _, t := range tables {
 		err := rc.toolClient.DeletePlacementRule(ctx, "pd", rc.getRuleID(t.ID))
@@ -3689,13 +3685,14 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 		return errors.Trace(err)
 	}
 	info := dom.InfoSchema()
-	allSchema := info.AllSchemas()
+	allSchemaName := info.AllSchemaNames()
 	recorder := tiflashrec.New()
 
 	expectTiFlashStoreCount := uint64(0)
 	needTiFlash := false
-	for _, s := range allSchema {
-		for _, t := range s.Tables {
+	for _, s := range allSchemaName {
+		for _, t := range info.SchemaTables(s) {
+			t := t.Meta()
 			if t.TiFlashReplica != nil {
 				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
 				recorder.AddTable(t.ID, *t.TiFlashReplica)

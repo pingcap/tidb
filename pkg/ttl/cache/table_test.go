@@ -188,29 +188,99 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	tz2, err := time.LoadLocation("Europe/Berlin")
 	require.NoError(t, err)
 
-	se.GetSessionVars().TimeZone = tz1
+	_, err = se.ExecuteSQL(context.TODO(), "SET @@global.time_zone = 'Asia/Shanghai'")
+	require.NoError(t, err)
 	tm, err := ttlTbl.EvalExpireTime(context.TODO(), se, now)
 	require.NoError(t, err)
 	require.Equal(t, now.Add(-time.Hour*24).Unix(), tm.Unix())
-	require.Equal(t, "1969-12-31 08:00:00", tm.Format(time.DateTime))
-	require.Equal(t, tz1.String(), tm.Location().String())
+	require.Equal(t, "1969-12-31 08:00:00", tm.In(tz1).Format(time.DateTime))
+	require.Same(t, now.Location(), tm.Location())
 
-	se.GetSessionVars().TimeZone = tz2
+	_, err = se.ExecuteSQL(context.TODO(), "SET @@global.time_zone = 'Europe/Berlin'")
+	require.NoError(t, err)
 	tm, err = ttlTbl.EvalExpireTime(context.TODO(), se, now)
 	require.NoError(t, err)
 	require.Equal(t, now.Add(-time.Hour*24).Unix(), tm.Unix())
-	require.Equal(t, "1969-12-31 01:00:00", tm.Format(time.DateTime))
-	require.Equal(t, tz2.String(), tm.Location().String())
+	require.Equal(t, "1969-12-31 01:00:00", tm.In(tz2).Format(time.DateTime))
+	require.Same(t, now.Location(), tm.Location())
 
-	se.GetSessionVars().TimeZone = tz1
+	_, err = se.ExecuteSQL(context.TODO(), "SET @@global.time_zone = 'Asia/Shanghai'")
+	require.NoError(t, err)
 	tm, err = ttlTbl2.EvalExpireTime(context.TODO(), se, now)
 	require.NoError(t, err)
-	require.Equal(t, "1969-10-01 08:00:00", tm.Format(time.DateTime))
-	require.Equal(t, tz1.String(), tm.Location().String())
+	require.Equal(t, "1969-10-01 08:00:00", tm.In(tz1).Format(time.DateTime))
+	require.Same(t, now.Location(), tm.Location())
 
-	se.GetSessionVars().TimeZone = tz2
+	_, err = se.ExecuteSQL(context.TODO(), "SET @@global.time_zone = 'Europe/Berlin'")
+	require.NoError(t, err)
 	tm, err = ttlTbl2.EvalExpireTime(context.TODO(), se, now)
 	require.NoError(t, err)
-	require.Equal(t, "1969-10-01 01:00:00", tm.Format(time.DateTime))
-	require.Equal(t, tz2.String(), tm.Location().String())
+	require.Equal(t, "1969-10-01 01:00:00", tm.In(tz2).Format(time.DateTime))
+	require.Same(t, now.Location(), tm.Location())
+
+	// test cases for daylight saving time.
+	// When local standard time was about to reach Sunday, 10 March 2024, 02:00:00 clocks were turned forward 1 hour to
+	// Sunday, 10 March 2024, 03:00:00 local daylight time instead.
+	tz3, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	now, err = time.ParseInLocation(time.DateTime, "2024-03-11 19:49:59", tz3)
+	require.NoError(t, err)
+	_, err = se.ExecuteSQL(context.TODO(), "SET @@global.time_zone = 'America/Los_Angeles'")
+	require.NoError(t, err)
+	tk.MustExec("create table test.t3(a int, t datetime) ttl = `t` + interval 90 minute")
+	tb3, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+	tblInfo3 := tb3.Meta()
+	ttlTbl3, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo3, model.NewCIStr(""))
+	require.NoError(t, err)
+	require.NoError(t, err)
+	tm, err = ttlTbl3.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2024-03-11 18:19:59", tm.In(tz3).Format(time.DateTime))
+	require.Same(t, now.Location(), tm.Location())
+
+	// across day light-saving time
+	now, err = time.ParseInLocation(time.DateTime, "2024-03-10 03:01:00", tz3)
+	require.NoError(t, err)
+	tm, err = ttlTbl3.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2024-03-10 00:31:00", tm.In(tz3).Format(time.DateTime))
+	require.Same(t, now.Location(), tm.Location())
+
+	now, err = time.ParseInLocation(time.DateTime, "2024-03-10 04:01:00", tz3)
+	require.NoError(t, err)
+	tm, err = ttlTbl3.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2024-03-10 01:31:00", tm.In(tz3).Format(time.DateTime))
+	require.Same(t, now.Location(), tm.Location())
+
+	now, err = time.ParseInLocation(time.DateTime, "2024-11-03 03:00:00", tz3)
+	require.NoError(t, err)
+	tm, err = ttlTbl3.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2024-11-03 01:30:00", tm.In(tz3).Format(time.DateTime))
+	require.Same(t, now.Location(), tm.Location())
+	// 2024-11-03 01:30:00 in America/Los_Angeles has two related time points:
+	// 2024-11-03 01:30:00 -0700 PDT
+	// 2024-11-03 01:30:00 -0800 PST
+	// We must use the earlier one to avoid deleting some unexpected rows.
+	require.Equal(t, int64(5400), now.Unix()-tm.Unix())
+
+	// we should use global time zone to calculate the expired time
+	_, err = se.ExecuteSQL(context.TODO(), "SET @@global.time_zone = 'Asia/Shanghai'")
+	require.NoError(t, err)
+	now, err = time.ParseInLocation(time.DateTime, "1999-02-28 16:00:00", time.UTC)
+	require.NoError(t, err)
+	tm, err = ttlTbl2.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "1998-12-01 00:00:00", tm.In(tz1).Format(time.DateTime))
+	require.Same(t, time.UTC, tm.Location())
+
+	// time should be truncated to second to make the result simple
+	now, err = time.ParseInLocation("2006-01-02 15:04:05.000000", "2023-01-02 15:00:01.986542", time.UTC)
+	require.NoError(t, err)
+	tm, err = ttlTbl.EvalExpireTime(context.TODO(), se, now)
+	require.NoError(t, err)
+	require.Equal(t, "2023-01-01 15:00:01.000000", tm.Format("2006-01-02 15:04:05.000000"))
+	require.Same(t, time.UTC, tm.Location())
 }

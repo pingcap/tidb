@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -36,26 +37,24 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		return plan, planChanged, nil
 	}
 	predicateNeeded := variable.EnableColumnTracking.Load()
-	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
+	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait
 	histNeeded := syncWait > 0
-	predicateColumns, histNeededColumns := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
+	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
-	if !histNeeded {
-		return plan, planChanged, nil
-	}
 
-	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below.
+	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
+	// stats loading for the determinate mode.
 	is := plan.SCtx().GetInfoSchema().(infoschema.InfoSchema)
 	tblID2Tbl := make(map[int64]table.Table)
-	for _, neededCol := range histNeededColumns {
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, neededCol.TableID)
+	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, int64(physicalTblID))
 		if tbl == nil {
-			continue
+			return
 		}
-		tblID2Tbl[neededCol.TableID] = tbl
-	}
+		tblID2Tbl[int64(physicalTblID)] = tbl
+	})
 
 	// collect needed virtual columns from already needed columns
 	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on
@@ -94,21 +93,21 @@ func (syncWaitStatsLoadPoint) name() string {
 	return "sync_wait_stats_load_point"
 }
 
-const maxDuration = 1<<63 - 1
-
 // RequestLoadStats send load column/index stats requests to stats handle
-func RequestLoadStats(ctx PlanContext, neededHistItems []model.TableItemID, syncWait int64) error {
+func RequestLoadStats(ctx PlanContext, neededHistItems []model.StatsLoadItem, syncWait int64) error {
+	maxExecutionTime := ctx.GetSessionVars().GetMaxExecutionTime()
+	if maxExecutionTime > 0 && maxExecutionTime < uint64(syncWait) {
+		syncWait = int64(maxExecutionTime)
+	}
+	failpoint.Inject("assertSyncWaitFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			if syncWait != 1 {
+				panic("syncWait should be 1(ms)")
+			}
+		}
+	})
+	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
-	if hintMaxExecutionTime <= 0 {
-		hintMaxExecutionTime = maxDuration
-	}
-	sessMaxExecutionTime := int64(ctx.GetSessionVars().MaxExecutionTime)
-	if sessMaxExecutionTime <= 0 {
-		sessMaxExecutionTime = maxDuration
-	}
-	waitTime := min(syncWait, hintMaxExecutionTime, sessMaxExecutionTime)
-	var timeout = time.Duration(waitTime)
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
@@ -117,7 +116,7 @@ func RequestLoadStats(ctx PlanContext, neededHistItems []model.TableItemID, sync
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("RequestLoadStats failed", zap.Error(err))
+		logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -173,8 +172,8 @@ func SyncWaitStatsLoad(plan LogicalPlan) error {
 // but d will not be collected.
 // It's because currently it's impossible that statistics related to indirectly depending columns are actually needed.
 // If we need to check indirect dependency some day, we can easily extend the logic here.
-func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []model.TableItemID) []model.TableItemID {
-	generatedCols := make([]model.TableItemID, 0)
+func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []model.StatsLoadItem) []model.StatsLoadItem {
+	generatedCols := make([]model.StatsLoadItem, 0)
 
 	// group the neededItems by table id
 	tblID2neededColIDs := make(map[int64][]int64, len(tblID2Tbl))
@@ -214,7 +213,7 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 			// then we think this virtual column is needed.
 			for depCol := range col.Dependences {
 				if _, ok := colNameSet[depCol]; ok {
-					generatedCols = append(generatedCols, model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false})
+					generatedCols = append(generatedCols, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}, FullLoad: true})
 					break
 				}
 			}
@@ -228,7 +227,7 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
 func collectSyncIndices(ctx PlanContext,
-	histNeededColumns []model.TableItemID,
+	histNeededColumns []model.StatsLoadItem,
 	tblID2Tbl map[int64]table.Table,
 ) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
@@ -256,19 +255,21 @@ func collectSyncIndices(ctx PlanContext,
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
-				idxStats, ok := tblStats.Indices[idx.Meta().ID]
-				if ok && idxStats.IsStatsInitialized() && !idxStats.IsFullLoad() {
-					histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
+				_, loadNeeded := tblStats.IndexIsLoadNeeded(idxID)
+				if !loadNeeded {
+					continue
 				}
+				histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
 			}
 		}
 	}
 	return histNeededIndices
 }
 
-func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.TableItemID) {
+func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.StatsLoadItem) {
+	histNeededItems = make([]model.StatsLoadItem, 0, len(histNeededColumns)+len(histNeededIndices))
 	for idx := range histNeededIndices {
-		histNeededItems = append(histNeededItems, idx)
+		histNeededItems = append(histNeededItems, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
 	}
 	histNeededItems = append(histNeededItems, histNeededColumns...)
 	return
