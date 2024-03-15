@@ -242,7 +242,7 @@ func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDif
 	return append(ptIDs, ntIDs...), nil
 }
 
-func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := applyTableUpdate(b, m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -766,7 +766,6 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	if b.enableV2 {
 		b.infoschemaV2.ts = schemaTS
-		b.infoschemaV2.schemaVersion = b.infoSchema.SchemaMetaVersion()
 		updateInfoSchemaBundles(b)
 		return &b.infoschemaV2
 	}
@@ -782,12 +781,10 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 		return nil, errors.New("builder's infoschema mismatch, return error to trigger full reload")
 	}
 
-	var oldIS *infoSchema
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
-		oldIS = schemaV2.infoSchema
-	} else {
-		oldIS = oldSchema.(*infoSchema)
+		b.infoschemaV2.ts = schemaV2.ts
 	}
+	oldIS := oldSchema.base()
 	b.initBundleInfoBuilder()
 	b.infoSchema.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)

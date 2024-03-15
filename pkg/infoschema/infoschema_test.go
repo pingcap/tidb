@@ -101,7 +101,7 @@ func TestBasic(t *testing.T) {
 	dbInfos := []*model.DBInfo{dbInfo}
 	internal.AddDB(t, re.Store(), dbInfo)
 
-	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(re, nil, infoschema.NewData()).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := re.Store().Begin()
@@ -925,6 +925,17 @@ func (tc *infoschemaTestContext) runDropSchema() {
 	})
 }
 
+func (tc *infoschemaTestContext) runRecoverSchema() {
+	tc.runDropSchema()
+	// recover schema
+	internal.AddDB(tc.t, tc.re.Store(), tc.dbInfo)
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionRecoverSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		dbInfo, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
+	})
+}
+
 func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 	if tc.dbInfo == nil {
 		tc.runCreateSchema()
@@ -1105,6 +1116,8 @@ func TestApplyDiff(t *testing.T) {
 			ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
 			data: infoschema.NewData(),
 		}
+		tc.runRecoverSchema()
+		tc.clear()
 		tc.runCreateSchema()
 		tc.clear()
 		tc.runDropSchema()

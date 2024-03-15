@@ -84,7 +84,7 @@ func TestPipelinedDMLPositive(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("set session tidb_dml_type = bulk")
 	for _, stmt := range stmts {
@@ -123,6 +123,19 @@ func TestPipelinedDMLPositive(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
 	tk.MustQuery("show warnings").CheckContain("pessimistic-auto-commit config is ignored in favor of Pipelined DML")
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(false)
+
+	// enable by hint
+	// Hint works for DELETE and UPDATE, but not for INSERT if the hint is in its select clause.
+	tk.MustExec("set @@tidb_dml_type = standard")
+	err = panicToErr(
+		func() error {
+			_, err := tk.Exec("delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t")
+			// "insert into t select /*+ SET_VAR(tidb_dml_type=bulk) */ * from t" won't work
+			return err
+		},
+	)
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
 }
 
 func TestPipelinedDMLNegative(t *testing.T) {
@@ -189,6 +202,12 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustExec("explain analyze insert into t values(9, 9)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
 	tk.Session().GetSessionVars().BinlogClient = nil
+
+	// disable MDL
+	tk.MustExec("set global tidb_enable_metadata_lock = off")
+	tk.MustExec("insert into t values(10, 10)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used without Metadata Lock. Fallback to standard mode")
+	tk.MustExec("set global tidb_enable_metadata_lock = on")
 }
 
 func compareTables(t *testing.T, tk *testkit.TestKit, t1, t2 string) {

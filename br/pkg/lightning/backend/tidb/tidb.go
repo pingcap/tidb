@@ -270,7 +270,7 @@ type tidbBackend struct {
 	// onDuplicate is the type of INSERT SQL. It may be different with
 	// conflictCfg.Strategy to implement other feature, but the behaviour in caller's
 	// view should be the same.
-	onDuplicate string
+	onDuplicate config.DuplicateResolutionAlgorithm
 	errorMgr    *errormanager.ErrorManager
 	// maxChunkSize and maxChunkRows are the target size and number of rows of each INSERT SQL
 	// statement to be sent to downstream. Sometimes we want to reduce the txn size to avoid
@@ -292,7 +292,7 @@ func NewTiDBBackend(
 	errorMgr *errormanager.ErrorManager,
 ) backend.Backend {
 	conflict := cfg.Conflict
-	var onDuplicate string
+	var onDuplicate config.DuplicateResolutionAlgorithm
 	switch conflict.Strategy {
 	case config.ErrorOnDup:
 		onDuplicate = config.ErrorOnDup

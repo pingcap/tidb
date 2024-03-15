@@ -395,7 +395,9 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 	return gcRatio, nil
 }
 
-func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+// AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
+// the download stage.
+func (rc *Client) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
 	rc.preallocedTableIDs = tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
@@ -539,7 +541,6 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
-	storeWorkerPoolMap := make(map[uint64]chan struct{})
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
@@ -552,15 +553,11 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		// ToDo remove it when token bucket is stable enough.
 		log.Info("use token bucket to control download and ingest flow")
 		useTokenBucket = true
-		for _, store := range stores {
-			ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
-			storeWorkerPoolMap[store.Id] = ch
-		}
 	}
 
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -1026,11 +1023,6 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	if err := rc.allocTableIDs(ctx, tables); err != nil {
-		errCh <- err
-		close(outCh)
-		return outCh
-	}
 
 	var err error
 
@@ -1546,7 +1538,13 @@ LOOPFORTABLE:
 				return nil
 			}
 			if rc.granularity == string(CoarseGrained) {
+				rc.fileImporter.cond.L.Lock()
+				for rc.fileImporter.ShouldBlock() {
+					// wait for download worker notified
+					rc.fileImporter.cond.Wait()
+				}
 				eg.Go(restoreFn)
+				rc.fileImporter.cond.L.Unlock()
 			} else {
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
@@ -2158,7 +2156,7 @@ func (rc *Client) ResetRestoreLabels(ctx context.Context) error {
 	if !rc.isOnline {
 		return nil
 	}
-	log.Info("start reseting store labels")
+	log.Info("start resetting store labels")
 	return rc.toolClient.SetStoresLabel(ctx, rc.restoreStores, restoreLabelKey, "")
 }
 
@@ -2257,7 +2255,7 @@ func (rc *Client) ResetPlacementRules(ctx context.Context, tables []*model.Table
 	if !rc.isOnline || len(rc.restoreStores) == 0 {
 		return nil
 	}
-	log.Info("start reseting placement rules")
+	log.Info("start resetting placement rules")
 	var failedTables []int64
 	for _, t := range tables {
 		err := rc.toolClient.DeletePlacementRule(ctx, "pd", rc.getRuleID(t.ID))

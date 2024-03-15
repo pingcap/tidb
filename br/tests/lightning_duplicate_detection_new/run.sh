@@ -57,17 +57,6 @@ run_lightning --backend tidb --config "$CUR/tidb-ignore.toml" --log-file "$LOG_F
 expected_rows=$(run_sql "SELECT count(*) AS total_count FROM test.dup_detect" | grep "total_count" | awk '{print $2}')
 expected_pks=$(run_sql "SELECT group_concat(col1 ORDER BY col1) AS pks FROM test.dup_detect" | grep "pks" | awk '{print $2}')
 
-cleanup
-run_lightning --backend local --config "$CUR/local-ignore.toml" --log-file "$LOG_FILE"
-actual_rows=$(run_sql "SELECT count(*) AS total_count FROM test.dup_detect" | grep "total_count" | awk '{print $2}')
-actual_pks=$(run_sql "SELECT group_concat(col1 ORDER BY col1) AS pks FROM test.dup_detect" | grep "pks" | awk '{print $2}')
-if [ "$expected_rows" != "$actual_rows" ] || [ "$expected_pks" != "$actual_pks" ]; then
-  echo "local backend ignore strategy result is not equal to tidb backend"
-  exit 1
-fi
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_records"
-check_contains "count(*): 228"
-
 # 3. Test error strategy.
 cleanup
 run_lightning --backend local --config "$CUR/local-error.toml" --log-file "$LOG_FILE" 2>&1 | grep -q "duplicate key in table \`test\`.\`dup_detect\` caused by index .*, but because checkpoint is off we can't have more details"

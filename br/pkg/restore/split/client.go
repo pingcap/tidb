@@ -515,6 +515,8 @@ func (c *pdClient) WaitRegionsSplit(ctx context.Context, newRegions []*RegionInf
 			}
 			return errors.Annotate(berrors.ErrPDSplitFailed, "wait region split failed")
 		}, &state)
+		// we only care about whether the last region splitted successfully.
+		// because we are waiting region report status *sequentially*.
 		if err != nil {
 			lastErr = err
 		}
