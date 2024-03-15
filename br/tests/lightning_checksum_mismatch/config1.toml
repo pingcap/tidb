@@ -1,9 +1,6 @@
 [tikv-importer]
-backend = 'local'
-incremental-import = true
-
-[conflict]
-strategy = ""
+backend = "local"
+duplicate-resolution = ""
 
 [post-restore]
 checksum = "required"
