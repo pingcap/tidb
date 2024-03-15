@@ -905,6 +905,28 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		return nil
 	}
 
+	// Collect access paths that satisfy the hints, and make sure there is at least one MV index path.
+	var mvIndexPathCnt int
+	candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	for idx := 0; idx < normalPathCnt; idx++ {
+		if ds.possibleAccessPaths[idx].Index != nil && ds.possibleAccessPaths[idx].Index.Global {
+			continue
+		}
+		if (ds.possibleAccessPaths[idx].IsTablePath() &&
+			!ds.isInIndexMergeHints("primary")) ||
+			(!ds.possibleAccessPaths[idx].IsTablePath() &&
+				!ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L)) {
+			continue
+		}
+		if isMVIndexPath(ds.possibleAccessPaths[idx]) {
+			mvIndexPathCnt++
+		}
+		candidateAccessPaths = append(candidateAccessPaths, ds.possibleAccessPaths[idx])
+	}
+	if mvIndexPathCnt == 0 {
+		return nil
+	}
+
 	for current, filter := range indexMergeConds {
 		// DNF path.
 		sf, ok := filter.(*expression.ScalarFunction)
@@ -913,27 +935,6 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			continue
 		}
 		dnfFilters := expression.SplitDNFItems(sf)
-
-		var mvIndexPathCnt int
-		candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
-		for idx := 0; idx < normalPathCnt; idx++ {
-			if ds.possibleAccessPaths[idx].Index != nil && ds.possibleAccessPaths[idx].Index.Global {
-				continue
-			}
-			if (ds.possibleAccessPaths[idx].IsTablePath() &&
-				!ds.isInIndexMergeHints("primary")) ||
-				(!ds.possibleAccessPaths[idx].IsTablePath() &&
-					!ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L)) {
-				continue
-			}
-			if isMVIndexPath(ds.possibleAccessPaths[idx]) {
-				mvIndexPathCnt++
-			}
-			candidateAccessPaths = append(candidateAccessPaths, ds.possibleAccessPaths[idx])
-		}
-		if mvIndexPathCnt == 0 {
-			return nil
-		}
 
 		unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
 			ds,
@@ -961,7 +962,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		}
 
 		// Keep the same behavior with previous implementation, we only handle the "composed" case here.
-		if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt <= 1 && normalIndexPartialPathCnt == 0) {
+		if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt == 1 && normalIndexPartialPathCnt == 0) {
 			return nil
 		}
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, finishedIndexMergePath)

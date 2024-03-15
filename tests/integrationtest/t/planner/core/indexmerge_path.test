@@ -308,7 +308,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 ) and
 c = 10 and
 a = 20;
-explain format=brief select /*+ use_index_merge(t, mvi1, mvi1) */ * from t where
+explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  1 member of (j->'$.a') or
  2 member of (j->'$.d')
