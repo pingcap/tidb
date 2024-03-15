@@ -1046,7 +1046,7 @@ func (context *TiFlashScanContext) String() string {
 		"remote_regions:%d, "+
 		"stale_reads:%d, "+
 		"total_learner_read:%dms, "+
-		"region_balance_info: %s}",
+		"region_balance_info:%s}",
 		context.totalDmfileDataScannedRows,
 		context.totalDmfileDataSkippedRows,
 		context.totalDmfileMvccScannedRows,
