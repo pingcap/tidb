@@ -155,3 +155,120 @@ show create table test.issue50972_2;
 show create table test.issue50972_3;
 drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
 
+<<<<<<< HEAD
+=======
+# TestCreateKeyPartitonWithEmptyColumn
+drop table if exists k1, k2, k3, k4;
+CREATE TABLE k1 (
+    id INT NOT NULL PRIMARY KEY,
+    name VARCHAR(20))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k1;
+CREATE TABLE k2 (
+    id INT NOT NULL,
+    name VARCHAR(20),
+    UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k2;
+CREATE TABLE k3 (
+    id INT NOT NULL PRIMARY KEY NONCLUSTERED,
+    name VARCHAR(20),
+    UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k3;
+--error 1105
+CREATE TABLE k4(
+    id INT NOT NULL,
+    id1 int,
+    name VARCHAR(20),
+    UNIQUE KEY (id, id1))
+PARTITION BY KEY()
+PARTITIONS 2;
+
+# TestPartitionInNonUTF8Charset
+set character_set_connection=gbk;
+drop table if exists t;
+create table t (col1 varbinary(16) unique key) partition by list columns(col1)
+    (partition p0 values in ('你好', '我好'), partition p1 values in ('大家好'), partition p2 DEFAULT);
+show create table t;
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+select hex(col1) from t partition(p1);
+select hex(col1) from t partition(p2);
+drop table t;
+create table t (col1 varbinary(16) unique key) partition by range columns(col1)
+    (partition p0 values less than ('你好'), partition p1 values less than ('我好'), partition p2 values less than MAXVALUE);
+show create table t;
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+select hex(col1) from t partition(p1);
+select hex(col1) from t partition(p2);
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci unique key) partition by list columns(col1)
+    (partition p0 values in ('你好', '我好'), partition p1 values in ('大家好'), partition p2 DEFAULT);
+show create table t;
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+select hex(col1) from t partition(p1);
+select hex(col1) from t partition(p2);
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci unique key) partition by range columns(col1)
+    (partition p0 values less than ('你好'), partition p1 values less than ('我好'), partition p2 values less than MAXVALUE);
+show create table t;
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+select hex(col1) from t partition(p1);
+select hex(col1) from t partition(p2);
+drop table t;
+create table t (col1 varbinary(16), col2 varbinary(16), unique key (col1, col2)) partition by list columns(col1, col2)
+    (partition p0 values in (('你好','你好'), ('我好','我好')), partition p1 values in (('大家好','大家好')), partition p2 DEFAULT);
+show create table t;
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+select hex(col1),hex(col2) from t partition(p1);
+select hex(col1),hex(col2) from t partition(p2);
+drop table t;
+create table t (col1 varbinary(16), col2 varbinary(16), unique key (col1, col2)) partition by range columns(col1, col2)
+    (partition p0 values less than ('你好','你好'), partition p1 values less than ('我好','我好'), partition p2 values less than (MAXVALUE, MAXVALUE));
+show create table t;
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+select hex(col1),hex(col2) from t partition(p1);
+select hex(col1),hex(col2) from t partition(p2);
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci, col2 varchar(16) collate gbk_chinese_ci, unique key (col1, col2)) partition by list columns(col1, col2)
+    (partition p0 values in (('你好','你好'), ('我好','我好')), partition p1 values in (('大家好','大家好')), partition p2 DEFAULT);
+show create table t;
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+select hex(col1),hex(col2) from t partition(p1);
+select hex(col1),hex(col2) from t partition(p2);
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci, col2 varchar(16) collate gbk_chinese_ci, unique key (col1, col2)) partition by range columns(col1, col2)
+    (partition p0 values less than ('你好','你好'), partition p1 values less than ('我好','我好'), partition p2 values less than (MAXVALUE, MAXVALUE) );
+show create table t;
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+select hex(col1),hex(col2) from t partition(p1);
+select hex(col1),hex(col2) from t partition(p2);
+drop table t;
+set character_set_connection=DEFAULT;
+
+# TestNULLInRangeParitionLessThanExpression
+-- error 1566
+create table a (col1 int, col2 int, unique key (col1, col2)) partition by range  columns (col1, col2) (partition p0 values less than (NULL, 1 ));
+
+# TestExchangePartitionAfterDropForeignKey
+drop table if exists parent, child, child_with_partition;
+create table parent (id int unique);
+create table child (id int, parent_id int, foreign key (parent_id) references parent(id));
+create table child_with_partition(id int, parent_id int) partition by range(id) (partition p1 values less than (100));
+-- error 1740
+alter table child_with_partition exchange partition p1 with table child;
+alter table child drop foreign key fk_1;
+alter table child drop key fk_1;
+alter table child_with_partition exchange partition p1 with table child;
+>>>>>>> 323858c8055 (ddl: fix the wrong logic to assert whether table has foreign key (#51808))
