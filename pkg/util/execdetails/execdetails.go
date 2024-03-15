@@ -1028,13 +1028,13 @@ func (context *TiFlashScanContext) String() string {
 		"total_rs_index_check:%dms, "+
 		"total_read:%dms"+
 		"%s}, "+ // Disagg cache info of DMFile
-		"delta_rows: %d, "+
-		"delta_bytes: %d, "+
-		"mvcc_input_rows: %d, "+
-		"mvcc_input_bytes: %d, "+
-		"mvcc_output_rows: %d, "+
-		"lm_skip_rows: %d, "+
-		"segment_num: %d, "+
+		"delta_rows:%d, "+
+		"delta_bytes:%d, "+
+		"mvcc_input_rows:%d, "+
+		"mvcc_input_bytes:%d, "+
+		"mvcc_output_rows:%d, "+
+		"lm_skip_rows:%d, "+
+		"segments:%d, "+
 		"create_snapshot_time: %dms, "+
 		"build_bitmap_time: %dms, "+
 		"build_inputstream_time: %dms, "+
