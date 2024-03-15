@@ -40,7 +40,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, domains json null, images json null, KEY `a_domains_b` (a, (cast(`domains` as char(253) array)), b))")
-	sql := "SELECT * FROM t WHERE   15975127 member of (domains)   AND 15975128 member of (domains) AND a = 1 AND b = 2"
+	sql := "SELECT * FROM t WHERE   '15975127' member of (domains)   AND '15975128' member of (domains) AND a = 1 AND b = 2"
 
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
@@ -72,7 +72,12 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	cnfs := ds.GetAllConds()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	idxCols, ok := core.PrepareCols4MVIndex(tbl.Meta(), tbl.Meta().FindIndexByName("a_domains_b"), ds.TblCols)
+	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
+		tbl.Meta(),
+		tbl.Meta().FindIndexByName("a_domains_b"),
+		ds.TblCols,
+		true,
+	)
 	require.True(t, ok)
 	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
 
@@ -336,7 +341,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
 		check(false, `select * from ti where ? member of (domains) OR ? member of (signatures) OR json_overlaps(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
 		check(false, `select * from ti where ? member of (domains) OR ? member of (signatures) OR ? member of (f_profile_ids) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("%v", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
 		check(false, `select * from ti WHERE ? member of (domains) OR ? member of (signatures) OR ? member of (long_link) OR json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`"[0,1]"`, `"[0,1,2]"`, `"[0]"`))
-		check(false, `select * from ti WHERE ? member of (domains) AND ? member of (signatures) AND json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'["0","1","2"]'`, `'["0"]'`, `'["1","2"]'`))
+		check(false, `select * from ti WHERE ? member of (domains) AND ? member of (signatures) AND json_contains(f_profile_ids, ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), randV(`'[0,1,2]'`, `'[0]'`, `'[1,2]'`))
 	}
 }
 

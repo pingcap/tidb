@@ -169,7 +169,7 @@ func recordUsedItemStatsStatus(sctx context.PlanContext, stats any, tableID, id 
 	}
 
 	// no need to record
-	if !missing && loadStatus.IsFullLoad() {
+	if !missing && loadStatus != nil && loadStatus.IsFullLoad() {
 		return
 	}
 
@@ -198,7 +198,14 @@ func recordUsedItemStatsStatus(sctx context.PlanContext, stats any, tableID, id 
 	}
 
 	if missing {
-		recordForColOrIdx[id] = "missing"
+		// Figure out whether it's really not existing.
+		if recordForTbl.ColAndIdxStatus != nil && recordForTbl.ColAndIdxStatus.(*statistics.ColAndIdxExistenceMap).HasAnalyzed(id, isIndex) {
+			// If this item has been analyzed but there's no its stats, we should mark it as uninitialized.
+			recordForColOrIdx[id] = statistics.StatsLoadedStatus{}.StatusToString()
+		} else {
+			// Otherwise, we mark it as missing.
+			recordForColOrIdx[id] = "missing"
+		}
 		return
 	}
 	recordForColOrIdx[id] = loadStatus.StatusToString()

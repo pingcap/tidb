@@ -847,10 +847,10 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
-	if err = hint.CheckBindingFromHistoryBindable(originNode, bindableStmt.PlanHint); err != nil {
-		return nil, err
+	if complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint); !complete {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(reason))
 	}
-	bindSQL := bindinfo.GenerateBindingSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
+	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
@@ -1439,30 +1439,29 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p.setSchemaAndNames(buildShowSlowSchema())
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
-		return &ReloadExprPushdownBlacklist{}, nil
+		ret = &ReloadExprPushdownBlacklist{}
 	case ast.AdminReloadOptRuleBlacklist:
-		return &ReloadOptRuleBlacklist{}, nil
+		ret = &ReloadOptRuleBlacklist{}
 	case ast.AdminPluginEnable:
-		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
+		ret = &AdminPlugins{Action: Enable, Plugins: as.Plugins}
 	case ast.AdminPluginDisable:
-		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
+		ret = &AdminPlugins{Action: Disable, Plugins: as.Plugins}
 	case ast.AdminFlushBindings:
-		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpFlushBindings}
 	case ast.AdminCaptureBindings:
-		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpCaptureBindings}
 	case ast.AdminEvolveBindings:
-		var err error
 		// The 'baseline evolution' only work in the test environment before the feature is GA.
 		if !config.CheckTableBeforeDrop {
-			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+			return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 		}
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
+		ret = &SQLBindPlan{SQLBindOp: OpEvolveBindings}
 	case ast.AdminReloadBindings:
-		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpReloadBindings}
 	case ast.AdminReloadStatistics:
-		return &Simple{Statement: as}, nil
+		ret = &Simple{Statement: as}
 	case ast.AdminFlushPlanCache:
-		return &Simple{Statement: as}, nil
+		ret = &Simple{Statement: as}
 	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		ret = &Simple{Statement: as}
 	case ast.AdminShowBDRRole:
@@ -1504,10 +1503,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		Ranges:           ranger.FullRange(),
 		physicalTableID:  physicalID,
 		isPartition:      isPartition,
-		tblColHists:      &(statistics.PseudoTable(tblInfo, false)).HistColl,
+		tblColHists:      &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
-	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo, false)).HistColl})
+	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo, false, false)).HistColl})
 	if hasCommonCols {
 		for _, c := range commonInfos {
 			is.Columns = append(is.Columns, c.ColumnInfo)
@@ -1523,7 +1522,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		DBName:          dbName,
 		physicalTableID: physicalID,
 		isPartition:     isPartition,
-		tblColHists:     &(statistics.PseudoTable(tblInfo, false)).HistColl,
+		tblColHists:     &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(idxColSchema)
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)

@@ -162,7 +162,7 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
-func (isd *Data) delete(item tableItem) {
+func (isd *Data) remove(item tableItem) {
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
@@ -212,7 +212,14 @@ func compareByName(a, b tableItem) bool {
 		return false
 	}
 
-	return a.tableID < b.tableID
+	if a.tableID < b.tableID {
+		return true
+	}
+	if a.tableID > b.tableID {
+		return false
+	}
+
+	return a.schemaVersion < b.schemaVersion
 }
 
 func compareSchemaItem(a, b schemaItem) bool {
@@ -278,6 +285,10 @@ func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, mat
 		return true
 	})
 	return target, ok
+}
+
+func (is *infoschemaV2) base() *infoSchema {
+	return is.infoSchema
 }
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
@@ -595,6 +606,20 @@ func applyRecoverSchema(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int
 	return b.applyRecoverSchema(m, diff)
 }
 
+func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	if di, ok := b.infoschemaV2.SchemaByID(diff.SchemaID); ok {
+		return nil, ErrDatabaseExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", di.ID),
+		)
+	}
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b.infoschemaV2.addDB(diff.Version, di)
+	return applyCreateTables(b, m, diff)
+}
+
 func applyModifySchemaCharsetAndCollate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
 	if b.enableV2 {
 		return b.applyModifySchemaCharsetAndCollateV2(m, diff)
@@ -609,39 +634,23 @@ func applyModifySchemaDefaultPlacement(b *Builder, m *meta.Meta, diff *model.Sch
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
-func applyDropTableOrPartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
 	if b.enableV2 {
-		// return b.applyDropTableOrPartitionV2(m, diff)
+		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
 	}
-	return b.applyDropTableOrPartition(m, diff)
-}
-
-func applyRecoverTable(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyRecoverTableV2(m, diff)
-	}
-	return b.applyRecoverTable(m, diff)
+	return b.applyDropTable(diff, dbInfo, tableID, affected)
 }
 
 func applyCreateTables(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyCreateTablesV2(m, diff)
-	}
 	return b.applyCreateTables(m, diff)
 }
 
-func applyReorganizePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func updateInfoSchemaBundles(b *Builder) {
 	if b.enableV2 {
-		return b.applyReorganizePartitionV2(m, diff)
+		b.updateInfoSchemaBundlesV2(&b.infoschemaV2)
+	} else {
+		b.updateInfoSchemaBundles(b.infoSchema)
 	}
-	return b.applyReorganizePartition(m, diff)
-}
-
-func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyExchangeTablePartitionV2(m, diff)
-	}
-	return b.applyExchangeTablePartition(m, diff)
 }
 
 // TODO: more UT to check the correctness.
@@ -656,7 +665,7 @@ func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	oldTableID, newTableID := b.getTableIDs(diff)
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 
-	tblIDs, allocs, err := b.dropTableForUpdate(newTableID, oldTableID, oldDBInfo, diff)
+	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, oldDBInfo, diff)
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +673,7 @@ func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
+		tblIDs, err = applyCreateTable(b, m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -692,38 +701,109 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 	return tableIDs
 }
 
-func (b *Builder) applyRecoverSchemaV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
+func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
+	// Remove the table in temporaryTables
+	if b.infoSchemaMisc.temporaryTableIDs != nil {
+		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
+	}
+
+	table, ok := b.infoschemaV2.TableByID(tableID)
+
+	if !ok {
+		return nil
+	}
+
+	b.infoData.remove(tableItem{
+		dbName:        dbInfo.Name.L,
+		dbID:          dbInfo.ID,
+		tableName:     table.Meta().Name.L,
+		tableID:       table.Meta().ID,
+		schemaVersion: diff.Version,
+	})
+
+	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	b.deleteReferredForeignKeys(dbInfo, tableID)
+	return affected
 }
 
 func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
-	panic("TODO")
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.Charset = di.Charset
+	newDBInfo.Collate = di.Collate
+	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
 }
 
 func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.SchemaDiff) error {
-	panic("TODO")
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
 }
 
-func (b *Builder) applyTruncateTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
+func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
+	if b.deltaUpdate {
+		b.completeUpdateTablesV2(is)
+		for tblID := range b.updateTables {
+			b.updateTableBundles(is, tblID)
+		}
+		return
+	}
+
+	// do full update bundles
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	is.ruleBundleMap = make(map[int64]*placement.Bundle)
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			b.updateTableBundles(is, tbl.Meta().ID)
+		}
+	}
 }
 
-func (b *Builder) applyDropTableOrPartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
+func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
+	if len(b.updatePolicies) == 0 && len(b.updatePartitions) == 0 {
+		return
+	}
 
-func (b *Builder) applyRecoverTableV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			tblInfo := tbl.Meta()
+			if tblInfo.PlacementPolicyRef != nil {
+				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
+					b.markTableBundleShouldUpdate(tblInfo.ID)
+				}
+			}
 
-func (b *Builder) applyCreateTablesV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
-func (b *Builder) applyReorganizePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
-}
-
-func (b *Builder) applyExchangeTablePartitionV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	panic("TODO")
+			if tblInfo.Partition != nil {
+				for _, par := range tblInfo.Partition.Definitions {
+					if _, ok := b.updatePartitions[par.ID]; ok {
+						b.markTableBundleShouldUpdate(tblInfo.ID)
+					}
+				}
+			}
+		}
+	}
 }

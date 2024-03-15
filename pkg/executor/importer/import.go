@@ -1050,7 +1050,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileNameKey = strings.Trim(u.Path, "/")
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
+	_, err2 = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), "")
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			"Glob pattern error: "+err2.Error())
@@ -1063,7 +1063,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	s := e.dataStore
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
-	idx := strings.IndexByte(fileNameKey, '*')
+	// check glob pattern is present in filename.
+	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
@@ -1098,7 +1099,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// when import from server disk, all entries in parent directory should have READ
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
-		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
+		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
@@ -1275,13 +1276,13 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 }
 
 // IsLocalSort returns true if we sort data on local disk.
-func (e *LoadDataController) IsLocalSort() bool {
-	return e.Plan.CloudStorageURI == ""
+func (p *Plan) IsLocalSort() bool {
+	return p.CloudStorageURI == ""
 }
 
 // IsGlobalSort returns true if we sort data on global storage.
-func (e *LoadDataController) IsGlobalSort() bool {
-	return !e.IsLocalSort()
+func (p *Plan) IsGlobalSort() bool {
+	return !p.IsLocalSort()
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.

@@ -69,7 +69,7 @@ type statementBuildInfo struct {
 }
 
 func (j job) String(redacted string) string {
-	return fmt.Sprintf("job id: %d, estimated size: %d, sql: %s", j.jobID, j.jobSize, redact.Redact(redacted, j.sql))
+	return fmt.Sprintf("job id: %d, estimated size: %d, sql: %s", j.jobID, j.jobSize, redact.String(redacted, j.sql))
 }
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
@@ -120,7 +120,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	if stmt.DryRun == ast.DryRunSplitDml {
 		return buildDryRunResults(stmt.DryRun, splitStmts, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactNew)
+	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
 }
 
 // we require:
@@ -280,7 +280,7 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 			failedJobs := make([]string, 0)
 			for _, job := range jobs {
 				if job.err != nil {
-					failedJobs = append(failedJobs, fmt.Sprintf("job:%s, error: %s", job.String(se.GetSessionVars().EnableRedactNew), job.err.Error()))
+					failedJobs = append(failedJobs, fmt.Sprintf("job:%s, error: %s", job.String(se.GetSessionVars().EnableRedactLog), job.err.Error()))
 				}
 			}
 			if len(failedJobs) == 0 {
@@ -324,7 +324,7 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 			return nil, errors.Annotate(jobs[i].err, "Early return: error occurred in the first job. All jobs are canceled")
 		}
 		if jobs[i].err != nil && !se.GetSessionVars().NonTransactionalIgnoreError {
-			return nil, ErrNonTransactionalJobFailure.GenWithStackByArgs(jobs[i].jobID, len(jobs), jobs[i].start.String(), jobs[i].end.String(), jobs[i].String(se.GetSessionVars().EnableRedactNew), jobs[i].err.Error())
+			return nil, ErrNonTransactionalJobFailure.GenWithStackByArgs(jobs[i].jobID, len(jobs), jobs[i].start.String(), jobs[i].end.String(), jobs[i].String(se.GetSessionVars().EnableRedactLog), jobs[i].err.Error())
 		}
 	}
 	return splitStmts, nil
@@ -410,8 +410,8 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 
 	job.sql = dmlSQL
 	logutil.Logger(ctx).Info("start a Non-transactional DML",
-		zap.String("job", job.String(se.GetSessionVars().EnableRedactNew)), zap.Int("totalJobCount", totalJobCount))
-	dmlSQLInLog := parser.Normalize(dmlSQL, se.GetSessionVars().EnableRedactNew)
+		zap.String("job", job.String(se.GetSessionVars().EnableRedactLog)), zap.Int("totalJobCount", totalJobCount))
+	dmlSQLInLog := parser.Normalize(dmlSQL, se.GetSessionVars().EnableRedactLog)
 
 	options.stmt.DMLStmt.SetText(nil, fmt.Sprintf("/* job %v/%v */ %s", job.jobID, totalJobCount, dmlSQL))
 	rs, err := se.ExecuteStmt(ctx, options.stmt.DMLStmt)

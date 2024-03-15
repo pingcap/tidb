@@ -155,19 +155,6 @@ const (
 		WHERE key_data = "" and row_data = "";
 	`
 
-	selectConflictKeysCountError = `
-		SELECT COUNT(*)
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ?;
-	`
-
-	selectConflictKeysError = `
-		SELECT raw_key, raw_row
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ?
-		LIMIT 1;
-	`
-
 	insertIntoDupRecord = `
 		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
@@ -767,64 +754,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	})
 
 	return errors.Trace(g.Wait())
-}
-
-// ResolveConflictKeysError query all conflicting rows (handle and their
-// values) from the current error report and return error
-// if the number of the conflicting rows is larger than 0.
-func (em *ErrorManager) ResolveConflictKeysError(
-	ctx context.Context,
-	tableName string,
-) error {
-	if em.db == nil {
-		return nil
-	}
-
-	_, gCtx := errgroup.WithContext(ctx)
-
-	kvRows, err := em.db.QueryContext(
-		gCtx, common.SprintfWithIdentifiers(selectConflictKeysCountError, em.schema),
-		tableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer kvRows.Close()
-	var kvRowsCount int64
-	for kvRows.Next() {
-		if err := kvRows.Scan(&kvRowsCount); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if err := kvRows.Err(); err != nil {
-		return errors.Trace(err)
-	}
-
-	em.logger.Debug("got kv rows count from table",
-		zap.Int64("kv rows count", kvRowsCount))
-	if kvRowsCount > 0 {
-		rows, err := em.db.QueryContext(
-			gCtx, common.SprintfWithIdentifiers(selectConflictKeysError, em.schema),
-			tableName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer rows.Close()
-
-		var rawKey, rawRow []byte
-		for rows.Next() {
-			if err := rows.Scan(&rawKey, &rawRow); err != nil {
-				return errors.Trace(err)
-			}
-			em.logger.Debug("got raw_key, raw_row from table",
-				logutil.Key("raw_key", rawKey),
-				zap.Binary("raw_row", rawRow))
-		}
-		if err := rows.Err(); err != nil {
-			return errors.Trace(err)
-		}
-		return common.ErrFoundDuplicateKeys.FastGenByArgs(rawKey, rawRow)
-	}
-	return nil
 }
 
 // RecordDuplicateCount reduce the counter of "duplicate entry" errors.

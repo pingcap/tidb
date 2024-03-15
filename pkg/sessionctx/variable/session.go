@@ -1067,6 +1067,9 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
+	// LoadBindingTimeout is the timeout for loading the bind info.
+	LoadBindingTimeout uint64
+
 	// TiKVClientReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
 	TiKVClientReadTimeout uint64
@@ -1202,10 +1205,8 @@ type SessionVars struct {
 	// EnableParallelApply indicates that thether to use parallel apply.
 	EnableParallelApply bool
 
-	// EnableRedactLog indicates that whether redact log.
-	EnableRedactLog bool
-	// EnableRedactNew indicates that whether redact log. Possible values are 'OFF', 'ON', 'MARKER'.
-	EnableRedactNew string
+	// EnableRedactLog indicates that whether redact log. Possible values are 'OFF', 'ON', 'MARKER'.
+	EnableRedactLog string
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
@@ -1579,6 +1580,10 @@ type SessionVars struct {
 	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
 	// overwritten if this value is not 0.
 	TxnEntrySizeLimit uint64
+
+	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result
+	// of division operations performed with the / operator.
+	DivPrecisionIncrement int
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2619,6 +2624,11 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
 	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
 	return s.prevStmtDigest
+}
+
+// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
+func (s *SessionVars) GetDivPrecisionIncrement() int {
+	return s.DivPrecisionIncrement
 }
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.

@@ -1186,13 +1186,11 @@ func (importer *FileImporter) downloadRawKVSSTV2(
 }
 
 func (importer *FileImporter) ingest(
-	c context.Context,
+	ctx context.Context,
 	files []*backuppb.File,
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
-	ctx, cancel := context.WithTimeout(c, gRPCTimeOut)
-	defer cancel()
 	for {
 		ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		if errIngest != nil {

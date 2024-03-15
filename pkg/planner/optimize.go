@@ -280,7 +280,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
-			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints

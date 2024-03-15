@@ -48,6 +48,7 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/metricsutil",
         "//pkg/util/printer",
+        "//pkg/util/redact",
         "//pkg/util/sem",
         "//pkg/util/signal",
         "//pkg/util/stmtsummary/v2:stmtsummary",
