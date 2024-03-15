@@ -82,7 +82,7 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 		t.receivedRowNum += chk.NumRows()
 		if uint64(t.chkHeap.rowChunks.Len()) < t.chkHeap.totalLimit {
 			if !t.chkHeap.isInitialized {
-				t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.greaterRow)
+				t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Count, 0, t.topn.greaterRow)
 			}
 			t.chkHeap.rowChunks.Add(chk)
 		} else {

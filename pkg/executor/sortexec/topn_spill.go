@@ -16,7 +16,6 @@ package sortexec
 
 import (
 	"fmt"
-	"runtime/debug"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -225,7 +224,7 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	}
 
 	if inDisk.NumChunks() > 0 {
-		log.Info(fmt.Sprintf("spilled num %d, stack: %s", spilledNum, debug.Stack()))
+		log.Info(fmt.Sprintf("spilled num %d, rowPtrNum: %d", spilledNum, rowPtrNum))
 		t.addInDisk(inDisk)
 	}
 

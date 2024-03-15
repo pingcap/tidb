@@ -164,10 +164,10 @@ func TestTopNSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(ctx, topNCase, schema)
 	exe := buildTopNExec(topNCase, dataSource, offset, count)
-	// for i := 0; i < 5; i++ {
-	// 	topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
-	// 	topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
-	// }
+	for i := 0; i < 5; i++ {
+		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
+		topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
+	}
 
 	// TODO add slow random fail point for topn failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
@@ -175,7 +175,7 @@ func TestTopNSpillDisk(t *testing.T) {
 	count = uint64(totalRowNum - totalRowNum/10)
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
 	for i := 0; i < 5; i++ {
-		// topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
+		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 }

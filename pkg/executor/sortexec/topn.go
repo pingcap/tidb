@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -50,6 +51,11 @@ type TopNExec struct {
 	spillHelper *topNSpillHelper
 	spillAction *topNSpillAction
 
+	// Normally, heap will be stored in memory after it has been built.
+	// However, other executors may trigger topn spill after the heap is built
+	// and inMemoryThenSpillFlag will be set to true at this time.
+	inMemoryThenSpillFlag bool
+
 	// Topn executor has two stage:
 	//  1. Building heap, in this stage all received rows will be inserted into heap.
 	//  2. Updating heap, in this stage only rows that is smaller than the heap top could be inserted and we will drop the heap top.
@@ -71,6 +77,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 	e.finishCh = make(chan struct{}, 1)
 	e.resultChannel = make(chan rowWithError, e.MaxChunkSize())
+	e.inMemoryThenSpillFlag = false
 	e.isInStage1ForTest = true
 
 	if variable.EnableTmpStorageOnOOM.Load() {
@@ -310,10 +317,14 @@ func (e *TopNExec) spillTopNExecHeap() error {
 }
 
 func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
+	// idx need to be set to 0 as we need to spill all data
+	e.chkHeap.idx = 0
 	err := e.spillTopNExecHeap()
 	if err != nil {
 		return err
 	}
+
+	log.Info("xzxdebug --------")
 
 	e.chunkChannel = make(chan *chunk.Chunk, len(e.spillHelper.workers))
 
@@ -391,6 +402,8 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 	if inDiskNum == 1 {
 		inDisk := e.spillHelper.sortedRowsInDisk[0]
 		chunkNum := inDisk.NumChunks()
+		skippedRowNum := uint64(0)
+		offset := e.Limit.Offset
 		for i := 0; i < chunkNum; i++ {
 			chk, err := inDisk.GetChunk(i)
 			if err != nil {
@@ -401,6 +414,10 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 
 			rowNum := chk.NumRows()
 			for j := 0; j < rowNum; j++ {
+				if !e.inMemoryThenSpillFlag && skippedRowNum < offset {
+					skippedRowNum++
+					continue
+				}
 				select {
 				case <-e.finishCh:
 					return nil
@@ -415,8 +432,8 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 		e.resultChannel,
 		e.finishCh,
 		e.lessRow,
-		int64(e.Limit.Offset+e.Limit.Count),
 		int64(e.Limit.Offset),
+		int64(e.Limit.Offset+e.Limit.Count),
 	)
 }
 
@@ -430,6 +447,8 @@ func (e *TopNExec) generateTopNResults() {
 		if err != nil {
 			e.resultChannel <- rowWithError{err: err}
 		}
+
+		e.inMemoryThenSpillFlag = true
 	}
 
 	e.generateTopNResultsWithSpill()

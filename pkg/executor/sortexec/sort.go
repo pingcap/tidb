@@ -328,8 +328,9 @@ func generateResultWithMulWayMerge(
 	resultChannel chan<- rowWithError,
 	finishCh <-chan struct{},
 	lessRow func(chunk.Row, chunk.Row) int,
-	limit int64,
-	outputRowNum int64) error {
+	offset int64,
+	limit int64) error {
+	outputRowNum := int64(0)
 	inDiskNum := len(sortedRowsInDisk)
 	multiWayMerge := &multiWayMergeImpl{
 		lessRowFunction: lessRow,
@@ -362,12 +363,15 @@ func generateResultWithMulWayMerge(
 		}
 
 		elem := multiWayMerge.elements[0]
-		select {
-		case <-finishCh:
-			return nil
-		case resultChannel <- rowWithError{row: elem.row}:
-			outputRowNum++
+
+		if outputRowNum >= offset {
+			select {
+			case <-finishCh:
+				return nil
+			case resultChannel <- rowWithError{row: elem.row}:
+			}
 		}
+		outputRowNum++
 
 		partitionID := elem.partitionID
 		newRow := cursors[partitionID].next()
