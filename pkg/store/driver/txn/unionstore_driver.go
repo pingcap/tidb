@@ -164,7 +164,8 @@ func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 }
 
 func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	return m.MemBuffer.BatchGet(ctx, keys)
+	data, err := m.MemBuffer.BatchGet(ctx, keys)
+	return data, derr.ToTiDBErr(err)
 }
 
 type tikvGetter struct {
