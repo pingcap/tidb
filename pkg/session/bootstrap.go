@@ -1314,19 +1314,19 @@ func checkDistTask(s sessiontypes.Session) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY variable_value from mysql.global_variables where variable_name = %?;", variable.TiDBEnableDistTask)
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
+		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
 	}
 	defer terror.Call(rs.Close)
 	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
+		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
 	}
 	if req.NumRows() == 0 {
 		// Not set yet.
 		return
 	} else if req.GetRow(0).GetString(0) == variable.On {
-		logutil.BgLogger().Fatal("[upgrade] check dist task failed, tidb_enable_dist_task is enabled", zap.Error(err))
+		logutil.BgLogger().Fatal("check dist task failed, tidb_enable_dist_task is enabled", zap.Error(err))
 	}
 
 	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
@@ -1338,16 +1338,16 @@ func checkDistTask(s sessiontypes.Session) {
 		proto.TaskStateReverted,
 	)
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] check dist task failed, reading tidb_global_task failed", zap.Error(err))
+		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
 	}
 	defer terror.Call(rs2.Close)
 	req = rs2.NewChunk(nil)
 	err = rs2.Next(ctx, req)
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] check dist task failed, reading tidb_global_task failed", zap.Error(err))
+		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
 	}
 	if req.NumRows() > 0 {
-		logutil.BgLogger().Fatal("[upgrade] check dist task failed, some distributed tasks is still running", zap.Error(err))
+		logutil.BgLogger().Fatal("check dist task failed, some distributed tasks is still running", zap.Error(err))
 	}
 }
 
