@@ -145,7 +145,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 		if txn, _ := e.Ctx().Txn(false); txn != nil {
-			if err := txn.GetMemBuffer().MayFlush(); err != nil {
+			if err := txn.MayFlush(); err != nil {
 				return err
 			}
 		}
@@ -228,7 +228,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 		}
 		chk = exec.TryNewCacheChunk(e.Children(0))
 		if txn, _ := e.Ctx().Txn(false); txn != nil {
-			if err := txn.GetMemBuffer().MayFlush(); err != nil {
+			if err := txn.MayFlush(); err != nil {
 				return err
 			}
 		}

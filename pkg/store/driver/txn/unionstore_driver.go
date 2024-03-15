@@ -148,15 +148,6 @@ func (m *memBuffer) SnapshotGetter() kv.Getter {
 	return newKVGetter(m.MemBuffer.SnapshotGetter())
 }
 
-// MayFlush implements kv.MemBuffer.MayFlush interface.
-func (m *memBuffer) MayFlush() error {
-	if !m.isPipelinedDML {
-		return nil
-	}
-	_, err := m.MemBuffer.Flush(false)
-	return err
-}
-
 // GetLocal implements kv.MemBuffer interface
 func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 	data, err := m.MemBuffer.GetLocal(ctx, key)

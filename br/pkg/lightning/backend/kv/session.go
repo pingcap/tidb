@@ -180,11 +180,6 @@ func (*MemBuf) Staging() kv.StagingHandle {
 // If the changes are not published by `Release`, they will be discarded.
 func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
-// MayFlush implements the kv.MemBuffer interface.
-func (*MemBuf) MayFlush() error {
-	return nil
-}
-
 // GetLocal implements the kv.MemBuffer interface.
 func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 	return mb.Get(ctx, key)
@@ -280,6 +275,11 @@ func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
 // IsPipelined implements the kv.Transaction interface.
 func (*transaction) IsPipelined() bool {
 	return false
+}
+
+// MayFlush implements the kv.Transaction interface.
+func (*transaction) MayFlush() error {
+	return nil
 }
 
 type planCtxImpl struct {

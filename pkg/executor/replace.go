@@ -188,7 +188,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		}
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))
-	return txn.GetMemBuffer().MayFlush()
+	return txn.MayFlush()
 }
 
 // Next implements the Executor Next interface.

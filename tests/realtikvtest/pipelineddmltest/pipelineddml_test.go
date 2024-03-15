@@ -687,3 +687,35 @@ func TestInsertIgnoreOnDuplicateKeyUpdate(t *testing.T) {
 	// if the statement execute successful, the following check should pass.
 	// tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("0 5", "1 1"))
 }
+
+func TestConflictError(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(128)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(128)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, _t1")
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("create table _t1(a int primary key, b int)")
+	var insert strings.Builder
+	insert.WriteString("insert into t1 values")
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			insert.WriteString(",")
+		}
+		insert.WriteString(fmt.Sprintf("(%d, %d)", i, i))
+	}
+	tk.MustExec(insert.String())
+	tk.MustExec("set session tidb_dml_type = bulk")
+	tk.MustExec("insert into _t1 select * from t1")
+	tk.MustExec("set session tidb_max_chunk_size = 32")
+	err := tk.ExecToErr("insert into _t1 select * from t1 order by rand()")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "Duplicate entry"), err.Error())
+}

@@ -189,9 +189,6 @@ type MemBuffer interface {
 	// RemoveFromBuffer removes the entry from the buffer. It's used for testing.
 	RemoveFromBuffer(Key)
 
-	// MayFlush will be called in pipelined txn
-	MayFlush() error
-
 	// GetLocal checks if the key exists in the buffer in local memory.
 	GetLocal(context.Context, []byte) ([]byte, error)
 
@@ -287,6 +284,8 @@ type Transaction interface {
 	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
 	// IsPipelined returns whether the transaction is used for pipelined DML.
 	IsPipelined() bool
+	// MayFlush flush the pipelined memdb if the keys or size exceeds threshold, no effect for standard DML.
+	MayFlush() error
 }
 
 // AssertionProto is an interface defined for the assertion protocol.
