@@ -331,6 +331,10 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	go func() {
 		defer close(schemaCh)
 		if err := reader.readSchemas(cctx, func(s *backuppb.Schema) {
+			if cfg.skipStats {
+				s.Stats = nil
+				s.StatsIndex = nil
+			}
 			select {
 			case <-cctx.Done():
 			case schemaCh <- s:
@@ -357,7 +361,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 					return
 				}
 				workers.ApplyOnErrorGroup(eg, func() error {
-					table, err := parseSchemaFile(s, !cfg.skipStats)
+					table, err := parseSchemaFile(s)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -449,7 +453,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	}
 }
 
-func parseSchemaFile(s *backuppb.Schema, loadStats bool) (*Table, error) {
+func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 	dbInfo := &model.DBInfo{}
 	if err := json.Unmarshal(s.Db, dbInfo); err != nil {
 		return nil, errors.Trace(err)
@@ -463,14 +467,14 @@ func parseSchemaFile(s *backuppb.Schema, loadStats bool) (*Table, error) {
 		}
 	}
 	var stats *util.JSONTable
-	if loadStats && s.Stats != nil {
+	if s.Stats != nil {
 		stats = &util.JSONTable{}
 		if err := json.Unmarshal(s.Stats, stats); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	var statsFileIndexes []*backuppb.StatsFileIndex
-	if loadStats && len(s.StatsIndex) > 0 {
+	if len(s.StatsIndex) > 0 {
 		statsFileIndexes = s.StatsIndex
 	}
 
