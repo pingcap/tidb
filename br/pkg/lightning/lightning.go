@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -343,6 +344,10 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	failpoint.Inject("setCheckpointName", func(val failpoint.Value) {
 		file := val.(string)
 		o.checkpointName = file
+	})
+	failpoint.Inject("removeCharset", func(val failpoint.Value) {
+		s := val.(string)
+		charset.RemoveCharset(s)
 	})
 
 	if o.dumpFileStorage != nil {

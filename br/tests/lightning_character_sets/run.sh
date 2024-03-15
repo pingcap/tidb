@@ -92,6 +92,11 @@ run_lightning --config "$CUR/greek.toml" -d "$CUR/greek" --backend tidb
 run_sql "SELECT count(*) FROM charsets.greek WHERE c = 'α';"
 check_contains 'count(*): 1'
 
+# test about unsupported charset in dump files, but downstream supports it
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/removeCharset=return("ascii")'
+run_sql 'DROP DATABASE IF EXISTS charsets;'
+run_lightning -d "$CUR/ascii" --backend tidb
+
 # latin1
 # wrong encoding will have wrong column name and data
 run_lightning --config "$CUR/binary.toml" -d "$CUR/latin1" 2>&1 | grep -q "unknown columns in header"

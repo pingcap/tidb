@@ -630,7 +630,8 @@ func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
 			zap.String("table", job.tblName),
 			zap.String("statement", sqlStr),
 			zap.Error(err))
-		job.stmts = []string{sqlStr}
+		useStmt := common.SprintfWithIdentifiers("USE %s", job.dbName)
+		job.stmts = []string{useStmt, sqlStr}
 	} else {
 		job.stmts = stmts
 	}
