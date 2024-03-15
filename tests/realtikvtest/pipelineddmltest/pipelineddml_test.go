@@ -674,3 +674,16 @@ func TestDuplicateKeyErrorMessage(t *testing.T) {
 	require.Error(t, err2)
 	require.Equal(t, err1.Error(), err2.Error())
 }
+
+func TestInsertIgnoreOnDuplicateKeyUpdate(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type = bulk")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, unique index u1(a, b), unique index u2(a))")
+	tk.MustExec("insert into t1 values(0, 0), (1, 1)")
+	tk.MustExecToErr("insert ignore into t1 values (0, 2) ,(1, 3) on duplicate key update b = 5, a = 0")
+	// if the statement execute successful, the following check should pass.
+	// tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("0 5", "1 1"))
+}

@@ -88,6 +88,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 {
+		if ignoreErr && txn.IsPipelined() {
+			return errors.New("cannot use pipelined mode with insert ignore and on duplicate update")
+		}
 		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
 			return err
