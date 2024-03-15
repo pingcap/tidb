@@ -847,10 +847,10 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
-	if err = hint.CheckBindingFromHistoryBindable(originNode, bindableStmt.PlanHint); err != nil {
-		return nil, err
+	if complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint); !complete {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(reason))
 	}
-	bindSQL := bindinfo.GenerateBindingSQL(context.TODO(), originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
+	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
@@ -1439,30 +1439,29 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p.setSchemaAndNames(buildShowSlowSchema())
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
-		return &ReloadExprPushdownBlacklist{}, nil
+		ret = &ReloadExprPushdownBlacklist{}
 	case ast.AdminReloadOptRuleBlacklist:
-		return &ReloadOptRuleBlacklist{}, nil
+		ret = &ReloadOptRuleBlacklist{}
 	case ast.AdminPluginEnable:
-		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
+		ret = &AdminPlugins{Action: Enable, Plugins: as.Plugins}
 	case ast.AdminPluginDisable:
-		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
+		ret = &AdminPlugins{Action: Disable, Plugins: as.Plugins}
 	case ast.AdminFlushBindings:
-		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpFlushBindings}
 	case ast.AdminCaptureBindings:
-		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpCaptureBindings}
 	case ast.AdminEvolveBindings:
-		var err error
 		// The 'baseline evolution' only work in the test environment before the feature is GA.
 		if !config.CheckTableBeforeDrop {
-			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+			return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 		}
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
+		ret = &SQLBindPlan{SQLBindOp: OpEvolveBindings}
 	case ast.AdminReloadBindings:
-		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpReloadBindings}
 	case ast.AdminReloadStatistics:
-		return &Simple{Statement: as}, nil
+		ret = &Simple{Statement: as}
 	case ast.AdminFlushPlanCache:
-		return &Simple{Statement: as}, nil
+		ret = &Simple{Statement: as}
 	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		ret = &Simple{Statement: as}
 	case ast.AdminShowBDRRole:
@@ -1481,7 +1480,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
 	tblInfo := tbl.Meta()
 	physicalID, isPartition := getPhysicalID(tbl)
-	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
+	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), dbName, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -1504,10 +1503,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		Ranges:           ranger.FullRange(),
 		physicalTableID:  physicalID,
 		isPartition:      isPartition,
-		tblColHists:      &(statistics.PseudoTable(tblInfo, false)).HistColl,
+		tblColHists:      &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
-	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo, false)).HistColl})
+	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo, false, false)).HistColl})
 	if hasCommonCols {
 		for _, c := range commonInfos {
 			is.Columns = append(is.Columns, c.ColumnInfo)
@@ -1523,7 +1522,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		DBName:          dbName,
 		physicalTableID: physicalID,
 		isPartition:     isPartition,
-		tblColHists:     &(statistics.PseudoTable(tblInfo, false)).HistColl,
+		tblColHists:     &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(idxColSchema)
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
@@ -1922,7 +1921,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 	if len(tblInfo.Indices) > 0 {
 		// Add indexed columns.
 		// Some indexed columns are generated columns so we also need to add the columns that make up those generated columns.
-		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx.GetExprCtx(), tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -3549,15 +3548,18 @@ func genAuthErrForGrantStmt(sctx PlanContext, dbName string) error {
 	return plannererrors.ErrDBaccessDenied.FastGenByArgs(u, h, dbName)
 }
 
-func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
+func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.Constant, error) {
 	var (
 		value types.Datum
 		err   error
 	)
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
-		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
+		value, err = table.EvalColDefaultExpr(b.ctx.GetExprCtx(), col.ToInfo(), col.DefaultExpr)
 	} else {
-		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
+		if err := table.CheckNoDefaultValueForInsert(b.ctx.GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
+			return nil, err
+		}
+		value, err = table.GetColDefaultValue(b.ctx.GetExprCtx(), col.ToInfo())
 	}
 	if err != nil {
 		return nil, err
@@ -3630,7 +3632,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, tn.Schema, tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -3845,7 +3847,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 			// See note in the end of the function. Only default for generated columns are OK.
 			return nil, nil
 		}
-		outExpr, err = b.getDefaultValue(refCol)
+		outExpr, err = b.getDefaultValueForInsert(refCol)
 	case *driver.ValueExpr:
 		outExpr = &expression.Constant{
 			Value:   x.Datum,
@@ -4122,7 +4124,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), model.NewCIStr(""), tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4222,7 +4224,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), model.NewCIStr(""), tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4333,7 +4335,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 		return nil, plannererrors.ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4426,7 +4428,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if !ok {
 		return d, errors.New("Expect constant values")
 	}
-	value, err := constant.Eval(b.ctx, chunk.Row{})
+	value, err := constant.Eval(b.ctx.GetExprCtx(), chunk.Row{})
 	if err != nil {
 		return d, err
 	}
@@ -4448,7 +4450,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	tblInfo := node.Table.TableInfo
 	handleColInfos := buildHandleColumnInfos(tblInfo)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -5212,8 +5214,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowStatsMeta:
-		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
+		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count", "Last_analyze_time"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDatetime}
 	case ast.ShowStatsExtended:
 		names = []string{"Db_name", "Table_name", "Stats_name", "Column_names", "Stats_type", "Stats_val", "Last_update_version"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}

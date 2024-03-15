@@ -57,12 +57,16 @@ type VecGroupChecker struct {
 
 	// groupCount is the count of groups in the current chunk
 	groupCount int
+
+	// vecEnabled indicates whether to use vectorized evaluation or not.
+	vecEnabled bool
 }
 
 // NewVecGroupChecker creates a new VecGroupChecker
-func NewVecGroupChecker(ctx expression.EvalContext, items []expression.Expression) *VecGroupChecker {
+func NewVecGroupChecker(ctx expression.EvalContext, vecEnabled bool, items []expression.Expression) *VecGroupChecker {
 	return &VecGroupChecker{
 		ctx:          ctx,
+		vecEnabled:   vecEnabled,
 		GroupByItems: items,
 		groupCount:   0,
 		nextGroupID:  0,
@@ -92,14 +96,15 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 			return false, err
 		}
 	}
-	e.firstGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.firstGroupKey, e.firstRowDatums...)
-	err = e.ctx.GetSessionVars().StmtCtx.HandleError(err)
+	ec := e.ctx.ErrCtx()
+	e.firstGroupKey, err = codec.EncodeKey(e.ctx.Location(), e.firstGroupKey, e.firstRowDatums...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}
 
-	e.lastGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.lastGroupKey, e.lastRowDatums...)
-	err = e.ctx.GetSessionVars().StmtCtx.HandleError(err)
+	e.lastGroupKey, err = codec.EncodeKey(e.ctx.Location(), e.lastGroupKey, e.lastRowDatums...)
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}
@@ -136,7 +141,7 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 	}
 
 	for _, item := range e.GroupByItems {
-		err = e.evalGroupItemsAndResolveGroups(item, chk, numRows)
+		err = e.evalGroupItemsAndResolveGroups(item, e.vecEnabled, chk, numRows)
 		if err != nil {
 			return false, err
 		}
@@ -322,7 +327,7 @@ func (e *VecGroupChecker) getFirstAndLastRowDatum(
 // evalGroupItemsAndResolveGroups evaluates the chunk according to the expression item.
 // And resolve the rows into groups according to the evaluation results
 func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
-	item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
+	item expression.Expression, vecEnabled bool, chk *chunk.Chunk, numRows int) (err error) {
 	tp := item.GetType()
 	eType := tp.EvalType()
 	if e.allocateBuffer == nil {
@@ -336,7 +341,7 @@ func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
 		return err
 	}
 	defer e.releaseBuffer(col)
-	err = expression.EvalExpr(e.ctx, item, eType, chk, col)
+	err = expression.EvalExpr(e.ctx, vecEnabled, item, eType, chk, col)
 	if err != nil {
 		return err
 	}

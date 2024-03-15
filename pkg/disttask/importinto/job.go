@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
@@ -70,18 +69,6 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		var err2 error
 		exec := se.(sqlexec.SQLExecutor)
-		// If 2 client try to execute IMPORT INTO concurrently, there's chance that both of them will pass the check.
-		// We can enforce ONLY one import job running by:
-		// 	- using LOCK TABLES, but it requires enable-table-lock=true, it's not enabled by default.
-		// 	- add a key to PD as a distributed lock, but it's a little complex, and we might support job queuing later.
-		// So we only add this simple soft check here and doc it.
-		activeJobCnt, err2 := importer.GetActiveJobCnt(ctx, exec)
-		if err2 != nil {
-			return err2
-		}
-		if activeJobCnt > 0 {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there's pending or running jobs")
-		}
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
 			plan.User, plan.Parameters, plan.TotalFileSize)
 		if err2 != nil {
@@ -125,7 +112,8 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		zap.Int64("job-id", jobID),
 		zap.Int64("task-id", task.ID),
 		zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
-		zap.Int("thread-cnt", plan.ThreadCnt))
+		zap.Int("thread-cnt", plan.ThreadCnt),
+		zap.Bool("global-sort", plan.IsGlobalSort()))
 
 	return jobID, task, nil
 }

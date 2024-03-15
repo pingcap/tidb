@@ -31,12 +31,16 @@ func TestRestoreConfigAdjust(t *testing.T) {
 
 	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
-	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount)
-	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes)
+	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount.Value)
+	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes.Value)
 }
 
 type mockPDClient struct {
 	pd.Client
+}
+
+func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
+	return 1
 }
 
 func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {

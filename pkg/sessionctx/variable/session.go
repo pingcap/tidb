@@ -688,9 +688,6 @@ type SessionVars struct {
 	}
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
-	// stmtVars variables are temporarily set by SET_VAR hint
-	// It only take effect for the duration of a single statement
-	stmtVars map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
@@ -1070,6 +1067,9 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
+	// LoadBindingTimeout is the timeout for loading the bind info.
+	LoadBindingTimeout uint64
+
 	// TiKVClientReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
 	TiKVClientReadTimeout uint64
@@ -1205,8 +1205,8 @@ type SessionVars struct {
 	// EnableParallelApply indicates that thether to use parallel apply.
 	EnableParallelApply bool
 
-	// EnableRedactLog indicates that whether redact log.
-	EnableRedactLog bool
+	// EnableRedactLog indicates that whether redact log. Possible values are 'OFF', 'ON', 'MARKER'.
+	EnableRedactLog string
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
@@ -1574,12 +1574,13 @@ type SessionVars struct {
 	CompressionAlgorithm int
 	CompressionLevel     int
 
-	// EnableParallelSort indicates whether use parallel sort. Default is false.
-	EnableParallelSort bool
-
 	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
 	// overwritten if this value is not 0.
 	TxnEntrySizeLimit uint64
+
+	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result
+	// of division operations performed with the / operator.
+	DivPrecisionIncrement int
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -1941,7 +1942,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 			types:  make(map[string]*types.FieldType),
 		},
 		systems:                       make(map[string]string),
-		stmtVars:                      make(map[string]string),
 		PreparedStmts:                 make(map[uint32]any),
 		PreparedStmtNameToID:          make(map[string]uint32),
 		PlanCacheParams:               NewPlanCacheParamList(),
@@ -2404,9 +2404,6 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
-	if val, ok := s.stmtVars[name]; ok {
-		return val, ok
-	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -2482,17 +2479,6 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	}
 	afterMinus := atomic.AddInt64(&PreparedStmtCount, -int64(psCount))
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
-}
-
-// SetStmtVar sets the value of a system variable temporarily
-func (s *SessionVars) setStmtVar(name string, val string) error {
-	s.stmtVars[name] = val
-	return nil
-}
-
-// ClearStmtVars clear temporarily system variables.
-func (s *SessionVars) ClearStmtVars() {
-	s.stmtVars = make(map[string]string)
 }
 
 // GetSessionOrGlobalSystemVar gets a system variable.
@@ -2635,6 +2621,11 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
 	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
 	return s.prevStmtDigest
+}
+
+// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
+func (s *SessionVars) GetDivPrecisionIncrement() int {
+	return s.DivPrecisionIncrement
 }
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
@@ -2819,6 +2810,9 @@ type Concurrency struct {
 
 	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
 	IdleTransactionTimeout int
+
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -3183,7 +3177,7 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	CopTasks          *stmtctx.CopTasksDetails
+	CopTasks          *execdetails.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
 	DiskMax           int64
@@ -3622,6 +3616,14 @@ func (s *SessionVars) GetRuntimeFilterTypes() []RuntimeFilterType {
 // GetRuntimeFilterMode return the session variable runtimeFilterMode
 func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
+}
+
+// GetMaxExecutionTime get the max execution timeout value.
+func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	if s.StmtCtx.HasMaxExecutionTime {
+		return s.StmtCtx.MaxExecutionTime
+	}
+	return s.MaxExecutionTime
 }
 
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable

@@ -220,6 +220,7 @@ func (d *ddl) CreateSchemaWithInfo(
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{dbInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -258,6 +259,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{toCharset, toCollate},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -289,6 +291,7 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{placementPolicyRef},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -298,18 +301,18 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
 func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := d.GetInfoSchemaWithInterceptor(sctx)
-	dbInfos := is.AllSchemas()
+	dbNames := is.AllSchemaNames()
 	// If there are no schema change since last time(can be weird).
 	if is.SchemaMetaVersion() == originVersion {
 		return originVersion, pendingCount
 	}
 	cnt := uint32(0)
-	for _, dbInfo := range dbInfos {
-		if util.IsMemOrSysDB(dbInfo.Name.L) {
+	for _, dbName := range dbNames {
+		if util.IsMemOrSysDB(dbName.L) {
 			continue
 		}
-		for _, tbl := range dbInfo.Tables {
-			if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
+		for _, tbl := range is.SchemaTables(dbName) {
+			if tbl.Meta().TiFlashReplica != nil && !tbl.Meta().TiFlashReplica.Available {
 				cnt++
 			}
 		}
@@ -371,7 +374,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	total := len(dbInfo.Tables)
+	tbls := is.SchemaTables(dbInfo.Name)
+	total := len(tbls)
 	succ := 0
 	skip := 0
 	fail := 0
@@ -392,7 +396,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
 
-	for _, tbl := range dbInfo.Tables {
+	for _, tbl := range tbls {
+		tbl := tbl.Meta()
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
@@ -448,6 +453,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			BinlogInfo:     &model.HistoryInfo{},
 			Args:           []any{*tiflashReplica},
 			CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+			SQLMode:        sctx.GetSessionVars().SQLMode,
 		}
 		err := d.DoDDLJob(sctx, job)
 		err = d.callHookOnChanged(job, err)
@@ -504,6 +510,7 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{placementPolicyRef},
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -630,6 +637,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -669,6 +677,7 @@ func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSc
 			Database: recoverSchemaInfo.Name.L,
 			Table:    model.InvolvingAll,
 		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -1278,7 +1287,7 @@ func restoreFuncCall(expr *ast.FuncCallExpr) (string, error) {
 // getFuncCallDefaultValue gets the default column value of function-call expression.
 func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (any, bool, error) {
 	switch expr.FnName.L {
-	case ast.CurrentTimestamp, ast.CurrentDate:
+	case ast.CurrentTimestamp, ast.CurrentDate: // CURRENT_TIMESTAMP() and CURRENT_DATE()
 		tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
 		if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 			defaultFsp := 0
@@ -1299,7 +1308,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			return nil, false, errors.Trace(err)
 		}
 		return str, true, nil
-	case ast.Rand, ast.UUID, ast.UUIDToBin:
+	case ast.Rand, ast.UUID, ast.UUIDToBin: // RAND(), UUID() and UUID_TO_BIN()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -1309,12 +1318,12 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		}
 		col.DefaultIsExpr = true
 		return str, false, nil
-	case ast.DateFormat:
-		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
-		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
+	case ast.DateFormat: // DATE_FORMAT()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
+		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
 		nowFunc, ok := expr.Args[0].(*ast.FuncCallExpr)
 		if ok && nowFunc.FnName.L == ast.Now {
 			if err := expression.VerifyArgsWrapper(nowFunc.FnName.L, len(nowFunc.Args)); err != nil {
@@ -1332,9 +1341,9 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			col.DefaultIsExpr = true
 			return str, false, nil
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), nowFunc.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.Replace:
-		// Support REPLACE(UPPER(UUID()), '-', '').
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -1346,6 +1355,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			}
 			funcCall = convertFunc.Args[0]
 		}
+		// Support REPLACE(UPPER(UUID()), '-', '').
 		if upperFunc, ok := funcCall.(*ast.FuncCallExpr); ok && upperFunc.FnName.L == ast.Upper {
 			if err := expression.VerifyArgsWrapper(upperFunc.FnName.L, len(upperFunc.Args)); err != nil {
 				return nil, false, errors.Trace(err)
@@ -1362,12 +1372,13 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.Upper:
-		// Support UPPER(SUBSTRING_INDEX(USER(), '@', 1)).
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support UPPER(SUBSTRING_INDEX(USER(), '@', 1)).
 		if substringIndexFunc, ok := expr.Args[0].(*ast.FuncCallExpr); ok && substringIndexFunc.FnName.L == ast.SubstringIndex {
 			if err := expression.VerifyArgsWrapper(substringIndexFunc.FnName.L, len(substringIndexFunc.Args)); err != nil {
 				return nil, false, errors.Trace(err)
@@ -1388,12 +1399,13 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
-	case ast.StrToDate:
-		// Support STR_TO_DATE('1980-01-01', '%Y-%m-%d').
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
+	case ast.StrToDate: // STR_TO_DATE()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support STR_TO_DATE('1980-01-01', '%Y-%m-%d').
 		if _, ok1 := expr.Args[0].(ast.ValueExpr); ok1 {
 			if _, ok2 := expr.Args[1].(ast.ValueExpr); ok2 {
 				str, err := restoreFuncCall(expr)
@@ -1404,7 +1416,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), fmt.Sprintf("%s with these args", expr.FnName.String()))
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -1652,6 +1665,9 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 
 	if c.GetDefaultValue() != nil {
 		if c.DefaultIsExpr {
+			if mysql.HasAutoIncrementFlag(c.GetFlag()) {
+				return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
+			}
 			return nil
 		}
 		if _, err := table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo()); err != nil {
@@ -2789,6 +2805,7 @@ func (d *ddl) createTableWithInfoJob(
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           args,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	return job, nil
 }
@@ -2880,6 +2897,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	jobs := &model.Job{
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	args := make([]*model.TableInfo, 0, len(infos))
 
@@ -3072,6 +3090,7 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 			Table:    model.InvolvingNone,
 		}},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -3141,6 +3160,7 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 			Database: model.InvolvingAll,
 			Table:    model.InvolvingAll,
 		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -3173,6 +3193,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{recoverInfo, recoverCheckFlagNone},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -4119,6 +4140,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{newBase, force},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -4172,6 +4194,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{uVal},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -4368,6 +4391,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{col, spec.Position, 0, spec.IfNotExists},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -4448,6 +4472,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{partInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
@@ -4611,6 +4636,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 		Args:           []any{partNames, newPartInfo},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4676,6 +4702,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		Args:           []any{partNames, partInfo},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4741,6 +4768,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 		Args:           []any{partNames, partInfo},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4949,6 +4977,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{pids, genIDs},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5045,6 +5074,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{partNames},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5195,7 +5225,7 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangePartTable.GenWithStackByArgs(nt.Name))
 	}
 
-	if nt.ForeignKeys != nil {
+	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
 
@@ -5258,6 +5288,7 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 			{Database: ptSchema.Name.L, Table: ptMeta.Name.L},
 			{Database: ntSchema.Name.L, Table: ntMeta.Name.L},
 		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5299,6 +5330,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{colName, spec.IfExists},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5465,6 +5497,8 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		if err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
+	} else {
+		hasDefaultValue = true
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
@@ -5501,8 +5535,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// ProcessColumnOptions process column options.
-func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// ProcessModifyColumnOptions process column options.
+func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
@@ -5580,7 +5614,8 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	return nil
 }
 
-func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column, outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
+func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column,
+	outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
 	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 	processColumnFlags(col)
 
@@ -5749,7 +5784,7 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = ProcessColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -5932,6 +5967,7 @@ func GetModifiableColumnJob(
 		CtxVars:        []any{needChangeColData},
 		Args:           []any{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
 	return job, nil
 }
@@ -6194,6 +6230,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		ReorgMeta:      NewDDLReorgMeta(ctx),
 		Args:           []any{&newCol, oldColName, spec.Position, 0, 0},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6253,8 +6290,8 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 	// Clean the NoDefaultValueFlag value.
 	col.DelFlag(mysql.NoDefaultValueFlag)
+	col.DefaultIsExpr = false
 	if len(specNewColumn.Options) == 0 {
-		col.DefaultIsExpr = false
 		err = col.SetDefaultValue(nil)
 		if err != nil {
 			return errors.Trace(err)
@@ -6282,6 +6319,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{col},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6314,6 +6352,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{spec.Comment},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6342,6 +6381,7 @@ func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, new
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{newCache},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6396,6 +6436,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{toCharset, toCollate, needsOverwriteCols},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6467,6 +6508,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{*replicaInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6523,6 +6565,7 @@ func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident,
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{ttlInfo, ttlEnable, ttlCronJobSchedule},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6556,6 +6599,7 @@ func (d *ddl) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error
 			Type:           model.ActionAlterTTLRemove,
 			BinlogInfo:     &model.HistoryInfo{},
 			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
 		err = d.DoDDLJob(ctx, job)
 		err = d.callHookOnChanged(job, err)
@@ -6689,6 +6733,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{available, physicalID},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6795,6 +6840,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{spec.FromKey, spec.ToKey},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6939,6 +6985,7 @@ func (d *ddl) dropTableObject(
 			BinlogInfo:     &model.HistoryInfo{},
 			Args:           jobArgs,
 			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
 
 		err = d.DoDDLJob(ctx, job)
@@ -7019,6 +7066,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{newTableID, fkCheck, genIDs[1:]},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
@@ -7098,6 +7146,7 @@ func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 			{Database: schemas[0].Name.L, Table: oldIdent.Name.L},
 			{Database: schemas[1].Name.L, Table: newIdent.Name.L},
 		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7155,6 +7204,7 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		Args:                []any{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
 		CtxVars:             []any{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
 		InvolvingSchemaInfo: involveSchemaInfo,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7350,6 +7400,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -7611,6 +7662,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		Charset:        chs,
 		Collate:        coll,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -7807,6 +7859,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{fkInfo, fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7836,6 +7889,7 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{fkName},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7928,6 +7982,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{indexName, ifExists},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8095,15 +8150,15 @@ func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo,
 	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
-func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]string, error) {
+func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]types.Datum, error) {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
-	valStrings := make([]string, 0, len(colTypes))
+	valDatums := make([]types.Datum, 0, len(colTypes))
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
-			valStrings = append(valStrings, partitionMaxValue)
+			valDatums = append(valDatums, types.NewStringDatum(partitionMaxValue))
 			continue
 		}
 		if d, ok := colExpr.(*ast.DefaultExpr); ok {
@@ -8149,13 +8204,9 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes 
 		if err != nil {
 			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
-		s, err := newVal.ToString()
-		if err != nil {
-			return nil, err
-		}
-		valStrings = append(valStrings, s)
+		valDatums = append(valDatums, newVal)
 	}
-	return valStrings, nil
+	return valDatums, nil
 }
 
 // LockTables uses to execute lock tables statement.
@@ -8204,14 +8255,14 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		SessionInfo:  sessionInfo,
 	}
 	job := &model.Job{
-		SchemaID:       lockTables[0].SchemaID,
-		TableID:        lockTables[0].TableID,
-		Type:           model.ActionLockTable,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{arg},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-
+		SchemaID:            lockTables[0].SchemaID,
+		TableID:             lockTables[0].TableID,
+		Type:                model.ActionLockTable,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                []any{arg},
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involveSchemaInfo,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
@@ -8243,6 +8294,7 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{arg},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err := d.DoDDLJob(ctx, job)
@@ -8336,6 +8388,7 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{arg},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err := d.DoDDLJob(ctx, job)
 	if err == nil {
@@ -8425,6 +8478,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStm
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{newTableInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	if err == nil {
@@ -8505,6 +8559,7 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{ident, stmt.SeqOptions},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8544,6 +8599,7 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{indexName, invisible},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8575,6 +8631,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{rule},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8618,6 +8675,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{partitionID, rule},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8688,6 +8746,7 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{partitionID, policyRefInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8853,6 +8912,7 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
 		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -8904,6 +8964,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
 		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -8961,6 +9022,7 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
 		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -9026,6 +9088,7 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
 		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -9065,6 +9128,7 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
 		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -9122,6 +9186,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(sctx, job)
@@ -9182,6 +9247,7 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -9274,6 +9340,7 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{constraintInfo},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -9307,6 +9374,7 @@ func (d *ddl) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrNa
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{constrName},
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -9340,6 +9408,7 @@ func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrN
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{constrName, enforced},
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)

@@ -265,16 +265,16 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	neededColumn := model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}
+	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
 	resultCh := make(chan stmtctx.StatsLoadResult, 1)
 	timeout := time.Duration(1<<63 - 1)
 	task := &types.NeededItemTask{
-		TableItemID: neededColumn,
-		ResultCh:    resultCh,
-		ToTimeout:   time.Now().Local().Add(timeout),
+		Item:      neededColumn,
+		ResultCh:  resultCh,
+		ToTimeout: time.Now().Local().Add(timeout),
 	}
 	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
-	sql := "select * from t where c>1"
+	sql := "select /*+ MAX_EXECUTION_TIME(1000) */ * from t where c>1"
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
@@ -285,6 +285,11 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/executor/assertSyncStatsFailed", `return(true)`))
 	tk.MustExec(sql) // not fail sql for timeout when pseudo=true
 	failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed")
+
+	// Test Issue #50872.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed", `return(true)`))
+	tk.MustExec(sql)
+	failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed")
 
 	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
@@ -374,11 +379,11 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		// prepare the input
 		tbl := tblID2Tbl[tblName2TblID[testCase.TableName]]
 		require.NotNil(t, tbl)
-		neededItems := make([]model.TableItemID, 0, len(testCase.InputColNames))
+		neededItems := make([]model.StatsLoadItem, 0, len(testCase.InputColNames))
 		for _, colName := range testCase.InputColNames {
 			col := tbl.Meta().FindPublicColumnByName(colName)
 			require.NotNil(t, col)
-			neededItems = append(neededItems, model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID})
+			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID}, FullLoad: true})
 		}
 
 		// call the function

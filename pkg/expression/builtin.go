@@ -33,6 +33,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -61,6 +62,10 @@ type baseBuiltinFunc struct {
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
+}
+
+func (*baseBuiltinFunc) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
+	return
 }
 
 // metadata returns the metadata of a function.
@@ -475,6 +480,7 @@ type vecBuiltinFunc interface {
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
+	contextopt.RequireOptionalEvalProps
 	vecBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
@@ -1038,7 +1044,7 @@ func (c *builtinFuncCache[T]) getCache(ctxID uint64) (v T, ok bool) {
 
 func (c *builtinFuncCache[T]) getOrInitCache(ctx EvalContext, constructCache func() (T, error)) (T, error) {
 	intest.Assert(constructCache != nil)
-	ctxID := ctx.GetSessionVars().StmtCtx.CtxID()
+	ctxID := ctx.CtxID()
 	if item, ok := c.getCache(ctxID); ok {
 		return item, nil
 	}

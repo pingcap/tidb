@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -118,7 +119,7 @@ func (b *builtinDatabaseSig) Clone() builtinFunc {
 // evalString evals a builtinDatabaseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	currentDB := ctx.GetSessionVars().CurrentDB
+	currentDB := ctx.CurrentDB()
 	return currentDB, currentDB == "", nil
 }
 
@@ -173,12 +174,13 @@ func (c *currentUserFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinCurrentUserSig{bf}
+	sig := &builtinCurrentUserSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCurrentUserSig struct {
 	baseBuiltinFunc
+	contextopt.CurrentUserPropReader
 }
 
 func (b *builtinCurrentUserSig) Clone() builtinFunc {
@@ -187,14 +189,22 @@ func (b *builtinCurrentUserSig) Clone() builtinFunc {
 	return newSig
 }
 
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinCurrentUserSig) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
+	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
+}
+
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-func (b *builtinCurrentUserSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	data := ctx.GetSessionVars()
-	if data == nil || data.User == nil {
+func (b *builtinCurrentUserSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if user == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.User.String(), false, nil
+	return user.String(), false, nil
 }
 
 type currentRoleFunctionClass struct {
@@ -210,12 +220,13 @@ func (c *currentRoleFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinCurrentRoleSig{bf}
+	sig := &builtinCurrentRoleSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCurrentRoleSig struct {
 	baseBuiltinFunc
+	contextopt.CurrentUserPropReader
 }
 
 func (b *builtinCurrentRoleSig) Clone() builtinFunc {
@@ -224,24 +235,32 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 	return newSig
 }
 
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinCurrentRoleSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
+}
+
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
 func (b *builtinCurrentRoleSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
-	data := ctx.GetSessionVars()
-	if data == nil || data.ActiveRoles == nil {
+	roles, err := b.ActiveRoles(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if roles == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	if len(data.ActiveRoles) == 0 {
+	if len(roles) == 0 {
 		return "NONE", false, nil
 	}
 	sortedRes := make([]string, 0, 10)
-	for _, r := range data.ActiveRoles {
+	for _, r := range roles {
 		sortedRes = append(sortedRes, r.String())
 	}
 	slices.Sort(sortedRes)
 	for i, r := range sortedRes {
 		res += r
-		if i != len(data.ActiveRoles)-1 {
+		if i != len(roles)-1 {
 			res += ","
 		}
 	}
@@ -309,12 +328,13 @@ func (c *userFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinUserSig{bf}
+	sig := &builtinUserSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinUserSig struct {
 	baseBuiltinFunc
+	contextopt.CurrentUserPropReader
 }
 
 func (b *builtinUserSig) Clone() builtinFunc {
@@ -323,14 +343,22 @@ func (b *builtinUserSig) Clone() builtinFunc {
 	return newSig
 }
 
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinUserSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
+}
+
 // evalString evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
-func (b *builtinUserSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	data := ctx.GetSessionVars()
-	if data == nil || data.User == nil {
+func (b *builtinUserSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if user == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.User.LoginString(), false, nil
+	return user.LoginString(), false, nil
 }
 
 type connectionIDFunctionClass struct {
@@ -937,7 +965,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 
 	// Querying may take some time and it takes a context.Context as argument, which is not available here.
 	// We simply create a context with a timeout here.
-	timeout := time.Duration(ctx.GetSessionVars().MaxExecutionTime) * time.Millisecond
+	timeout := time.Duration(ctx.GetSessionVars().GetMaxExecutionTime()) * time.Millisecond
 	if timeout == 0 || timeout > 20*time.Second {
 		timeout = 20 * time.Second
 	}
@@ -1120,7 +1148,7 @@ func (b *builtinNextValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1176,7 +1204,7 @@ func (b *builtinLastValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1226,7 +1254,7 @@ func (b *builtinSetValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))

@@ -188,22 +188,16 @@
       {
         "SQL": "explain select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
         "Plan": [
-          "TableReader_12 0.01 root  MppVersion: 2, data:ExchangeSender_11",
-          "└─ExchangeSender_11 0.01 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─TableRangeScan_10 1.00 mpp[tiflash] table:t3, partition:p1 range:[1 \"a\",1 \"a\"], keep order:false, stats:pseudo"
+          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
         ],
-        "Warn": [
-          "disable dynamic pruning due to t3 has no global stats"
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
         "Plan": [
-          "Point_Get_6 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
+          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
         ],
-        "Warn": [
-          "disable dynamic pruning due to t3 has no global stats"
-        ]
+        "Warn": null
       }
     ]
   },

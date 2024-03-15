@@ -64,7 +64,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
-	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -128,30 +127,6 @@ func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (str
 	return sortDir, nil
 }
 
-// GetTiKVModeSwitcherWithPDClient creates a new TiKV mode switcher with its pd Client.
-func GetTiKVModeSwitcherWithPDClient(logger *zap.Logger) (pdhttp.Client, local.TiKVModeSwitcher, error) {
-	tidbCfg := tidb.GetGlobalConfig()
-	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-	tls, err := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		hostPort,
-		nil, nil, nil,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	addrs := strings.Split(tidbCfg.Path, ",")
-	var opts []pdhttp.ClientOption
-	if o := tls.TLSConfig(); o != nil {
-		opts = append(opts, pdhttp.WithTLSConfig(o))
-	}
-	pdHTTPCli := NewPDHttpClient("dist-task", addrs, opts...)
-	// TODO: let disttask framework pass-in the PD HTTP client from domain
-	return pdHTTPCli, NewTiKVModeSwitcher(tls, pdHTTPCli, logger), nil
-}
-
 // GetCachedKVStoreFrom gets a cached kv store from PD address.
 // Callers should NOT close the kv store.
 func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
@@ -189,7 +164,12 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 }
 
 // NewTableImporter creates a new table importer.
-func NewTableImporter(ctx context.Context, e *LoadDataController, id string) (ti *TableImporter, err error) {
+func NewTableImporter(
+	ctx context.Context,
+	e *LoadDataController,
+	id string,
+	kvStore tidbkv.Storage,
+) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -215,14 +195,8 @@ func NewTableImporter(ctx context.Context, e *LoadDataController, id string) (ti
 		return nil, err
 	}
 
-	// no need to close kvStore, since it's a cached store.
-	kvStore, err := GetCachedKVStoreFrom(tidbCfg.Path, tls)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-	d := kvStore.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
 	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
 		return nil, err
@@ -441,7 +415,8 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
 	}
-	tableRegions, err2 := mydump.MakeTableRegions(ctx, dataDivideCfg)
+	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
+	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
 
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
@@ -542,6 +517,9 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	if common.ErrFoundDuplicateKeys.Equal(importErr) {
+		importErr = local.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
+	}
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key
@@ -584,7 +562,7 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	}
 
 	defer unlockDiskQuota()
-
+	ti.logger.Info("start checking disk quota", zap.String("disk-quota", units.BytesSize(float64(ti.diskQuota))))
 	for {
 		select {
 		case <-ctx.Done():
@@ -630,6 +608,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 				int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio),
 				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
 			); err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+				}
 				importErr = multierr.Append(importErr, err)
 			}
 		}
@@ -724,6 +705,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		failpoint.Return(nil, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+		}
 		return nil, err
 	}
 	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
@@ -733,6 +717,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		return nil, err
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+		}
 		return nil, err
 	}
 

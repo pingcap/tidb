@@ -95,16 +95,19 @@ func TestRunningJobs(t *testing.T) {
 	runnable = j.checkRunnable(mkJob(0, "db100.t100"))
 	require.False(t, runnable)
 
+	job5.State = model.JobStateDone
 	j.remove(job5)
 	require.Equal(t, "1,2,3,4", orderedAllIDs(j.allIDs()))
 	runnable = j.checkRunnable(mkJob(0, "db100.t100"))
 	require.True(t, runnable)
 
+	job3.State = model.JobStateDone
 	j.remove(job3)
 	require.Equal(t, "1,2,4", orderedAllIDs(j.allIDs()))
 	runnable = j.checkRunnable(mkJob(0, "db1.t100"))
 	require.True(t, runnable)
 
+	job1.State = model.JobStateDone
 	j.remove(job1)
 	require.Equal(t, "2,4", orderedAllIDs(j.allIDs()))
 	runnable = j.checkRunnable(mkJob(0, "db1.t1"))

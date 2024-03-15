@@ -411,7 +411,7 @@ func (dc *ddlCtx) isReorgPaused(jobID int64) bool {
 }
 
 func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
-	if isChanClosed(dc.ctx.Done()) {
+	if dc.ctx.Err() != nil {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
@@ -706,7 +706,10 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			tb = tbl.(table.PhysicalTable)
 		}
 		if mergingTmpIdx {
-			start, end = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|elements[0].ID)
+			firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
+			lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
+			start = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
+			end = tablecodec.EncodeIndexSeekKey(pid, lastElemTempID, []byte{255})
 		} else {
 			start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
 			if err != nil {

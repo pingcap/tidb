@@ -584,6 +584,9 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
 		defaultVal, err = table.EvalColDefaultExpr(e.Ctx().GetExprCtx(), col.ToInfo(), col.DefaultExpr)
 	} else {
+		if err := table.CheckNoDefaultValueForInsert(e.Ctx().GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
+			return types.Datum{}, err
+		}
 		defaultVal, err = table.GetColDefaultValue(e.Ctx().GetExprCtx(), col.ToInfo())
 	}
 	if err != nil {
@@ -1189,12 +1192,6 @@ func (e *InsertValues) batchCheckAndInsert(
 		return err
 	}
 	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, txn)
-	if e.collectRuntimeStatsEnabled() {
-		if snapshot := txn.GetSnapshot(); snapshot != nil {
-			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
-		}
-	}
 	sc := e.Ctx().GetSessionVars().StmtCtx
 	for _, fkc := range e.fkChecks {
 		err = fkc.checkRows(ctx, sc, txn, toBeCheckedRows)
@@ -1490,6 +1487,11 @@ func (e *InsertRuntimeStat) String() string {
 		buf.WriteString("}")
 	} else {
 		fmt.Fprintf(buf, "insert:%v", execdetails.FormatDuration(e.CheckInsertTime))
+		if e.SnapshotRuntimeStats != nil {
+			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
+				fmt.Fprintf(buf, ", rpc:{%s}", rpc)
+			}
+		}
 	}
 	return buf.String()
 }

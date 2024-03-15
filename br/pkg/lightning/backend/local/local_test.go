@@ -679,6 +679,10 @@ func (c *mockPdClient) GetTS(ctx context.Context) (int64, int64, error) {
 	return 1, 2, nil
 }
 
+func (c *mockPdClient) GetClusterID(ctx context.Context) uint64 {
+	return 1
+}
+
 type mockGrpcErr struct{}
 
 func (e mockGrpcErr) GRPCStatus() *status.Status {

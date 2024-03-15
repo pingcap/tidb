@@ -308,11 +308,11 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
 		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
 			var key *expression.Column
-			if item.Col.Equal(p.SCtx(), leftJoinKeys[joinKeyPos]) {
+			if item.Col.Equal(p.SCtx().GetExprCtx(), leftJoinKeys[joinKeyPos]) {
 				key = leftJoinKeys[joinKeyPos]
 				hasLeftColInProp = true
 			}
-			if item.Col.Equal(p.SCtx(), rightJoinKeys[joinKeyPos]) {
+			if item.Col.Equal(p.SCtx().GetExprCtx(), rightJoinKeys[joinKeyPos]) {
 				key = rightJoinKeys[joinKeyPos]
 				hasRightColInProp = true
 			}
@@ -378,7 +378,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 func (p *PhysicalMergeJoin) initCompareFuncs() {
 	p.CompareFuncs = make([]expression.CompareFunc, 0, len(p.LeftJoinKeys))
 	for i := range p.LeftJoinKeys {
-		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.SCtx(), p.LeftJoinKeys[i], p.RightJoinKeys[i]))
+		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.SCtx().GetExprCtx(), p.LeftJoinKeys[i], p.RightJoinKeys[i]))
 	}
 }
 
@@ -672,8 +672,8 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			if isOuterKeysPrefix && !prop.SortItems[i].Col.EqualColumn(join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
 				isOuterKeysPrefix = false
 			}
-			compareFuncs = append(compareFuncs, expression.GetCmpFunction(p.SCtx(), join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
-			outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(p.SCtx(), join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
+			compareFuncs = append(compareFuncs, expression.GetCmpFunction(p.SCtx().GetExprCtx(), join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
+			outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(p.SCtx().GetExprCtx(), join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
 		}
 		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
 		canKeepOuterOrder := len(prop.SortItems) <= len(join.OuterJoinKeys)
@@ -1062,7 +1062,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		KeepOrder:       keepOrder,
 		Desc:            desc,
 		physicalTableID: ds.physicalTableID,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -1250,7 +1250,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Ranges:           ranges,
 		rangeInfo:        rangeInfo,
 		Desc:             desc,
-		isPartition:      ds.isPartition,
+		isPartition:      ds.partitionDefIdx != nil,
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
@@ -1274,7 +1274,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
-			isPartition:     ds.isPartition,
+			isPartition:     ds.partitionDefIdx != nil,
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
@@ -1448,13 +1448,14 @@ func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 // BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
 func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx PlanContext, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
+	exprCtx := ctx.GetExprCtx()
 	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(ctx, row)
+		constantArg, err := cwc.opArg[i].Eval(exprCtx, row)
 		if err != nil {
 			return nil, err
 		}
 		cwc.TmpConstant[i].Value = constantArg
-		newExpr, err := expression.NewFunction(ctx, opType, types.NewFieldType(mysql.TypeTiny), cwc.TargetCol, cwc.TmpConstant[i])
+		newExpr, err := expression.NewFunction(exprCtx, opType, types.NewFieldType(mysql.TypeTiny), cwc.TargetCol, cwc.TmpConstant[i])
 		if err != nil {
 			return nil, err
 		}
@@ -1529,7 +1530,7 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
 			// Don't use the join columns if their collations are unmatched and the new collation is enabled.
 			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetType()) && types.IsString(outerKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.GetType()) {
-				et, err := expression.CheckAndDeriveCollationFromExprs(ijHelper.innerPlan.SCtx(), "equal", types.ETInt, idxCol, outerKeys[ijHelper.curIdxOff2KeyOff[i]])
+				et, err := expression.CheckAndDeriveCollationFromExprs(ijHelper.innerPlan.SCtx().GetExprCtx(), "equal", types.ETInt, idxCol, outerKeys[ijHelper.curIdxOff2KeyOff[i]])
 				if err != nil {
 					logutil.BgLogger().Error("Unexpected error happened during constructing index join", zap.Stack("stack"))
 				}
@@ -1659,7 +1660,7 @@ func (mr *mutableIndexJoinRange) Rebuild() error {
 
 func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(relatedExprs []expression.Expression, ranges []*ranger.Range, path *util.AccessPath, innerKeys, outerKeys []*expression.Column) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(ijHelper.join.SCtx(), relatedExprs) {
+	if expression.MaybeOverOptimized4PlanCache(ijHelper.join.SCtx().GetExprCtx(), relatedExprs) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
 		return &mutableIndexJoinRange{
 			ranges:        ranges,
@@ -2349,7 +2350,7 @@ func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 		}
 		equalExprs = append(equalExprs, eqCondition)
 	}
-	ctx := p.SCtx()
+	ctx := p.SCtx().GetExprCtx()
 	if !expression.CanExprsPushDown(ctx, equalExprs, p.SCtx().GetClient(), storeType) {
 		return false
 	}
@@ -2625,14 +2626,15 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	newProps := []*property.PhysicalProperty{newProp}
 	// generate a mpp task candidate if mpp mode is allowed
 	ctx := p.SCtx()
+	exprCtx := ctx.GetExprCtx()
 	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
-		expression.CanExprsPushDown(ctx, p.Exprs, ctx.GetClient(), kv.TiFlash) {
+		expression.CanExprsPushDown(exprCtx, p.Exprs, ctx.GetClient(), kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		newProps = append(newProps, mppProp)
 	}
 	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown && p.canPushToCop(kv.TiKV) &&
-		expression.CanExprsPushDown(ctx, p.Exprs, ctx.GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
+		expression.CanExprsPushDown(exprCtx, p.Exprs, ctx.GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
 		copProp := newProp.CloneEssentialFields()
 		copProp.TaskTp = property.CopSingleReadTaskType
 		newProps = append(newProps, copProp)
@@ -2844,8 +2846,9 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 
 	{
 		allSupported := true
+		exprCtx := lw.SCtx().GetExprCtx()
 		for _, windowFunc := range lw.WindowFuncDescs {
-			if !windowFunc.CanPushDownToTiFlash(lw.SCtx(), lw.SCtx().GetClient()) {
+			if !windowFunc.CanPushDownToTiFlash(exprCtx, lw.SCtx().GetClient()) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function `" + windowFunc.Name + "` or its arguments are not supported now.")
 				allSupported = false
@@ -2859,7 +2862,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		}
 
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
-			ctx := lw.SCtx()
+			ctx := lw.SCtx().GetExprCtx()
 			if _, err := expression.ExpressionsToPBList(ctx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
@@ -3237,7 +3240,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		for i, agg := range aggFuncs {
 			if agg.Mode == aggregation.FinalMode && agg.Name == ast.AggFuncCount {
 				oldFT := agg.RetTp
-				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx(), ast.AggFuncSum, agg.Args, false)
+				aggFuncs[i], _ = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncSum, agg.Args, false)
 				aggFuncs[i].TypeInfer4FinalCount(oldFT)
 			}
 		}
@@ -3474,7 +3477,7 @@ func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
 	return !expression.ContainVirtualColumn(p.Conditions) &&
 		p.canPushToCop(storeTp) &&
 		expression.CanExprsPushDown(
-			p.SCtx(),
+			p.SCtx().GetExprCtx(),
 			p.Conditions,
 			p.SCtx().GetClient(),
 			storeTp)

@@ -112,7 +112,7 @@ func run() error {
 		return errors.Trace(fetchMode(ctx, cli, tls))
 	}
 	if len(*mode) != 0 {
-		return errors.Trace(lightning.SwitchMode(ctx, cli, tls, *mode))
+		return errors.Trace(lightning.SwitchMode(ctx, cli, tls.TLSConfig(), *mode))
 	}
 
 	if len(*cpRemove) != 0 {
@@ -193,14 +193,14 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 		return errors.Trace(err)
 	}
 
-	var lastErr error
+	var errs []error
 
 	for _, table := range targetTables {
 		fmt.Fprintln(os.Stderr, "Dropping table:", table.TableName)
 		err := target.DropTable(ctx, table.TableName)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "* Encountered error while dropping table:", err)
-			lastErr = err
+			errs = append(errs, err)
 		}
 	}
 
@@ -218,18 +218,18 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 				err := engine.Cleanup(cfg.TikvImporter.SortedKVDir)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "* Encountered error while cleanup engine:", err)
-					lastErr = err
+					errs = append(errs, err)
 				}
 			}
 		}
 	}
 
 	// try clean up metas
-	if lastErr == nil {
-		lastErr = lightning.CleanupMetas(ctx, cfg, tableName)
+	if len(errs) == 0 {
+		errs = append(errs, lightning.CleanupMetas(ctx, cfg, tableName))
 	}
 
-	return errors.Trace(lastErr)
+	return errors.Trace(errors.Join(errs...))
 }
 
 func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) error {

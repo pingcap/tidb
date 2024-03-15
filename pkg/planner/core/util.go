@@ -17,18 +17,19 @@ package core
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
-	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
@@ -137,7 +138,7 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 // inlineProjection prunes unneeded columns inline a executor.
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(s.SCtx(), parentUsedCols, s.Schema())
+	used := expression.GetUsedList(s.SCtx().GetExprCtx(), parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
@@ -412,62 +413,59 @@ func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// GetPhysID returns the physical table ID.
-func GetPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, colPos int, d types.Datum) (int64, error) {
-	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
-		return tblInfo.ID, nil
+// EncodeUniqueIndexKey encodes a unique index key.
+func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
+	encodedIdxVals, err := EncodeUniqueIndexValuesForKey(ctx, tblInfo, idxInfo, idxVals)
+	if err != nil {
+		return nil, err
 	}
+	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
+}
 
-	if partitionExpr == nil {
-		return tblInfo.ID, nil
-	}
-
-	switch pi.Type {
-	case model.PartitionTypeHash:
-		intVal := d.GetInt64()
-		partIdx := mathutil.Abs(intVal % int64(pi.Num))
-		return pi.Definitions[partIdx].ID, nil
-	case model.PartitionTypeKey:
-		if partitionExpr.ForKeyPruning == nil ||
-			len(pi.Columns) > 1 {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
+// EncodeUniqueIndexValuesForKey encodes unique index values for a key.
+func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	for i := range idxVals {
+		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
+		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
+		// So we don't use CastValue for string value for now.
+		// TODO: The first if branch should have been removed, because the functionality of set the collation of the datum
+		// have been moved to util/ranger (normal path) and getNameValuePairs/getPointGetValue (fast path). But this change
+		// will be cherry-picked to a hotfix, so we choose to be a bit conservative and keep this for now.
+		if colInfo.GetType() == mysql.TypeString || colInfo.GetType() == mysql.TypeVarString || colInfo.GetType() == mysql.TypeVarchar {
+			var str string
+			str, err = idxVals[i].ToString()
+			idxVals[i].SetString(str, idxVals[i].Collation())
+		} else if colInfo.GetType() == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
+			var str string
+			var e types.Enum
+			str, err = idxVals[i].ToString()
+			if err != nil {
+				return nil, kv.ErrNotExist
+			}
+			e, err = types.ParseEnumName(colInfo.FieldType.GetElems(), str, colInfo.FieldType.GetCollate())
+			if err != nil {
+				return nil, kv.ErrNotExist
+			}
+			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.GetCollate())
+		} else {
+			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
+			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
+			idxVals[i], err = table.CastValue(ctx, idxVals[i], colInfo, true, false)
+			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) ||
+				types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
+				return nil, kv.ErrNotExist
+			}
 		}
-		newKeyPartExpr := tables.ForKeyPruning{
-			KeyPartCols: []*expression.Column{{
-				Index:    colPos,
-				UniqueID: partitionExpr.KeyPartCols[0].UniqueID,
-			}},
-		}
-		partIdx, err := newKeyPartExpr.LocateKeyPartition(pi.Num, []types.Datum{d})
 		if err != nil {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		return pi.Definitions[partIdx].ID, nil
-	case model.PartitionTypeRange:
-		// we've check the type assertions in func TryFastPlan
-		col, ok := partitionExpr.Expr.(*expression.Column)
-		if !ok {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
-		ranges := partitionExpr.ForRangePruning
-		length := len(ranges.LessThan)
-		intVal := d.GetInt64()
-		partIdx := sort.Search(length, func(i int) bool {
-			return ranges.Compare(i, intVal, unsigned) > 0
-		})
-		if partIdx >= 0 && partIdx < length {
-			return pi.Definitions[partIdx].ID, nil
-		}
-	case model.PartitionTypeList:
-		isNull := false // we've guaranteed this in the build process of either TryFastPlan or buildBatchPointGet
-		intVal := d.GetInt64()
-		partIdx := partitionExpr.ForListPruning.LocatePartition(intVal, isNull)
-		if partIdx >= 0 {
-			return pi.Definitions[partIdx].ID, nil
+			return nil, err
 		}
 	}
 
-	return 0, errors.Errorf("dual partition")
+	encodedIdxVals, err := codec.EncodeKey(sc.TimeZone(), nil, idxVals...)
+	err = sc.HandleError(err)
+	if err != nil {
+		return nil, err
+	}
+	return encodedIdxVals, nil
 }

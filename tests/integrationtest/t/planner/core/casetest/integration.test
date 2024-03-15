@@ -467,6 +467,8 @@ set tidb_partition_prune_mode='dynamic';
 drop table if exists t1, t2_part;
 create table t1 (a int, b int);
 create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
+set @@tidb_skip_missing_partition_stats = off;
+set @@tidb_opt_fix_control = "";
 --enable_warnings
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 --disable_warnings
@@ -474,6 +476,12 @@ set @@tidb_opt_fix_control = "44262:ON";
 --enable_warnings
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 --disable_warnings
+set @@tidb_opt_fix_control = "";
+set @@tidb_skip_missing_partition_stats = on;
+--enable_warnings
+explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+--disable_warnings
+set @@tidb_skip_missing_partition_stats = default;
 
 
 # TestPartitionPruningForInExpr
@@ -716,4 +724,8 @@ select
 from
   (select 1 as c0) as subq_1;
 
-
+# TestIssue50614
+use test;
+drop table if exists tt;
+create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,d));
+explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));

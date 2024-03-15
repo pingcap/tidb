@@ -140,7 +140,8 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
 	}
 	tbl := &statistics.Table{
-		HistColl: newHistColl,
+		HistColl:              newHistColl,
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 	}
 	for id, jsonIdx := range jsonTbl.Indices {
 		for _, idxInfo := range tableInfo.Indices {
@@ -167,7 +168,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				PhysicalID:        physicalID,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
+			// All the objects in the table shares the same stats version.
+			if statsVer != statistics.Version0 {
+				tbl.StatsVer = int(statsVer)
+			}
 			tbl.Indices[idx.ID] = idx
+			tbl.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, true)
 		}
 	}
 
@@ -215,7 +221,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				StatsVer:          statsVer,
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
+			// All the objects in the table shares the same stats version.
+			if statsVer != statistics.Version0 {
+				tbl.StatsVer = int(statsVer)
+			}
 			tbl.Columns[col.ID] = col
+			tbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, true)
 		}
 	}
 	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)

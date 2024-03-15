@@ -440,8 +440,8 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		MemTableSize:                int(cfg.TikvImporter.EngineMemCacheSize),
 		LocalWriterMemCacheSize:     int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		ShouldCheckTiKV:             cfg.App.CheckRequirements,
-		DupeDetectEnabled:           cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		DupeDetectEnabled:           cfg.Conflict.Strategy != config.NoneOnDup,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: cfg.Conflict.Strategy == config.ErrorOnDup},
 		StoreWriteBWLimit:           int(cfg.TikvImporter.StoreWriteBWLimit),
 		ShouldCheckWriteStall:       cfg.Cron.SwitchMode.Duration == 0,
 		MaxOpenFiles:                maxOpenFiles,
@@ -517,7 +517,6 @@ func NewBackend(
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
 		pd.WithCustomTimeoutOption(60*time.Second),
-		pd.WithMaxErrorRetry(3),
 	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
@@ -1520,7 +1519,7 @@ func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterC
 // This function will spawn a goroutine to keep switch mode periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
 func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common.Range) (<-chan struct{}, error) {
-	switcher := NewTiKVModeSwitcher(local.tls, local.pdHTTPCli, log.FromContext(ctx).Logger)
+	switcher := NewTiKVModeSwitcher(local.tls.TLSConfig(), local.pdHTTPCli, log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
 	keyRanges := make([]*sst.Range, 0, len(ranges))

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -213,6 +214,11 @@ func (c *Context) GetExprCtx() exprctx.BuildContext {
 // GetTableCtx returns the table.MutateContext
 func (c *Context) GetTableCtx() tbctx.MutateContext {
 	return c.tblctx
+}
+
+// GetDistSQLCtx returns the distsql context of the session
+func (c *Context) GetDistSQLCtx() distsqlctx.DistSQLContext {
+	return c
 }
 
 // Txn implements sessionctx.Context Txn interface.
@@ -538,6 +544,7 @@ func NewContext() *Context {
 	vars.MinPagingSize = variable.DefMinPagingSize
 	vars.CostModelVersion = variable.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
+	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}

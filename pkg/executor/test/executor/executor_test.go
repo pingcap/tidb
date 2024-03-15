@@ -2795,3 +2795,128 @@ func TestIssue38756(t *testing.T) {
 	tk.MustQuery("(SELECT DISTINCT SQRT(1) FROM t)").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT DISTINCT cast(1 as double) FROM t").Check(testkit.Rows("1"))
 }
+
+func TestIssue50043(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Test simplified case by update.
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2),unique key idx2 ( c1 ));")
+	tk.MustExec("insert into t values (0,NULL);")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("update t set c2 = 5 where c1 = 0;")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000"))
+
+	// Test simplified case by insert on duplicate key update.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2));")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("alter table t add unique key idx4 ( c1 );")
+	tk.MustExec("insert into t values (0, NULL), (1, 1);")
+	tk.MustExec("insert into t values (0, 2) ,(1, 3) on duplicate key update c2 = 5;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000", "1 5.00000000000000000"))
+
+	// Test Issue 50043.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2));")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("alter table t add unique key idx4 ( c1 );")
+	tk.MustExec("insert into t values (0, NULL), (1, 1);")
+	tk.MustExec("insert ignore into t values (0, 2) ,(1, 3) on duplicate key update c2 = 5, c1 = 0")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000", "1 1.00000000000000000"))
+}
+
+func TestIssue51324(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int key, a int, b enum('a', 'b'))")
+	tk.MustGetErrMsg("insert into t values ()", "[table:1364]Field 'id' doesn't have a default value")
+	tk.MustExec("insert into t set id = 1")
+	tk.MustExec("insert into t set id = 2, a = NULL, b = NULL")
+	tk.MustExec("insert into t set id = 3, a = DEFAULT, b = DEFAULT")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>"))
+
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustGetErrMsg("insert into t set id = 4;", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustExec("insert into t set id = 5, a = NULL, b = NULL;")
+	tk.MustGetErrMsg("insert into t set id = 6, a = DEFAULT, b = DEFAULT;", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>", "5 <nil> <nil>"))
+
+	tk.MustExec("insert ignore into t set id = 4;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustExec("insert ignore into t set id = 6, a = DEFAULT, b = DEFAULT;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>", "4 <nil> <nil>", "5 <nil> <nil>", "6 <nil> <nil>"))
+	tk.MustExec("update t set id = id + 10")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("11 <nil> <nil>", "12 <nil> <nil>", "13 <nil> <nil>", "14 <nil> <nil>", "15 <nil> <nil>", "16 <nil> <nil>"))
+
+	// Test not null case.
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (id int key, a int not null, b enum('a', 'b') not null)")
+	tk.MustGetErrMsg("insert into t values ()", "[table:1364]Field 'id' doesn't have a default value")
+	tk.MustGetErrMsg("insert into t set id = 1", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustGetErrMsg("insert into t set id = 2, a = NULL, b = NULL", "[table:1048]Column 'a' cannot be null")
+	tk.MustGetErrMsg("insert into t set id = 2, a = 2, b = NULL", "[table:1048]Column 'b' cannot be null")
+	tk.MustGetErrMsg("insert into t set id = 3, a = DEFAULT, b = DEFAULT", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustExec("insert ignore into t set id = 4;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustExec("insert ignore into t set id = 5, a = NULL, b = NULL;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null", "Warning 1048 Column 'b' cannot be null"))
+	tk.MustExec("insert ignore into t set id = 6, a = 6,    b = NULL;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'b' cannot be null"))
+	tk.MustExec("insert ignore into t set id = 7, a = DEFAULT, b = DEFAULT;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("4 0 a", "5 0 ", "6 6 ", "7 0 a"))
+
+	// Test add column with OriginDefaultValue case.
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (id int, unique key idx (id))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("alter table t add column a int default 1")
+	tk.MustExec("alter table t add column b int default null")
+	tk.MustExec("alter table t add column c int not null")
+	tk.MustExec("alter table t add column d int not null default 1")
+	tk.MustExec("insert ignore into t (id) values (2)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'c' doesn't have a default value"))
+	tk.MustExec("insert ignore into t (id) values (1),(2) on duplicate key update id = id+10")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'c' doesn't have a default value"))
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustExec("alter table t alter column c drop default")
+	tk.MustExec("alter table t alter column d drop default")
+	tk.MustExec("insert ignore into t (id) values (3)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value", "Warning 1364 Field 'b' doesn't have a default value", "Warning 1364 Field 'c' doesn't have a default value", "Warning 1364 Field 'd' doesn't have a default value"))
+	tk.MustExec("insert ignore into t (id) values (11),(12),(3) on duplicate key update id = id+10")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value", "Warning 1364 Field 'b' doesn't have a default value", "Warning 1364 Field 'c' doesn't have a default value", "Warning 1364 Field 'd' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("13 <nil> <nil> 0 0", "21 1 <nil> 0 1", "22 1 <nil> 0 1"))
+}
+
+func TestDecimalDivPrecisionIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a decimal(3,0), b decimal(3,0))")
+	tk.MustExec("insert into t values (8, 7), (9, 7)")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1429", "1.2857"))
+
+	tk.MustExec("set div_precision_increment = 7")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1428571", "1.2857143"))
+
+	tk.MustExec("set div_precision_increment = 30")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.142857142857142857142857142857", "1.285714285714285714285714285714"))
+
+	tk.MustExec("set div_precision_increment = 4")
+	tk.MustQuery("select avg(a) from t").Check(testkit.Rows("8.5000"))
+
+	tk.MustExec("set div_precision_increment = 4")
+	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571"))
+
+	tk.MustExec("set div_precision_increment = 10")
+	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571428571428550"))
+}

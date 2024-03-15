@@ -458,7 +458,7 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 	if ownerID != jobID {
 		sv.schemaVersionMu.Lock()
 		sv.lockOwner.Store(jobID)
-		if sv.etcdClient != nil && variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
 			se, err := concurrency.NewSession(sv.etcdClient)
 			if err != nil {
 				return errors.Trace(err)
@@ -754,7 +754,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchMDL = d.SwitchMDL
-	variable.SwitchDDLVersion = d.SwitchDDLVersion
+	variable.SwitchFastCreateTable = d.SwitchFastCreateTable
 
 	return d
 }
@@ -820,7 +820,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobsV1)
 	})
 	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobChV2, d.addBatchDDLJobsV2)
+		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
 	})
 	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
@@ -874,6 +874,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if ingest.LitBackCtxMgr != nil {
 			ingest.LitBackCtxMgr.MarkJobFinish()
 		}
+		d.runningJobs = newRunningJobs()
 	})
 
 	return nil
@@ -922,7 +923,7 @@ func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 }
 
 func (d *ddl) close() {
-	if isChanClosed(d.ctx.Done()) {
+	if d.ctx.Err() != nil {
 		return
 	}
 
@@ -1107,7 +1108,7 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 }
 
 func setDDLJobMode(job *model.Job) {
-	if variable.DDLVersion.Load() != model.TiDBDDLV2 {
+	if !variable.EnableFastCreateTable.Load() {
 		job.LocalMode = false
 		return
 	}
@@ -1410,10 +1411,10 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	return nil
 }
 
-// SwitchDDLVersion switch ddl version.
-func (d *ddl) SwitchDDLVersion(version int64) error {
-	oldVersion := variable.DDLVersion.Load()
-	if oldVersion == version {
+// SwitchFastCreateTable switch fast create table
+func (d *ddl) SwitchFastCreateTable(val bool) error {
+	old := variable.EnableFastCreateTable.Load()
+	if old == val {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
@@ -1435,17 +1436,17 @@ func (d *ddl) SwitchDDLVersion(version int64) error {
 		return errors.New("please wait for all jobs done")
 	}
 
-	if err := d.migration2DDLVersion(version); err != nil {
+	if err := d.switchFastCreateTable(val); err != nil {
 		return errors.Trace(err)
 	}
 
-	variable.DDLVersion.Store(version)
-	logutil.BgLogger().Info("switch ddl version", zap.String("category", "ddl"), zap.Int64("version", version))
+	variable.EnableFastCreateTable.Store(val)
+	logutil.BgLogger().Info("switch fast create table", zap.String("category", "ddl"), zap.Bool("val", val))
 	return nil
 }
 
-// migration2DDLV1 migration ddl version to v1.
-func (*ddl) migration2DDLV1(m *meta.Meta) error {
+// disableFastCreateTable disable fast create table feature.
+func (*ddl) disableFastCreateTable(m *meta.Meta) error {
 	ddlV2Initialized, err := m.GetDDLV2Initialized()
 	if err != nil {
 		return errors.Trace(err)
@@ -1460,8 +1461,8 @@ func (*ddl) migration2DDLV1(m *meta.Meta) error {
 	return errors.Trace(m.SetDDLV2Initialized(false))
 }
 
-// migration2DDLV2 migration ddl version to v2.
-func (*ddl) migration2DDLV2(m *meta.Meta) error {
+// enableFastCreateTable enable fast create table feature.
+func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 	ddlV2Initialized, err := m.GetDDLV2Initialized()
 	if err != nil {
 		return errors.Trace(err)
@@ -1494,17 +1495,14 @@ func (*ddl) migration2DDLV2(m *meta.Meta) error {
 	return errors.Trace(m.SetDDLV2Initialized(true))
 }
 
-func (d *ddl) migration2DDLVersion(ver int64) (err error) {
+func (d *ddl) switchFastCreateTable(val bool) (err error) {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 
-		switch ver {
-		case model.TiDBDDLV1, 0:
-			err = d.migration2DDLV1(m)
-		case model.TiDBDDLV2:
-			err = d.migration2DDLV2(m)
-		default:
-			err = errors.Errorf("unknown ddl version %d", ver)
+		if val {
+			err = d.enableFastCreateTable(m)
+		} else {
+			err = d.disableFastCreateTable(m)
 		}
 		return errors.Trace(err)
 	})

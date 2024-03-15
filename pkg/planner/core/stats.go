@@ -70,7 +70,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	statsTable := statistics.PseudoTable(p.TableInfo, false)
+	statsTable := statistics.PseudoTable(p.TableInfo, false, false)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
@@ -263,11 +263,12 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.physicalTableID)
 	statsRecord.RecordUsedInfo(ds.physicalTableID, &stmtctx.UsedStatsInfoForTable{
-		Name:          name,
-		TblInfo:       tblInfo,
-		Version:       tableStats.StatsVersion,
-		RealtimeCount: tableStats.HistColl.RealtimeCount,
-		ModifyCount:   tableStats.HistColl.ModifyCount,
+		Name:            name,
+		TblInfo:         tblInfo,
+		Version:         tableStats.StatsVersion,
+		RealtimeCount:   tableStats.HistColl.RealtimeCount,
+		ModifyCount:     tableStats.HistColl.ModifyCount,
+		ColAndIdxStatus: ds.statisticTable.ColAndIdxExistenceMap,
 	})
 
 	for _, col := range ds.schema.Columns {
@@ -470,9 +471,10 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 	// two preprocess here.
 	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
+	exprCtx := ds.SCtx().GetExprCtx()
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(ds.SCtx(), expr)
-		ds.pushedDownConds[i] = expression.EliminateNoPrecisionLossCast(ds.SCtx(), ds.pushedDownConds[i])
+		ds.pushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
+		ds.pushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.pushedDownConds[i])
 	}
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
@@ -524,10 +526,11 @@ func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64)
 func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
 	ts.Source.initStats(nil)
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	exprCtx := ts.SCtx().GetExprCtx()
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(ts.SCtx(), expr)
+		ts.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
 	}
 	ts.SetStats(ts.Source.deriveStatsByFilter(ts.AccessConds, nil))
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
@@ -553,8 +556,9 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 // DeriveStats implements LogicalPlan DeriveStats interface.
 func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	is.Source.initStats(nil)
+	exprCtx := is.SCtx().GetExprCtx()
 	for i, expr := range is.AccessConds {
-		is.AccessConds[i] = expression.PushDownNot(is.SCtx(), expr)
+		is.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
 	}
 	is.SetStats(is.Source.deriveStatsByFilter(is.AccessConds, nil))
 	if len(is.AccessConds) == 0 {
@@ -1009,7 +1013,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	if p.cte.seedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
 		if len(p.cte.pushDownPredicates) > 0 {
-			newCond := expression.ComposeDNFCondition(p.SCtx(), p.cte.pushDownPredicates...)
+			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.cte.pushDownPredicates...)
 			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.cte.seedPartLogicalPlan)
 			p.cte.seedPartLogicalPlan = newSel

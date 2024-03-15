@@ -1307,13 +1307,22 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.BuildContext, tp
 	return idx, nil
 }
 
-func (t *partitionedTable) locatePartition(ctx expression.BuildContext, r []types.Datum) (int64, error) {
+func (t *partitionedTable) locatePartitionIdx(ctx expression.BuildContext, r []types.Datum) (int, error) {
 	pi := t.Meta().GetPartitionInfo()
 	columnsSet := len(t.meta.Partition.Columns) > 0
 	idx, err := t.locatePartitionCommon(ctx, pi.Type, t.partitionExpr, pi.Num, columnsSet, r)
 	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	return idx, nil
+}
+
+func (t *partitionedTable) locatePartition(ctx expression.BuildContext, r []types.Datum) (int64, error) {
+	idx, err := t.locatePartitionIdx(ctx, r)
+	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	pi := t.Meta().GetPartitionInfo()
 	return pi.Definitions[idx].ID, nil
 }
 
@@ -1385,8 +1394,7 @@ func (pe *PartitionExpr) locateListPartition(ctx expression.EvalContext, r []typ
 	if len(lp.ColPrunes) == 0 {
 		return lp.locateListPartitionByRow(ctx, r)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	tc, ec := sc.TypeCtx(), sc.ErrCtx()
+	tc, ec := ctx.TypeCtx(), ctx.ErrCtx()
 	return lp.locateListColumnsPartitionByRow(tc, ec, r)
 }
 
@@ -1458,7 +1466,7 @@ func (t *partitionedTable) locateHashPartition(ctx expression.EvalContext, partE
 			data = r[col.Index]
 		default:
 			var err error
-			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
+			data, err = r[col.Index].ConvertTo(ctx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
 			if err != nil {
 				return 0, err
 			}
@@ -1540,6 +1548,11 @@ func (t *partitionedTable) GetPartitionByRow(ctx expression.BuildContext, r []ty
 		return nil, errors.Trace(err)
 	}
 	return t.partitions[pid], nil
+}
+
+// GetPartitionIdxByRow returns the index in PartitionDef for the matching partition
+func (t *partitionedTable) GetPartitionIdxByRow(ctx expression.BuildContext, r []types.Datum) (int, error) {
+	return t.locatePartitionIdx(ctx, r)
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddlv2test
+package fastcreatetable
 
 import (
 	"testing"
@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
-func TestSwitchDDLVersion(t *testing.T) {
+func TestSwitchFastCreateTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
@@ -32,7 +32,7 @@ func TestSwitchDDLVersion(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
 
-	tk.MustQuery("show global variables like 'tidb_ddl_version'").Check(testkit.Rows("tidb_ddl_version 1"))
+	tk.MustQuery("show global variables like 'tidb_enable_fast_create_table'").Check(testkit.Rows("tidb_enable_fast_create_table OFF"))
 
 	tk.MustExec("create database db1;")
 	tk.MustExec("create database db2;")
@@ -40,13 +40,13 @@ func TestSwitchDDLVersion(t *testing.T) {
 	tk.MustExec("create table db1.tb2(id int);")
 	tk.MustExec("create table db2.tb1(id int);")
 
-	tk.MustExec("set global tidb_ddl_version=2")
-	tk.MustQuery("show global variables like 'tidb_ddl_version'").Check(testkit.Rows("tidb_ddl_version 2"))
+	tk.MustExec("set global tidb_enable_fast_create_table=ON")
+	tk.MustQuery("show global variables like 'tidb_enable_fast_create_table'").Check(testkit.Rows("tidb_enable_fast_create_table ON"))
 
-	tk.MustExec("set global tidb_ddl_version=1")
-	tk.MustQuery("show global variables like 'tidb_ddl_version'").Check(testkit.Rows("tidb_ddl_version 1"))
+	tk.MustExec("set global tidb_enable_fast_create_table=0")
+	tk.MustQuery("show global variables like 'tidb_enable_fast_create_table'").Check(testkit.Rows("tidb_enable_fast_create_table OFF"))
 
-	tk.MustGetErrMsg("set global tidb_ddl_version=3", "[variable:1231]Variable 'tidb_ddl_version' can't be set to the value of '3'")
+	tk.MustGetErrMsg("set global tidb_enable_fast_create_table='wrong'", "[variable:1231]Variable 'tidb_enable_fast_create_table' can't be set to the value of 'wrong'")
 }
 
 func TestDDL(t *testing.T) {
@@ -60,7 +60,7 @@ func TestDDL(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
 
-	tk.MustExec("set global tidb_ddl_version=2")
+	tk.MustExec("set global tidb_enable_fast_create_table=ON")
 
 	tk.MustExec("create database db")
 	// Create Table
