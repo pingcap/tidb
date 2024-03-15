@@ -437,6 +437,8 @@ func NewColDesc(col *Column) *ColDesc {
 		} else {
 			extra = "VIRTUAL GENERATED"
 		}
+	} else if col.DefaultIsExpr {
+		extra = "DEFAULT_GENERATED"
 	}
 
 	desc := &ColDesc{

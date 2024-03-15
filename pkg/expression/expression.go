@@ -371,7 +371,7 @@ func deallocateZeroSlice(isZero []int8) {
 }
 
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
-func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
 	// After the function finished, then we reset the input.Sel().
 	// The caller will handle the input.Sel() and selected slices.
@@ -410,10 +410,10 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 
 		// Take the implicit evalReal path if possible.
 		if CanImplicitEvalReal(expr) {
-			if err := implicitEvalReal(ctx, expr, input, buf); err != nil {
+			if err := implicitEvalReal(ctx, vecEnabled, expr, input, buf); err != nil {
 				return nil, nil, err
 			}
-		} else if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
+		} else if err := EvalExpr(ctx, vecEnabled, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -585,8 +585,8 @@ func toBool(tc types.Context, tp *types.FieldType, eType types.EvalType, buf *ch
 	return nil
 }
 
-func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+func implicitEvalReal(ctx EvalContext, vecEnabled bool, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && vecEnabled {
 		err = expr.VecEvalReal(ctx, input, result)
 	} else {
 		ind, n := 0, input.NumRows()
@@ -614,8 +614,8 @@ func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, resu
 // the environment variables and whether the expression can be vectorized.
 // Note: the input argument `evalType` is needed because of that when `expr` is
 // of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
-func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+func EvalExpr(ctx EvalContext, vecEnabled bool, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && vecEnabled {
 		switch evalType {
 		case types.ETInt:
 			err = expr.VecEvalInt(ctx, input, result)

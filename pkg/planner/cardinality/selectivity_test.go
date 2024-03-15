@@ -973,6 +973,19 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 			StatsVer:          2,
 		}
 	}
+	idxValues := make([]types.Datum, 0, len(colValues))
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	for _, colV := range colValues {
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, colV)
+		require.NoError(t, err)
+		idxValues = append(idxValues, types.NewBytesDatum(b))
+	}
+	mockStatsTbl.Indices[1] = &statistics.Index{
+		Histogram:         *mockStatsHistogram(1, idxValues, 1000, types.NewFieldType(mysql.TypeBlob)),
+		Info:              tblInfo.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
 	generateMapsForMockStatsTbl(mockStatsTbl)
 	stat := h.GetTableStats(tblInfo)
 	stat.HistColl = mockStatsTbl.HistColl

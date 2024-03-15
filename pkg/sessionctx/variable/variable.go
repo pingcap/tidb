@@ -68,6 +68,8 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+	// Marker is a special log redact behavior
+	Marker = "MARKER"
 
 	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
 	// even if the performance might be slowed down.

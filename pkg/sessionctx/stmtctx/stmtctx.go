@@ -49,9 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
-	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -235,10 +233,9 @@ type StatementContext struct {
 		// extraWarnings would not be printed through SHOW WARNINGS, but we want to always output them through the slow
 		// log to help diagnostics, so we store them here separately.
 		extraWarnings []SQLWarn
-
-		execDetails    execdetails.ExecDetails
-		detailsSummary execdetails.P90Summary
 	}
+	execdetails.SyncExecDetails
+
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
 	// PrevLastInsertID is the last insert ID of previous statement.
@@ -362,7 +359,7 @@ type StatementContext struct {
 		// Timeout to wait for sync-load
 		Timeout time.Duration
 		// NeededItems stores the columns/indices whose stats are needed for planner.
-		NeededItems []model.TableItemID
+		NeededItems []model.StatsLoadItem
 		// ResultCh to receive stats loading results
 		ResultCh chan StatsLoadResult
 		// LoadStartTime is to record the load start time to calculate latency
@@ -1055,8 +1052,6 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.touched = 0
 	sc.mu.message = ""
 	sc.mu.warnings = nil
-	sc.mu.execDetails = execdetails.ExecDetails{}
-	sc.mu.detailsSummary.Reset()
 }
 
 // ResetForRetry resets the changed states during execution.
@@ -1067,63 +1062,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
-}
-
-// MergeExecDetails merges a single region execution details into self, used to print
-// the information in slow query log.
-func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *util.CommitDetails) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if details != nil {
-		sc.mu.execDetails.CopTime += details.CopTime
-		sc.mu.execDetails.BackoffTime += details.BackoffTime
-		sc.mu.execDetails.RequestCount++
-		sc.MergeScanDetail(details.ScanDetail)
-		sc.MergeTimeDetail(details.TimeDetail)
-		detail := &execdetails.DetailsNeedP90{
-			BackoffSleep:  details.BackoffSleep,
-			BackoffTimes:  details.BackoffTimes,
-			CalleeAddress: details.CalleeAddress,
-			TimeDetail:    details.TimeDetail,
-		}
-		sc.mu.detailsSummary.Merge(detail)
-	}
-	if commitDetails != nil {
-		if sc.mu.execDetails.CommitDetail == nil {
-			sc.mu.execDetails.CommitDetail = commitDetails
-		} else {
-			sc.mu.execDetails.CommitDetail.Merge(commitDetails)
-		}
-	}
-}
-
-// MergeScanDetail merges scan details into self.
-func (sc *StatementContext) MergeScanDetail(scanDetail *util.ScanDetail) {
-	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
-	if scanDetail == nil {
-		return
-	}
-	if sc.mu.execDetails.ScanDetail == nil {
-		sc.mu.execDetails.ScanDetail = &util.ScanDetail{}
-	}
-	sc.mu.execDetails.ScanDetail.Merge(scanDetail)
-}
-
-// MergeTimeDetail merges time details into self.
-func (sc *StatementContext) MergeTimeDetail(timeDetail util.TimeDetail) {
-	sc.mu.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
-	sc.mu.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
-}
-
-// MergeLockKeysExecDetails merges lock keys execution details into self.
-func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *util.LockKeysDetails) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if sc.mu.execDetails.LockKeysDetail == nil {
-		sc.mu.execDetails.LockKeysDetail = lockKeys
-	} else {
-		sc.mu.execDetails.LockKeysDetail.Merge(lockKeys)
-	}
+	sc.SyncExecDetails.Reset()
 }
 
 // GetExecDetails gets the execution details for the statement.
@@ -1131,7 +1070,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	details = sc.mu.execDetails
+	details = sc.SyncExecDetails.GetExecDetails()
 	details.LockKeysDuration = time.Duration(atomic.LoadInt64(&sc.LockKeysDuration))
 	return details
 }
@@ -1167,50 +1106,6 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 		flags |= model.FlagInRestrictedSQL
 	}
 	return flags
-}
-
-// CopTasksDetails returns some useful information of cop-tasks during execution.
-func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	n := sc.mu.detailsSummary.NumCopTasks
-	d := &CopTasksDetails{
-		NumCopTasks:       n,
-		MaxBackoffTime:    make(map[string]time.Duration),
-		AvgBackoffTime:    make(map[string]time.Duration),
-		P90BackoffTime:    make(map[string]time.Duration),
-		TotBackoffTime:    make(map[string]time.Duration),
-		TotBackoffTimes:   make(map[string]int),
-		MaxBackoffAddress: make(map[string]string),
-	}
-	if n == 0 {
-		return d
-	}
-	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
-	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
-
-	d.P90ProcessTime = time.Duration((sc.mu.detailsSummary.ProcessTimePercentile.GetPercentile(0.9)))
-	d.MaxProcessTime = sc.mu.detailsSummary.ProcessTimePercentile.GetMax().D
-	d.MaxProcessAddress = sc.mu.detailsSummary.ProcessTimePercentile.GetMax().Addr
-
-	d.P90WaitTime = time.Duration((sc.mu.detailsSummary.WaitTimePercentile.GetPercentile(0.9)))
-	d.MaxWaitTime = sc.mu.detailsSummary.WaitTimePercentile.GetMax().D
-	d.MaxWaitAddress = sc.mu.detailsSummary.WaitTimePercentile.GetMax().Addr
-
-	for backoff, items := range sc.mu.detailsSummary.BackoffInfo {
-		if items == nil {
-			continue
-		}
-		n := items.ReqTimes
-		d.MaxBackoffAddress[backoff] = items.BackoffPercentile.GetMax().Addr
-		d.MaxBackoffTime[backoff] = items.BackoffPercentile.GetMax().D
-		d.P90BackoffTime[backoff] = time.Duration(items.BackoffPercentile.GetPercentile(0.9))
-
-		d.AvgBackoffTime[backoff] = items.TotBackoffTime / time.Duration(n)
-		d.TotBackoffTime[backoff] = items.TotBackoffTime
-		d.TotBackoffTimes[backoff] = items.TotBackoffTimes
-	}
-	return d
 }
 
 // InitFromPBFlagAndTz set the flag and timezone of StatementContext from a `tipb.SelectRequest.Flags` and `*time.Location`.
@@ -1306,46 +1201,6 @@ func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
 	sc.SetVarHintRestore[name] = val
 }
 
-// CopTasksDetails collects some useful information of cop-tasks during execution.
-type CopTasksDetails struct {
-	NumCopTasks int
-
-	AvgProcessTime    time.Duration
-	P90ProcessTime    time.Duration
-	MaxProcessAddress string
-	MaxProcessTime    time.Duration
-
-	AvgWaitTime    time.Duration
-	P90WaitTime    time.Duration
-	MaxWaitAddress string
-	MaxWaitTime    time.Duration
-
-	MaxBackoffTime    map[string]time.Duration
-	MaxBackoffAddress map[string]string
-	AvgBackoffTime    map[string]time.Duration
-	P90BackoffTime    map[string]time.Duration
-	TotBackoffTime    map[string]time.Duration
-	TotBackoffTimes   map[string]int
-}
-
-// ToZapFields wraps the CopTasksDetails as zap.Fileds.
-func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
-	if d.NumCopTasks == 0 {
-		return
-	}
-	fields = make([]zap.Field, 0, 10)
-	fields = append(fields, zap.Int("num_cop_tasks", d.NumCopTasks))
-	fields = append(fields, zap.String("process_avg_time", strconv.FormatFloat(d.AvgProcessTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("process_p90_time", strconv.FormatFloat(d.P90ProcessTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("process_max_time", strconv.FormatFloat(d.MaxProcessTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("process_max_addr", d.MaxProcessAddress))
-	fields = append(fields, zap.String("wait_avg_time", strconv.FormatFloat(d.AvgWaitTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("wait_p90_time", strconv.FormatFloat(d.P90WaitTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
-	return fields
-}
-
 // GetUsedStatsInfo returns the map for recording the used stats during query.
 // If initIfNil is true, it will initialize it when this map is nil.
 func (sc *StatementContext) GetUsedStatsInfo(initIfNil bool) *UsedStatsInfo {
@@ -1400,6 +1255,7 @@ type UsedStatsInfoForTable struct {
 	ModifyCount           int64
 	ColumnStatsLoadStatus map[int64]string
 	IndexStatsLoadStatus  map[int64]string
+	ColAndIdxStatus       any
 }
 
 // FormatForExplain format the content in the format expected to be printed in the execution plan.

@@ -24,6 +24,7 @@ import (
 
 func TestMain(m *testing.M) {
 	server.RunInGoTest = true
+	server.RunInGoTestChan = make(chan struct{})
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

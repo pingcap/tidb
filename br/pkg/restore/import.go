@@ -1151,7 +1151,7 @@ func (importer *FileImporter) downloadRawKVSSTV2(
 		}
 		log.Debug("download SST", logutil.SSTMeta(sstMeta), logutil.Region(regionInfo.Region))
 
-		var atomicResp atomic.Value
+		var atomicResp atomic.Pointer[import_sstpb.DownloadResponse]
 		eg, ectx := errgroup.WithContext(ctx)
 		for _, p := range regionInfo.Region.GetPeers() {
 			peer := p
@@ -1176,7 +1176,7 @@ func (importer *FileImporter) downloadRawKVSSTV2(
 			return nil, err
 		}
 
-		downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
+		downloadResp := atomicResp.Load()
 		sstMeta.Range.Start = downloadResp.Range.GetStart()
 		sstMeta.Range.End = downloadResp.Range.GetEnd()
 		sstMeta.ApiVersion = apiVersion
@@ -1186,13 +1186,11 @@ func (importer *FileImporter) downloadRawKVSSTV2(
 }
 
 func (importer *FileImporter) ingest(
-	c context.Context,
+	ctx context.Context,
 	files []*backuppb.File,
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
-	ctx, cancel := context.WithTimeout(c, gRPCTimeOut)
-	defer cancel()
 	for {
 		ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		if errIngest != nil {

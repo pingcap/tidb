@@ -35,6 +35,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
+	testDataMap.LoadTestSuiteData("testdata", "plan_cache_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -54,6 +55,10 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func GetPlanCacheSuiteData() testdata.TestData {
+	return testDataMap["plan_cache_suite"]
 }
 
 func GetIndexMergeSuiteData() testdata.TestData {

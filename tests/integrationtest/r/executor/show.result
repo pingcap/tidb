@@ -542,7 +542,7 @@ t	CREATE TABLE `t` (
   `a` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`a`)
-(PARTITION `p` VALUES LESS THAN (x'7f'))
+(PARTITION `p` VALUES LESS THAN (0x7f))
 set @@session.tidb_enable_list_partition = default;
 set @@foreign_key_checks=default;
 create table if not exists show_errors (a int);

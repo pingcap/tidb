@@ -237,10 +237,10 @@ func DurationToTS(d time.Duration) uint64 {
 
 // GetFullTableName returns the full table name.
 func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
-	for _, schema := range is.AllSchemas() {
-		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
+	for _, schemaName := range is.AllSchemaNames() {
+		if t, err := is.TableByName(schemaName, tblInfo.Name); err == nil {
 			if t.Meta().ID == tblInfo.ID {
-				return schema.Name.O + "." + tblInfo.Name.O
+				return schemaName.O + "." + tblInfo.Name.O
 			}
 		}
 	}

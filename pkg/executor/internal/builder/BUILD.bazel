@@ -11,6 +11,7 @@ go_library(
         "//pkg/planner/context",
         "//pkg/planner/core",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/util/timeutil",
         "@com_github_pingcap_tipb//go-tipb",
     ],

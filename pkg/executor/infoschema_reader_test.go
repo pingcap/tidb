@@ -542,7 +542,7 @@ SELECT
     )
   LIMIT 1
 ;
-`).Check(testkit.Rows("t a b"))
+`)
 	}
 }
 

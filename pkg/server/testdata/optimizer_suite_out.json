@@ -106,7 +106,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                                      "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
                                         "TotalCount": 0
@@ -137,7 +137,7 @@
                                           ]
                                         },
                                         {
-                                          "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                          "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                             "EssentialLoaded": false,
                                             "InValidForCollPseudo": true,
                                             "IsInvalid": true,
@@ -160,7 +160,7 @@
                                           ]
                                         },
                                         {
-                                          "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                                          "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
                                             "TotalCount": 0
@@ -349,7 +349,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                      "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                         "EssentialLoaded": false,
                                         "InValidForCollPseudo": true,
                                         "IsInvalid": true,
@@ -372,7 +372,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                                      "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
                                         "TotalCount": 0
@@ -532,7 +532,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                                      "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
                                         "TotalCount": 0
@@ -564,7 +564,7 @@
                                           ]
                                         },
                                         {
-                                          "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                          "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                             "EssentialLoaded": false,
                                             "InValidForCollPseudo": true,
                                             "IsInvalid": true,
@@ -589,7 +589,7 @@
                                           ]
                                         },
                                         {
-                                          "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                                          "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
                                             "TotalCount": 0

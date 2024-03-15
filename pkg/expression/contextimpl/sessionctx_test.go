@@ -20,7 +20,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextimpl"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -33,6 +36,14 @@ func TestEvalContextImplWithSessionCtx(t *testing.T) {
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	impl := contextimpl.NewExprExtendedImpl(ctx)
+
+	// should contain all the optional properties
+	for i := 0; i < context.OptPropsCnt; i++ {
+		provider, ok := impl.GetOptionalPropProvider(context.OptionalEvalPropKey(i))
+		require.True(t, ok)
+		require.NotNil(t, provider)
+		require.Same(t, context.OptionalEvalPropKey(i).Desc(), provider.Desc())
+	}
 
 	ctx.ResetSessionAndStmtTimeZone(time.FixedZone("UTC+11", 11*3600))
 	vars.SQLMode = mysql.ModeStrictTransTables | mysql.ModeNoZeroDate
@@ -73,4 +84,31 @@ func TestEvalContextImplWithSessionCtx(t *testing.T) {
 	require.Equal(t, 1, len(warnings))
 	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err1", warnings[0].Err.Error())
+}
+
+func getProvider[T context.OptionalEvalPropProvider](
+	t *testing.T,
+	impl *contextimpl.ExprCtxExtendedImpl,
+	key context.OptionalEvalPropKey,
+) T {
+	val, ok := impl.GetOptionalPropProvider(key)
+	require.True(t, ok)
+	p, ok := val.(T)
+	require.True(t, ok)
+	return p
+}
+
+func TestEvalContextImplWithSessionCtxForOptProps(t *testing.T) {
+	ctx := mock.NewContext()
+	impl := contextimpl.NewExprExtendedImpl(ctx)
+
+	// test for OptPropCurrentUser
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "user1", Hostname: "host1"}
+	ctx.GetSessionVars().ActiveRoles = []*auth.RoleIdentity{
+		{Username: "role1", Hostname: "host1"},
+		{Username: "role2", Hostname: "host2"},
+	}
+	user, roles := getProvider[contextopt.CurrentUserPropProvider](t, impl, context.OptPropCurrentUser)()
+	require.Equal(t, ctx.GetSessionVars().User, user)
+	require.Equal(t, ctx.GetSessionVars().ActiveRoles, roles)
 }

@@ -69,7 +69,7 @@ go_test(
     embed = [":ttlworker"],
     flaky = True,
     race = "on",
-    shard_count = 46,
+    shard_count = 48,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",

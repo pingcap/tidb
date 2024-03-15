@@ -258,10 +258,6 @@ type StatsReadWriter interface {
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
-	// UpdateStatsMetaDelta updates the count and modify_count for the given table in mysql.stats_meta.
-	// It will add the delta to the original count and modify_count. The delta can be positive or negative.
-	UpdateStatsMetaDelta(tableID int64, count, delta int64) (err error)
-
 	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
 	LoadNeededHistograms() (err error)
 
@@ -367,9 +363,9 @@ type StatsReadWriter interface {
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	ToTimeout   time.Time
-	ResultCh    chan stmtctx.StatsLoadResult
-	TableItemID model.TableItemID
+	ToTimeout time.Time
+	ResultCh  chan stmtctx.StatsLoadResult
+	Item      model.StatsLoadItem
 }
 
 // StatsLoad is used to load stats concurrently
@@ -384,7 +380,7 @@ type StatsLoad struct {
 // StatsSyncLoad implement the sync-load feature.
 type StatsSyncLoad interface {
 	// SendLoadRequests sends load requests to the channel.
-	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error
 
 	// SyncWaitStatsLoad will wait for the load requests to finish.
 	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error

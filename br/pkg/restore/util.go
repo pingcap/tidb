@@ -366,8 +366,8 @@ func GoValidateFileRanges(
 					}
 				}
 				// Merge small ranges to reduce split and scatter regions.
-				ranges, stat, err := MergeFileRanges(
-					files, splitSizeBytes, splitKeyCount)
+				ranges, stat, err := MergeAndRewriteFileRanges(
+					files, t.RewriteRule, splitSizeBytes, splitKeyCount)
 				if err != nil {
 					errCh <- err
 					return
@@ -507,7 +507,6 @@ func SplitRanges(
 	ctx context.Context,
 	client *Client,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
@@ -518,7 +517,7 @@ func SplitRanges(
 		isRawKv,
 	))
 
-	return splitter.ExecuteSplit(ctx, ranges, rewriteRules, client.GetStoreCount(), client.GetGranularity(), isRawKv, func(keys [][]byte) {
+	return splitter.ExecuteSplit(ctx, ranges, client.GetStoreCount(), isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}

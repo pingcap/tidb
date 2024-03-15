@@ -233,8 +233,25 @@ func TestInitStats(t *testing.T) {
 	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.Update(is))
-	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
+	// Index and pk are loaded.
+	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+column:1 ndv:6 totColSize:0
+num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
+num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
+num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
+num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
+num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
+num: 1 lower_bound: 6 upper_bound: 6 repeats: 1 ndv: 0
+column:2 ndv:6 totColSize:6
+column:3 ndv:6 totColSize:6
+index:1 ndv:6
+num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
+num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
+num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
+num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
+num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
+num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
+	require.Equal(t, needed, table0.String())
 	h.SetLease(0)
 }
 

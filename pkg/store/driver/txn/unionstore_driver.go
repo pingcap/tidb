@@ -26,13 +26,14 @@ import (
 // memBuffer wraps tikv.MemDB as kv.MemBuffer.
 type memBuffer struct {
 	tikv.MemBuffer
+	isPipelinedDML bool
 }
 
-func newMemBuffer(m tikv.MemBuffer) kv.MemBuffer {
+func newMemBuffer(m tikv.MemBuffer, isPipelinedDML bool) kv.MemBuffer {
 	if m == nil {
 		return nil
 	}
-	return &memBuffer{MemBuffer: m}
+	return &memBuffer{MemBuffer: m, isPipelinedDML: isPipelinedDML}
 }
 
 func (m *memBuffer) Size() int {
@@ -67,20 +68,30 @@ func (m *memBuffer) GetFlags(key kv.Key) (kv.KeyFlags, error) {
 }
 
 func (m *memBuffer) Staging() kv.StagingHandle {
+	if m.isPipelinedDML {
+		// 0 stands for staging not supported.
+		return 0
+	}
 	return kv.StagingHandle(m.MemBuffer.Staging())
 }
 
 func (m *memBuffer) Cleanup(h kv.StagingHandle) {
+	if m.isPipelinedDML {
+		return
+	}
 	m.MemBuffer.Cleanup(int(h))
 }
 
 func (m *memBuffer) Release(h kv.StagingHandle) {
+	if m.isPipelinedDML {
+		return
+	}
 	m.MemBuffer.Release(int(h))
 }
 
 func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, kv.KeyFlags, []byte)) {
 	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
-		f(kv.Key(key), getTiDBKeyFlags(flag), value)
+		f(key, getTiDBKeyFlags(flag), value)
 	}
 	m.MemBuffer.InspectStage(int(handle), tf)
 }
@@ -112,20 +123,38 @@ func (m *memBuffer) IterReverse(k, lowerBound kv.Key) (kv.Iterator, error) {
 	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
-// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+// SnapshotIter returns an Iterator for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
+	if m.isPipelinedDML {
+		return &kv.EmptyIterator{}
+	}
 	it := m.MemBuffer.SnapshotIter(k, upperbound)
 	return &tikvIterator{Iterator: it}
 }
 
 func (m *memBuffer) SnapshotIterReverse(k, lowerBound kv.Key) kv.Iterator {
+	if m.isPipelinedDML {
+		return &kv.EmptyIterator{}
+	}
 	it := m.MemBuffer.SnapshotIterReverse(k, lowerBound)
 	return &tikvIterator{Iterator: it}
 }
 
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotGetter() kv.Getter {
+	if m.isPipelinedDML {
+		return &kv.EmptyRetriever{}
+	}
 	return newKVGetter(m.MemBuffer.SnapshotGetter())
+}
+
+// MayFlush implements kv.MemBuffer.MayFlush interface.
+func (m *memBuffer) MayFlush() error {
+	if !m.isPipelinedDML {
+		return nil
+	}
+	_, err := m.MemBuffer.Flush(false)
+	return err
 }
 
 type tikvGetter struct {

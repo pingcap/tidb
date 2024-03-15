@@ -49,19 +49,19 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	}
 
 	newTables := make(map[int64]*PhysicalTable, len(isc.Tables))
-	for _, db := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(db.Name) {
+	for _, dbName := range is.AllSchemaNames() {
+		for _, tbl := range is.SchemaTables(dbName) {
 			tblInfo := tbl.Meta()
 			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {
 				continue
 			}
 
 			logger := logutil.BgLogger().
-				With(zap.String("schema", db.Name.L),
+				With(zap.String("schema", dbName.L),
 					zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))
 
 			if tblInfo.Partition == nil {
-				ttlTable, err := isc.newTable(db.Name, tblInfo, nil)
+				ttlTable, err := isc.newTable(dbName, tblInfo, nil)
 				if err != nil {
 					logger.Warn("fail to build info schema cache", zap.Error(err))
 					continue
@@ -72,7 +72,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 
 			for _, par := range tblInfo.Partition.Definitions {
 				par := par
-				ttlTable, err := isc.newTable(db.Name, tblInfo, &par)
+				ttlTable, err := isc.newTable(dbName, tblInfo, &par)
 				if err != nil {
 					logger.Warn("fail to build info schema cache",
 						zap.Int64("partitionID", par.ID),

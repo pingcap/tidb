@@ -315,6 +315,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		// (dr *delRange) startEmulator()
 		resp.Resp = &kvrpcpb.UnsafeDestroyRangeResponse{}
 		return resp, nil
+	case tikvrpc.CmdFlush:
+		r := req.Flush()
+		c.cluster.handleDelay(r.StartTs, r.Context.RegionId)
+		resp.Resp, err = c.usSvr.KvFlush(ctx, r)
+	case tikvrpc.CmdBufferBatchGet:
+		r := req.BufferBatchGet()
+		resp.Resp, err = c.usSvr.KvBufferBatchGet(ctx, r)
 	default:
 		err = errors.Errorf("not support this request type %v", req.Type)
 	}

@@ -8,11 +8,14 @@ go_library(
     deps = [
         "//pkg/errctx",
         "//pkg/expression/context",
+        "//pkg/expression/contextopt",
+        "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
+        "//pkg/util/intest",
     ],
 )
 
@@ -24,6 +27,9 @@ go_test(
     deps = [
         ":contextimpl",
         "//pkg/errctx",
+        "//pkg/expression/context",
+        "//pkg/expression/contextopt",
+        "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
         "//pkg/types",

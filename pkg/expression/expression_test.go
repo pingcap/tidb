@@ -268,11 +268,9 @@ func TestEvalExpr(t *testing.T) {
 		colBuf2 := chunk.NewColumn(ft, 1024)
 		var err error
 		require.True(t, colExpr.Vectorized())
-		ctx.GetSessionVars().EnableVectorizedExpression = false
-		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, false, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		require.NoError(t, err)
-		ctx.GetSessionVars().EnableVectorizedExpression = true
-		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf2)
+		err = EvalExpr(ctx, true, colExpr, colExpr.GetType().EvalType(), input, colBuf2)
 		require.NoError(t, err)
 		for j := 0; j < 1024; j++ {
 			isNull := colBuf.IsNull(j)

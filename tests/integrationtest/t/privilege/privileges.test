@@ -841,6 +841,26 @@ ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
 ADMIN SHOW SLOW RECENT 3;
 -- error 8121
 ADMIN SHOW SLOW TOP ALL 3;
+-- error 8121
+admin reload expr_pushdown_blacklist;
+-- error 8121
+admin reload opt_rule_blacklist;
+-- error 8121
+admin plugins enable audit;
+-- error 8121
+admin plugins disable audit;
+-- error 8121
+admin flush bindings;
+-- error 8121
+admin capture bindings;
+-- error 8121
+admin reload bindings;
+-- error 8121
+admin flush session plan_cache;
+-- error 8121
+admin flush global plan_cache;
+-- error 8121
+admin flush instance plan_cache;
 
 disconnect without_super;
 connection default;

@@ -584,9 +584,9 @@ t	CREATE TABLE `t` (
   `a` varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`a`)
-(PARTITION `p0` VALUES IN (0,4),
- PARTITION `p1` VALUES IN (1,NULL,DEFAULT),
- PARTITION `p2` VALUES IN (2,7,10))
+(PARTITION `p0` VALUES IN ('0','4'),
+ PARTITION `p1` VALUES IN ('1',NULL,DEFAULT),
+ PARTITION `p2` VALUES IN ('2','7','10'))
 insert into t values (1, "1"), (2, "2"), (3,'3'), (null, null), (4, "4"), (11, "11");
 analyze table t;
 select * from t partition(p0);
@@ -600,9 +600,9 @@ NULL	NULL
 3	3
 select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_schema = 'ddl__db_partition' and table_name = 't';
 partition_name	partition_method	partition_expression	partition_description	table_rows
-p0	LIST COLUMNS	`a`	0,4	1
-p1	LIST COLUMNS	`a`	1,NULL,DEFAULT	4
-p2	LIST COLUMNS	`a`	2,7,10	1
+p0	LIST COLUMNS	`a`	'0','4'	1
+p1	LIST COLUMNS	`a`	'1',NULL,DEFAULT	4
+p2	LIST COLUMNS	`a`	'2','7','10'	1
 set @@tidb_partition_prune_mode = 'dynamic';
 explain format = 'brief' select * from t where a is null;
 id	estRows	task	access object	operator info
@@ -2805,7 +2805,7 @@ t	CREATE TABLE "t" (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS("a")
 (PARTITION "p0" VALUES IN ('''','''''',''''''''),
- PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))
+ PARTITION "p1" VALUES IN ('""','\\','\\''\t\n'))
 drop table t;
 CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
 PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
@@ -2818,7 +2818,7 @@ t	CREATE TABLE "t" (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS("a")
 (PARTITION "p0" VALUES IN ('''','''''',''''''''),
- PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))
+ PARTITION "p1" VALUES IN ('""','\\','\\''\t\n'))
 drop table t;
 CREATE TABLE t (a varchar(255)) PARTITION BY RANGE COLUMNS(a) (
 PARTITION p0 VALUES LESS THAN ('"'),
@@ -2859,7 +2859,7 @@ PARTITION BY RANGE COLUMNS("a")
  PARTITION "p1" VALUES LESS THAN ('""'),
  PARTITION "p2" VALUES LESS THAN (''''),
  PARTITION "p3" VALUES LESS THAN (''''''),
- PARTITION "p4" VALUES LESS THAN (x'5c27090a'),
+ PARTITION "p4" VALUES LESS THAN ('\\''\t\n'),
  PARTITION "pMax" VALUES LESS THAN (MAXVALUE))
 drop table t;
 CREATE TABLE t (a varchar(255), b varchar(255)) PARTITION BY RANGE COLUMNS(a,b) (

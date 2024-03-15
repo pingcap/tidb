@@ -736,7 +736,7 @@ create table log_message_1 (
 			"  `a` time DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p1` VALUES LESS THAN ('2020'))"))
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20'))"))
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a time, b time) partition by range columns (a) (partition p1 values less than ('2020'), partition p2 values less than ('20:20:10'))`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows(
@@ -745,7 +745,7 @@ create table log_message_1 (
 			"  `b` time DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p1` VALUES LESS THAN ('2020'),\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20'),\n" +
 			" PARTITION `p2` VALUES LESS THAN ('20:20:10'))"))
 	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
 	tk.MustExec(`drop table t`)
@@ -1455,12 +1455,15 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`use test`)
+	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("IndexRangeScan")
+	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("IndexRangeScan")
 	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	// Here it will fail with
 	// the partition is not in public.
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
-	assert.NotNil(t, err)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "the partition is in not in public")
 	tk2.MustExec(`commit`)
 	tk3.MustExec(`commit`)
 	<-syncChan
@@ -1477,6 +1480,10 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
 	require.Equal(t, 3, cnt)
+	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
+	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 }
 
 func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
@@ -3406,8 +3413,8 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		"  `create_time` datetime DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
-		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
-		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'),\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02 00:00:00'),\n" +
 		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
 		" PARTITION `P_LT_2023-01-04 00:00:00` VALUES LESS THAN ('2023-01-04 00:00:00'))"))
 }
@@ -3438,7 +3445,7 @@ func TestExchangeValidateHandleNullValue(t *testing.T) {
 	tk.MustExec(`alter table t3 EXCHANGE PARTITION p0 WITH TABLE t4`)
 
 	tk.MustExec(`CREATE TABLE t5 (id int, c varchar(128)) partition by range (id)(
-		partition p0 values less than (10), 
+		partition p0 values less than (10),
 		partition p1 values less than (20),
 		partition p2 values less than (maxvalue))`)
 	tk.MustExec(`CREATE TABLE t6 (id int, c varchar(128))`)

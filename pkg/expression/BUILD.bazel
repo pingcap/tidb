@@ -75,6 +75,7 @@ go_library(
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression/context",
+        "//pkg/expression/contextopt",
         "//pkg/extension",
         "//pkg/kv",
         "//pkg/parser",

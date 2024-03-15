@@ -937,7 +937,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx context.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, histNDV int64,
+	modifyCount, histNDV int64, increaseFactor float64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -1052,38 +1052,35 @@ func (hg *Histogram) OutOfRangeRowCount(
 		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
-	totalPercent := leftPercent*0.5 + rightPercent*0.5
-	if totalPercent > 1 {
-		totalPercent = 1
-	}
+	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	rowCount = totalPercent * hg.NotNullCount()
 
-	// Upper bound logic
+	// Upper & lower bound logic.
+	upperBound := rowCount
+	if histNDV > 0 {
+		upperBound = hg.NotNullCount() / float64(histNDV)
+	}
 
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
-	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
-	// a rather loose upper bound.
-	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
-	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
-	// can produce a reasonable results in this scenario.
-	if rowCount > float64(modifyCount) && allowUseModifyCount {
-		return float64(modifyCount)
+
+	if !allowUseModifyCount {
+		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
+		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
+		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
+		return min(rowCount, upperBound)
 	}
 
-	// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
-	// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-	// But it's impossible to have a reliable upper bound in all cases.
-	// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-	if !allowUseModifyCount {
-		var upperBound float64
-		if histNDV > 0 {
-			upperBound = hg.NotNullCount() / float64(histNDV)
-		}
-		if rowCount > upperBound {
-			return upperBound
-		}
+	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
+	// Assume at least 1/NDV is returned
+	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
+		rowCount = upperBound
+	} else if rowCount < upperBound {
+		// Adjust by increaseFactor if our estimate is low
+		rowCount *= increaseFactor
 	}
-	return rowCount
+
+	// Use modifyCount as a final bound
+	return min(rowCount, float64(modifyCount))
 }
 
 // Copy deep copies the histogram.

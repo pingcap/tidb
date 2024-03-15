@@ -106,14 +106,17 @@ func (b *builtinCurrentUserSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 func (b *builtinCurrentUserSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return err
+	}
 
-	data := ctx.GetSessionVars()
 	result.ReserveString(n)
-	if data == nil || data.User == nil {
+	if user == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
 	for i := 0; i < n; i++ {
-		result.AppendString(data.User.String())
+		result.AppendString(user.String())
 	}
 	return nil
 }
@@ -145,13 +148,17 @@ func (b *builtinCurrentRoleSig) vectorized() bool {
 func (b *builtinCurrentRoleSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	data := ctx.GetSessionVars()
-	if data == nil || data.ActiveRoles == nil {
+	roles, err := b.ActiveRoles(ctx)
+	if err != nil {
+		return err
+	}
+
+	if roles == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
 
 	result.ReserveString(n)
-	if len(data.ActiveRoles) == 0 {
+	if len(roles) == 0 {
 		for i := 0; i < n; i++ {
 			result.AppendString("NONE")
 		}
@@ -159,7 +166,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	}
 
 	sortedRes := make([]string, 0, 10)
-	for _, r := range data.ActiveRoles {
+	for _, r := range roles {
 		sortedRes = append(sortedRes, r.String())
 	}
 	slices.Sort(sortedRes)
@@ -178,14 +185,17 @@ func (b *builtinUserSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	data := ctx.GetSessionVars()
-	if data == nil || data.User == nil {
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return err
+	}
+	if user == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		result.AppendString(data.User.LoginString())
+		result.AppendString(user.LoginString())
 	}
 	return nil
 }

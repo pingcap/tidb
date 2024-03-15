@@ -629,7 +629,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		colSize[col.ID] = int64(newLen - oldLen)
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
-	return nil
+	return memBuffer.MayFlush()
 }
 
 func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
@@ -1123,6 +1123,9 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		colSize[col.ID] = int64(size) - 1
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
+	if err = memBuffer.MayFlush(); err != nil {
+		return nil, err
+	}
 	return recordID, nil
 }
 
@@ -1400,7 +1403,10 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		colSize[col.ID] = -int64(size - 1)
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, -1, 1, colSize)
-	return err
+	if err != nil {
+		return err
+	}
+	return memBuffer.MayFlush()
 }
 
 func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, row []types.Datum, colIDs []int64) error {
@@ -2346,7 +2352,7 @@ type TemporaryTable struct {
 func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 	return &TemporaryTable{
 		modified:        false,
-		stats:           statistics.PseudoTable(tblInfo, false),
+		stats:           statistics.PseudoTable(tblInfo, false, false),
 		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
 		meta:            tblInfo,
 	}

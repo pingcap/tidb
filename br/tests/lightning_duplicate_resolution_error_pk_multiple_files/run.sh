@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright 2021 PingCAP, Inc.
+# Copyright 2024 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,6 +26,6 @@ run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
 ! run_lightning --backend local --config "${mydir}/config.toml"
 [ $? -eq 0 ]
 
-tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key"
+tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a"
 
 check_not_contains "the whole procedure completed" $TEST_DIR/lightning.log

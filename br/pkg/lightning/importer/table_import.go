@@ -1026,7 +1026,7 @@ func (tr *TableImporter) postProcess(
 				SysVars: rc.sysVars,
 			}
 			var err error
-			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.TikvImporter.DuplicateResolution)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 				return false, errors.Trace(err)
@@ -1052,7 +1052,7 @@ func (tr *TableImporter) postProcess(
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
-			hasRemoteDupe, e := dupeController.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			hasRemoteDupe, e := dupeController.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.TikvImporter.DuplicateResolution)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, errors.Trace(e)
@@ -1340,6 +1340,9 @@ func (tr *TableImporter) importKV(
 		}
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
+	if common.ErrFoundDuplicateKeys.Equal(err) {
+		err = local.ConvertToErrFoundConflictRecords(err, tr.encTable)
+	}
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
 	if err == nil && saveCpErr == nil {

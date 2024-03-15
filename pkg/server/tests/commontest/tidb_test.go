@@ -141,8 +141,9 @@ func TestStatusPort(t *testing.T) {
 	cfg.Performance.TCPKeepAlive = true
 
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	err = server.Run(ts.Domain)
 	require.Error(t, err)
-	require.Nil(t, server)
 }
 
 func TestMultiStatements(t *testing.T) {
@@ -164,16 +165,16 @@ func TestSocketForwarding(t *testing.T) {
 	cfg.Port = cli.Port
 	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	defer server.Close()
 
 	cli.RunTestRegression(t, func(config *mysql.Config) {
@@ -197,7 +198,7 @@ func TestSocket(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -205,7 +206,7 @@ func TestSocket(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
 	defer server.Close()
 
 	confFunc := func(config *mysql.Config) {
@@ -232,15 +233,17 @@ func TestSocketAndIp(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	cli.WaitUntilServerCanConnect()
 	defer server.Close()
 
@@ -397,7 +400,7 @@ func TestOnlySocket(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -405,7 +408,7 @@ func TestOnlySocket(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	<-server2.RunInGoTestChan
 	defer server.Close()
 	require.Nil(t, server.Listener())
 	require.NotNil(t, server.Socket())
@@ -898,17 +901,18 @@ func TestGracefulShutdown(t *testing.T) {
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Performance.TCPKeepAlive = true
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	require.NotNil(t, server)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
-
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	resp, err := cli.FetchStatus("/status") // server is up
 	require.NoError(t, err)
 	require.Nil(t, resp.Body.Close())
@@ -1067,7 +1071,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			sqlStr := mc.GetSQL(s.SQLDigest)
 			encodedPlan := mc.GetPlan(s.PlanDigest)
 			// Normalize the user SQL before check.
-			normalizedSQL := parser.Normalize(sql)
+			normalizedSQL := parser.Normalize(sql, "ON")
 			require.Equalf(t, normalizedSQL, sqlStr, "sql: %v", sql)
 			// decode plan before check.
 			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
@@ -2141,16 +2145,18 @@ func TestLocalhostClientMapping(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
+	<-server2.RunInGoTestChan
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	cli.WaitUntilServerCanConnect()
 
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
@@ -2763,6 +2769,7 @@ type mockProxyProtocolProxy struct {
 	backendIsSock bool
 	ln            net.Listener
 	run           atomic.Bool
+	runChan       chan struct{}
 }
 
 func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
@@ -2772,6 +2779,7 @@ func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSo
 		clientAddr:    clientAddr,
 		backendIsSock: backendIsSock,
 		ln:            nil,
+		runChan:       make(chan struct{}),
 	}
 }
 
@@ -2785,6 +2793,7 @@ func (p *mockProxyProtocolProxy) Run() (err error) {
 	if err != nil {
 		return err
 	}
+	close(p.runChan)
 	for p.run.Load() {
 		conn, err := p.ln.Accept()
 		if err != nil {
@@ -2884,6 +2893,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	// Prepare Server
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -2895,7 +2905,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	defer func() {
 		server.Close()
 	}()
-
+	<-server2.RunInGoTestChan
 	require.NotNil(t, server.Listener())
 	require.Nil(t, server.Socket())
 
@@ -2908,7 +2918,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	defer func() {
 		ppProxy.Close()
 	}()
-
+	<-ppProxy.runChan
 	cli := testserverclient.NewTestServerClient()
 	cli.Port = testutil.GetPortFromTCPAddr(ppProxy.ListenAddr())
 	cli.WaitUntilServerCanConnect()
@@ -3060,4 +3070,9 @@ func TestPrepareCount(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
 	require.NoError(t, qctx.Close())
+}
+
+func TestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestSQLModeIsLoadedBeforeQuery(t)
 }

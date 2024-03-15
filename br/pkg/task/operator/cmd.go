@@ -106,6 +106,7 @@ func hintAllReady() {
 // AdaptEnvForSnapshotBackup blocks the current goroutine and pause the GC safepoint and remove the scheduler by the config.
 // This function will block until the context being canceled.
 func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
+	utils.DumpGoroutineWhenExit.Store(true)
 	mgr, err := dialPD(ctx, &cfg.Config)
 	if err != nil {
 		return errors.Annotate(err, "failed to dial PD")
@@ -141,6 +142,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 		if cfg.OnAllReady != nil {
 			cfg.OnAllReady()
 		}
+		utils.DumpGoroutineWhenExit.Store(false)
 		hintAllReady()
 	}()
 	defer func() {

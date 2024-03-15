@@ -180,6 +180,11 @@ func (*MemBuf) Staging() kv.StagingHandle {
 // If the changes are not published by `Release`, they will be discarded.
 func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
+// MayFlush implements the kv.MemBuffer interface.
+func (*MemBuf) MayFlush() error {
+	return nil
+}
+
 // Size returns sum of keys and values length.
 func (mb *MemBuf) Size() int {
 	return mb.size

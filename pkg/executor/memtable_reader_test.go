@@ -154,10 +154,14 @@ func TestTiDBClusterConfig(t *testing.T) {
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// Tiproxy config
 	router.Handle("/api/admin/config", fn.Wrap(mockConfig))
+	// TSO config
+	router.Handle("/tso/api/v1/config", fn.Wrap(mockConfig))
+	// Scheduling config
+	router.Handle("/scheduling/api/v1/config", fn.Wrap(mockConfig))
 
 	// mock servers
 	var servers []string
-	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd", "tso", "scheduling"} {
 		for _, server := range testServers {
 			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
 		}
@@ -215,10 +219,28 @@ func TestTiDBClusterConfig(t *testing.T) {
 		"pd key1 value1",
 		"pd key2.nest1 n-value1",
 		"pd key2.nest2 n-value2",
+		"tso key1 value1",
+		"tso key2.nest1 n-value1",
+		"tso key2.nest2 n-value2",
+		"tso key1 value1",
+		"tso key2.nest1 n-value1",
+		"tso key2.nest2 n-value2",
+		"tso key1 value1",
+		"tso key2.nest1 n-value1",
+		"tso key2.nest2 n-value2",
+		"scheduling key1 value1",
+		"scheduling key2.nest1 n-value1",
+		"scheduling key2.nest2 n-value2",
+		"scheduling key1 value1",
+		"scheduling key2.nest1 n-value1",
+		"scheduling key2.nest2 n-value2",
+		"scheduling key1 value1",
+		"scheduling key2.nest1 n-value1",
+		"scheduling key2.nest2 n-value2",
 	))
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnings: %+v", warnings))
-	require.Equal(t, int32(15), requestCounter)
+	require.Equal(t, int32(21), requestCounter)
 
 	// TODO: we need remove it when index usage is GA.
 	rs := tk.MustQuery("show config").Rows()
@@ -235,7 +257,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 
 	// type => server index => row
 	rows := map[string][][]string{}
-	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd", "tso", "scheduling"} {
 		for _, server := range testServers {
 			rows[typ] = append(rows[typ], []string{
 				fmt.Sprintf("%s %s key1 value1", typ, server.address),
@@ -258,7 +280,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	}{
 		{
 			sql:      "select * from information_schema.cluster_config",
-			reqCount: 15,
+			reqCount: 21,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tidb"][1],
@@ -275,6 +297,12 @@ func TestTiDBClusterConfig(t *testing.T) {
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
+				rows["tso"][0],
+				rows["tso"][1],
+				rows["tso"][2],
+				rows["scheduling"][0],
+				rows["scheduling"][1],
+				rows["scheduling"][2],
 			),
 		},
 		{
@@ -291,7 +319,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
-			reqCount: 15,
+			reqCount: 21,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
@@ -300,6 +328,8 @@ func TestTiDBClusterConfig(t *testing.T) {
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
+				rows["tso"][0],
+				rows["scheduling"][0],
 			),
 		},
 		{
@@ -372,13 +402,15 @@ func TestTiDBClusterConfig(t *testing.T) {
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where instance='%s'`,
 				testServers[0].address),
-			reqCount: 5,
+			reqCount: 7,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
 				rows["tiflash"][0],
 				rows["tiproxy"][0],
 				rows["pd"][0],
+				rows["tso"][0],
+				rows["scheduling"][0],
 			),
 		},
 		{

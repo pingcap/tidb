@@ -598,8 +598,8 @@ explain select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10)
 id	estRows	task	access object	operator info
 Sort_5	2250.55	root		index_merge.t1.c1
 └─IndexMerge_12	1247.30	root		type: union
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
   └─Selection_11(Probe)	1247.30	cop[tikv]		or(and(lt(index_merge.t1.c1, 10), lt(index_merge.t1.c4, 10)), lt(index_merge.t1.c2, 10)), or(lt(index_merge.t1.c3, 10), lt(index_merge.t1.c5, 10))
     └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where ((c1 < 10 and c4 < 10) or c2 < 10) and (c3 < 10 or c4 < 10) order by 1;

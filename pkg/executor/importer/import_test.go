@@ -414,6 +414,28 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
 	c.Path = path.Join(tempDir, "server-*.csv")
 	require.NoError(t, c.InitDataFiles(ctx))
+	// test glob matching pattern [12]
+	err = os.WriteFile(path.Join(tempDir, "glob-1.csv"), []byte("1,1"), 0o644)
+	require.NoError(t, err)
+	err = os.WriteFile(path.Join(tempDir, "glob-2.csv"), []byte("2,2"), 0o644)
+	require.NoError(t, err)
+	err = os.WriteFile(path.Join(tempDir, "glob-3.csv"), []byte("3,3"), 0o644)
+	require.NoError(t, err)
+	c.Path = path.Join(tempDir, "glob-[12].csv")
+	require.NoError(t, c.InitDataFiles(ctx))
+	gotPath := make([]string, 0, len(c.dataFiles))
+	for _, f := range c.dataFiles {
+		gotPath = append(gotPath, f.Path)
+	}
+	require.ElementsMatch(t, []string{"glob-1.csv", "glob-2.csv"}, gotPath)
+	// test glob matching pattern [2-3]
+	c.Path = path.Join(tempDir, "glob-[2-3].csv")
+	require.NoError(t, c.InitDataFiles(ctx))
+	gotPath = make([]string, 0, len(c.dataFiles))
+	for _, f := range c.dataFiles {
+		gotPath = append(gotPath, f.Path)
+	}
+	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
 }
 
 func TestGetDataSourceType(t *testing.T) {

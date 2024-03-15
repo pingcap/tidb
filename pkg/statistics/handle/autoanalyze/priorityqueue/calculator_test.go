@@ -110,10 +110,12 @@ func TestCalculateWeight(t *testing.T) {
 func testWeightCalculation(t *testing.T, pc *priorityqueue.PriorityCalculator, group []testData) {
 	prevWeight := -1.0
 	for _, tc := range group {
-		job := &priorityqueue.TableAnalysisJob{
-			ChangePercentage:     tc.ChangePercentage,
-			TableSize:            tc.TableSize,
-			LastAnalysisDuration: tc.LastAnalysisDuration,
+		job := &priorityqueue.NonPartitionedTableAnalysisJob{
+			Indicators: priorityqueue.Indicators{
+				ChangePercentage:     tc.ChangePercentage,
+				TableSize:            tc.TableSize,
+				LastAnalysisDuration: tc.LastAnalysisDuration,
+			},
 		}
 		weight := pc.CalculateWeight(job)
 		require.Greater(t, weight, 0.0)
@@ -125,21 +127,20 @@ func testWeightCalculation(t *testing.T, pc *priorityqueue.PriorityCalculator, g
 func TestGetSpecialEvent(t *testing.T) {
 	pc := priorityqueue.NewPriorityCalculator()
 
-	jobWithIndex := &priorityqueue.TableAnalysisJob{
+	jobWithIndex1 := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		PartitionIndexes: map[string][]string{
 			"index1": {"p1", "p2"},
 		},
 	}
-	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex))
+	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex1))
 
-	jobWithIndex = &priorityqueue.TableAnalysisJob{
+	jobWithIndex2 := &priorityqueue.NonPartitionedTableAnalysisJob{
 		Indexes: []string{"index1"},
 	}
-	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex))
+	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex2))
 
-	jobWithoutIndex := &priorityqueue.TableAnalysisJob{
+	jobWithoutIndex := &priorityqueue.DynamicPartitionedTableAnalysisJob{
 		PartitionIndexes: map[string][]string{},
-		Indexes:          []string{},
 	}
 	require.Equal(t, priorityqueue.EventNone, pc.GetSpecialEvent(jobWithoutIndex))
 }

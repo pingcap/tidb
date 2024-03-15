@@ -154,6 +154,10 @@ format = "text"
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
+# Stores general log into separated files.
+# If it equals to empty, the general log will be written to the server log.
+general-log-file = ""
+
 # Make tidb panic if the write log operation hang for 15s
 # timeout = 15
 
@@ -170,6 +174,10 @@ max-days = 0
 
 # Maximum number of old log files to retain. No clean up by default.
 max-backups = 0
+
+# Compression function for rotated files.
+# It can be empty or "gzip", empty means compression disabled.
+compression = ""
 
 [security]
 # Path of file that contains list of trusted SSL CAs for connection with mysql client.

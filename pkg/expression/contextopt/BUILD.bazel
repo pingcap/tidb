@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "contextopt",
+    srcs = [
+        "current_user.go",
+        "optional.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/expression/contextopt",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/context",
+        "//pkg/parser/auth",
+        "//pkg/util/intest",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "contextopt_test",
+    timeout = "short",
+    srcs = ["optional_test.go"],
+    embed = [":contextopt"],
+    flaky = True,
+    deps = [
+        "//pkg/expression/context",
+        "//pkg/parser/auth",
+        "@com_github_stretchr_testify//require",
+    ],
+)

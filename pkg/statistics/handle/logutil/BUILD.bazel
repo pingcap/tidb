@@ -8,5 +8,6 @@ go_library(
     deps = [
         "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )

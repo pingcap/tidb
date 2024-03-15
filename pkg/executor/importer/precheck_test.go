@@ -79,6 +79,7 @@ func TestCheckRequirements(t *testing.T) {
 	tableObj, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
+	// source data file size = 0
 	c := &importer.LoadDataController{
 		Plan: &importer.Plan{
 			DBName:         "test",
@@ -88,8 +89,18 @@ func TestCheckRequirements(t *testing.T) {
 	}
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataPreCheckFailed)
 
-	// now checkTotalFileSize pass, and try next pre-check item
+	// make checkTotalFileSize pass
 	c.TotalFileSize = 1
+	// global sort with thread count < 16
+	c.ThreadCnt = 15
+	c.CloudStorageURI = "s3://test"
+	err = c.CheckRequirements(ctx, conn)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "global sort requires at least 16 threads")
+
+	// reset fields, make global sort thread check pass
+	c.ThreadCnt = 1
+	c.CloudStorageURI = ""
 	// non-empty table
 	_, err = conn.Execute(ctx, "insert into test.t values(1)")
 	require.NoError(t, err)
@@ -155,6 +166,7 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, c.CheckRequirements(ctx, conn))
 
 	// with global sort
+	c.Plan.ThreadCnt = 16
 	c.Plan.CloudStorageURI = ":"
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"

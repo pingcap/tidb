@@ -65,6 +65,12 @@ lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./br/pkg/lightning/...
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_resource_control.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_runtime.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
 
 license:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \

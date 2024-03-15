@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -30,9 +31,10 @@ import (
 )
 
 func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	data := infoschema.NewData()
+	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
-	infoSchema := infoSchemaBuilder.Build()
+	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
 	table, err := infoSchema.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummary))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
@@ -73,9 +75,10 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 }
 
 func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	data := infoschema.NewData()
+	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
-	infoSchema := infoSchemaBuilder.Build()
+	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
 	table, err := infoSchema.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummaryEvicted))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
@@ -151,9 +154,10 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	data := infoschema.NewData()
+	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
-	infoSchema := infoSchemaBuilder.Build()
+	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
 	table, err := infoSchema.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummaryHistory))
 	require.NoError(t, err)
 	columns := table.Meta().Columns

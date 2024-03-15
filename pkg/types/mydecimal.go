@@ -51,8 +51,6 @@ const (
 	wordMax       = wordBase - 1
 	notFixedDec   = 31
 
-	DivFracIncr = 4
-
 	// Round up to the next integer if positive or down to the next integer if negative.
 	ModeHalfUp RoundMode = 5
 	// Truncate just truncates the decimal.

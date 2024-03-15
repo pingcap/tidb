@@ -189,7 +189,7 @@ func TestSlowLogFormat(t *testing.T) {
 		ColumnStatsLoadStatus: map[int64]string{2: "unInitialized"},
 	}
 
-	copTasks := &stmtctx.CopTasksDetails{
+	copTasks := &execdetails.CopTasksDetails{
 		NumCopTasks:       10,
 		AvgProcessTime:    time.Second,
 		P90ProcessTime:    time.Second * 2,

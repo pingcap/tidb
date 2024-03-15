@@ -17,6 +17,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )

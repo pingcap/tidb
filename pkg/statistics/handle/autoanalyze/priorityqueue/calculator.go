@@ -51,19 +51,20 @@ func NewPriorityCalculator() *PriorityCalculator {
 //	                  0.1 * (1 - math.Log10(1 + TableSize)) +
 //	                  0.3 * math.Log10(1 + math.Sqrt(AnalysisInterval)) +
 //	                  special_event[event])
-func (pc *PriorityCalculator) CalculateWeight(job *TableAnalysisJob) float64 {
+func (pc *PriorityCalculator) CalculateWeight(job AnalysisJob) float64 {
 	// We multiply the priority_score by 100 to increase its magnitude. This ensures that
 	// when we apply the log10 function, the resulting value is more meaningful and reasonable.
-	changeRatio := 100 * job.ChangePercentage
+	indicators := job.GetIndicators()
+	changeRatio := 100 * indicators.ChangePercentage
 	return changeRatioWeight*math.Log10(1+changeRatio) +
-		sizeWeight*(1-math.Log10(1+job.TableSize)) +
-		analysisInterval*math.Log10(1+math.Sqrt(job.LastAnalysisDuration.Seconds())) +
+		sizeWeight*(1-math.Log10(1+indicators.TableSize)) +
+		analysisInterval*math.Log10(1+math.Sqrt(indicators.LastAnalysisDuration.Seconds())) +
 		pc.GetSpecialEvent(job)
 }
 
 // GetSpecialEvent returns the special event weight.
 // Exported for testing purposes.
-func (*PriorityCalculator) GetSpecialEvent(job *TableAnalysisJob) float64 {
+func (*PriorityCalculator) GetSpecialEvent(job AnalysisJob) float64 {
 	if job.HasNewlyAddedIndex() {
 		return EventNewIndex
 	}

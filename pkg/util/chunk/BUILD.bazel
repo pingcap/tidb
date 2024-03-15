@@ -65,7 +65,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",

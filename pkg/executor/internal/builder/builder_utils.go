@@ -20,6 +20,7 @@ import (
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -53,6 +54,10 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		dagReq.CollectExecutionSummaries = &collExec
 	}
 	dagReq.Flags = sc.PushDownFlags()
+	if ctx.GetSessionVars().GetDivPrecisionIncrement() != variable.DefDivPrecisionIncrement {
+		var divPrecIncr uint32 = uint32(ctx.GetSessionVars().GetDivPrecisionIncrement())
+		dagReq.DivPrecisionIncrement = &divPrecIncr
+	}
 	if storeType == kv.TiFlash {
 		var executors []*tipb.Executor
 		executors, err = ConstructTreeBasedDistExec(ctx.GetPlanCtx(), plans[0])

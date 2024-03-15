@@ -31,13 +31,13 @@ func NewAnalysisPriorityQueue() *AnalysisPriorityQueue {
 }
 
 // Push adds a job to the priority queue with the given weight.
-func (apq *AnalysisPriorityQueue) Push(job *TableAnalysisJob) {
+func (apq *AnalysisPriorityQueue) Push(job AnalysisJob) {
 	heap.Push(apq.inner, job)
 }
 
 // Pop removes the highest priority job from the queue.
-func (apq *AnalysisPriorityQueue) Pop() *TableAnalysisJob {
-	return heap.Pop(apq.inner).(*TableAnalysisJob)
+func (apq *AnalysisPriorityQueue) Pop() AnalysisJob {
+	return heap.Pop(apq.inner).(AnalysisJob)
 }
 
 // Len returns the number of jobs in the queue.
@@ -47,14 +47,14 @@ func (apq *AnalysisPriorityQueue) Len() int {
 
 // An AnalysisInnerQueue implements heap.Interface and holds TableAnalysisJobs.
 // Exported for testing purposes. You should not use this directly.
-type AnalysisInnerQueue []*TableAnalysisJob
+type AnalysisInnerQueue []AnalysisJob
 
 // Implement the sort.Interface methods for the priority queue.
 
 func (aq AnalysisInnerQueue) Len() int { return len(aq) }
 func (aq AnalysisInnerQueue) Less(i, j int) bool {
 	// We want Pop to give us the highest, not lowest, priority, so we use greater than here.
-	return aq[i].Weight > aq[j].Weight
+	return aq[i].GetWeight() > aq[j].GetWeight()
 }
 func (aq AnalysisInnerQueue) Swap(i, j int) {
 	aq[i], aq[j] = aq[j], aq[i]
@@ -62,7 +62,7 @@ func (aq AnalysisInnerQueue) Swap(i, j int) {
 
 // Push adds an item to the priority queue.
 func (aq *AnalysisInnerQueue) Push(x any) {
-	item := x.(*TableAnalysisJob)
+	item := x.(AnalysisJob)
 	*aq = append(*aq, item)
 }
 

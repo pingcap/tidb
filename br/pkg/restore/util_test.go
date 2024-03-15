@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore_test
+package restore
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -23,19 +22,19 @@ import (
 )
 
 func TestParseQuoteName(t *testing.T) {
-	schema, table := restore.ParseQuoteName("`a`.`b`")
+	schema, table := ParseQuoteName("`a`.`b`")
 	require.Equal(t, "a", schema)
 	require.Equal(t, "b", table)
 
-	schema, table = restore.ParseQuoteName("`a``b`.``````")
+	schema, table = ParseQuoteName("`a``b`.``````")
 	require.Equal(t, "a`b", schema)
 	require.Equal(t, "``", table)
 
-	schema, table = restore.ParseQuoteName("`.`.`.`")
+	schema, table = ParseQuoteName("`.`.`.`")
 	require.Equal(t, ".", schema)
 	require.Equal(t, ".", table)
 
-	schema, table = restore.ParseQuoteName("`.``.`.`.`")
+	schema, table = ParseQuoteName("`.``.`.`.`")
 	require.Equal(t, ".`.", schema)
 	require.Equal(t, ".", table)
 }
@@ -54,7 +53,7 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 		StartKey: []byte("t2abc"),
 		EndKey:   []byte("t3a"),
 	}
-	sstMeta, err := restore.GetSSTMetaFromFile([]byte{}, file, region, rule, restore.RewriteModeLegacy)
+	sstMeta, err := GetSSTMetaFromFile([]byte{}, file, region, rule, RewriteModeLegacy)
 	require.Nil(t, err)
 	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
 	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))
@@ -91,14 +90,14 @@ func TestMapTableToFiles(t *testing.T) {
 		},
 	}
 
-	result := restore.MapTableToFiles(append(filesOfTable2, filesOfTable1...))
+	result := MapTableToFiles(append(filesOfTable2, filesOfTable1...))
 
 	require.Equal(t, filesOfTable1, result[1])
 	require.Equal(t, filesOfTable2, result[2])
 }
 
 func TestValidateFileRewriteRule(t *testing.T) {
-	rules := &restore.RewriteRules{
+	rules := &RewriteRules{
 		Data: []*import_sstpb.RewriteRule{{
 			OldKeyPrefix: []byte(tablecodec.EncodeTablePrefix(1)),
 			NewKeyPrefix: []byte(tablecodec.EncodeTablePrefix(2)),
@@ -106,7 +105,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 	}
 
 	// Empty start/end key is not allowed.
-	err := restore.ValidateFileRewriteRule(
+	err := ValidateFileRewriteRule(
 		&backuppb.File{
 			Name:     "file_write.sst",
 			StartKey: []byte(""),
@@ -118,7 +117,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 	require.Regexp(t, ".*cannot find rewrite rule.*", err.Error())
 
 	// Range is not overlap, no rule found.
-	err = restore.ValidateFileRewriteRule(
+	err = ValidateFileRewriteRule(
 		&backuppb.File{
 			Name:     "file_write.sst",
 			StartKey: tablecodec.EncodeTablePrefix(0),
@@ -130,7 +129,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 	require.Regexp(t, ".*cannot find rewrite rule.*", err.Error())
 
 	// No rule for end key.
-	err = restore.ValidateFileRewriteRule(
+	err = ValidateFileRewriteRule(
 		&backuppb.File{
 			Name:     "file_write.sst",
 			StartKey: tablecodec.EncodeTablePrefix(1),
@@ -146,7 +145,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 		OldKeyPrefix: tablecodec.EncodeTablePrefix(2),
 		NewKeyPrefix: tablecodec.EncodeTablePrefix(3),
 	})
-	err = restore.ValidateFileRewriteRule(
+	err = ValidateFileRewriteRule(
 		&backuppb.File{
 			Name:     "file_write.sst",
 			StartKey: tablecodec.EncodeTablePrefix(1),
@@ -162,7 +161,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 		OldKeyPrefix: tablecodec.EncodeTablePrefix(2),
 		NewKeyPrefix: tablecodec.EncodeTablePrefix(1),
 	})
-	err = restore.ValidateFileRewriteRule(
+	err = ValidateFileRewriteRule(
 		&backuppb.File{
 			Name:     "file_write.sst",
 			StartKey: tablecodec.EncodeTablePrefix(1),
@@ -345,7 +344,7 @@ func (c *regionOnlineSlowClient) ScanRegions(ctx context.Context, key, endKey []
 }
 
 func TestRewriteFileKeys(t *testing.T) {
-	rewriteRules := restore.RewriteRules{
+	rewriteRules := RewriteRules{
 		Data: []*import_sstpb.RewriteRule{
 			{
 				NewKeyPrefix: tablecodec.GenTablePrefix(2),
@@ -362,7 +361,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		StartKey: tablecodec.GenTableRecordPrefix(1),
 		EndKey:   tablecodec.GenTableRecordPrefix(1).PrefixNext(),
 	}
-	start, end, err := restore.GetRewriteRawKeys(&rawKeyFile, &rewriteRules)
+	start, end, err := GetRewriteRawKeys(&rawKeyFile, &rewriteRules)
 	require.NoError(t, err)
 	_, end, err = codec.DecodeBytes(end, nil)
 	require.NoError(t, err)
@@ -376,7 +375,7 @@ func TestRewriteFileKeys(t *testing.T) {
 		StartKey: codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1)),
 		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1).PrefixNext()),
 	}
-	start, end, err = restore.GetRewriteEncodedKeys(&encodeKeyFile, &rewriteRules)
+	start, end, err = GetRewriteEncodedKeys(&encodeKeyFile, &rewriteRules)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2)), start)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2).PrefixNext()), end)
@@ -388,12 +387,12 @@ func TestRewriteFileKeys(t *testing.T) {
 		EndKey:   codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(767).PrefixNext()),
 	}
 	// use raw rewrite should no error but not equal
-	start, end, err = restore.GetRewriteRawKeys(&encodeKeyFile767, &rewriteRules)
+	start, end, err = GetRewriteRawKeys(&encodeKeyFile767, &rewriteRules)
 	require.NoError(t, err)
 	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.NotEqual(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
 	// use encode rewrite should no error and equal
-	start, end, err = restore.GetRewriteEncodedKeys(&encodeKeyFile767, &rewriteRules)
+	start, end, err = GetRewriteEncodedKeys(&encodeKeyFile767, &rewriteRules)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
@@ -410,8 +409,8 @@ func newPeerMeta(
 	commitIndex uint64,
 	version uint64,
 	tombstone bool,
-) *restore.RecoverRegion {
-	return &restore.RecoverRegion{
+) *RecoverRegion {
+	return &RecoverRegion{
 		&recover_data.RegionMeta{
 			RegionId:    regionId,
 			PeerId:      peerId,
@@ -427,12 +426,12 @@ func newPeerMeta(
 	}
 }
 
-func newRecoverRegionInfo(r *restore.RecoverRegion) *restore.RecoverRegionInfo {
-	return &restore.RecoverRegionInfo{
+func newRecoverRegionInfo(r *RecoverRegion) *RecoverRegionInfo {
+	return &RecoverRegionInfo{
 		RegionVersion: r.Version,
 		RegionId:      r.RegionId,
-		StartKey:      restore.PrefixStartKey(r.StartKey),
-		EndKey:        restore.PrefixEndKey(r.EndKey),
+		StartKey:      PrefixStartKey(r.StartKey),
+		EndKey:        PrefixEndKey(r.EndKey),
 		TombStone:     r.Tombstone,
 	}
 }
@@ -441,7 +440,7 @@ func TestSortRecoverRegions(t *testing.T) {
 	selectedPeer1 := newPeerMeta(9, 11, 2, []byte("aa"), nil, 2, 0, 0, 0, false)
 	selectedPeer2 := newPeerMeta(19, 22, 3, []byte("bbb"), nil, 2, 1, 0, 1, false)
 	selectedPeer3 := newPeerMeta(29, 30, 1, []byte("c"), nil, 2, 1, 1, 2, false)
-	regions := map[uint64][]*restore.RecoverRegion{
+	regions := map[uint64][]*RecoverRegion{
 		9: {
 			// peer 11 should be selected because of log term
 			newPeerMeta(9, 10, 1, []byte("a"), nil, 1, 1, 1, 1, false),
@@ -461,8 +460,8 @@ func TestSortRecoverRegions(t *testing.T) {
 			newPeerMeta(29, 32, 3, []byte("ccc"), nil, 2, 1, 0, 0, false),
 		},
 	}
-	regionsInfos := restore.SortRecoverRegions(regions)
-	expectRegionInfos := []*restore.RecoverRegionInfo{
+	regionsInfos := SortRecoverRegions(regions)
+	expectRegionInfos := []*RecoverRegionInfo{
 		newRecoverRegionInfo(selectedPeer3),
 		newRecoverRegionInfo(selectedPeer2),
 		newRecoverRegionInfo(selectedPeer1),
@@ -476,13 +475,13 @@ func TestCheckConsistencyAndValidPeer(t *testing.T) {
 	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
 	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 1, 2, false)
 
-	validRegionInfos := []*restore.RecoverRegionInfo{
+	validRegionInfos := []*RecoverRegionInfo{
 		newRecoverRegionInfo(validPeer1),
 		newRecoverRegionInfo(validPeer2),
 		newRecoverRegionInfo(validPeer3),
 	}
 
-	validPeer, err := restore.CheckConsistencyAndValidPeer(validRegionInfos)
+	validPeer, err := CheckConsistencyAndValidPeer(validRegionInfos)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(validPeer))
 	var regions = make(map[uint64]struct{}, 3)
@@ -497,13 +496,13 @@ func TestCheckConsistencyAndValidPeer(t *testing.T) {
 	invalidPeer2 := newPeerMeta(19, 22, 3, []byte("dd"), []byte("cc"), 2, 1, 0, 1, false)
 	invalidPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte("dd"), 2, 1, 1, 2, false)
 
-	invalidRegionInfos := []*restore.RecoverRegionInfo{
+	invalidRegionInfos := []*RecoverRegionInfo{
 		newRecoverRegionInfo(invalidPeer1),
 		newRecoverRegionInfo(invalidPeer2),
 		newRecoverRegionInfo(invalidPeer3),
 	}
 
-	_, err = restore.CheckConsistencyAndValidPeer(invalidRegionInfos)
+	_, err = CheckConsistencyAndValidPeer(invalidRegionInfos)
 	require.Error(t, err)
 	require.Regexp(t, ".*invalid restore range.*", err.Error())
 }
@@ -514,13 +513,13 @@ func TestLeaderCandidates(t *testing.T) {
 	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
 	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 0, 2, false)
 
-	peers := []*restore.RecoverRegion{
+	peers := []*RecoverRegion{
 		validPeer1,
 		validPeer2,
 		validPeer3,
 	}
 
-	candidates, err := restore.LeaderCandidates(peers)
+	candidates, err := LeaderCandidates(peers)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(candidates))
 }
@@ -530,30 +529,30 @@ func TestSelectRegionLeader(t *testing.T) {
 	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
 	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 0, 2, false)
 
-	peers := []*restore.RecoverRegion{
+	peers := []*RecoverRegion{
 		validPeer1,
 		validPeer2,
 		validPeer3,
 	}
 	// init store banlance score all is 0
 	storeBalanceScore := make(map[uint64]int, len(peers))
-	leader := restore.SelectRegionLeader(storeBalanceScore, peers)
+	leader := SelectRegionLeader(storeBalanceScore, peers)
 	require.Equal(t, validPeer1, leader)
 
 	// change store banlance store
 	storeBalanceScore[2] = 3
 	storeBalanceScore[3] = 2
 	storeBalanceScore[1] = 1
-	leader = restore.SelectRegionLeader(storeBalanceScore, peers)
+	leader = SelectRegionLeader(storeBalanceScore, peers)
 	require.Equal(t, validPeer3, leader)
 
 	// one peer
-	peer := []*restore.RecoverRegion{
+	peer := []*RecoverRegion{
 		validPeer3,
 	}
 	// init store banlance score all is 0
 	storeScore := make(map[uint64]int, len(peer))
-	leader = restore.SelectRegionLeader(storeScore, peer)
+	leader = SelectRegionLeader(storeScore, peer)
 	require.Equal(t, validPeer3, leader)
 }
 
@@ -567,7 +566,7 @@ func TestLogFilesSkipMap(t *testing.T) {
 	)
 
 	for ratio < 1 {
-		skipmap := restore.NewLogFilesSkipMap()
+		skipmap := NewLogFilesSkipMap()
 		nativemap := make(map[string]map[int]map[int]struct{})
 		count := 0
 		for i := 0; i < int(ratio*float64(metaNum*groupNum*fileNum)); i++ {

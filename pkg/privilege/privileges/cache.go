@@ -1633,7 +1633,7 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
-	priv atomic.Value
+	priv atomic.Pointer[MySQLPrivilege]
 }
 
 // NewHandle returns a Handle.
@@ -1643,7 +1643,7 @@ func NewHandle() *Handle {
 
 // Get the MySQLPrivilege for read.
 func (h *Handle) Get() *MySQLPrivilege {
-	return h.priv.Load().(*MySQLPrivilege)
+	return h.priv.Load()
 }
 
 // Update loads all the privilege info from kv storage.

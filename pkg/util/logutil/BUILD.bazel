@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "logutil",
     srcs = [
+        "general_logger.go",
         "hex.go",
         "log.go",
         "slow_query_logger.go",

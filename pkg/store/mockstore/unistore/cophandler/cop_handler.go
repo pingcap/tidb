@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
@@ -313,6 +314,11 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		}
 	}
 	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
+	if dagReq.DivPrecisionIncrement != nil {
+		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
+	} else {
+		sctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
+	}
 	ctx := &dagContext{
 		evalContext:   &evalContext{sctx: sctx},
 		dbReader:      reader,

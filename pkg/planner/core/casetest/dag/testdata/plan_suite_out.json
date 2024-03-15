@@ -16,7 +16,7 @@
       },
       {
         "SQL": "select * from t where (t.c > 0 and t.c < 2) or (t.c > 4 and t.c < 6) or (t.c > 8 and t.c < 10) or (t.c > 12 and t.c < 14) or (t.c > 16 and t.c < 18)",
-        "Best": "TableReader(Table(t)->Sel([or(or(and(gt(test.t.c, 0), lt(test.t.c, 2)), and(gt(test.t.c, 4), lt(test.t.c, 6))), or(and(gt(test.t.c, 8), lt(test.t.c, 10)), or(and(gt(test.t.c, 12), lt(test.t.c, 14)), and(gt(test.t.c, 16), lt(test.t.c, 18)))))]))"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1] [5,5] [9,9] [13,13] [17,17]], Table(t))"
       },
       {
         "SQL": "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",

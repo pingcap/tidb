@@ -3061,3 +3061,126 @@ func TestPointGetKeyPartitioning(t *testing.T) {
 	tk.MustExec(`INSERT INTO t VALUES ('Aa', 'Ab', 'Ac'), ('Ba', 'Bb', 'Bc')`)
 	tk.MustQuery(`SELECT * FROM t WHERE b = 'Ab'`).Check(testkit.Rows("Aa Ab Ac"))
 }
+
+func TestExplainPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t (a int, b int) PARTITION BY hash(a) PARTITIONS 3`)
+	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
+		`TableReader 1.00 root  data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 3)`,
+		`  └─TableFullScan 2.00 cop[tikv] table:t, partition:p0 keep order:false`))
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
+		`TableReader 1.00 root partition:p0 data:Selection`,
+		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 3)`,
+		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`CREATE TABLE t (a int unsigned primary key, b int) PARTITION BY hash(a) PARTITIONS 3`)
+	tk.MustExec(`INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`SELECT * FROM t WHERE a = 3`).Check(testkit.Rows("3 3"))
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0 handle:3"))
+}
+
+func TestPruningOverflow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("CREATE TABLE t (a int NOT NULL, b bigint NOT NULL,PRIMARY KEY (a,b)) PARTITION BY HASH ((a*b))PARTITIONS 13")
+	tk.MustExec(`insert into t values(0, 3522101843073676459)`)
+	tk.MustQuery(`SELECT a, b FROM t WHERE a IN (0,14158354938390,0) AND b IN (3522101843073676459,-2846203247576845955,838395691793635638)`).Check(testkit.Rows("0 3522101843073676459"))
+}
+
+func TestPartitionCoverage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustExec(`create table t (id int, d date, filler varchar(255))`)
+	tk.MustExec(`insert into t (id, d) values (1, '2024-02-29'), (2,'2024-03-01')`)
+	tk.MustExec(`alter table t partition by list (YEAR(d)) (partition p0 values in  (2024,2025), partition p1 values in (2023))`)
+	tk.MustQuery(`select id,d from t partition (p0)`).Check(testkit.Rows("1 2024-02-29", "2 2024-03-01"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`select id,d from t partition (p0)`).Check(testkit.Rows("1 2024-02-29", "2 2024-03-01"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`select id,d from t partition (p1)`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`select id,d from t partition (p1)`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`update t set filler = 'updated' where id = 1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b int, primary key (a,b)) partition by hash(b) partitions 3`)
+	tk.MustExec(`insert into t values (1,1),(1,2),(2,1),(2,2),(1,3)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
+	query := `select * from t where a in (1,2) and b = 1 order by a`
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"))
+	tk.MustQuery(query).Check(testkit.Rows("1 1", "2 1"))
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"TableReader 2.00 root partition:p1 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t range:[1 1,1 1], [2 1,2 1], keep order:true"))
+	tk.MustQuery(query).Check(testkit.Rows("1 1", "2 1"))
+
+	query = `select * from t where a = 1 and b in (1,2)`
+	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"PartitionUnion 2.00 root  ",
+		"├─Batch_Point_Get 2.00 root table:t, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+		"└─Batch_Point_Get 2.00 root table:t, partition:p2, clustered index:PRIMARY(a, b) keep order:false, desc:false"))
+
+	tk.MustQuery(query).Sort().Check(testkit.Rows("1 1", "1 2"))
+	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
+		"TableReader 3.00 root partition:p1,p2 data:TableRangeScan",
+		"└─TableRangeScan 3.00 cop[tikv] table:t range:[1 1,1 1], [1 2,1 2], keep order:false"))
+	tk.MustQuery(query).Sort().Check(testkit.Rows("1 1", "1 2"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int) partition by range (a) (partition p values less than (10))`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
+		"TableReader 10.00 root partition:dual data:Selection",
+		"└─Selection 10.00 cop[tikv]  eq(test.t.a, 10)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
+		`TableReader 0.00 root partition:dual data:Selection`,
+		`└─Selection 0.00 cop[tikv]  eq(test.t.a, 10)`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`select * from t where a = 10`).Check(testkit.Rows())
+
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`set @p=1,@q=2,@u=3;`)
+	tk.MustExec(`create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2`)
+	tk.MustExec(`insert into t values(1,0),(2,0),(3,0),(4,0)`)
+	tk.MustQuery(`explain format = 'brief' select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p0 handle:2"))
+	tk.MustQuery(`select * from t where ((a >= 3 and a <= 1) or a = 2) and 1 = 1`).Sort().Check(testkit.Rows("2 0"))
+	tk.MustExec(`prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and 1 = 1'`)
+	tk.MustQuery(`execute stmt using @p,@p`).Sort().Check(testkit.Rows("1 0", "2 0"))
+	tk.MustQuery(`execute stmt using @q,@q`).Sort().Check(testkit.Rows("2 0"))
+	tk.MustQuery(`execute stmt using @p,@u`).Sort().Check(testkit.Rows("1 0", "2 0", "3 0"))
+	tk.MustQuery(`execute stmt using @u,@p`).Sort().Check(testkit.Rows("2 0"))
+
+	tk.MustExec(`create table t19141 (c_int int, primary key (c_int)) partition by hash ( c_int ) partitions 4`)
+	tk.MustExec(`insert into t19141 values (1), (2), (3), (4)`)
+	tk.MustQuery(`explain format = 'brief' select * from t19141 partition (p0)`).Check(testkit.Rows(""+
+		"TableReader 10000.00 root partition:p0 data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t19141 keep order:false, stats:pseudo"))
+	tk.MustQuery(`select * from t19141 partition (p0)`).Sort().Check(testkit.Rows("4"))
+	tk.MustQuery(`select * from t19141 partition (p0) where c_int = 1`).Sort().Check(testkit.Rows())
+	tk.MustExec(`update t19141 partition (p0) set c_int = -c_int where c_int = 1`)
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustQuery(`select * from t19141 partition (p0, p2) where c_int in (1,2,3)`).Sort().Check(testkit.Rows("2"))
+	tk.MustExec(`update t19141 partition (p1) set c_int = -c_int where c_int in (2,3)`)
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec(`delete from t19141 partition (p0) where c_int in (2,3)`)
+	tk.MustQuery(`select * from t19141 order by c_int`).Sort().Check(testkit.Rows("1", "2", "3", "4"))
+}

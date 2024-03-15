@@ -188,16 +188,14 @@
       {
         "SQL": "explain select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
         "Plan": [
-          "TableReader_11 0.01 root partition:p1 MppVersion: 2, data:ExchangeSender_10",
-          "└─ExchangeSender_10 0.01 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─TableRangeScan_9 1.00 mpp[tiflash] table:t3 range:[1 \"a\",1 \"a\"], keep order:false, stats:pseudo, PartitionTableScan:true"
+          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
         ],
         "Warn": null
       },
       {
         "SQL": "explain select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
         "Plan": [
-          "Point_Get_5 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
+          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
         ],
         "Warn": null
       }

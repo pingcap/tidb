@@ -426,7 +426,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		for i := 0; i < numOuterChks; i++ {
 			chk := task.outerResult.GetChunk(i)
 			task.outerMatch[i] = make([]bool, chk.NumRows())
-			task.outerMatch[i], err = expression.VectorizedFilter(exprCtx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), task.outerMatch[i])
+			task.outerMatch[i], err = expression.VectorizedFilter(exprCtx, imw.ctx.GetSessionVars().EnableVectorizedExpression, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), task.outerMatch[i])
 			if err != nil {
 				return err
 			}

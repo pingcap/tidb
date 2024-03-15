@@ -76,6 +76,23 @@ func MergeOverlappingFiles(
 
 // mergeOverlappingFilesInternal reads from given files whose key range may overlap
 // and writes to one new sorted, nonoverlapping files.
+// since some memory are taken by library, such as HTTP2, that we cannot calculate
+// accurately, here we only consider the memory used by our code, the estimate max
+// memory usage of this function is:
+//
+//	memSizeLimit
+//	+ 20 * partSize
+//	+ 20 * 5MiB(stat file, we might not use all part, as stat file is quite small)
+//	+ readBufferSize * len(paths)
+//	+ memory taken by concurrent reading if check-hotspot is enabled
+//
+// memSizeLimit = 256 MiB now.
+// partSize = index-kv-data-file-size / (10000 / MergeSortOverlapThreshold) for import into.
+// readBufferSize = 64 KiB now.
+// len(paths) >= kv-files-in-subtask(suppose MergeSortOverlapThreshold) / concurrency
+//
+// TODO: seems it might OOM if partSize = 256 / (10000/4000) = 100 MiB, when write
+// external storage is slow.
 func mergeOverlappingFilesInternal(
 	ctx context.Context,
 	paths []string,
@@ -124,6 +141,18 @@ func mergeOverlappingFilesInternal(
 	if err != nil {
 		return nil
 	}
+	defer func() {
+		err2 := writer.Close(ctx)
+		if err2 == nil {
+			return
+		}
+
+		if err == nil {
+			err = err2
+		} else {
+			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err2))
+		}
+	}()
 
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
@@ -133,10 +162,5 @@ func mergeOverlappingFilesInternal(
 			return err
 		}
 	}
-	err = iter.Error()
-	if err != nil {
-		return err
-	}
-
-	return writer.Close(ctx)
+	return iter.Error()
 }

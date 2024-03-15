@@ -98,9 +98,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
 	// merge-sort data kv
-	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	s.tk.MustExec("truncate table t")
-	result = s.tk.MustQuery(importSQL).Rows()
+	result = s.tk.MustQuery(importSQL + `, __force_merge_step`).Rows()
 	s.Len(result, 1)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
@@ -150,7 +149,7 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	// 1 subtask, encoding 10 files using 4 threads.
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
-		with thread=4, cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
+		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 }

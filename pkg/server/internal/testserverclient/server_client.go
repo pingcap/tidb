@@ -16,6 +16,7 @@ package testserverclient
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -2626,6 +2627,37 @@ func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
 				require.Equalf(t, warnings, newWarnings, "source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt)
 			}
 		}
+	})
+}
+
+func (cli *TestServerClient) RunTestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "set global sql_mode='NO_BACKSLASH_ESCAPES';")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, `
+		CREATE TABLE t1 (
+			id bigint(20) NOT NULL,
+			t text DEFAULT NULL,
+			PRIMARY KEY (id)
+		);`)
+		require.NoError(t, err)
+
+		// use another new connection
+		conn1, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "insert into t1 values (1, 'ab\\\\c');")
+		require.NoError(t, err)
+		result, err := conn1.QueryContext(ctx, "select t from t1 where id = 1;")
+		require.NoError(t, err)
+		require.True(t, result.Next())
+		var tStr string
+		require.NoError(t, result.Scan(&tStr))
+
+		require.Equal(t, "ab\\\\c", tStr)
 	})
 }
 

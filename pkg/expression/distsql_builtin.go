@@ -597,9 +597,9 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_FoundRows:
 		f = &builtinFoundRowsSig{base}
 	case tipb.ScalarFuncSig_CurrentUser:
-		f = &builtinCurrentUserSig{base}
+		f = &builtinCurrentUserSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_User:
-		f = &builtinUserSig{base}
+		f = &builtinUserSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ConnectionID:
 		f = &builtinConnectionIDSig{base}
 	case tipb.ScalarFuncSig_LastInsertID:
