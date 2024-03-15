@@ -3065,11 +3065,6 @@ var defaultSysVars = []*SysVar{
 			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableParallelSort, Value: BoolToOnOff(DefEnableParallelSort), Type: TypeBool,
-		SetSession: func(vars *SessionVars, s string) error {
-			vars.EnableParallelSort = TiDBOptOn(s)
-			return nil
-		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: DivPrecisionIncrement, Value: strconv.Itoa(DefDivPrecisionIncrement), Type: TypeUnsigned, MinValue: 0, MaxValue: 30,
 		SetSession: func(s *SessionVars, val string) error {
 			s.DivPrecisionIncrement = tidbOptPositiveInt32(val, DefDivPrecisionIncrement)
