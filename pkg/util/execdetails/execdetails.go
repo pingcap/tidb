@@ -1042,10 +1042,10 @@ func (context *TiFlashScanContext) String() string {
 		"local_max_stream:%dms, "+
 		"remote_min_stream:%dms, "+
 		"remote_max_stream:%dms, "+
-		"local_region_num: %d, "+
-		"remote_region_num: %d, "+
-		"stale_read_num: %d, "+
-		"learner_read_time: %dms, "+
+		"local_regions:%d, "+
+		"remote_regions:%d, "+
+		"stale_reads:%d, "+
+		"total_learner_read:%dms, "+
 		"region_balance_info: %s}",
 		context.totalDmfileDataScannedRows,
 		context.totalDmfileDataSkippedRows,
