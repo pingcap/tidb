@@ -246,21 +246,22 @@ func handleTopLevelANDListAndGenFinishedPath(
 
 /*
 Example (consistent with the one in generateUnfinishedIndexMergePathFromORList()):
-  idx1: (a, j->'$.a' unsigned array)  idx2: (j->'$.b' unsigned array, a)
-  Input:
-    indexMergePath:
-      unfinishedAccessPath{ indexMergeORPartialPaths:[
-        [unfinishedAccessPath{idx1,1 member of j->'$.a'}, nil]
-        [nil, unfinishedAccessPath{idx2,2 member of j->'$.b'}]
-      ]}
-    pathListFromANDItem:
-      [unfinishedAccessPath{idx1,a=3}, unfinishedAccessPath{idx2,a=3}]
-  Output:
-    unfinishedAccessPath{ indexMergeORPartialPaths:[
-      [unfinishedAccessPath{idx1,1 member of j->'$.a', a=3}, nil]
-      [nil, unfinishedAccessPath{idx2,2 member of j->'$.b', a=3}]
-    ]}
- */
+
+	idx1: (a, j->'$.a' unsigned array)  idx2: (j->'$.b' unsigned array, a)
+	Input:
+	  indexMergePath:
+	    unfinishedAccessPath{ indexMergeORPartialPaths:[
+	      [unfinishedAccessPath{idx1,1 member of j->'$.a'}, nil]
+	      [nil, unfinishedAccessPath{idx2,2 member of j->'$.b'}]
+	    ]}
+	  pathListFromANDItem:
+	    [unfinishedAccessPath{idx1,a=3}, unfinishedAccessPath{idx2,a=3}]
+	Output:
+	  unfinishedAccessPath{ indexMergeORPartialPaths:[
+	    [unfinishedAccessPath{idx1,1 member of j->'$.a', a=3}, nil]
+	    [nil, unfinishedAccessPath{idx2,2 member of j->'$.b', a=3}]
+	  ]}
+*/
 func mergeANDItemIntoUnfinishedIndexMergePath(
 	indexMergePath *unfinishedAccessPath,
 	pathListFromANDItem unfinishedAccessPathList,
