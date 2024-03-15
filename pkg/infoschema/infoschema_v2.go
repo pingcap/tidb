@@ -41,7 +41,6 @@ type tableItem struct {
 	tableName     string
 	tableID       int64
 	schemaVersion int64
-	tomb          bool
 }
 
 type schemaItem struct {
@@ -164,8 +163,6 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 }
 
 func (isd *Data) remove(item tableItem) {
-	item.tomb = true
-	isd.byName.Set(item)
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
@@ -238,9 +235,10 @@ func compareSchemaItem(a, b schemaItem) bool {
 var _ InfoSchema = &infoschemaV2{}
 
 type infoschemaV2 struct {
-	*infoSchema // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
-	r           autoid.Requirement
-	ts          uint64
+	*infoSchema   // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
+	r             autoid.Requirement
+	ts            uint64
+	schemaVersion int64
 	*Data
 }
 
@@ -286,10 +284,6 @@ func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, mat
 		}
 		return true
 	})
-	if ok && target.tomb {
-		// If the item is a tomb record, the table is dropped.
-		ok = false
-	}
 	return target, ok
 }
 
@@ -299,14 +293,14 @@ func (is *infoschemaV2) base() *infoSchema {
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	// Get from the cache.
-	key := tableCacheKey{id, is.infoSchema.schemaMetaVersion}
+	key := tableCacheKey{id, is.schemaVersion}
 	tbl, found := is.tableCache.Get(key)
 	if found && tbl != nil {
 		return tbl, true
 	}
 
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
-	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
+	itm, ok := search(is.byID, is.schemaVersion, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, false
@@ -321,7 +315,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.schemaVersion)
 	if err != nil || ret == nil {
 		return nil, false
 	}
@@ -347,21 +341,21 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
-	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, tableID: math.MaxInt64}, eq)
+	itm, ok := search(is.byName, is.schemaVersion, tableItem{dbName: schema.L, tableName: tbl.L, tableID: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
 	}
 
 	// Get from the cache.
-	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
+	key := tableCacheKey{itm.tableID, is.schemaVersion}
 	res, found := is.tableCache.Get(key)
 	if found && res != nil {
 		return res, nil
 	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
+	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.schemaVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -381,7 +375,7 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 			ok = false
 			return false
 		}
-		if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+		if item.schemaVersion <= is.schemaVersion {
 			ok = true
 			val = item.dbInfo
 			return false
@@ -413,6 +407,10 @@ func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
 		rs = append(rs, sc.dbInfo.Name)
 	}
 	return rs
+}
+
+func (is *infoschemaV2) SchemaMetaVersion() int64 {
+	return is.schemaVersion
 }
 
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
@@ -710,6 +708,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	}
 
 	table, ok := b.infoschemaV2.TableByID(tableID)
+
 	if !ok {
 		return nil
 	}

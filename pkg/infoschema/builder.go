@@ -766,6 +766,7 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	if b.enableV2 {
 		b.infoschemaV2.ts = schemaTS
+		b.infoschemaV2.schemaVersion = b.infoSchema.SchemaMetaVersion()
 		updateInfoSchemaBundles(b)
 		return &b.infoschemaV2
 	}
@@ -781,10 +782,12 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 		return nil, errors.New("builder's infoschema mismatch, return error to trigger full reload")
 	}
 
+	var oldIS *infoSchema
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
-		b.infoschemaV2.ts = schemaV2.ts
+		oldIS = schemaV2.infoSchema
+	} else {
+		oldIS = oldSchema.(*infoSchema)
 	}
-	oldIS := oldSchema.base()
 	b.initBundleInfoBuilder()
 	b.infoSchema.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
