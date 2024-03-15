@@ -131,7 +131,7 @@ func (cfg *RestoreCommonConfig) adjust() {
 	if len(cfg.Granularity) == 0 {
 		cfg.Granularity = string(restore.FineGrained)
 	}
-	if cfg.ConcurrencyPerStore.Modified {
+	if !cfg.ConcurrencyPerStore.Modified {
 		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
 	}
 }
@@ -938,6 +938,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		} else {
 			client.SetPolicyMap(policies)
 		}
+	}
+
+	// preallocate the table id, because any ddl job or database creation also allocates the global ID
+	err = client.AllocTableIDs(ctx, tables)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// execute DDL first

@@ -500,7 +500,7 @@ func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKV
 			dataConflictInfos = dataConflictInfos[:0]
 		}
 
-		if algorithm == config.DupeResAlgErr {
+		if algorithm == config.ErrorOnDup {
 			return errors.Trace(common.ErrFoundDataConflictRecords.FastGenByArgs(m.tbl.Meta().Name, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val)))
 		}
 	}
@@ -575,7 +575,7 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 			indexHandles.truncate()
 		}
 
-		if algorithm == config.DupeResAlgErr {
+		if algorithm == config.ErrorOnDup {
 			return newErrFoundIndexConflictRecords(key, val, m.tbl, indexInfo)
 		}
 	}
@@ -1110,12 +1110,12 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 	}()
 
 	switch algorithm {
-	case config.DupeResAlgNone:
+	case config.NoneOnDup:
 		logger.Warn("skipping resolution due to selected algorithm. this table will become inconsistent!", zap.String("category", "resolve-dupe"), zap.Stringer("algorithm", algorithm))
 		return nil
-	case config.DupeResAlgReplace:
+	case config.ReplaceOnDup:
 	default:
-		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
+		panic(fmt.Sprintf("[resolve-dupe] unknown conflict.strategy algorithm %v", algorithm))
 	}
 
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")

@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 	"math"
 	"time"
 
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -185,28 +183,40 @@ func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
 	return nil
 }
 
-// EvalExpireTime returns the expired time
+// EvalExpireTime returns the expired time.
+// It uses the global timezone to compute the expired time.
+// Then we'll reset the returned expired time to the same timezone as the input `now`.
 func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	now time.Time) (expire time.Time, err error) {
-	tz := se.GetSessionVars().Location()
-
 	expireExpr := t.TTLInfo.IntervalExprStr
 	unit := ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit)
 
-	var rows []chunk.Row
-	rows, err = se.ExecuteSQL(
-		ctx,
-		// FROM_UNIXTIME does not support negative value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>`
-		// to present current time
-		fmt.Sprintf("SELECT FROM_UNIXTIME(0) + INTERVAL %d SECOND - INTERVAL %s %s", now.Unix(), expireExpr, unit.String()),
-	)
-
+	y, m, d, nanosecond, _, err := types.ParseDurationValue(unit.String(), expireExpr)
 	if err != nil {
-		return
+		return time.Time{}, err
 	}
 
-	tm := rows[0].GetTime(0)
-	return tm.CoreTime().GoTime(tz)
+	// Use the global time zone to compute expire time.
+	// Different timezones may have different results event with the same "now" time and TTL expression.
+	// Consider a TTL setting with the expiration `INTERVAL 1 MONTH`.
+	// If the current timezone is `Asia/Shanghai` and now is `2021-03-01 00:00:00 +0800`
+	// the expired time should be `2021-02-01 00:00:00 +0800`, corresponding to UTC time `2021-01-31 16:00:00 UTC`.
+	// But if we use the `UTC` time zone, the current time is `2021-02-28 16:00:00 UTC`,
+	// and the expired time should be `2021-01-28 16:00:00 UTC` that is not the same the previous one.
+	globalTz, err := se.GlobalTimeZone(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	expire = now.
+		In(globalTz).
+		// Truncate to second to make sure the precision is always the same with the one stored in a table to avoid some
+		// comparing problems in testing.
+		Truncate(time.Second).
+		AddDate(-int(y), -int(m), -int(d)).
+		Add(-time.Duration(nanosecond)).
+		In(now.Location())
+	return
 }
 
 // SplitScanRanges split ranges for TTL scan

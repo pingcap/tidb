@@ -172,6 +172,7 @@ go_library(
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/globalstats",
+        "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/util",
         "//pkg/store/driver/backoff",
         "//pkg/store/driver/txn",
