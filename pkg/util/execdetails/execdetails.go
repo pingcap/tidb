@@ -1011,6 +1011,12 @@ func (context *TiFlashScanContext) String() string {
 			minNum,
 			float64(maxNum)/float64(minNum))
 	}
+	dmfile_disagg_info := "}"
+	if context.totalDisaggReadCacheHitSize != 0 || context.totalDisaggReadCacheMissSize != 0 {
+		dmfile_disagg_info = fmt.Sprintf(", disagg_cache_hit_size: %d, disagg_cache_miss_size: %d}",
+			context.totalDisaggReadCacheHitSize,
+			context.totalDisaggReadCacheMissSize)
+	}
 	return fmt.Sprintf("tiflash_scan:{"+
 		"dtfile:{"+
 		"data_scanned_rows:%d, "+
@@ -1020,9 +1026,8 @@ func (context *TiFlashScanContext) String() string {
 		"lm_filter_scanned_rows:%d, "+
 		"lm_filter_skipped_rows:%d, "+
 		"rs_index_check_time: %dms, "+
-		"read_time: %dms, "+
-		"disagg_cache_hit_size: %d, "+
-		"disagg_cache_miss_size: %d}, "+
+		"read_time: %dms"+
+		"%s, "+ // Disagg cache info of DMFile
 		"delta_rows: %d, "+
 		"delta_bytes: %d, "+
 		"mvcc_input_rows: %d, "+
@@ -1050,8 +1055,7 @@ func (context *TiFlashScanContext) String() string {
 		context.totalDmfileLmFilterSkippedRows,
 		context.totalDmfileRoughSetIndexCheckTimeMs,
 		context.totalDmfileReadTimeMs,
-		context.totalDisaggReadCacheHitSize,
-		context.totalDisaggReadCacheMissSize,
+		dmfile_disagg_info,
 		context.totalDeltaRows,
 		context.totalDeltaBytes,
 		context.totalMvccInputRows,
