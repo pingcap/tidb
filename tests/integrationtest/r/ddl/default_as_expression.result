@@ -923,7 +923,6 @@ INSERT INTO parent VALUES(1, default);
 INSERT INTO child VALUES(1, default);
 alter table child add foreign key fk_2(cc) references parent(c);
 INSERT INTO parent VALUES(2, default);
-Error 1062 (23000): Duplicate entry '2024-03-12' for key 'parent.PRIMARY'
 alter table child drop foreign key fk_2;
 SELECT count(1) FROM parent WHERE c = date_format(@x,'%Y-%m-%d');
 count(1)

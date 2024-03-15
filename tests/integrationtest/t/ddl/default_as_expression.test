@@ -495,7 +495,7 @@ SET @x := NOW();
 INSERT INTO parent VALUES(1, default);
 INSERT INTO child VALUES(1, default);
 alter table child add foreign key fk_2(cc) references parent(c);
--- error 1062
+-- error 0,1062
 INSERT INTO parent VALUES(2, default);
 alter table child drop foreign key fk_2;
 SELECT count(1) FROM parent WHERE c = date_format(@x,'%Y-%m-%d');
