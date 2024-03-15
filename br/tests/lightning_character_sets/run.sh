@@ -80,6 +80,8 @@ check_contains 's: 5291'
 # test about unsupported charset in UTF-8 encoding dump files
 # test local backend
 run_lightning --config "$CUR/greek.toml" -d "$CUR/greek" 2>&1 | grep -q "Unknown character set: 'greek'"
+# check TiDB does not receive the DDL
+check_not_contains "greek" $TEST_DIR/tidb.log
 run_sql 'DROP DATABASE IF EXISTS charsets;'
 run_sql 'CREATE DATABASE charsets;'
 run_sql 'CREATE TABLE charsets.greek (c VARCHAR(20) PRIMARY KEY);'
@@ -91,11 +93,6 @@ run_sql 'TRUNCATE TABLE charsets.greek;'
 run_lightning --config "$CUR/greek.toml" -d "$CUR/greek" --backend tidb
 run_sql "SELECT count(*) FROM charsets.greek WHERE c = 'α';"
 check_contains 'count(*): 1'
-
-# test about unsupported charset in dump files, but downstream supports it
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/removeCharset=return("ascii")'
-run_sql 'DROP DATABASE IF EXISTS charsets;'
-run_lightning -d "$CUR/ascii" --backend tidb
 
 # latin1
 # wrong encoding will have wrong column name and data

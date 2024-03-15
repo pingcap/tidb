@@ -625,16 +625,9 @@ type restoreSchemaWorker struct {
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
 	stmts, err := createIfNotExistsStmt(worker.parser, sqlStr, job.dbName, job.tblName)
 	if err != nil {
-		worker.logger.Warn("failed to rewrite statement, will use raw input instead",
-			zap.String("db", job.dbName),
-			zap.String("table", job.tblName),
-			zap.String("statement", sqlStr),
-			zap.Error(err))
-		useStmt := common.SprintfWithIdentifiers("USE %s", job.dbName)
-		job.stmts = []string{useStmt, sqlStr}
-	} else {
-		job.stmts = stmts
+		return errors.Trace(err)
 	}
+	job.stmts = stmts
 	return worker.appendJob(job)
 }
 
