@@ -1027,7 +1027,7 @@ func (context *TiFlashScanContext) String() string {
 		"lm_filter_skipped_rows:%d, "+
 		"rs_index_check_time: %dms, "+
 		"read_time: %dms"+
-		"%s, "+ // Disagg cache info of DMFile
+		"%s}, "+ // Disagg cache info of DMFile
 		"delta_rows: %d, "+
 		"delta_bytes: %d, "+
 		"mvcc_input_rows: %d, "+
