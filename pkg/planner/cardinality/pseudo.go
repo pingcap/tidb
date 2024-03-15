@@ -85,7 +85,7 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 			firstMatch = true
 		}
 		if firstMatch {
-			statistics.IndexStatsIsInvalid((*statistics.Index)(nil), sctx, coll, idx.ID)
+			statistics.IndexStatsIsInvalid(sctx, (*statistics.Index)(nil), coll, idx.ID)
 		}
 		if idx.Info.Unique && unique {
 			return 1.0 / float64(coll.RealtimeCount)
