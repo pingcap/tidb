@@ -1,5 +1,4 @@
 set tidb_cost_model_version=2;
-delete from mysql.bind_info;
 drop table if exists t;
 create table t(a varchar(10), b int, c int);
 show columns from t where true;
@@ -306,54 +305,6 @@ c2	c0
 0	0
 1	1
 0	1
-drop table if exists t;
-create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b));
-insert into t values (1,2);
-admin check table t;
-select a from t order by a;
-a
-1
-explain select a from t order by a;
-id	estRows	task	access object	operator info
-Sort_4	10000.00	root		planner__core__integration.t.a
-└─TableReader_8	10000.00	root		data:TableFullScan_7
-  └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-select a from t where a > 0;
-a
-1
-explain select a from t where a > 1;
-id	estRows	task	access object	operator info
-TableReader_7	3333.33	root		data:Selection_6
-└─Selection_6	3333.33	cop[tikv]		gt(planner__core__integration.t.a, 1)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-select * from t use index(i_a);
-Error 1176 (42000): Key 'i_a' doesn't exist in table 't'
-select * from t force index(i_a);
-Error 1176 (42000): Key 'i_a' doesn't exist in table 't'
-select * from t ignore index(i_a);
-Error 1176 (42000): Key 'i_a' doesn't exist in table 't'
-select /*+ USE_INDEX(t, i_a) */ * from t;
-a	b
-1	2
-Level	Code	Message
-Warning	1176	Key 'i_a' doesn't exist in table 't'
-select /*+ IGNORE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a;
-a
-1
-Level	Code	Message
-Warning	1176	Key 'i_a' doesn't exist in table 't'
-select /*+ FORCE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a;
-a
-1
-Level	Code	Message
-Warning	1176	Key 'i_a' doesn't exist in table 't'
-select /*+ FORCE_INDEX(aaa) */ * from t;
-a	b
-1	2
-Level	Code	Message
-Warning	1815	force_index(planner__core__integration.aaa) is inapplicable, check whether the table(planner__core__integration.aaa) exists
-admin check table t;
-admin check index t i_a;
 select max(t.col) from (select 'a' as col union all select '' as col) as t;
 max(t.col)
 a
