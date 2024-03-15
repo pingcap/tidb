@@ -15,14 +15,18 @@
 package sortexec
 
 import (
+	"fmt"
 	"sync"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
 // topNWorker is used only when topn spill is triggered
 type topNWorker struct {
+	idForTest int
+
 	chunkChannel           <-chan *chunk.Chunk
 	fetcherAndWorkerSyncer *sync.WaitGroup
 	errOutputChan          chan<- rowWithError
@@ -31,9 +35,12 @@ type topNWorker struct {
 	topn       *TopNExec
 	chkHeap    *topNChunkHeap
 	memTracker *memory.Tracker
+
+	receivedRowNum int
 }
 
 func newTopNWorker(
+	idForTest int,
 	fetcherAndWorkerSyncer *sync.WaitGroup,
 	errOutputChan chan<- rowWithError,
 	finishChan <-chan struct{},
@@ -41,6 +48,7 @@ func newTopNWorker(
 	chkHeap *topNChunkHeap,
 	memTracker *memory.Tracker) *topNWorker {
 	return &topNWorker{
+		idForTest:              idForTest,
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
 		errOutputChan:          errOutputChan,
 		finishChan:             finishChan,
@@ -55,7 +63,8 @@ func (t *topNWorker) setChunkChannel(chunkChannel <-chan *chunk.Chunk) {
 }
 
 func (t *topNWorker) fetchChunksAndProcess() {
-	t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.greaterRow)
+	// Offset of heap in worker should be 0, as we need to spill all data
+	t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Count, 0, t.topn.greaterRow)
 	for t.fetchChunksAndProcessImpl() {
 	}
 }
@@ -70,6 +79,7 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 		}
 		defer t.fetcherAndWorkerSyncer.Done()
 
+		t.receivedRowNum += chk.NumRows()
 		if uint64(t.chkHeap.rowChunks.Len()) < t.chkHeap.totalLimit {
 			if !t.chkHeap.isInitialized {
 				t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, int(t.topn.Limit.Offset), t.topn.greaterRow)
@@ -93,4 +103,5 @@ func (t *topNWorker) run() {
 	}()
 
 	t.fetchChunksAndProcess()
+	log.Info(fmt.Sprintf("worker %d, receive %d rows", t.idForTest, t.receivedRowNum))
 }

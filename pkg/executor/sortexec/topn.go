@@ -82,8 +82,9 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		workers := make([]*topNWorker, concurrency)
 		for i := range workers {
 			chkHeap := &topNChunkHeap{}
-			chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow)
-			workers[i] = newTopNWorker(e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap, e.memTracker)
+			// Offset of heap in worker should be 0, as we need to spill all data
+			chkHeap.init(e, e.memTracker, e.Limit.Count, 0, e.greaterRow)
+			workers[i] = newTopNWorker(i, e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap, e.memTracker)
 		}
 
 		e.spillHelper = newTopNSpillerHelper(

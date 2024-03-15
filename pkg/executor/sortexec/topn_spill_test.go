@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
@@ -113,12 +114,36 @@ func topNSpillCase1(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.Sor
 
 // Case2 means that we will trigger spill in stage 2
 func topNSpillCase2(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
+	if exe == nil {
+		exe = buildTopNExec(sortCase, dataSource, offset, count)
+	}
+	dataSource.PrepareChunks()
+	resultChunks := executeTopNExecutor(t, exe)
 
+	require.True(t, exe.IsSpillTriggeredForTest())
+	require.True(t, exe.GetIsInStage1ForTest())
+
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.True(t, checkTopNCorrectness(schema, exe, dataSource, resultChunks, offset, count))
 }
 
 // After sorted all rows are in memory and the spill is triggered after some chunks have been fetched
 func topNInMemoryThenSpillCase(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
+	if exe == nil {
+		exe = buildTopNExec(sortCase, dataSource, offset, count)
+	}
+	dataSource.PrepareChunks()
+	resultChunks := executeTopNExecutor(t, exe)
 
+	require.True(t, exe.IsSpillTriggeredForTest())
+	require.True(t, exe.GetIsInStage1ForTest())
+
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.True(t, checkTopNCorrectness(schema, exe, dataSource, resultChunks, offset, count))
 }
 
 func TestTopNSpillDisk(t *testing.T) {
@@ -157,4 +182,34 @@ func TestTopNSpillDisk(t *testing.T) {
 
 func TestTopNSpillDiskFailpoint(t *testing.T) {
 	// TODO spills in stage 1 and stage 2 are all need to be tested
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(false)`)
+
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	ctx.GetSessionVars().EnableParallelSort = true
+
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	for i := 0; i < 20; i++ {
+		failpointNoMemoryDataTest(t, ctx, nil, sortCase, schema, dataSource)
+		failpointNoMemoryDataTest(t, ctx, exe, sortCase, schema, dataSource)
+	}
+
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	for i := 0; i < 20; i++ {
+		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, schema, dataSource)
+		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, schema, dataSource)
+	}
 }
