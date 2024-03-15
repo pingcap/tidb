@@ -136,7 +136,7 @@ require (
 	golang.org/x/term v0.18.0
 	golang.org/x/text v0.14.0
 	golang.org/x/time v0.5.0
-	golang.org/x/tools v0.18.0
+	golang.org/x/tools v0.19.0
 	google.golang.org/api v0.162.0
 	google.golang.org/grpc v1.62.1
 	gopkg.in/yaml.v2 v2.4.0
