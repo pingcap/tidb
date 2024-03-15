@@ -295,6 +295,7 @@ func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 
 type readSchemaConfig struct {
 	skipFiles bool
+	skipStats bool
 }
 
 // ReadSchemaOption describes some extra option of reading the config.
@@ -306,6 +307,10 @@ func SkipFiles(conf *readSchemaConfig) {
 	conf.skipFiles = true
 }
 
+func SkipStats(conf *readSchemaConfig) {
+	conf.skipStats = true
+}
+
 // GetBasic returns a basic copy of the backup meta.
 func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 	return *reader.backupMeta
@@ -314,19 +319,46 @@ func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
 func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
+<<<<<<< HEAD
 	ch := make(chan interface{}, MaxBatchSize)
 	errCh := make(chan error, 1)
+=======
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	cfg := readSchemaConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	ch := make(chan any, MaxBatchSize)
+	schemaCh := make(chan *backuppb.Schema, MaxBatchSize)
+	// Make sure these 2 goroutine avoid to blocked by the errCh.
+	// And the second error in the errCh is not the root cause error.
+	errCh := make(chan error, 2)
+	// download and parse metafile
+	go func() {
+		defer close(schemaCh)
+		if err := reader.readSchemas(cctx, func(s *backuppb.Schema) {
+			if cfg.skipStats {
+				s.Stats = nil
+				s.StatsIndex = nil
+			}
+			select {
+			case <-cctx.Done():
+			case schemaCh <- s:
+			}
+		}); err != nil {
+			errCh <- errors.Trace(err)
+		}
+	}()
+	// parse the schema
+>>>>>>> cbd41115f32 (br: skip loading stats into memory if set `--load-stats` to false (#51535))
 	go func() {
 		defer close(ch)
 		if err := reader.readSchemas(ctx, func(s *backuppb.Schema) { ch <- s }); err != nil {
 			errCh <- errors.Trace(err)
 		}
 	}()
-
-	cfg := readSchemaConfig{}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
 
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
