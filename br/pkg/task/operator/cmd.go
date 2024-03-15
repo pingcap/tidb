@@ -135,9 +135,15 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	}
 	defer cx.Close()
 
+	initChan := make(chan struct{})
 	cx.run(func() error { return pauseGCKeeper(cx) })
-	cx.run(func() error { return pauseSchedulerKeeper(cx) })
-	cx.run(func() error { return pauseAdminAndWaitApply(cx) })
+	cx.run(func() error {
+		log.Info("Pause scheduler waiting all connections established.")
+		<-initChan
+		log.Info("Pause scheduler noticed connections established.")
+		return pauseSchedulerKeeper(cx)
+	})
+	cx.run(func() error { return pauseAdminAndWaitApply(cx, initChan) })
 	go func() {
 		cx.rdGrp.Wait()
 		if cfg.OnAllReady != nil {
@@ -154,7 +160,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
-func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
+func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectionsEstablished chan<- struct{}) error {
 	env := preparesnap.CliEnv{
 		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
 		Mgr:   cx.kvMgr,
@@ -164,6 +170,10 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 	begin := time.Now()
 	prep := preparesnap.New(retryEnv)
 	prep.LeaseDuration = cx.cfg.TTL
+	prep.AfterConnectionsEstablished = func() {
+		log.Info("All connections are stablished.")
+		close(afterConnectionsEstablished)
+	}
 
 	defer cx.cleanUpWith(func(ctx context.Context) {
 		if err := prep.Finalize(ctx); err != nil {
