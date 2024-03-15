@@ -131,7 +131,7 @@ func (cfg *RestoreCommonConfig) adjust() {
 	if len(cfg.Granularity) == 0 {
 		cfg.Granularity = string(restore.FineGrained)
 	}
-	if cfg.ConcurrencyPerStore.Modified {
+	if !cfg.ConcurrencyPerStore.Modified {
 		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
 	}
 }

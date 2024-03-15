@@ -298,8 +298,10 @@ func (rs *RegionSplitter) waitRegionSplitted(ctx context.Context, regionID uint6
 		}
 		return errors.Annotate(berrors.ErrPDSplitFailed, "wait region splitted failed")
 	}, &state)
+	// we only care about whether the last region splitted successfully.
+	// because we are waiting region report status *sequentially*.
 	if err != nil {
-		log.Warn("failed to split regions", logutil.ShortError(err))
+		log.Warn("failed to split regions", zap.Uint64("regionID", regionID))
 	}
 }
 

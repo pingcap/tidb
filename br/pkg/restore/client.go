@@ -541,7 +541,6 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
-	storeWorkerPoolMap := make(map[uint64]chan struct{})
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
@@ -554,15 +553,11 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		// ToDo remove it when token bucket is stable enough.
 		log.Info("use token bucket to control download and ingest flow")
 		useTokenBucket = true
-		for _, store := range stores {
-			ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
-			storeWorkerPoolMap[store.Id] = ch
-		}
 	}
 
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -1543,7 +1538,13 @@ LOOPFORTABLE:
 				return nil
 			}
 			if rc.granularity == string(CoarseGrained) {
+				rc.fileImporter.cond.L.Lock()
+				for rc.fileImporter.ShouldBlock() {
+					// wait for download worker notified
+					rc.fileImporter.cond.Wait()
+				}
 				eg.Go(restoreFn)
+				rc.fileImporter.cond.L.Unlock()
 			} else {
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
