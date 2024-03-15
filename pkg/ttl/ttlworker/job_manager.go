@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -202,7 +201,7 @@ func (m *JobManager) jobLoop() error {
 		case <-m.ctx.Done():
 			return nil
 		case <-timerTicker:
-			m.onTimerTick(se, timerRT, timerSyncer, now)
+			m.onTimerTick(se, timerRT, timerSyncer, time.Now())
 		case jobReq := <-jobRequestCh:
 			m.handleSubmitJobRequest(se, jobReq)
 		case <-infoSchemaCacheUpdateTicker:
@@ -328,7 +327,7 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
-	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false)
+	_, err := m.lockNewJob(m.ctx, se, tbl, time.Now(), jobReq.RequestID, false)
 	jobReq.RespCh <- err
 }
 
@@ -360,13 +359,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		return
 	}
 
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		responseErr(err)
-		return
-	}
-
-	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now().In(tz)) {
+	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), time.Now()) {
 		responseErr(errors.New("not in TTL job window"))
 		return
 	}
@@ -565,13 +558,6 @@ j:
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		terror.Log(err)
-	} else {
-		now = now.In(tz)
-	}
-
 	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
 		if len(m.runningJobs) > 0 {
 			for _, job := range m.runningJobs {
@@ -719,7 +705,6 @@ func (m *JobManager) lockHBTimeoutJob(ctx context.Context, se session.Session, t
 		jobID = tableStatus.CurrentJobID
 		jobStart = tableStatus.CurrentJobStartTime
 		expireTime = tableStatus.CurrentJobTTLExpire
-		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
 		sql, args := setTableStatusOwnerSQL(tableStatus.CurrentJobID, table.ID, jobStart, now, expireTime, m.id)
 		if _, err = se.ExecuteSQL(ctx, sql, args...); err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)
@@ -751,9 +736,6 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		if err != nil {
 			return err
 		}
-
-		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
-		intest.Assert(se.GetSessionVars().TimeZone.String() == expireTime.Location().String())
 
 		sql, args := setTableStatusOwnerSQL(jobID, table.ID, now, now, expireTime, m.id)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
@@ -877,7 +859,6 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, no
 			continue
 		}
 
-		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
 		sql, args := updateHeartBeatSQL(job.tbl.ID, now, m.id)
 		_, err := se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
@@ -1277,18 +1258,4 @@ func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int6
 	}
 
 	return &jobTrace, nil
-}
-
-func (a *managerJobAdapter) Now() (time.Time, error) {
-	se, err := getSession(a.sessPool)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	tz, err := se.GlobalTimeZone(context.TODO())
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	return se.Now().In(tz), nil
 }
