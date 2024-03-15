@@ -1035,13 +1035,13 @@ func (context *TiFlashScanContext) String() string {
 		"mvcc_output_rows:%d, "+
 		"lm_skip_rows:%d, "+
 		"segments:%d, "+
-		"create_snapshot_time: %dms, "+
-		"build_bitmap_time: %dms, "+
-		"build_inputstream_time: %dms, "+
-		"local_min_stream_cost: %dms, "+
-		"local_max_stream_cost: %dms, "+
-		"remote_min_stream_cost: %dms, "+
-		"remote_max_stream_cost: %dms, "+
+		"total_build_snapshot:%dms, "+
+		"total_build_bitmap:%dms, "+
+		"total_build_inputstream:%dms, "+
+		"local_min_stream:%dms, "+
+		"local_max_stream:%dms, "+
+		"remote_min_stream:%dms, "+
+		"remote_max_stream:%dms, "+
 		"local_region_num: %d, "+
 		"remote_region_num: %d, "+
 		"stale_read_num: %d, "+
