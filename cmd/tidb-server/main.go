@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
@@ -121,6 +122,8 @@ const (
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
 	nmTempDir          = "temp-dir"
+
+	nmRedact = "redact"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -172,6 +175,9 @@ var (
 	statusPort      *string
 	metricsAddr     *string
 	metricsInterval *uint
+
+	// subcommand collect-log
+	redactFlag *bool
 
 	// PROXY Protocol
 	proxyProtocolNetworks      *string
@@ -227,6 +233,9 @@ func initFlagSet() *flag.FlagSet {
 	metricsAddr = fset.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = fset.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
+	// subcommand collect-log
+	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs, if `./tidb-server --redact=xxx collect-log <input> <output>` subcommand is used")
+
 	// PROXY Protocol
 	proxyProtocolNetworks = fset.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = fset.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
@@ -253,6 +262,16 @@ func initFlagSet() *flag.FlagSet {
 
 func main() {
 	fset := initFlagSet()
+	if args := fset.Args(); len(args) != 0 {
+		if args[0] == "collect-logs" && len(args) > 1 {
+			output := "-"
+			if len(args) > 2 {
+				output = args[2]
+			}
+			terror.MustNil(redact.DeRedactFile(*redactFlag, args[1], output))
+			return
+		}
+	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
 		setVersions()
