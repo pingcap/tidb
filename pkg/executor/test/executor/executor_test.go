@@ -2797,14 +2797,14 @@ func TestIssue38756(t *testing.T) {
 }
 
 func TestIssue50043(t *testing.T) {
-	testIssue50043WithInitSql(t, "")
+	testIssue50043WithInitSQL(t, "")
 }
 
 func TestIssue50043WithPipelinedDML(t *testing.T) {
-	testIssue50043WithInitSql(t, "set @@tidb_dml_type=bulk")
+	testIssue50043WithInitSQL(t, "set @@tidb_dml_type=bulk")
 }
 
-func testIssue50043WithInitSql(t *testing.T, initSQL string) {
+func testIssue50043WithInitSQL(t *testing.T, initSQL string) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(initSQL)
