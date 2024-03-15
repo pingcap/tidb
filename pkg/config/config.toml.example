@@ -377,6 +377,9 @@ grpc-keepalive-timeout = 3
 # The compression type for gRPC channel: none or gzip.
 grpc-compression-type = "none"
 
+# control whether to share the buffer pool in the TiKV gRPC clients.
+grpc-shared-buffer-pool = true
+
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
