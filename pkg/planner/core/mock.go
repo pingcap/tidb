@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
@@ -412,6 +413,7 @@ func MockContext() *mock.Context {
 		Client: &mock.Client{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
+	ctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	do := domain.NewMockDomain()
 	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))

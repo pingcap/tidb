@@ -208,7 +208,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 2. Do duplicate detection if needed
-	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.Strategy != "" {
+	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
 		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
 		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
@@ -1020,13 +1020,13 @@ func (tr *TableImporter) postProcess(
 		localBackend := rc.backend.(*local.Backend)
 		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 		hasDupe := false
-		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
 			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
 			var err error
-			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.TikvImporter.DuplicateResolution)
+			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.Conflict.Strategy)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 				return false, errors.Trace(err)
@@ -1047,12 +1047,12 @@ func (tr *TableImporter) postProcess(
 		needChecksum := !otherHasDupe && needRemoteDupe
 		hasDupe = hasDupe || otherHasDupe
 
-		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+		if needRemoteDupe && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
-			hasRemoteDupe, e := dupeController.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.TikvImporter.DuplicateResolution)
+			hasRemoteDupe, e := dupeController.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.Conflict.Strategy)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, errors.Trace(e)
@@ -1060,7 +1060,7 @@ func (tr *TableImporter) postProcess(
 			hasDupe = hasDupe || hasRemoteDupe
 
 			if hasDupe {
-				if err = dupeController.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+				if err = dupeController.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.Conflict.Strategy); err != nil {
 					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 					return false, errors.Trace(err)
 				}

@@ -230,12 +230,6 @@ var noopSysVars = []*SysVar{
 		MaxValue:                math.MaxUint64,
 		IsHintUpdatableVerified: true,
 	},
-	{
-		Scope:                   ScopeGlobal | ScopeSession,
-		Name:                    "div_precision_increment",
-		Value:                   "4",
-		IsHintUpdatableVerified: true,
-	},
 	{Scope: ScopeGlobal, Name: "innodb_lru_scan_depth", Value: "1024"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_rseg_truncate_frequency", Value: ""},
 	{

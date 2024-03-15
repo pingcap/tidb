@@ -340,3 +340,30 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1", "2 1 2"))
 }
+
+func TestMultiSchemaAddIndexMerge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+
+	first := true
+	var tk2Err error
+	ingest.MockExecAfterWriteRow = func() {
+		if !first {
+			return
+		}
+		_, tk2Err = tk2.Exec("insert into t values (4, 4);")
+		first = false
+	}
+
+	tk.MustExec("alter table t add index idx1(a), add index idx2(b);")
+	require.False(t, first)
+	require.NoError(t, tk2Err)
+	tk.MustExec("admin check table t;")
+}

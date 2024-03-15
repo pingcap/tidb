@@ -96,7 +96,7 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	case ast.AggFuncSum:
 		a.typeInfer4Sum()
 	case ast.AggFuncAvg:
-		a.typeInfer4Avg()
+		a.typeInfer4Avg(ctx.GetSessionVars().GetDivPrecisionIncrement())
 	case ast.AggFuncGroupConcat:
 		a.typeInfer4GroupConcat(ctx)
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
@@ -220,16 +220,16 @@ func (a *baseFuncDesc) TypeInfer4FinalCount(finalCountRetType *types.FieldType) 
 
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
-func (a *baseFuncDesc) typeInfer4Avg() {
+func (a *baseFuncDesc) typeInfer4Avg(divPrecIncre int) {
 	switch a.Args[0].GetType().GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.SetDecimalUnderLimit(types.DivFracIncr)
+		a.RetTp.SetDecimalUnderLimit(divPrecIncre)
 		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().GetType())
-		a.RetTp.SetFlenUnderLimit(flen + types.DivFracIncr)
+		a.RetTp.SetFlenUnderLimit(flen + divPrecIncre)
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(), types.DivFracIncr, types.DivFracIncr)
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(), divPrecIncre, divPrecIncre)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
