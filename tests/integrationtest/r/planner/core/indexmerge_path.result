@@ -819,7 +819,7 @@ IndexMerge	0.20	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 2,10 2], keep order:false, stats:pseudo
 └─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 20), eq(planner__core__indexmerge_path.t.c, 10), or(json_memberof(cast(1, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(2, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")))
   └─TableRowIDScan	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format=brief select /*+ use_index_merge(t, mvi1, mvi1) */ * from t where
+explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 (
 1 member of (j->'$.a') or
 2 member of (j->'$.d')
