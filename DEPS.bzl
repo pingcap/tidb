@@ -5988,13 +5988,13 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sha256 = "5bd7643610ba897d50031477e327ebb02adc1985e69181902bda1b0fe0e66595",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20240305085524-87f5b80908ab",
+        sha256 = "fdbbefe8286ca8c338b7a8c9ae7c3d0b857f0b852df7ba975a57d64c9102f309",
+        strip_prefix = "github.com/JinheLin/tipb@v0.0.0-20240315032302-72b51a7f16e9",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20240305085524-87f5b80908ab.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20240305085524-87f5b80908ab.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20240305085524-87f5b80908ab.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20240305085524-87f5b80908ab.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/JinheLin/tipb/com_github_jinhelin_tipb-v0.0.0-20240315032302-72b51a7f16e9.zip",
+            "http://ats.apps.svc/gomod/github.com/JinheLin/tipb/com_github_jinhelin_tipb-v0.0.0-20240315032302-72b51a7f16e9.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/JinheLin/tipb/com_github_jinhelin_tipb-v0.0.0-20240315032302-72b51a7f16e9.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/JinheLin/tipb/com_github_jinhelin_tipb-v0.0.0-20240315032302-72b51a7f16e9.zip",
         ],
     )
     go_repository(
