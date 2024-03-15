@@ -80,7 +80,7 @@ func newCheckSumCommand() *cobra.Command {
 			}
 
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := metautil.LoadBackupTables(ctx, reader)
+			dbs, err := metautil.LoadBackupTables(ctx, reader, false)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -173,7 +173,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := metautil.LoadBackupTables(ctx, reader)
+			dbs, err := metautil.LoadBackupTables(ctx, reader, false)
 			if err != nil {
 				log.Error("load tables failed", zap.Error(err))
 				return errors.Trace(err)
