@@ -2234,12 +2234,9 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 
 	if fatal {
 		dom = domain.GetDomain(seV178)
-		dom.Close()
-		require.True(t, fatal2panic)
-	} else {
-		dom.Close()
-		require.False(t, fatal2panic)
 	}
+	dom.Close()
+	require.Equal(t, fatal, fatal2panic)
 }
 
 func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
