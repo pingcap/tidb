@@ -752,28 +752,28 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 		storeType: crs.storeType,
 		BasicRuntimeStats: BasicRuntimeStats{
 			tiflashScanContext: TiFlashScanContext{
-				totalDmfileDataScannedRows:          summary.GetTiflashScanContext().GetDmfileDataScannedRows(),
-				totalDmfileDataSkippedRows:          summary.GetTiflashScanContext().GetDmfileDataSkippedRows(),
-				totalDmfileMvccScannedRows:          summary.GetTiflashScanContext().GetDmfileMvccScannedRows(),
-				totalDmfileMvccSkippedRows:          summary.GetTiflashScanContext().GetDmfileMvccSkippedRows(),
-				totalDmfileLmFilterScannedRows:      summary.GetTiflashScanContext().GetDmfileLmFilterScannedRows(),
-				totalDmfileLmFilterSkippedRows:      summary.GetTiflashScanContext().GetDmfileLmFilterSkippedRows(),
+				dmfileDataScannedRows:               summary.GetTiflashScanContext().GetDmfileDataScannedRows(),
+				dmfileDataSkippedRows:               summary.GetTiflashScanContext().GetDmfileDataSkippedRows(),
+				dmfileMvccScannedRows:               summary.GetTiflashScanContext().GetDmfileMvccScannedRows(),
+				dmfileMvccSkippedRows:               summary.GetTiflashScanContext().GetDmfileMvccSkippedRows(),
+				dmfileLmFilterScannedRows:           summary.GetTiflashScanContext().GetDmfileLmFilterScannedRows(),
+				dmfileLmFilterSkippedRows:           summary.GetTiflashScanContext().GetDmfileLmFilterSkippedRows(),
 				totalDmfileRoughSetIndexCheckTimeMs: summary.GetTiflashScanContext().GetDmfileRoughSetIndexCheckTimeMs(),
 				totalDmfileReadTimeMs:               summary.GetTiflashScanContext().GetDmfileReadTimeMs(),
 				totalCreateSnapshotTimeMs:           summary.GetTiflashScanContext().GetCreateSnapshotTimeMs(),
-				totalLocalRegionNum:                 summary.GetTiflashScanContext().GetLocalRegionNum(),
-				totalRemoteRegionNum:                summary.GetTiflashScanContext().GetRemoteRegionNum(),
+				localRegionNum:                      summary.GetTiflashScanContext().GetLocalRegionNum(),
+				remoteRegionNum:                     summary.GetTiflashScanContext().GetRemoteRegionNum(),
 				totalLearnerReadMs:                  summary.GetTiflashScanContext().GetLearnerReadMs(),
-				totalDisaggReadCacheHitSize:         summary.GetTiflashScanContext().GetDisaggReadCacheHitSize(),
-				totalDisaggReadCacheMissSize:        summary.GetTiflashScanContext().GetDisaggReadCacheMissSize(),
-				totalNumSegments:                    summary.GetTiflashScanContext().GetNumSegments(),
-				totalNumReadTasks:                   summary.GetTiflashScanContext().GetNumReadTasks(),
-				totalDeltaRows:                      summary.GetTiflashScanContext().GetDeltaRows(),
-				totalDeltaBytes:                     summary.GetTiflashScanContext().GetDeltaBytes(),
-				totalMvccInputRows:                  summary.GetTiflashScanContext().GetMvccInputRows(),
-				totalMvccInputBytes:                 summary.GetTiflashScanContext().GetMvccInputBytes(),
-				totalMvccOutputRows:                 summary.GetTiflashScanContext().GetMvccOutputRows(),
-				totalLateMaterializationSkipRows:    summary.GetTiflashScanContext().GetLateMaterializationSkipRows(),
+				disaggReadCacheHitSize:              summary.GetTiflashScanContext().GetDisaggReadCacheHitSize(),
+				disaggReadCacheMissSize:             summary.GetTiflashScanContext().GetDisaggReadCacheMissSize(),
+				numSegments:                         summary.GetTiflashScanContext().GetNumSegments(),
+				numReadTasks:                        summary.GetTiflashScanContext().GetNumReadTasks(),
+				deltaRows:                           summary.GetTiflashScanContext().GetDeltaRows(),
+				deltaBytes:                          summary.GetTiflashScanContext().GetDeltaBytes(),
+				mvccInputRows:                       summary.GetTiflashScanContext().GetMvccInputRows(),
+				mvccInputBytes:                      summary.GetTiflashScanContext().GetMvccInputBytes(),
+				mvccOutputRows:                      summary.GetTiflashScanContext().GetMvccOutputRows(),
+				lateMaterializationSkipRows:         summary.GetTiflashScanContext().GetLateMaterializationSkipRows(),
 				totalBuildBitmapTimeMs:              summary.GetTiflashScanContext().GetBuildBitmapTimeMs(),
 				totalBuildInputStreamTimeMs:         summary.GetTiflashScanContext().GetBuildInputstreamTimeMs(),
 				numStaleRead:                        summary.GetTiflashScanContext().GetNumStaleRead(),
@@ -920,28 +920,28 @@ type RuntimeStats interface {
 
 // TiFlashScanContext is used to express the table scan information in tiflash
 type TiFlashScanContext struct {
-	totalDmfileDataScannedRows          uint64
-	totalDmfileDataSkippedRows          uint64
-	totalDmfileMvccScannedRows          uint64
-	totalDmfileMvccSkippedRows          uint64
-	totalDmfileLmFilterScannedRows      uint64
-	totalDmfileLmFilterSkippedRows      uint64
+	dmfileDataScannedRows               uint64
+	dmfileDataSkippedRows               uint64
+	dmfileMvccScannedRows               uint64
+	dmfileMvccSkippedRows               uint64
+	dmfileLmFilterScannedRows           uint64
+	dmfileLmFilterSkippedRows           uint64
 	totalDmfileRoughSetIndexCheckTimeMs uint64
 	totalDmfileReadTimeMs               uint64
 	totalCreateSnapshotTimeMs           uint64
-	totalLocalRegionNum                 uint64
-	totalRemoteRegionNum                uint64
+	localRegionNum                      uint64
+	remoteRegionNum                     uint64
 	totalLearnerReadMs                  uint64
-	totalDisaggReadCacheHitSize         uint64
-	totalDisaggReadCacheMissSize        uint64
-	totalNumSegments                    uint64
-	totalNumReadTasks                   uint64
-	totalDeltaRows                      uint64
-	totalDeltaBytes                     uint64
-	totalMvccInputRows                  uint64
-	totalMvccInputBytes                 uint64
-	totalMvccOutputRows                 uint64
-	totalLateMaterializationSkipRows    uint64
+	disaggReadCacheHitSize              uint64
+	disaggReadCacheMissSize             uint64
+	numSegments                         uint64
+	numReadTasks                        uint64
+	deltaRows                           uint64
+	deltaBytes                          uint64
+	mvccInputRows                       uint64
+	mvccInputBytes                      uint64
+	mvccOutputRows                      uint64
+	lateMaterializationSkipRows         uint64
 	totalBuildBitmapTimeMs              uint64
 	totalBuildInputStreamTimeMs         uint64
 	numStaleRead                        uint64
@@ -955,28 +955,28 @@ type TiFlashScanContext struct {
 // Clone implements the deep copy of * TiFlashshScanContext
 func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 	newContext := TiFlashScanContext{
-		totalDmfileDataScannedRows:          context.totalDmfileDataScannedRows,
-		totalDmfileDataSkippedRows:          context.totalDmfileDataSkippedRows,
-		totalDmfileMvccScannedRows:          context.totalDmfileMvccScannedRows,
-		totalDmfileMvccSkippedRows:          context.totalDmfileMvccSkippedRows,
-		totalDmfileLmFilterScannedRows:      context.totalDmfileLmFilterScannedRows,
-		totalDmfileLmFilterSkippedRows:      context.totalDmfileLmFilterSkippedRows,
+		dmfileDataScannedRows:               context.dmfileDataScannedRows,
+		dmfileDataSkippedRows:               context.dmfileDataSkippedRows,
+		dmfileMvccScannedRows:               context.dmfileMvccScannedRows,
+		dmfileMvccSkippedRows:               context.dmfileMvccSkippedRows,
+		dmfileLmFilterScannedRows:           context.dmfileLmFilterScannedRows,
+		dmfileLmFilterSkippedRows:           context.dmfileLmFilterSkippedRows,
 		totalDmfileRoughSetIndexCheckTimeMs: context.totalDmfileRoughSetIndexCheckTimeMs,
 		totalDmfileReadTimeMs:               context.totalDmfileReadTimeMs,
 		totalCreateSnapshotTimeMs:           context.totalCreateSnapshotTimeMs,
-		totalLocalRegionNum:                 context.totalLocalRegionNum,
-		totalRemoteRegionNum:                context.totalRemoteRegionNum,
+		localRegionNum:                      context.localRegionNum,
+		remoteRegionNum:                     context.remoteRegionNum,
 		totalLearnerReadMs:                  context.totalLearnerReadMs,
-		totalDisaggReadCacheHitSize:         context.totalDisaggReadCacheHitSize,
-		totalDisaggReadCacheMissSize:        context.totalDisaggReadCacheMissSize,
-		totalNumSegments:                    context.totalNumSegments,
-		totalNumReadTasks:                   context.totalNumReadTasks,
-		totalDeltaRows:                      context.totalDeltaRows,
-		totalDeltaBytes:                     context.totalDeltaBytes,
-		totalMvccInputRows:                  context.totalMvccInputRows,
-		totalMvccInputBytes:                 context.totalMvccInputBytes,
-		totalMvccOutputRows:                 context.totalMvccOutputRows,
-		totalLateMaterializationSkipRows:    context.totalLateMaterializationSkipRows,
+		disaggReadCacheHitSize:              context.disaggReadCacheHitSize,
+		disaggReadCacheMissSize:             context.disaggReadCacheMissSize,
+		numSegments:                         context.numSegments,
+		numReadTasks:                        context.numReadTasks,
+		deltaRows:                           context.deltaRows,
+		deltaBytes:                          context.deltaBytes,
+		mvccInputRows:                       context.mvccInputRows,
+		mvccInputBytes:                      context.mvccInputBytes,
+		mvccOutputRows:                      context.mvccOutputRows,
+		lateMaterializationSkipRows:         context.lateMaterializationSkipRows,
 		totalBuildBitmapTimeMs:              context.totalBuildBitmapTimeMs,
 		totalBuildInputStreamTimeMs:         context.totalBuildInputStreamTimeMs,
 		numStaleRead:                        context.numStaleRead,
@@ -1012,10 +1012,10 @@ func (context *TiFlashScanContext) String() string {
 			float64(maxNum)/float64(minNum))
 	}
 	dmfile_disagg_info := ""
-	if context.totalDisaggReadCacheHitSize != 0 || context.totalDisaggReadCacheMissSize != 0 {
+	if context.disaggReadCacheHitSize != 0 || context.disaggReadCacheMissSize != 0 {
 		dmfile_disagg_info = fmt.Sprintf(", disagg_cache_hit_size: %d, disagg_cache_miss_size: %d",
-			context.totalDisaggReadCacheHitSize,
-			context.totalDisaggReadCacheMissSize)
+			context.disaggReadCacheHitSize,
+			context.disaggReadCacheMissSize)
 	}
 	return fmt.Sprintf("tiflash_scan:{"+
 		"dtfile:{"+
@@ -1047,22 +1047,22 @@ func (context *TiFlashScanContext) String() string {
 		"stale_reads:%d, "+
 		"total_learner_read:%dms, "+
 		"region_balance_info:%s}",
-		context.totalDmfileDataScannedRows,
-		context.totalDmfileDataSkippedRows,
-		context.totalDmfileMvccScannedRows,
-		context.totalDmfileMvccSkippedRows,
-		context.totalDmfileLmFilterScannedRows,
-		context.totalDmfileLmFilterSkippedRows,
+		context.dmfileDataScannedRows,
+		context.dmfileDataSkippedRows,
+		context.dmfileMvccScannedRows,
+		context.dmfileMvccSkippedRows,
+		context.dmfileLmFilterScannedRows,
+		context.dmfileLmFilterSkippedRows,
 		context.totalDmfileRoughSetIndexCheckTimeMs,
 		context.totalDmfileReadTimeMs,
 		dmfile_disagg_info,
-		context.totalDeltaRows,
-		context.totalDeltaBytes,
-		context.totalMvccInputRows,
-		context.totalMvccInputBytes,
-		context.totalMvccOutputRows,
-		context.totalLateMaterializationSkipRows,
-		context.totalNumSegments,
+		context.deltaRows,
+		context.deltaBytes,
+		context.mvccInputRows,
+		context.mvccInputBytes,
+		context.mvccOutputRows,
+		context.lateMaterializationSkipRows,
+		context.numSegments,
 		context.totalCreateSnapshotTimeMs,
 		context.totalBuildBitmapTimeMs,
 		context.totalBuildInputStreamTimeMs,
@@ -1070,8 +1070,8 @@ func (context *TiFlashScanContext) String() string {
 		context.localMaxStreamCostMs,
 		context.remoteMinStreamCostMs,
 		context.remoteMaxStreamCostMs,
-		context.totalLocalRegionNum,
-		context.totalRemoteRegionNum,
+		context.localRegionNum,
+		context.remoteRegionNum,
 		context.numStaleRead,
 		context.totalLearnerReadMs,
 		regionBalanceInfo,
@@ -1080,28 +1080,28 @@ func (context *TiFlashScanContext) String() string {
 
 // Merge make sum to merge the information in TiFlashScanContext
 func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
-	context.totalDmfileDataScannedRows += other.totalDmfileDataScannedRows
-	context.totalDmfileDataSkippedRows += other.totalDmfileDataSkippedRows
-	context.totalDmfileMvccScannedRows += other.totalDmfileMvccScannedRows
-	context.totalDmfileMvccSkippedRows += other.totalDmfileMvccSkippedRows
-	context.totalDmfileLmFilterScannedRows += other.totalDmfileLmFilterScannedRows
-	context.totalDmfileLmFilterSkippedRows += other.totalDmfileLmFilterSkippedRows
+	context.dmfileDataScannedRows += other.dmfileDataScannedRows
+	context.dmfileDataSkippedRows += other.dmfileDataSkippedRows
+	context.dmfileMvccScannedRows += other.dmfileMvccScannedRows
+	context.dmfileMvccSkippedRows += other.dmfileMvccSkippedRows
+	context.dmfileLmFilterScannedRows += other.dmfileLmFilterScannedRows
+	context.dmfileLmFilterSkippedRows += other.dmfileLmFilterSkippedRows
 	context.totalDmfileRoughSetIndexCheckTimeMs += other.totalDmfileRoughSetIndexCheckTimeMs
 	context.totalDmfileReadTimeMs += other.totalDmfileReadTimeMs
 	context.totalCreateSnapshotTimeMs += other.totalCreateSnapshotTimeMs
-	context.totalLocalRegionNum += other.totalLocalRegionNum
-	context.totalRemoteRegionNum += other.totalRemoteRegionNum
+	context.localRegionNum += other.localRegionNum
+	context.remoteRegionNum += other.remoteRegionNum
 	context.totalLearnerReadMs += other.totalLearnerReadMs
-	context.totalDisaggReadCacheHitSize += other.totalDisaggReadCacheHitSize
-	context.totalDisaggReadCacheMissSize += other.totalDisaggReadCacheMissSize
-	context.totalNumSegments += other.totalNumSegments
-	context.totalNumReadTasks += other.totalNumReadTasks
-	context.totalDeltaRows += other.totalDeltaRows
-	context.totalDeltaBytes += other.totalDeltaBytes
-	context.totalMvccInputRows += other.totalMvccInputRows
-	context.totalMvccInputBytes += other.totalMvccInputBytes
-	context.totalMvccOutputRows += other.totalMvccOutputRows
-	context.totalLateMaterializationSkipRows += other.totalLateMaterializationSkipRows
+	context.disaggReadCacheHitSize += other.disaggReadCacheHitSize
+	context.disaggReadCacheMissSize += other.disaggReadCacheMissSize
+	context.numSegments += other.numSegments
+	context.numReadTasks += other.numReadTasks
+	context.deltaRows += other.deltaRows
+	context.deltaBytes += other.deltaBytes
+	context.mvccInputRows += other.mvccInputRows
+	context.mvccInputBytes += other.mvccInputBytes
+	context.mvccOutputRows += other.mvccOutputRows
+	context.lateMaterializationSkipRows += other.lateMaterializationSkipRows
 	context.totalBuildBitmapTimeMs += other.totalBuildBitmapTimeMs
 	context.totalBuildInputStreamTimeMs += other.totalBuildInputStreamTimeMs
 	context.numStaleRead += other.numStaleRead
@@ -1129,14 +1129,14 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
 func (context *TiFlashScanContext) Empty() bool {
-	res := context.totalDmfileDataScannedRows == 0 &&
-		context.totalDmfileDataSkippedRows == 0 &&
-		context.totalDmfileMvccScannedRows == 0 &&
-		context.totalDmfileMvccSkippedRows == 0 &&
-		context.totalDmfileLmFilterScannedRows == 0 &&
-		context.totalDmfileLmFilterSkippedRows == 0 &&
-		context.totalLocalRegionNum == 0 &&
-		context.totalRemoteRegionNum == 0
+	res := context.dmfileDataScannedRows == 0 &&
+		context.dmfileDataSkippedRows == 0 &&
+		context.dmfileMvccScannedRows == 0 &&
+		context.dmfileMvccSkippedRows == 0 &&
+		context.dmfileLmFilterScannedRows == 0 &&
+		context.dmfileLmFilterSkippedRows == 0 &&
+		context.localRegionNum == 0 &&
+		context.remoteRegionNum == 0
 	return res
 }
 
