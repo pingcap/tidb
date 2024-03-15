@@ -1011,7 +1011,7 @@ func (context *TiFlashScanContext) String() string {
 			minNum,
 			float64(maxNum)/float64(minNum))
 	}
-	dmfile_disagg_info := "}"
+	dmfile_disagg_info := ""
 	if context.totalDisaggReadCacheHitSize != 0 || context.totalDisaggReadCacheMissSize != 0 {
 		dmfile_disagg_info = fmt.Sprintf(", disagg_cache_hit_size: %d, disagg_cache_miss_size: %d",
 			context.totalDisaggReadCacheHitSize,
