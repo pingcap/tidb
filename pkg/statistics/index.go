@@ -128,7 +128,7 @@ func (idx *Index) TotalRowCount() float64 {
 }
 
 // IndexStatsIsInvalid checks whether the index has valid stats or not.
-func IndexStatsIsInvalid(idxStats *Index, sctx context.PlanContext, coll *HistColl, cid int64) (res bool) {
+func IndexStatsIsInvalid(sctx context.PlanContext, idxStats *Index, coll *HistColl, cid int64) (res bool) {
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
