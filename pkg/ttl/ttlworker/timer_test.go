@@ -55,14 +55,6 @@ func (a *mockJobAdapter) GetJob(ctx context.Context, tableID, physicalID int64, 
 	return job, args.Error(1)
 }
 
-func (a *mockJobAdapter) Now() (now time.Time, _ error) {
-	args := a.Called()
-	if obj := args.Get(0); obj != nil {
-		now = obj.(time.Time)
-	}
-	return now, nil
-}
-
 type mockTimerCli struct {
 	mock.Mock
 	timerapi.TimerClient
@@ -191,7 +183,6 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// normal
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
-	adapter.On("Now").Return(time.Now()).Once()
 	r, err := hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{}, r)
@@ -206,7 +197,9 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// not in window
 	now := time.Date(2023, 1, 1, 15, 10, 0, 0, time.UTC)
-	adapter.On("Now").Return(now, nil).Once()
+	hook.nowFunc = func() time.Time {
+		return now
+	}
 	clearTTLWindowAndEnable()
 	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
@@ -215,7 +208,6 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	adapter.AssertExpectations(t)
 
 	clearTTLWindowAndEnable()
-	adapter.On("Now").Return(now, nil).Once()
 	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
@@ -224,7 +216,6 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// in window
 	clearTTLWindowAndEnable()
-	adapter.On("Now").Return(now, nil).Once()
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
 	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
 	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
@@ -235,7 +226,6 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// CanSubmitJob returns false
 	clearTTLWindowAndEnable()
-	adapter.On("Now").Return(now, nil).Once()
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(false).Once()
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
@@ -277,7 +267,6 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("SubmitJob", ctx, data.TableID, data.PhysicalID, timer.EventID, timer.EventStart).
 		Return(nil, errors.New("mockSubmitErr")).
 		Once()
-	adapter.On("Now").Return(time.Now()).Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.EqualError(t, err, "mockSubmitErr")
 	adapter.AssertExpectations(t)
@@ -316,7 +305,6 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", hook.ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(&TTLJobTrace{RequestID: timer.EventID, Finished: true, Summary: summary.LastJobSummary}, nil).
 		Once()
-	adapter.On("Now").Return(time.Now()).Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), hook.waitJobLoopCounter)
@@ -359,7 +347,6 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).
 		Return(false).
 		Once()
-	adapter.On("Now").Return(time.Now()).Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.NoError(t, err)
 	adapter.AssertExpectations(t)
@@ -379,7 +366,6 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 		Return(nil, nil).
 		Once()
 	require.False(t, timer.Enable)
-	adapter.On("Now").Return(time.Now()).Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.NoError(t, err)
 	adapter.AssertExpectations(t)
@@ -396,7 +382,9 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	watermark = time.Unix(3600*789, 0)
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetWatermark(watermark)))
 	timer = triggerTestTimer(t, store, timer.ID)
-	adapter.On("Now").Return(timer.EventStart.Add(11*time.Minute), nil).Once()
+	hook.nowFunc = func() time.Time {
+		return timer.EventStart.Add(11 * time.Minute)
+	}
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()

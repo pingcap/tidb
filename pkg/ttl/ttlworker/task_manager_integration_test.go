@@ -49,7 +49,7 @@ func TestParallelLockNewTask(t *testing.T) {
 	sessionFactory := sessionFactory(t, store)
 	se := sessionFactory()
 
-	now := se.Now()
+	now := time.Now()
 
 	isc := cache.NewInfoSchemaCache(time.Minute)
 	require.NoError(t, isc.Update(se))
@@ -129,6 +129,7 @@ func TestParallelSchedule(t *testing.T) {
 	}
 	isc := cache.NewInfoSchemaCache(time.Second)
 	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
 	scheduleWg := sync.WaitGroup{}
 	finishTasks := make([]func(), 0, 4)
 	for i := 0; i < 4; i++ {
@@ -145,7 +146,7 @@ func TestParallelSchedule(t *testing.T) {
 		scheduleWg.Add(1)
 		go func() {
 			se := sessionFactory()
-			m.RescheduleTasks(se, se.Now())
+			m.RescheduleTasks(se, now)
 			scheduleWg.Done()
 		}()
 		finishTasks = append(finishTasks, func() {
@@ -153,7 +154,7 @@ func TestParallelSchedule(t *testing.T) {
 			for _, task := range m.GetRunningTasks() {
 				require.Nil(t, task.Context().Err(), fmt.Sprintf("%s %d", managerID, task.ScanID))
 				task.SetResult(nil)
-				m.CheckFinishedTask(se, se.Now())
+				m.CheckFinishedTask(se, time.Now())
 				require.NotNil(t, task.Context().Err(), fmt.Sprintf("%s %d", managerID, task.ScanID))
 			}
 		})
@@ -187,15 +188,14 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	// update the infoschema cache
 	isc := cache.NewInfoSchemaCache(time.Second)
 	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
 
 	// schedule in a task manager
 	scanWorker := ttlworker.NewMockScanWorker(t)
 	scanWorker.Start()
 	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1", store)
 	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
-	se := sessionFactory()
-	now := se.Now()
-	m.RescheduleTasks(se, now)
+	m.RescheduleTasks(sessionFactory(), now)
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-1"))
 
 	// another task manager should fetch this task after heartbeat expire
@@ -235,14 +235,13 @@ func TestTaskMetrics(t *testing.T) {
 	// update the infoschema cache
 	isc := cache.NewInfoSchemaCache(time.Second)
 	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
 
 	// schedule in a task manager
 	scanWorker := ttlworker.NewMockScanWorker(t)
 	scanWorker.Start()
 	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-1", store)
 	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
-	se := sessionFactory()
-	now := se.Now()
 	m.RescheduleTasks(sessionFactory(), now)
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-1"))
 
@@ -263,10 +262,9 @@ func TestRescheduleWithError(t *testing.T) {
 	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", 613, 1)
 	tk.MustExec(sql)
 
-	se := sessionFactory()
-	now := se.Now()
 	isc := cache.NewInfoSchemaCache(time.Second)
-	require.NoError(t, isc.Update(se))
+	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
 
 	// schedule in a task manager
 	scanWorker := ttlworker.NewMockScanWorker(t)
@@ -306,6 +304,7 @@ func TestTTLRunningTasksLimitation(t *testing.T) {
 	}
 	isc := cache.NewInfoSchemaCache(time.Second)
 	require.NoError(t, isc.Update(sessionFactory()))
+	now := time.Now()
 	scheduleWg := sync.WaitGroup{}
 	for i := 0; i < 16; i++ {
 		workers := []ttlworker.Worker{}
@@ -321,7 +320,7 @@ func TestTTLRunningTasksLimitation(t *testing.T) {
 		scheduleWg.Add(1)
 		go func() {
 			se := sessionFactory()
-			m.RescheduleTasks(se, se.Now())
+			m.RescheduleTasks(se, now)
 			scheduleWg.Done()
 		}()
 	}
