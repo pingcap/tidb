@@ -461,6 +461,7 @@ func (c *BackendConfig) adjust() {
 // Backend is a local backend.
 type Backend struct {
 	pdCli     pd.Client
+	pdRPCCli  pd.RPCClient
 	pdHTTPCli pdhttp.Client
 	splitCli  split.SplitClient
 	tikvCli   *tikvclient.KVStore
@@ -545,11 +546,13 @@ func NewBackend(
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
+	pdBo := retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second)
 	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
-	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
+	).WithBackoffer(pdBo)
+	pdRPCCli := pdCli.BackoffRPCClient(pdBo)
 	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), false)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	var writeLimiter StoreWriteLimiter
@@ -560,6 +563,7 @@ func NewBackend(
 	}
 	local := &Backend{
 		pdCli:     pdCli,
+		pdRPCCli:  pdRPCCli,
 		pdHTTPCli: pdHTTPCli,
 		splitCli:  splitCli,
 		tikvCli:   tikvCli,
@@ -615,7 +619,7 @@ func (local *Backend) TotalMemoryConsume() int64 {
 }
 
 func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
-	stores, err := local.pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := local.pdRPCCli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1245,7 +1249,7 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
+	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdRPCCli, local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
 			regionSplitSize = kvRegionSplitSize
@@ -1613,7 +1617,7 @@ func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
 
 // GetTS implements StoreHelper interface.
 func (local *Backend) GetTS(ctx context.Context) (physical, logical int64, err error) {
-	return local.pdCli.GetTS(ctx)
+	return local.pdRPCCli.GetTS(ctx)
 }
 
 // GetTiKVCodec implements StoreHelper interface.
@@ -1652,7 +1656,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 }
 
 // GetRegionSplitSizeKeys return region split size, region split keys, error
-func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
+func GetRegionSplitSizeKeys(ctx context.Context, cli pd.RPCClient, tls *common.TLS) (
 	regionSplitSize int64, regionSplitKeys int64, err error) {
 	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {

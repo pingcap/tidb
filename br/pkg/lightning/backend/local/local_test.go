@@ -1063,7 +1063,7 @@ func TestMultiIngest(t *testing.T) {
 		}
 
 		local := &Backend{
-			pdCli: &mockPdClient{stores: stores},
+			pdRPCCli: &mockPdClient{stores: stores},
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
 				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
@@ -2336,7 +2336,7 @@ func TestExternalEngine(t *testing.T) {
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,
 		}, nil),
-		pdCli: &mockPdClient{},
+		pdRPCCli: &mockPdClient{},
 	}
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)

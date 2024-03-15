@@ -37,6 +37,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/retry"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -338,7 +339,10 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 	return nil, err
 }
 
-var retryGetTSInterval = time.Second
+var (
+	retryGetTSInterval    = time.Second
+	retryGetTSMaxDuration = time.Minute
+)
 
 // Checksum implements the ChecksumManager interface.
 func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
@@ -346,25 +350,10 @@ func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 	var (
 		physicalTS, logicalTS int64
 		err                   error
-		retryTime             int
 	)
 	physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
-	for err != nil {
-		if !pd.IsLeaderChange(errors.Cause(err)) {
-			return nil, errors.Annotate(err, "fetch tso from pd failed")
-		}
-		retryTime++
-		if retryTime%60 == 0 {
-			log.FromContext(ctx).Warn("fetch tso from pd failed and retrying",
-				zap.Int("retryTime", retryTime),
-				zap.Error(err))
-		}
-		select {
-		case <-ctx.Done():
-			err = ctx.Err()
-		case <-time.After(retryGetTSInterval):
-			physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
-		}
+	if err != nil {
+		return nil, errors.Annotate(err, "fetch tso from pd failed")
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 	if err := e.manager.addOneJob(ctx, tbl, ts); err != nil {
@@ -406,7 +395,7 @@ func (m *gcTTLManager) Pop() any {
 
 type gcTTLManager struct {
 	lock     sync.Mutex
-	pdClient pd.Client
+	pdClient pd.RPCClient
 	// tableGCSafeTS is a binary heap that stored active checksum jobs GC safe point ts
 	tableGCSafeTS []*tableChecksumTS
 	currentTS     uint64
@@ -417,7 +406,7 @@ type gcTTLManager struct {
 
 func newGCTTLManager(pdClient pd.Client) gcTTLManager {
 	return gcTTLManager{
-		pdClient:  pdClient,
+		pdClient:  pdClient.BackoffRPCClient(retry.InitialBackoffer(retryGetTSInterval, retryGetTSInterval, retryGetTSMaxDuration, retry.WithMinLogInterval(retryGetTSInterval))),
 		serviceID: fmt.Sprintf("lightning-%s", uuid.New()),
 	}
 }

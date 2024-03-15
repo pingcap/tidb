@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -32,6 +33,7 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/retry"
 	"google.golang.org/grpc"
 )
 
@@ -59,6 +61,13 @@ func newPDClient(pd *us.MockPD, addrs []string) *pdClient {
 		globalConfig:          make(map[string]string),
 		addrs:                 addrs,
 	}
+}
+
+func (c *pdClient) BackoffRPCClient(bos ...*retry.Backoffer) pd.RPCClient {
+	if len(bos) == 0 {
+		return pd.NewBackofferClient(c, retry.InitialBackoffer(time.Second, time.Second*3, time.Second*10))
+	}
+	return pd.NewBackofferClient(c, bos[0])
 }
 
 func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
@@ -117,22 +126,18 @@ var _ pd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
 var _ pd.ServiceClient = (*mockPDServiceClient)(nil)
 
 type mockPDServiceClient struct {
-	addr string
+	url string
 }
 
 func newMockPDServiceClient(addr string) pd.ServiceClient {
 	if !strings.HasPrefix(addr, "http") {
 		addr = fmt.Sprintf("%s://%s", "http", addr)
 	}
-	return &mockPDServiceClient{addr: addr}
+	return &mockPDServiceClient{url: addr}
 }
 
-func (c *mockPDServiceClient) GetAddress() string {
-	return c.addr
-}
-
-func (c *mockPDServiceClient) GetHTTPAddress() string {
-	return c.addr
+func (c *mockPDServiceClient) GetURL() string {
+	return c.url
 }
 
 func (c *mockPDServiceClient) GetClientConn() *grpc.ClientConn {
@@ -194,9 +199,9 @@ func (c *mockPDServiceDiscovery) GetServingEndpointClientConn() *grpc.ClientConn
 
 func (c *mockPDServiceDiscovery) GetClientConns() *sync.Map { return nil }
 
-func (c *mockPDServiceDiscovery) GetServingAddr() string { return "" }
+func (c *mockPDServiceDiscovery) GetServingURL() string { return "" }
 
-func (c *mockPDServiceDiscovery) GetBackupAddrs() []string { return nil }
+func (c *mockPDServiceDiscovery) GetBackupURLs() []string { return nil }
 
 func (c *mockPDServiceDiscovery) GetServiceClient() pd.ServiceClient {
 	if len(c.clis) > 0 {
@@ -217,9 +222,9 @@ func (c *mockPDServiceDiscovery) ScheduleCheckMemberChanged() {}
 
 func (c *mockPDServiceDiscovery) CheckMemberChanged() error { return nil }
 
-func (c *mockPDServiceDiscovery) AddServingAddrSwitchedCallback(callbacks ...func()) {}
+func (c *mockPDServiceDiscovery) AddServingURLSwitchedCallback(callbacks ...func()) {}
 
-func (c *mockPDServiceDiscovery) AddServiceAddrsSwitchedCallback(callbacks ...func()) {}
+func (c *mockPDServiceDiscovery) AddServiceURLsSwitchedCallback(callbacks ...func()) {}
 
 type mockTSFuture struct {
 	pdc  *pdClient
@@ -235,7 +240,7 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 	return m.pdc.GetTS(m.ctx)
 }
 
-func (c *pdClient) GetLeaderAddr() string { return "mockpd" }
+func (c *pdClient) GetLeaderURL() string { return "mockpd" }
 
 func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
 	c.gcSafePointMu.Lock()
