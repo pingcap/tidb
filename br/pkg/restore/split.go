@@ -557,7 +557,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	}
 
 	helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
-		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints, false)
+		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints, false, true)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
 			_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
