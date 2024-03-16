@@ -88,6 +88,14 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 {
+		if ignoreErr && txn.IsPipelined() {
+			// P-DML doesn't support staging now. In a INSERT IGNORE ... ON DUPLICATE ... stmt, it's
+			// possible that 1 row succeeded and 1 row returns error but is ignored, thus the whole
+			// statement can successfully commit. See TestIssue50043
+			// The second row is supposed to be cleanup by the staging mechanism, so forbid this
+			// case for P-DML temporarily.
+			return errors.New("cannot use pipelined mode with insert ignore and on duplicate update")
+		}
 		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
 			return err
@@ -120,7 +128,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
-	return nil
+	return txn.MayFlush()
 }
 
 func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
