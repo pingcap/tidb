@@ -35,9 +35,10 @@ const (
 )
 
 type SplitContext struct {
-	isRawKv    bool
-	storeCount int
-	onSplit    OnSplitFunc
+	isRawKv     bool
+	storeCount  int
+	onSplit     OnSplitFunc
+	needScatter bool
 }
 
 // RegionSplitter is a executor of region split by rules.
@@ -99,9 +100,10 @@ func (rs *RegionSplitter) ExecuteSplit(
 	// and the range size must be greater than 0 here
 	scanStartKey := sortedRanges[0].StartKey
 	sctx := SplitContext{
-		isRawKv:    isRawKv,
-		onSplit:    onSplit,
-		storeCount: storeCount,
+		isRawKv:     isRawKv,
+		onSplit:     onSplit,
+		storeCount:  storeCount,
+		needScatter: true,
 	}
 	// the range size must be greater than 0 here
 	return rs.executeSplitByRanges(ctx, sctx, scanStartKey, sortedKeys)
@@ -116,7 +118,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 	startTime := time.Now()
 	// Choose the rough region split keys,
 	// each splited region contains 128 regions to be splitted.
-	const regionIndexStep = 128
+	const regionIndexStep = 8
 	const maxSplitKeysOnce = 10240
 	curRegionIndex := regionIndexStep
 	roughScanStartKey := scanStartKey
@@ -140,6 +142,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 	}
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
+	splitContext.needScatter = false
 	// Then send split requests to each TiKV.
 	if err := rs.executeSplitByKeys(ctx, splitContext, scanStartKey, sortedKeys); err != nil {
 		return errors.Trace(err)
@@ -186,7 +189,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Info("get split keys for split regions",
 					logutil.Region(region.Region), logutil.Keys(keys))
-				newRegions, err := rs.splitAndScatterRegions(ectx, region, keys, sctx.isRawKv)
+				newRegions, err := rs.splitAndScatterRegions(ectx, region, keys, sctx.isRawKv, sctx.needScatter)
 				if err != nil {
 					return err
 				}
@@ -195,12 +198,14 @@ func (rs *RegionSplitter) executeSplitByKeys(
 						zap.Int("new region count", len(newRegions)),
 						zap.Int("split key count", len(keys)))
 				}
-				log.Info("scattered regions", zap.Int("count", len(newRegions)))
-				mutex.Lock()
-				for _, r := range newRegions {
-					regionsMap[r.Region.Id] = r
+				if sctx.needScatter {
+					log.Info("scattered regions", zap.Int("count", len(newRegions)))
+					mutex.Lock()
+					for _, r := range newRegions {
+						regionsMap[r.Region.Id] = r
+					}
+					mutex.Unlock()
 				}
-				mutex.Unlock()
 				sctx.onSplit(keys)
 				return nil
 			})
@@ -229,7 +234,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 }
 
 func (rs *RegionSplitter) splitAndScatterRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, isRawKv bool,
+	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, isRawKv bool, scatter bool,
 ) ([]*split.RegionInfo, error) {
 	if len(keys) < 1 {
 		return []*split.RegionInfo{regionInfo}, nil
@@ -249,9 +254,11 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 		}
 		return nil, errors.Trace(err)
 	}
-	err2 := rs.client.ScatterRegions(ctx, append(newRegions, regionInfo))
-	if err2 != nil {
-		log.Warn("failed to scatter regions", zap.Error(err2))
+	if scatter {
+		err2 := rs.client.ScatterRegions(ctx, append(newRegions, regionInfo))
+		if err2 != nil {
+			log.Warn("failed to scatter regions", zap.Error(err2))
+		}
 	}
 	return newRegions, nil
 }
