@@ -558,6 +558,7 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
+	go rc.fileImporter.StatsLoop(ctx)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
