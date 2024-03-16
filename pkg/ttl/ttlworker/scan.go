@@ -111,7 +111,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	}
 	defer rawSess.Close()
 
-	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, rawSess.Now())
+	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, time.Now())
 	if err != nil {
 		return t.result(err)
 	}
@@ -127,7 +127,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	// because `ExecuteSQLWithCheck` only do checks when the table meta used by task is different with the latest one.
 	// In this case, some rows will be deleted unexpectedly.
 	if t.ExpireTime.After(safeExpire) {
-		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.Unix(), safeExpire.Unix()))
+		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.UnixMilli(), safeExpire.UnixMilli()))
 	}
 
 	origConcurrency := rawSess.GetSessionVars().DistSQLScanConcurrency()

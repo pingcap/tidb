@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -322,7 +321,6 @@ loop:
 }
 
 func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([]*cache.TTLTask, error) {
-	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 	sql, args := cache.PeekWaitingTTLTask(now.Add(-getTaskManagerHeartBeatExpireInterval()))
 	rows, err := se.ExecuteSQL(m.ctx, sql, args...)
 	if err != nil {
@@ -374,7 +372,6 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 			return errors.WithStack(errTooManyRunningTasks)
 		}
 
-		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 		sql, args := setTTLTaskOwnerSQL(task.JobID, task.ScanID, m.id, now)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
@@ -443,7 +440,6 @@ func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, n
 			state.ScanTaskErr = task.result.err.Error()
 		}
 
-		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 		sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state)
 		if err != nil {
 			return err
@@ -486,7 +482,6 @@ func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task
 		state.ScanTaskErr = task.result.err.Error()
 	}
 
-	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 	sql, args, err := setTTLTaskFinishedSQL(task.JobID, task.ScanID, state, now)
 	if err != nil {
 		return err

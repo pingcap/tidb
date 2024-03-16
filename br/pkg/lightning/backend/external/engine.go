@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
@@ -25,7 +24,6 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -386,43 +384,6 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 
 // LargeRegionSplitDataThreshold is exposed for test.
 var LargeRegionSplitDataThreshold = int(config.SplitRegionSize)
-
-// createMergeIter is unused now.
-// TODO(lance6716): check the performance of new design and remove it.
-func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIter, error) {
-	logger := logutil.Logger(ctx)
-
-	var offsets []uint64
-	if len(e.statsFiles) == 0 {
-		offsets = make([]uint64, len(e.dataFiles))
-		logger.Info("no stats files",
-			zap.String("startKey", hex.EncodeToString(start)))
-	} else {
-		offs, err := seekPropsOffsets(ctx, []kv.Key{start}, e.statsFiles, e.storage)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		offsets = offs[0]
-		logger.Debug("seek props offsets",
-			zap.Uint64s("offsets", offsets),
-			zap.String("startKey", hex.EncodeToString(start)),
-			zap.Strings("dataFiles", e.dataFiles),
-			zap.Strings("statsFiles", e.statsFiles))
-	}
-	iter, err := NewMergeKVIter(
-		ctx,
-		e.dataFiles,
-		offsets,
-		e.storage,
-		64*1024,
-		e.checkHotspot,
-		e.mergerIterConcurrency,
-	)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return iter, nil
-}
 
 // KVStatistics returns the total kv size and total kv count.
 func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
