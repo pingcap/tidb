@@ -738,3 +738,50 @@ func TestConflictError(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "Duplicate entry"), err.Error())
 }
+
+func TestRejectUnsupportedTables(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_dml_type = bulk")
+
+	// FKs are not supported if foreign_key_checks=ON
+	tk.MustExec("drop table if exists parent, child")
+	tk.MustExec("create table parent(a int primary key)")
+	tk.MustExec("create table child(a int, foreign key (a) references parent(a))")
+	err := tk.ExecToErr("insert into parent values(1)")
+	require.NoError(t, err)
+	err = tk.ExecToErr("insert into child values(1)")
+	require.NoError(t, err)
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
+	err = tk.ExecToErr("insert into child values(2)")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "foreign key constraint fails"), err.Error())
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
+
+	// test a delete sql that deletes two tables
+	tk.MustExec("insert into parent values(2)")
+	tk.MustExec("delete parent, child from parent left join child on parent.a = child.a")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
+
+	// swap the order of the two tables
+	tk.MustExec("insert into parent values(3)")
+	tk.MustExec("delete child, parent from child left join parent on parent.a = child.a")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
+
+	tk.MustExec("set @@foreign_key_checks=false")
+	tk.MustExec("insert into parent values(4)")
+	tk.MustExec("insert into child values(4)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	// temp tables are not supported
+	tk.MustExec("create temporary table temp(a int)")
+	tk.MustExec("insert into temp values(1)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on temporary tables. Fallback to standard mode")
+
+	// cached tables are not supported
+	tk.MustExec("create table cached(a int)")
+	tk.MustExec("alter table cached cache")
+	tk.MustExec("insert into cached values(1)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on cached tables. Fallback to standard mode")
+}
