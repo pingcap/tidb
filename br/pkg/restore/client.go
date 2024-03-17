@@ -1490,6 +1490,7 @@ func (rc *Client) RestoreSSTFiles(
 	}
 
 	runner := rc.GetCheckpointRunner()
+	workers := make(chan struct{}, 128)
 
 	var rangeFiles []*backuppb.File
 	var leftFiles []*backuppb.File
@@ -1522,7 +1523,7 @@ LOOPFORTABLE:
 								updateCh.Inc()
 							}
 						}()
-						return rc.fileImporter.ImportSSTFiles(ectx, fs, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
+						return rc.fileImporter.ImportSSTFiles(ectx, workers, fs, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 					}(filesGroup); importErr != nil {
 						return errors.Trace(importErr)
 					}
@@ -1540,6 +1541,11 @@ LOOPFORTABLE:
 				return nil
 			}
 			if rc.granularity == string(CoarseGrained) {
+				select {
+				case <-ectx.Done():
+					break LOOPFORTABLE
+				case workers <- struct{}{}:
+				}
 				rc.fileImporter.cond.L.Lock()
 				for rc.fileImporter.ShouldBlock() {
 					// wait for download worker notified
@@ -1580,7 +1586,7 @@ func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.Fi
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, nil, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 	if err := eg.Wait(); err != nil {
