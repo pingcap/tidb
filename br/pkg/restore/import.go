@@ -432,7 +432,7 @@ func NewFileImporter(
 
 func (importer *FileImporter) ShouldBlock() bool {
 	if importer != nil {
-		return importer.downloadTokensMap.ShouldBlock() || importer.ingestTokensMap.ShouldBlock()
+		return importer.downloadTokensMap.ShouldBlock()
 	}
 	return false
 }
@@ -675,19 +675,42 @@ func (importer *FileImporter) ImportSSTFiles(
 		return errors.Trace(err)
 	}
 
+	type ingestTask struct {
+		info          *split.RegionInfo
+		downloadMetas []*import_sstpb.SSTMeta
+	}
+
 	downloadFn := importer.download
 	if importer.useTokenBucket {
 		downloadFn = importer.downloadV2
 	}
 
-	err = utils.WithRetry(ctx, func() error {
+	ingestFn := func(tasks []*ingestTask) error {
+		start = time.Now()
+		for _, task := range tasks {
+			start = time.Now()
+			if errIngest := importer.ingest(ctx, task.info, task.downloadMetas); errIngest != nil {
+				log.Warn("ingest file failed, retry later",
+					logutil.Files(files),
+					logutil.SSTMetas(task.downloadMetas),
+					logutil.Region(task.info.Region),
+					zap.Error(errIngest))
+				return errIngest
+			}
+		}
+		log.Debug("ingest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
+		return nil
+	}
+
+	ScanAndDownloadFn := func() ([]*ingestTask, error) {
 		// Scan regions covered by the file range
 		regionInfos, errScanRegion := split.PaginateScanRegion(
 			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
 		if errScanRegion != nil {
-			return errors.Trace(errScanRegion)
+			return nil, errors.Trace(errScanRegion)
 		}
 
+		tasks := make([]*ingestTask, 0, len(regionInfos))
 		log.Debug("scan regions", logutil.Files(files), zap.Int("count", len(regionInfos)))
 		// Try to download and ingest the file in every region
 	regionLoop:
@@ -717,28 +740,64 @@ func (importer *FileImporter) ImportSSTFiles(
 					logutil.Key("startKey", startKey),
 					logutil.Key("endKey", endKey),
 					logutil.ShortError(errDownload))
-				return errors.Trace(errDownload)
+				return nil, errors.Trace(errDownload)
 			}
 			log.Debug("download file done",
 				zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)),
 				logutil.Key("start", files[0].StartKey), logutil.Key("end", files[0].EndKey))
-			start = time.Now()
-			if errIngest := importer.ingest(ctx, files, info, downloadMetas); errIngest != nil {
-				log.Warn("ingest file failed, retry later",
-					logutil.Files(files),
-					logutil.SSTMetas(downloadMetas),
-					logutil.Region(info.Region),
-					zap.Error(errIngest))
-				return errors.Trace(errIngest)
-			}
-			log.Debug("ingest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
+
+			tasks = append(tasks, &ingestTask{info: info, downloadMetas: downloadMetas})
+		}
+		return tasks, nil
+	}
+	err = utils.WithRetry(ctx, func() error {
+		tasks, err := ScanAndDownloadFn()
+		if err != nil {
+			return err
 		}
 
-		for _, f := range files {
-			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+		if importer.useTokenBucket {
+			go func(tasks []*ingestTask) {
+				err := utils.WithRetry(ctx, func() error {
+					err = ingestFn(tasks)
+					for err != nil {
+						tasks, err := ScanAndDownloadFn()
+						if err != nil {
+							// re-scan and consume the backoffer counter
+							log.Warn("scan and download sst files in another goroutine failed, retry it", logutil.Files(files), zap.Error(err))
+							return err
+						}
+						err = ingestFn(tasks)
+						if err != nil {
+							log.Warn("ingest sst files in another goroutine failed, retry it", logutil.Files(files), zap.Error(err))
+							continue
+						}
+					}
+					return nil
+				}, utils.NewImportSSTBackoffer())
+				if err != nil {
+					// TODO stop the whole program
+					log.Error("import sst files in another goroutine failed after retry, stop the whole progress", logutil.Files(files), zap.Error(err))
+				}
+
+				for _, f := range files {
+					summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+					summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+				}
+			}(tasks)
+			return nil
+		} else {
+			err := ingestFn(tasks)
+			if err != nil {
+				return err
+			}
+			for _, f := range files {
+				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+			}
+			return nil
+
 		}
-		return nil
 	}, utils.NewImportSSTBackoffer())
 	if err != nil {
 		log.Error("import sst file failed after retry, stop the whole progress", logutil.Files(files), zap.Error(err))
@@ -1255,7 +1314,6 @@ func (importer *FileImporter) downloadRawKVSSTV2(
 
 func (importer *FileImporter) ingest(
 	ctx context.Context,
-	files []*backuppb.File,
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
@@ -1266,7 +1324,7 @@ func (importer *FileImporter) ingest(
 	case <-tokenCh:
 	}
 	defer func() {
-		importer.releaseToken(tokenCh)
+		tokenCh <- struct{}{}
 	}()
 	for {
 		ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
@@ -1299,7 +1357,6 @@ func (importer *FileImporter) ingest(
 					}
 					// do not get region info, wait a second and GetRegion() again.
 					log.Warn("ingest get region by key return nil", logutil.Region(info.Region),
-						logutil.Files(files),
 						logutil.SSTMetas(downloadMetas),
 					)
 					time.Sleep(time.Second)
@@ -1310,7 +1367,6 @@ func (importer *FileImporter) ingest(
 				return errors.Trace(berrors.ErrKVEpochNotMatch)
 			}
 			log.Debug("ingest sst returns not leader error, retry it",
-				logutil.Files(files),
 				logutil.SSTMetas(downloadMetas),
 				logutil.Region(info.Region),
 				zap.Stringer("newLeader", newInfo.Leader))
