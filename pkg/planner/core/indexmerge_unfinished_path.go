@@ -178,7 +178,7 @@ func initUnfinishedPathsFromExpr(
 		ret[i].idxColHasAccessFilter = make([]bool, len(idxCols))
 		for j, col := range idxCols {
 			for _, cnfItem := range cnfItems {
-				if ok, tp := checkFilter4MVIndexColumn(ds.SCtx(), cnfItem, col); ok &&
+				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
 					(tp == eqOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {

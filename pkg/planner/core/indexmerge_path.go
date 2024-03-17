@@ -1266,13 +1266,13 @@ func buildPartialPath4MVIndex(
 // This function is exported for test.
 func PrepareIdxColsAndUnwrapArrayType(
 	tableInfo *model.TableInfo,
-	mvIndex *model.IndexInfo,
+	idxInfo *model.IndexInfo,
 	tblCols []*expression.Column,
 	checkOnly1ArrayTypeCol bool,
 ) (idxCols []*expression.Column, ok bool) {
 	var virColNum = 0
-	for i := range mvIndex.Columns {
-		colOffset := mvIndex.Columns[i].Offset
+	for i := range idxInfo.Columns {
+		colOffset := idxInfo.Columns[i].Offset
 		colMeta := tableInfo.Cols()[colOffset]
 		var col *expression.Column
 		for _, c := range tblCols {
@@ -1315,7 +1315,7 @@ func collectFilters4MVIndex(
 			if usedAsAccess[i] {
 				continue
 			}
-			if ok, tp := checkFilter4MVIndexColumn(sctx, f, col); ok {
+			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
@@ -1389,7 +1389,7 @@ func CollectFilters4MVIndexMutations(sctx PlanContext, filters []expression.Expr
 			if usedAsAccess[i] {
 				continue
 			}
-			if ok, _ := checkFilter4MVIndexColumn(sctx, f, col); ok {
+			if ok, _ := checkAccessFilter4IdxCol(sctx, f, col); ok {
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
@@ -1481,10 +1481,11 @@ const (
 	singleValueOnMVColTp
 )
 
-// checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column, and
-// which type the access filter is, as defined above.
+// checkAccessFilter4IdxCol checks whether this filter can be used as an accessFilter to access the column of an index,
+// and returns which type the access filter is, as defined above.
+// Though this function is introduced for MV index, it can also be used for normal index
 // If the return value ok is false, the type must be unspecifiedFilterTp.
-func checkFilter4MVIndexColumn(
+func checkAccessFilter4IdxCol(
 	sctx PlanContext,
 	filter expression.Expression,
 	idxCol *expression.Column,
