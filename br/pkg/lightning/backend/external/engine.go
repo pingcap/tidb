@@ -482,7 +482,7 @@ func (e *Engine) Close() error {
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
 	memLimiter := membuf.NewLimiter(memLimit)
-	log.L().Info("lance test, will Reset")
+	logutil.BgLogger().Info("lance test, will Reset")
 	if e.smallBlockBufPool != nil {
 		e.smallBlockBufPool.Destroy()
 		e.smallBlockBufPool = membuf.NewPool(
