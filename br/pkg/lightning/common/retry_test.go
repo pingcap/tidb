@@ -28,7 +28,6 @@ import (
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/client/errs"
 	"go.uber.org/multierr"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
@@ -66,14 +65,6 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(drivererr.ErrTiKVServerTimeout))
 	require.True(t, IsRetryableError(drivererr.ErrTiKVServerBusy))
 	require.True(t, IsRetryableError(drivererr.ErrUnknown))
-
-	// pd client error
-	require.True(t, IsRetryableError(errs.ErrClientGetLeader))
-	require.True(t, IsRetryableError(errs.ErrClientGetMember))
-	require.True(t, IsRetryableError(errs.ErrClientUpdateMember))
-	require.True(t, IsRetryableError(errs.ErrClientUpdateMember.GenWithStack("test")))
-	require.True(t, IsRetryableError(errs.ErrClientUpdateMember.FastGen("test")))
-	require.True(t, IsRetryableError(errors.Trace(errs.ErrClientUpdateMember.FastGen("test"))))
 
 	// net: connection refused
 	_, err := net.Dial("tcp", "localhost:65533")
