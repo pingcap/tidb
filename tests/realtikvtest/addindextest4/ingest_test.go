@@ -528,3 +528,27 @@ func TestAddEmptyMultiValueIndex(t *testing.T) {
 	tk.MustExec("alter table t add index ((cast(j->'$.string' as char(10) array)));")
 	tk.MustExec("admin check table t;")
 }
+
+func TestIssue51162(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_fast_table_check=0")
+	tk.MustExec(`CREATE TABLE tl (
+	 col_42 json NOT NULL,
+	 col_43 tinyint(1) DEFAULT NULL,
+	 col_44 char(168) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,
+	 col_45 json DEFAULT NULL,
+	 col_46 text COLLATE utf8mb4_unicode_ci NOT NULL,
+	 col_47 char(43) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'xW2YNb99pse4)',
+	 col_48 time NOT NULL DEFAULT '12:31:25',
+	 PRIMARY KEY (col_47,col_46(2)) /*T![clustered_index] CLUSTERED */
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`)
+
+	tk.MustExec(`INSERT INTO tl VALUES
+	('[\"01qHMy8yycbq2v1CZ80kiIECEQFLXYsnM0tpVh9vbx71DMpaPdp6hBkrpTodkXVt\", \"dGugZHV3pmqjLSdICAYbiwFGZsYWX9MrzgSGCslmEsfFzXYOiXyE0YMS1TSfnX5R\", \"Ypz8Jj0hBSBQbiWd3LbPRV2qvSEAxV8rlXnxpn93nXmFyMJkCQzyhtNn0FUwH6Ce\", \"Yf6kag9ruOT04V8AHT6NYhCNIa2CYZDVg8zWaxxHFm0GPAJh0e6Mc5Upa0EAp1Sr\", \"ljrRnPUdxJNkWxmkn4K25YeFwVtedGtLDrWlWYZyqt2Shpfg4p7jroOwbOZHuHiE\"]',0,'釸7鈡w歀痂暰苕rv)Ts','[5661899762065804824, 3294089805449875423, 2378579521053711229, 6262068190112960080]','Wxup81婱鍋cH爀
+	2潺檛楍1N7','2ZNeu2n5-2+Q3qYp','10:14:20');`)
+
+	tk.MustExec("alter table tl add index idx_16(`col_48`,(cast(`col_45` as signed array)),`col_46`(5));")
+	tk.MustExec("admin check table tl")
+}

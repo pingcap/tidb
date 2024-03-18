@@ -3925,18 +3925,6 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	}
 }
 
-func containsTarget(query string) bool {
-	idx := strings.Index(query, "sbtest1")
-	if idx == -1 {
-		return false
-	}
-	// Exclude sbtest1[0-9].
-	if len(query) > idx+7 && query[idx+7] >= '0' && query[idx+7] <= '9' {
-		return false
-	}
-	return true
-}
-
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
@@ -3945,10 +3933,6 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			query = execStmt.OriginText()
 		} else {
 			query = execStmt.GetTextToLog(false)
-		}
-
-		if !containsTarget(query) {
-			return
 		}
 
 		query = executor.QueryReplacer.Replace(query)
