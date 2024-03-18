@@ -153,6 +153,7 @@ func (mr *MockRowsMockRecorder) Clear() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Clear", reflect.TypeOf((*MockRows)(nil).Clear))
 }
 
+<<<<<<< HEAD
 // SplitIntoChunks mocks base method.
 func (m *MockRows) SplitIntoChunks(arg0 int) []encode.Rows {
 	m.ctrl.T.Helper()
@@ -167,6 +168,8 @@ func (mr *MockRowsMockRecorder) SplitIntoChunks(arg0 interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SplitIntoChunks", reflect.TypeOf((*MockRows)(nil).SplitIntoChunks), arg0)
 }
 
+=======
+>>>>>>> eea121309ac (lightning: skip CREATE DATABASE when downstream exists, and return error when parse failed (#51801))
 // MockRow is a mock of Row interface.
 type MockRow struct {
 	ctrl     *gomock.Controller
