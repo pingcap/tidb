@@ -1011,15 +1011,15 @@ func (context *TiFlashScanContext) String() string {
 			minNum,
 			float64(maxNum)/float64(minNum))
 	}
-	dmfile_disagg_info := ""
+	dmfileDisaggInfo := ""
 	if context.disaggReadCacheHitBytes != 0 || context.disaggReadCacheMissBytes != 0 {
-		dmfile_disagg_info = fmt.Sprintf(", disagg_cache_hit_bytes: %d, disagg_cache_miss_bytes: %d",
+		dmfileDisaggInfo = fmt.Sprintf(", disagg_cache_hit_bytes: %d, disagg_cache_miss_bytes: %d",
 			context.disaggReadCacheHitBytes,
 			context.disaggReadCacheMissBytes)
 	}
-	remote_stream_info := ""
+	remoteStreamInfo := ""
 	if context.minRemoteStreamMs != 0 || context.maxRemoteStreamMs != 0 {
-		remote_stream_info = fmt.Sprintf("min_remote_stream:%dms, max_remote_stream:%dms, ", context.minRemoteStreamMs, context.maxRemoteStreamMs)
+		remoteStreamInfo = fmt.Sprintf("min_remote_stream:%dms, max_remote_stream:%dms, ", context.minRemoteStreamMs, context.maxRemoteStreamMs)
 	}
 	// note: "tot" is short for "total"
 	return fmt.Sprintf("tiflash_scan:{"+
@@ -1069,7 +1069,7 @@ func (context *TiFlashScanContext) String() string {
 		context.totalBuildInputStreamMs,
 		context.minLocalStreamMs,
 		context.maxLocalStreamMs,
-		remote_stream_info,
+		remoteStreamInfo,
 		context.dmfileDataScannedRows,
 		context.dmfileDataSkippedRows,
 		context.dmfileMvccScannedRows,
@@ -1078,7 +1078,7 @@ func (context *TiFlashScanContext) String() string {
 		context.dmfileLmFilterSkippedRows,
 		context.totalDmfileRsCheckMs,
 		context.totalDmfileReadMs,
-		dmfile_disagg_info,
+		dmfileDisaggInfo,
 	)
 }
 
