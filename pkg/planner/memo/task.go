@@ -15,6 +15,7 @@
 package memo
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -49,6 +50,17 @@ func (ts *TaskStack) Destroy() {
 	// when a taskStack itself is useless, we can destroy itself actively.
 	clear(ts.tasks)
 	TaskStackPool.Put(ts)
+}
+
+// Desc is used to desc the detail info about current stack state.
+// when use customized stack to drive the tasks, the call-chain state is dived in the stack.
+func (ts *TaskStack) Desc() string {
+	var str strings.Builder
+	for _, one := range ts.tasks {
+		str.WriteString(one.desc())
+		str.WriteString("\n")
+	}
+	return str.String()
 }
 
 // Len indicates the length of current stack.
