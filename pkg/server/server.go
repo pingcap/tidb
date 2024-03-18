@@ -244,8 +244,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		concurrentLimiter:      NewTokenLimiter(cfg.TokenLimit),
 		clients:                make(map[uint64]*clientConn),
 		ConnNumByResourceGroup: make(map[string]int),
-		internalSessions:       make(map[interface{}]struct{}, 100),
-		health:                 uatomic.NewBool(true),
+		internalSessions:       make(map[any]struct{}, 100),
+		health:                 uatomic.NewBool(false),
 		inShutdownMode:         uatomic.NewBool(false),
 		printMDLLogTime:        time.Now(),
 	}
@@ -458,6 +458,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
+	s.health.Store(true)
 	err = <-errChan
 	if err != nil {
 		return err
