@@ -128,18 +128,58 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 	if len(sessionStates.Bindings) == 0 {
 		return nil
 	}
-	var records []Binding
-	if err := json.Unmarshal(hack.Slice(sessionStates.Bindings), &records); err != nil {
+
+	var m []map[string]any
+	var err error
+	bindingBytes := hack.Slice(sessionStates.Bindings)
+	if err = json.Unmarshal(bindingBytes, &m); err != nil {
 		return err
 	}
+	if len(m) == 0 {
+		return nil
+	}
+
+	var records []Binding
+	// Key "Bindings" only exists in old versions.
+	if _, ok := m[0]["Bindings"]; ok {
+		err = h.decodeOldStyleSessionStates(bindingBytes, &records)
+	} else {
+		err = json.Unmarshal(bindingBytes, &records)
+	}
+	if err != nil {
+		return err
+	}
+
 	for _, record := range records {
 		// Restore hints and ID because hints are hard to encode.
-		if err := prepareHints(sctx, &record); err != nil {
+		if err = prepareHints(sctx, &record); err != nil {
 			return err
 		}
 		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), []Binding{record})
 	}
+	return nil
+}
 
+// Before v8.0.0, the data structure is different. We need to adapt to the old structure so that the sessions
+// can be migrated from an old version to a new version.
+func (h *sessionBindingHandle) decodeOldStyleSessionStates(bindingBytes []byte, bindings *[]Binding) error {
+	type bindRecord struct {
+		OriginalSQL string
+		Db          string
+		Bindings    []Binding
+	}
+	var records []bindRecord
+	if err := json.Unmarshal(bindingBytes, &records); err != nil {
+		return err
+	}
+	*bindings = make([]Binding, 0, len(records))
+	for _, record := range records {
+		for _, binding := range record.Bindings {
+			binding.OriginalSQL = record.OriginalSQL
+			binding.Db = record.Db
+			*bindings = append(*bindings, binding)
+		}
+	}
 	return nil
 }
 
