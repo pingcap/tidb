@@ -678,12 +678,18 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 			if op.Tp == ast.ColumnOptionDefaultValue {
 				if tmp, ok := op.Expr.(*driver.ValueExpr); ok {
 					if !tmp.Datum.IsNull() {
-						return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
+						return hasAutoIncrement, types.ErrInvalidDefault.GenWithStackByArgs(colDef.Name.Name.O)
+					}
+				}
+				if tmp, ok := op.Expr.(*ast.FuncCallExpr); ok {
+					if tmp.FnName.L == "current_date" {
+						return hasAutoIncrement, types.ErrInvalidDefault.GenWithStackByArgs(colDef.Name.Name.O)
 					}
 				}
 			}
 		}
 	}
+
 	if colDef.Options[index].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != index+1 {
 		if tmp, ok := colDef.Options[index].Expr.(*driver.ValueExpr); ok {
 			if tmp.Datum.IsNull() {
@@ -762,19 +768,6 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
 		default:
-			if col.Tp.GetType() == mysql.TypeDate {
-				var defaultValueOpt *ast.ColumnOption
-				for _, op := range col.Options {
-					if op.Tp == ast.ColumnOptionDefaultValue {
-						defaultValueOpt = op
-						break
-					}
-				}
-				if defaultValueOpt != nil && defaultValueOpt.Expr != nil {
-					p.err = types.ErrInvalidDefault.GenWithStackByArgs(col.Name.Name.O)
-					return
-				}
-			}
 			p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
 		}
 	}

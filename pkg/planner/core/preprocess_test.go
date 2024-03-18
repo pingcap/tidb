@@ -59,7 +59,7 @@ func TestValidator(t *testing.T) {
 		{"select ?", false, parser.ErrSyntax},
 		{"select ?", true, nil},
 		{"create table t(id int not null auto_increment default 2, key (id))", true,
-			errors.New("Invalid default value for 'id'")},
+			errors.New("[types:1067]Invalid default value for 'id'")},
 		{"create table t(id int not null default 2 auto_increment, key (id))", true,
 			errors.New("Invalid default value for 'id'")},
 		// Default value can be null when the column is primary key in MySQL 5.6.
