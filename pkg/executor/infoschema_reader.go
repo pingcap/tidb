@@ -784,6 +784,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
 		schema := e.dbs[e.dbsIdx]
 		tables := is.SchemaTables(schema)
+		logutil.BgLogger().Info("tables", zap.Any("tables", tables))
 		for e.tblIdx < len(tables) {
 			table := tables[e.tblIdx]
 			e.tblIdx++
@@ -813,6 +814,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema model.CIStr, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	logutil.BgLogger().Info("test table", zap.Any("tbl", tbl))
 	if tbl.IsView() {
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
