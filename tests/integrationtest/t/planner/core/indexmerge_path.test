@@ -265,7 +265,7 @@ explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 w
 explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where (a = 1 and b = 2) or json_contains(j, '1');
 
 # TestExpandANDListWithNestedORList
-drop table if exists t;
+drop table if exists t, t1;
 create table t (a int, b varchar(30), c float, j json, pk int primary key,
 key mvi1(c, (cast(j->'$.a' as unsigned array)), b),
 key mvi2(a, (cast(j->'$.c' as unsigned array))),
@@ -280,6 +280,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 ) and
 c = 10 and
 a = 20;
+
 explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  c = 1 or
@@ -287,6 +288,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
  c = 3
 ) and
 json_overlaps(j->'$.a', '[4,5,6]');
+
 explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  c = 1 or
@@ -294,6 +296,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
  c = 3
 ) and
 (json_contains(j->'$.a', '[4,5,6]'));
+
 explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  c = 1 or
@@ -301,6 +304,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
  c = 3
 ) and
 json_contains(j->'$.a', '[2]');
+
 explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  1 member of (j->'$.a') or
@@ -308,12 +312,14 @@ explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 ) and
 c = 10 and
 a = 20;
+
 explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
 (
  1 member of (j->'$.a') or
  2 member of (j->'$.d')
 ) and
 a = 20;
+
 explain format=brief select /*+ use_index_merge(t, mvi1, mvi3) */ * from t where
 c = 5 and
 (
@@ -321,6 +327,7 @@ c = 5 and
  2 member of (j->'$.d')
 ) and
 a = 20;
+
 explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * from t where
 (
  pk = 2 or
@@ -330,6 +337,7 @@ explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * fro
 a = 1 and
 b = '2' and
 c = 3;
+
 explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * from t where
 a = 1 and
 b = '2' and
@@ -339,6 +347,7 @@ c = 3 and
  (3 member of (j->'$.a')) or
  (3 member of (j->'$.c'))
 );
+
 explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 b = '2' and
@@ -347,6 +356,7 @@ b = '2' and
  (c = 10 and 3 member of (j->'$.a')) or
  3 member of (j->'$.c')
 );
+
 explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 (json_overlaps(j->'$.a', '[4,5,6]')) and
@@ -355,6 +365,7 @@ a = 1 and
  c = 10 or
  3 member of (j->'$.c')
 );
+
 explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
 a = 1 and
 (json_overlaps(j->'$.a', '[4,5,6]')) and
@@ -363,3 +374,7 @@ a = 1 and
  (c = 10) or
  (3 member of (j->'$.c'))
 );
+
+create table t1 (a int, b int, c int, d int, j json, key kb(b, (cast(j as unsigned array))), key(d, c));
+explain format=brief select * from t1 where (c=1 or b=1) and (1 member of (j));
+explain format=brief select * from t1 where (c=1 or b=1) and (1 member of (j)) and d=1;
