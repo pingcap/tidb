@@ -263,4 +263,9 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	// 	failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, schema, dataSource)
 	// 	failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, schema, dataSource)
 	// }
+
+	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
+	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/TopNRandomFail")
+	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail")
+	failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
 }
