@@ -14,7 +14,7 @@ import (
 
 	import_sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/tikv/client-go/v2/tikv"
+	apicodec "github.com/tikv/client-go/v2/internal/apicodec"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -152,10 +152,10 @@ func (mr *MockStoreHelperMockRecorder) GetTS(arg0 any) *gomock.Call {
 }
 
 // GetTiKVCodec mocks base method.
-func (m *MockStoreHelper) GetTiKVCodec() tikv.Codec {
+func (m *MockStoreHelper) GetTiKVCodec() apicodec.Codec {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTiKVCodec")
-	ret0, _ := ret[0].(tikv.Codec)
+	ret0, _ := ret[0].(apicodec.Codec)
 	return ret0
 }
 
