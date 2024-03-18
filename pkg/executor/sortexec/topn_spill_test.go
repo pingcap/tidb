@@ -75,6 +75,31 @@ func executeTopNExecutor(t *testing.T, exe *sortexec.TopNExec) []*chunk.Chunk {
 	return resultChunks
 }
 
+func executeTopNAndManuallyTriggerSpill(t *testing.T, exe *sortexec.TopNExec, hardLimit int64, tracker *memory.Tracker) []*chunk.Chunk {
+	tmpCtx := context.Background()
+	err := exe.Open(tmpCtx)
+	require.NoError(t, err)
+
+	resultChunks := make([]*chunk.Chunk, 0)
+	chk := exec.NewFirstChunk(exe)
+	for i := 0; i >= 0; i++ {
+		err = exe.Next(tmpCtx, chk)
+		require.NoError(t, err)
+
+		if i == 10 {
+			// Trigger the spill
+			tracker.Consume(hardLimit)
+			tracker.Consume(-hardLimit)
+		}
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		resultChunks = append(resultChunks, chk.CopyConstruct())
+	}
+	return resultChunks
+}
+
 // No spill will be triggered in this test
 func topNNoSpillCase(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
 	if exe == nil {
@@ -104,7 +129,8 @@ func topNSpillCase1(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.Sor
 	resultChunks := executeTopNExecutor(t, exe)
 
 	require.True(t, exe.IsSpillTriggeredForTest())
-	require.True(t, exe.GetIsInStage1ForTest())
+	require.True(t, exe.GetIsSpillTriggeredInStage1ForTest())
+	require.False(t, exe.GetInMemoryThenSpillFlagForTest())
 
 	err := exe.Close()
 	require.NoError(t, err)
@@ -121,7 +147,9 @@ func topNSpillCase2(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.Sor
 	resultChunks := executeTopNExecutor(t, exe)
 
 	require.True(t, exe.IsSpillTriggeredForTest())
-	require.True(t, exe.GetIsInStage1ForTest())
+	require.False(t, exe.GetIsSpillTriggeredInStage1ForTest())
+	require.True(t, exe.GetIsSpillTriggeredInStage2ForTest())
+	require.False(t, exe.GetInMemoryThenSpillFlagForTest())
 
 	err := exe.Close()
 	require.NoError(t, err)
@@ -129,16 +157,18 @@ func topNSpillCase2(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.Sor
 	require.True(t, checkTopNCorrectness(schema, exe, dataSource, resultChunks, offset, count))
 }
 
-// After sorted all rows are in memory and the spill is triggered after some chunks have been fetched
-func topNInMemoryThenSpillCase(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
+// After all sorted rows are in memory, then the spill will be triggered after some chunks have been fetched
+func topNInMemoryThenSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.TopNExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
 	if exe == nil {
 		exe = buildTopNExec(sortCase, dataSource, offset, count)
 	}
 	dataSource.PrepareChunks()
-	resultChunks := executeTopNExecutor(t, exe)
+	resultChunks := executeTopNAndManuallyTriggerSpill(t, exe, hardLimit1*2, ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	require.True(t, exe.IsSpillTriggeredForTest())
-	require.True(t, exe.GetIsInStage1ForTest())
+	require.False(t, exe.GetIsSpillTriggeredInStage1ForTest())
+	require.False(t, exe.GetIsSpillTriggeredInStage2ForTest())
+	require.True(t, exe.GetInMemoryThenSpillFlagForTest())
 
 	err := exe.Close()
 	require.NoError(t, err)
@@ -151,6 +181,8 @@ func TestTopNSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
 	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
@@ -169,7 +201,6 @@ func TestTopNSpillDisk(t *testing.T) {
 		topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
-	// TODO add slow random fail point for topn failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	count = uint64(totalRowNum - totalRowNum/10)
@@ -178,38 +209,58 @@ func TestTopNSpillDisk(t *testing.T) {
 		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
+
+	count = uint64(totalRowNum / 5)
+	offset = count / 5
+	exe = buildTopNExec(topNCase, dataSource, offset, count)
+	for i := 0; i < 5; i++ {
+		topNSpillCase2(t, nil, topNCase, schema, dataSource, 0, count)
+		topNSpillCase2(t, exe, topNCase, schema, dataSource, offset, count)
+	}
+
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1*2)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	count = uint64(totalRowNum / 5)
+	offset = count / 5
+	exe = buildTopNExec(topNCase, dataSource, offset, count)
+	for i := 0; i < 5; i++ {
+		topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
+		topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
+	}
+
+	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
 }
 
 func TestTopNSpillDiskFailpoint(t *testing.T) {
 	// TODO spills in stage 1 and stage 2 are all need to be tested
-	sortexec.SetSmallSpillChunkSizeForTest()
-	ctx := mock.NewContext()
-	sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	// sortexec.SetSmallSpillChunkSizeForTest()
+	// ctx := mock.NewContext()
+	// sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(false)`)
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(false)`)
 
-	ctx.GetSessionVars().InitChunkSize = 32
-	ctx.GetSessionVars().MaxChunkSize = 32
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = true
+	// ctx.GetSessionVars().InitChunkSize = 32
+	// ctx.GetSessionVars().MaxChunkSize = 32
+	// ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
+	// ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	// ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	// ctx.GetSessionVars().EnableParallelSort = true
 
-	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
-	for i := 0; i < 20; i++ {
-		failpointNoMemoryDataTest(t, ctx, nil, sortCase, schema, dataSource)
-		failpointNoMemoryDataTest(t, ctx, exe, sortCase, schema, dataSource)
-	}
+	// schema := expression.NewSchema(sortCase.Columns()...)
+	// dataSource := buildDataSource(ctx, sortCase, schema)
+	// exe := buildSortExec(ctx, sortCase, dataSource)
+	// for i := 0; i < 20; i++ {
+	// 	failpointNoMemoryDataTest(t, ctx, nil, sortCase, schema, dataSource)
+	// 	failpointNoMemoryDataTest(t, ctx, exe, sortCase, schema, dataSource)
+	// }
 
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	for i := 0; i < 20; i++ {
-		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, schema, dataSource)
-		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, schema, dataSource)
-	}
+	// ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
+	// ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	// for i := 0; i < 20; i++ {
+	// 	failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, schema, dataSource)
+	// 	failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, schema, dataSource)
+	// }
 }

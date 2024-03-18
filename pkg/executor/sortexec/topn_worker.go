@@ -15,17 +15,18 @@
 package sortexec
 
 import (
-	"fmt"
+	"math/rand"
 	"sync"
+	"time"
 
-	"github.com/pingcap/log"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
 // topNWorker is used only when topn spill is triggered
 type topNWorker struct {
-	idForTest int
+	workerIDForTest int
 
 	chunkChannel           <-chan *chunk.Chunk
 	fetcherAndWorkerSyncer *sync.WaitGroup
@@ -48,7 +49,7 @@ func newTopNWorker(
 	chkHeap *topNChunkHeap,
 	memTracker *memory.Tracker) *topNWorker {
 	return &topNWorker{
-		idForTest:              idForTest,
+		workerIDForTest:        idForTest,
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
 		errOutputChan:          errOutputChan,
 		finishChan:             finishChan,
@@ -79,6 +80,8 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 		}
 		defer t.fetcherAndWorkerSyncer.Done()
 
+		t.injectFailPointForTopNWorker(3)
+
 		t.receivedRowNum += chk.NumRows()
 		if uint64(t.chkHeap.rowChunks.Len()) < t.chkHeap.totalLimit {
 			if !t.chkHeap.isInitialized {
@@ -103,5 +106,18 @@ func (t *topNWorker) run() {
 	}()
 
 	t.fetchChunksAndProcess()
-	log.Info(fmt.Sprintf("worker %d, receive %d rows", t.idForTest, t.receivedRowNum))
+}
+
+func (p *topNWorker) injectFailPointForTopNWorker(triggerFactor int32) {
+	injectParallelSortRandomFail(triggerFactor)
+	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
+		if val.(bool) {
+			if p.workerIDForTest%2 == 0 {
+				randNum := rand.Int31n(10000)
+				if randNum < 10 {
+					time.Sleep(1 * time.Millisecond)
+				}
+			}
+		}
+	})
 }

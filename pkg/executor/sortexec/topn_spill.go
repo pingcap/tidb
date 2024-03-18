@@ -15,18 +15,18 @@
 package sortexec
 
 import (
-	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 type topNSpillHelper struct {
@@ -104,6 +104,7 @@ func (t *topNSpillHelper) setInSpilling() {
 	t.cond.L.Lock()
 	defer t.cond.L.Unlock()
 	t.spillStatus = inSpilling
+	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", t.bytesConsumed.Load()), zap.Int64("quota", t.bytesLimit.Load()))
 }
 
 func (t *topNSpillHelper) setNotSpilled() {
@@ -224,7 +225,6 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	}
 
 	if inDisk.NumChunks() > 0 {
-		log.Info(fmt.Sprintf("spilled num %d, rowPtrNum: %d", spilledNum, rowPtrNum))
 		t.addInDisk(inDisk)
 	}
 

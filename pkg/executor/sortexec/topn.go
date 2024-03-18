@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -60,9 +59,9 @@ type TopNExec struct {
 	//  1. Building heap, in this stage all received rows will be inserted into heap.
 	//  2. Updating heap, in this stage only rows that is smaller than the heap top could be inserted and we will drop the heap top.
 	//
-	// isInStage1ForTest will be set to false if we step into stage 2.
 	// This variable is only used for test.
-	isInStage1ForTest bool
+	isSpillTriggeredInStage1ForTest bool
+	isSpillTriggeredInStage2ForTest bool
 }
 
 // Open implements the Executor Open interface.
@@ -78,7 +77,8 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.finishCh = make(chan struct{}, 1)
 	e.resultChannel = make(chan rowWithError, e.MaxChunkSize())
 	e.inMemoryThenSpillFlag = false
-	e.isInStage1ForTest = true
+	e.isSpillTriggeredInStage1ForTest = false
+	e.isSpillTriggeredInStage2ForTest = false
 
 	if variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
@@ -198,11 +198,11 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 			return err
 		}
 		if srcChk.NumRows() == 0 {
-			e.isInStage1ForTest = false
 			break
 		}
 		e.chkHeap.rowChunks.Add(srcChk)
 		if e.spillHelper.isSpillNeeded() {
+			e.isSpillTriggeredInStage1ForTest = true
 			break
 		}
 	}
@@ -217,6 +217,7 @@ func (e *TopNExec) executeTopNNoSpill(ctx context.Context) error {
 	childRowChk := exec.TryNewCacheChunk(e.Children(0))
 	for {
 		if e.spillHelper.isSpillNeeded() {
+			e.isSpillTriggeredInStage2ForTest = true
 			return nil
 		}
 
@@ -324,8 +325,6 @@ func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
 		return err
 	}
 
-	log.Info("xzxdebug --------")
-
 	e.chunkChannel = make(chan *chunk.Chunk, len(e.spillHelper.workers))
 
 	// Wait for the finish of chunk fetcher
@@ -385,7 +384,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 func (e *TopNExec) generateTopNResultsWithNoSpill() bool {
 	rowPtrNum := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < rowPtrNum; e.chkHeap.idx++ {
-		if e.chkHeap.idx%1000 == 0 && e.spillHelper.isSpillTriggered() {
+		if e.chkHeap.idx%1000 == 0 && e.spillHelper.isSpillNeeded() {
 			return true
 		}
 		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
@@ -458,8 +457,16 @@ func (e *TopNExec) IsSpillTriggeredForTest() bool {
 	return e.spillHelper.isSpillTriggered()
 }
 
-func (e *TopNExec) GetIsInStage1ForTest() bool {
-	return e.isInStage1ForTest
+func (e *TopNExec) GetIsSpillTriggeredInStage1ForTest() bool {
+	return e.isSpillTriggeredInStage1ForTest
+}
+
+func (e *TopNExec) GetIsSpillTriggeredInStage2ForTest() bool {
+	return e.isSpillTriggeredInStage2ForTest
+}
+
+func (e *TopNExec) GetInMemoryThenSpillFlagForTest() bool {
+	return e.inMemoryThenSpillFlag
 }
 
 func injectTopNRandomFail(triggerFactor int32) {
