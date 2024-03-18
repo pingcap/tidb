@@ -117,47 +117,7 @@ func (c *testSplitClient) GetRegionByID(ctx context.Context, regionID uint64) (*
 	return region, nil
 }
 
-func (c *testSplitClient) SplitRegion(
-	ctx context.Context,
-	regionInfo *split.RegionInfo,
-	key []byte,
-) (*split.RegionInfo, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var target *split.RegionInfo
-	splitKey := codec.EncodeBytes([]byte{}, key)
-	for _, region := range c.regions {
-		if bytes.Compare(splitKey, region.Region.StartKey) >= 0 &&
-			beforeEnd(splitKey, region.Region.EndKey) {
-			target = region
-		}
-	}
-	if target == nil {
-		return nil, errors.Errorf("region not found: key=%s", string(key))
-	}
-	newRegion := &split.RegionInfo{
-		Region: &metapb.Region{
-			Peers:    target.Region.Peers,
-			Id:       c.nextRegionID,
-			StartKey: target.Region.StartKey,
-			EndKey:   splitKey,
-			RegionEpoch: &metapb.RegionEpoch{
-				Version: target.Region.RegionEpoch.Version,
-				ConfVer: target.Region.RegionEpoch.ConfVer + 1,
-			},
-		},
-	}
-	c.regions[c.nextRegionID] = newRegion
-	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(newRegion.Region, newRegion.Leader))
-	c.nextRegionID++
-	target.Region.StartKey = splitKey
-	target.Region.RegionEpoch.ConfVer++
-	c.regions[target.Region.Id] = target
-	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(target.Region, target.Leader))
-	return newRegion, nil
-}
-
-func (c *testSplitClient) BatchSplitRegionsWithOrigin(
+func (c *testSplitClient) SplitWaitScatter(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
 ) (*split.RegionInfo, []*split.RegionInfo, error) {
 	c.mu.Lock()
@@ -230,13 +190,6 @@ func (c *testSplitClient) BatchSplitRegionsWithOrigin(
 	}
 
 	return target, newRegions, err
-}
-
-func (c *testSplitClient) BatchSplitRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) ([]*split.RegionInfo, error) {
-	_, newRegions, err := c.BatchSplitRegionsWithOrigin(ctx, regionInfo, keys)
-	return newRegions, err
 }
 
 func (c *testSplitClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
