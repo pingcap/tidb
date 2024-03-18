@@ -4375,6 +4375,10 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 			)
 			return false
 		}
+		referredFKs := is.GetTableReferredForeignKeys(t.DB, t.Table)
+		if len(referredFKs) > 0 {
+			return false
+		}
 		if tbl.Meta().TempTableType != model.TempTableNone {
 			stmtCtx.AppendWarning(
 				errors.New(
