@@ -1289,20 +1289,19 @@ func (e *InsertValues) batchCheckAndInsert(
 					return err
 				}
 				break
-			} else {
-				if tablecodec.IsTempIndexKey(uk.newKey) {
-					tablecodec.TempIndexKey2IndexKey(uk.newKey)
-					_, err = txn.Get(ctx, uk.newKey)
-					if err != nil && !kv.IsErrNotFound(err) {
+			}
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				tablecodec.TempIndexKey2IndexKey(uk.newKey)
+				_, err = txn.Get(ctx, uk.newKey)
+				if err != nil && !kv.IsErrNotFound(err) {
+					return err
+				}
+				if err == nil {
+					rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
+					if err != nil {
 						return err
 					}
-					if err == nil {
-						rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
-						if err != nil {
-							return err
-						}
-						break
-					}
+					break
 				}
 			}
 		}
