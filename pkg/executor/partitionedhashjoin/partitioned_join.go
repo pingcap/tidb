@@ -374,10 +374,10 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		}
 
 		builder.partIdxVector = builder.partIdxVector[:]
-		h := fnv.New32a()
+		h := fnv.New64()
 		for _, key := range builder.serializedKeyVectorBuffer {
 			h.Write(key)
-			hash := h.Sum32()
+			hash := h.Sum64()
 			builder.hashValue = append(builder.hashValue, hash)
 			builder.partIdxVector = append(builder.partIdxVector, int(hash)%int(partitionNumber))
 			h.Reset()
