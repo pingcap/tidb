@@ -64,7 +64,6 @@ type OnSplitFunc func(key [][]byte)
 func (rs *RegionSplitter) ExecuteSplit(
 	ctx context.Context,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	storeCount int,
 	isRawKv bool,
 	onSplit OnSplitFunc,
@@ -82,7 +81,7 @@ func (rs *RegionSplitter) ExecuteSplit(
 
 	// Sort the range for getting the min and max key of the ranges
 	// TODO: this sort may not needed if we sort tables after creatation outside.
-	sortedRanges, errSplit := SortRanges(ranges, rewriteRules)
+	sortedRanges, errSplit := SortRanges(ranges)
 	if errSplit != nil {
 		return errors.Trace(errSplit)
 	}
@@ -299,8 +298,10 @@ func (rs *RegionSplitter) waitRegionSplitted(ctx context.Context, regionID uint6
 		}
 		return errors.Annotate(berrors.ErrPDSplitFailed, "wait region splitted failed")
 	}, &state)
+	// we only care about whether the last region splitted successfully.
+	// because we are waiting region report status *sequentially*.
 	if err != nil {
-		log.Warn("failed to split regions", logutil.ShortError(err))
+		log.Warn("failed to split regions", zap.Uint64("regionID", regionID))
 	}
 }
 
@@ -348,76 +349,10 @@ func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64)
 }
 
 func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*split.RegionInfo, timeout time.Duration) int {
-	var (
-		startTime   = time.Now()
-		interval    = split.ScatterWaitInterval
-		leftRegions = mapRegionInfoSlice(regionInfos)
-		retryCnt    = 0
-
-		reScatterRegions = make([]*split.RegionInfo, 0, len(regionInfos))
-	)
-	for {
-		loggedLongRetry := false
-		reScatterRegions = reScatterRegions[:0]
-		for regionID, regionInfo := range leftRegions {
-			if retryCnt > 10 && !loggedLongRetry {
-				loggedLongRetry = true
-				resp, err := rs.client.GetOperator(ctx, regionID)
-				log.Info("retried many times to wait for scattering regions, checking operator",
-					zap.Int("retryCnt", retryCnt),
-					zap.Uint64("anyRegionID", regionID),
-					zap.Stringer("resp", resp),
-					zap.Error(err))
-			}
-			ok, rescatter, err := rs.client.IsScatterRegionFinished(ctx, regionID)
-			if err != nil {
-				log.Warn("scatter region failed: do not have the region",
-					logutil.Region(regionInfo.Region), zap.Error(err))
-				delete(leftRegions, regionID)
-				continue
-			}
-			if ok {
-				delete(leftRegions, regionID)
-				continue
-			}
-			if rescatter {
-				reScatterRegions = append(reScatterRegions, regionInfo)
-			}
-			// RUNNING_STATUS, just wait and check it in the next loop
-		}
-
-		if len(leftRegions) == 0 {
-			return 0
-		}
-
-		if len(reScatterRegions) > 0 {
-			err2 := rs.client.ScatterRegions(ctx, reScatterRegions)
-			if err2 != nil {
-				log.Warn("failed to scatter regions", zap.Error(err2))
-			}
-		}
-
-		if time.Since(startTime) > timeout {
-			break
-		}
-		retryCnt += 1
-		interval = 2 * interval
-		if interval > split.ScatterMaxWaitInterval {
-			interval = split.ScatterMaxWaitInterval
-		}
-		time.Sleep(interval)
-	}
-
-	return len(leftRegions)
-}
-
-func mapRegionInfoSlice(regionInfos []*split.RegionInfo) map[uint64]*split.RegionInfo {
-	regionInfoMap := make(map[uint64]*split.RegionInfo)
-	for _, info := range regionInfos {
-		regionID := info.Region.GetId()
-		regionInfoMap[regionID] = info
-	}
-	return regionInfoMap
+	ctx2, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	leftRegions, _ := rs.client.WaitRegionsScattered(ctx2, regionInfos)
+	return leftRegions
 }
 
 // TestGetSplitSortedKeysFromSortedRegionsTest is used only in unit test
@@ -625,7 +560,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 				startKey = point
 			}
 
-			return regionSplitter.ExecuteSplit(ctx, ranges, nil, 3, false, func([][]byte) {})
+			return regionSplitter.ExecuteSplit(ctx, ranges, 3, false, func([][]byte) {})
 		}
 		select {
 		case <-ctx.Done():

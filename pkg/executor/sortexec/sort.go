@@ -161,7 +161,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
 
-	e.IsUnparallel = !e.Ctx().GetSessionVars().EnableParallelSort
+	e.IsUnparallel = true
 	if e.IsUnparallel {
 		e.Unparallel.Idx = 0
 		e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
@@ -184,6 +184,18 @@ func (e *SortExec) Open(ctx context.Context) error {
 	}
 
 	return exec.Open(ctx, e.Children(0))
+}
+
+// InitInParallelModeForTest is a function for test
+// After system variable is added, we can delete this function
+func (e *SortExec) InitInParallelModeForTest() {
+	e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
+	e.Parallel.chunkChannel = make(chan *chunk.Chunk, len(e.Parallel.workers))
+	e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
+	e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
+	for i := range e.Parallel.sortedRowsIters {
+		e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
+	}
 }
 
 // Next implements the Executor Next interface.

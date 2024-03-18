@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -183,11 +182,12 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
-	// We can read it without analyze again! Thanks for PrevLastVersion.
-	require.NotNil(t, statsTbl2.Columns[int64(3)])
-	// assert WithGetTableStatsByQuery get the same result
-	statsTbl2 = h.GetTableStats(tableInfo2)
-	require.False(t, statsTbl2.Pseudo)
+	require.Nil(t, statsTbl2.Columns[int64(3)])
+	tbl2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tableInfo2 = tbl2.Meta()
+	statsTbl2, err = h.TableStatsFromStorage(tableInfo2, tableInfo2.ID, true, 0)
+	require.NoError(t, err)
 	require.NotNil(t, statsTbl2.Columns[int64(3)])
 }
 
@@ -1390,7 +1390,15 @@ func TestInitStatsLite(t *testing.T) {
 	require.NoError(t, h.InitStatsLite(is))
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
-	internal.AssertTableEqual(t, statsTbl0, statsTbl1)
+	{
+		// internal.AssertTableEqual(t, statsTbl0, statsTbl1)
+		// statsTbl0 is loaded when the cache has pseudo table.
+		// TODO: We haven't optimize the pseudo table's memory usage yet. So here the two will be different.
+		require.True(t, len(statsTbl0.Columns) > 0)
+		require.True(t, len(statsTbl0.Indices) > 0)
+		require.True(t, len(statsTbl1.Columns) == 0)
+		require.True(t, len(statsTbl1.Indices) == 0)
+	}
 
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")

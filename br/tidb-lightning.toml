@@ -89,27 +89,29 @@ driver = "file"
 # - origin. keep the checkpoints data unchanged.
 #keep-after-success = "remove"
 
+
+[conflict]
+# Starting from v7.3.0, a new version of strategy is introduced to handle conflicting data. The default value is "".
+# - "": TiDB Lightning does not detect or handle conflicting data. If the source file contains conflicting primary or unique key records, the subsequent step reports an error. In the logical import mode, the strategy is converted to "error" directly.
+# - "error": When detecting conflicting primary or unique key records in the imported data, TiDB Lightning terminates the import and reports an error.
+# - "replace": When encountering conflicting primary or unique key records, TiDB Lightning retains the latest data and overwrites the old data.
+#              The conflict data are recorded in the `lightning_task_info.conflict_error_v2` table and the `conflict_records` table of the target TiDB cluster.
+#              You can manually insert the correct records into the target table based on your business requirements.
+#              Note that the target TiKV must be v5.2.0 or later versions.
+# - "ignore": When encountering conflicting primary or unique key records, TiDB Lightning retains the old data and ignores the new data. This option can only be used in the logical import mode.
+strategy = ""
+# Controls whether TiDB Lightning checks conflicts before the import. The default value is false, which means that TiDB Lightning only checks conflicts after the import. If it is set to true, TiDB Lightning checks conflicts both before and after the import. This parameter can be used only in the physical import mode (`tikv-importer.backend = "local"`).
+# precheck-conflict-before-import = false
+# Controls the maximum number of conflict errors that can be handled when strategy is "replace" or "ignore". You can set it only when strategy is "replace" or "ignore". The default value is 9223372036854775807, which means that almost all errors are tolerant. In physical import mode, this parameter takes effect only when `precheck-conflict-before-import` is enabled.
+# threshold = 9223372036854775807
+# Controls the maximum number of records in the conflict_records table. The default value is 100. If the strategy is "ignore", the conflict records that are ignored are recorded; if the strategy is "replace", the conflict records that are overwritten are recorded. However, the "replace" strategy cannot record the conflict records in the logical import mode. In physical import mode, this parameter takes effect only when `precheck-conflict-before-import` is enabled.
+# max-record-rows = 100
+
 [tikv-importer]
 # Delivery backend, can be "importer", "local" or "tidb".
 backend = "importer"
 # Address of tikv-importer when the backend is 'importer'
 addr = "127.0.0.1:8287"
-# What to do on duplicated record (unique key conflict) when the backend is 'tidb'. Possible values are:
-#  - replace: replace the old record by the new record (i.e. insert rows using "REPLACE INTO")
-#  - ignore: keep the old record and ignore the new record (i.e. insert rows using "INSERT IGNORE INTO")
-#  - error: produce an error (i.e. insert rows using "INSERT INTO"), which will count towards the max-error limit.
-#on-duplicate = "replace"
-# Whether to detect and resolve duplicate records (unique key conflict) when the backend is 'local'.
-# Current supports three resolution algorithms:
-#  - none: doesn't detect duplicate records, which has the best performance of the three algorithms, but probably leads to
-#    inconsistent data in the target TiDB.
-#  - record: only records duplicate records to `lightning_task_info.conflict_error_v2` table on the target TiDB. Note that this
-#    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
-#  - remove: records all duplicate records like the 'record' algorithm and remove all duplicate records to ensure a consistent
-#    state in the target TiDB.
-#  - replace: records all duplicate records like the 'record' algorithm and remove some duplicate records and reserve the others
-#    that will not cause conflict to ensure a consistent state in the target TiDB.
-#duplicate-resolution = 'none'
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
 #region-split-size = '96MiB'
