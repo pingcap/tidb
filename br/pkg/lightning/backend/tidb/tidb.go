@@ -24,6 +24,8 @@ import (
 	"time"
 
 	gmysql "github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
