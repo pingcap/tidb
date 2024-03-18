@@ -422,7 +422,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	if len(errPat) != 0 {
 		require.Error(t, err)
-		require.Regexp(t, errPat, err.Error())
+		require.ErrorContains(t, err, errPat)
 		return
 	}
 	require.NoError(t, err)
@@ -604,7 +604,7 @@ func (h *splitRegionEpochNotMatchHook) BeforeSplitRegion(ctx context.Context, re
 }
 
 func TestBatchSplitByRangesEpochNotMatch(t *testing.T) {
-	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionEpochNotMatchHook{}, "batch split regions failed: epoch not match", defaultHook{})
+	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionEpochNotMatchHook{}, "epoch not match", defaultHook{})
 }
 
 // return epoch not match error in every other call
