@@ -162,7 +162,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 
 // Before v8.0.0, the data structure is different. We need to adapt to the old structure so that the sessions
 // can be migrated from an old version to a new version.
-func (h *sessionBindingHandle) decodeOldStyleSessionStates(bindingBytes []byte, bindings *[]Binding) error {
+func (_ *sessionBindingHandle) decodeOldStyleSessionStates(bindingBytes []byte, bindings *[]Binding) error {
 	type bindRecord struct {
 		OriginalSQL string
 		Db          string
