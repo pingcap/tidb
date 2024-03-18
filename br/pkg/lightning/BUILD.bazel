@@ -27,7 +27,6 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/version/build",
         "//pkg/expression",
-        "//pkg/parser/charset",
         "//pkg/planner/core",
         "//pkg/util",
         "//pkg/util/promutil",
