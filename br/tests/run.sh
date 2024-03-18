@@ -17,6 +17,17 @@
 set -eu
 export PATH="tests/_utils:bin:$PATH"
 export TEST_DIR=/tmp/backup_restore_test
+<<<<<<< HEAD
+=======
+export COV_DIR="/tmp/group_cover"
+mkdir -p $COV_DIR || true
+source $CUR/_utils/run_services
+
+# Create COV_DIR if not exists
+if [ -d "$COV_DIR" ]; then
+   mkdir -p $COV_DIR
+fi
+>>>>>>> eea121309ac (lightning: skip CREATE DATABASE when downstream exists, and return error when parse failed (#51801))
 
 # Reset TEST_DIR
 rm -rf $TEST_DIR && mkdir -p $TEST_DIR

@@ -386,5 +386,76 @@ func (m *MockBackend) TotalMemoryConsume() int64 {
 // LocalWriter indicates an expected call of LocalWriter.
 func (mr *MockBackendMockRecorder) TotalMemoryConsume() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
+<<<<<<< HEAD
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TotalMemoryConsume", reflect.TypeOf((*MockBackend)(nil).OpenEngine))
+=======
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockTargetInfoGetter)(nil).CheckRequirements), arg0, arg1)
+}
+
+// FetchRemoteDBModels mocks base method.
+func (m *MockTargetInfoGetter) FetchRemoteDBModels(arg0 context.Context) ([]*model.DBInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchRemoteDBModels", arg0)
+	ret0, _ := ret[0].([]*model.DBInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchRemoteDBModels indicates an expected call of FetchRemoteDBModels.
+func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteDBModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteDBModels), arg0)
+}
+
+// FetchRemoteTableModels mocks base method.
+func (m *MockTargetInfoGetter) FetchRemoteTableModels(arg0 context.Context, arg1 string) ([]*model.TableInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchRemoteTableModels", arg0, arg1)
+	ret0, _ := ret[0].([]*model.TableInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchRemoteTableModels indicates an expected call of FetchRemoteTableModels.
+func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteTableModels(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteTableModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteTableModels), arg0, arg1)
+}
+
+// MockChunkFlushStatus is a mock of ChunkFlushStatus interface.
+type MockChunkFlushStatus struct {
+	ctrl     *gomock.Controller
+	recorder *MockChunkFlushStatusMockRecorder
+}
+
+// MockChunkFlushStatusMockRecorder is the mock recorder for MockChunkFlushStatus.
+type MockChunkFlushStatusMockRecorder struct {
+	mock *MockChunkFlushStatus
+}
+
+// NewMockChunkFlushStatus creates a new mock instance.
+func NewMockChunkFlushStatus(ctrl *gomock.Controller) *MockChunkFlushStatus {
+	mock := &MockChunkFlushStatus{ctrl: ctrl}
+	mock.recorder = &MockChunkFlushStatusMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockChunkFlushStatus) EXPECT() *MockChunkFlushStatusMockRecorder {
+	return m.recorder
+}
+
+// Flushed mocks base method.
+func (m *MockChunkFlushStatus) Flushed() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Flushed")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// Flushed indicates an expected call of Flushed.
+func (mr *MockChunkFlushStatusMockRecorder) Flushed() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Flushed", reflect.TypeOf((*MockChunkFlushStatus)(nil).Flushed))
+>>>>>>> eea121309ac (lightning: skip CREATE DATABASE when downstream exists, and return error when parse failed (#51801))
 }
