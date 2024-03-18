@@ -4347,6 +4347,57 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 		// we enforce that pipelined DML must lazily check key.
 		return false
 	}
+	is, ok := s.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get latest InfoSchema. Fallback to standard mode"))
+		return false
+	}
+	for _, t := range stmtCtx.Tables {
+		// get table schema from current infoschema
+		tbl, err := is.TableByName(model.NewCIStr(t.DB), model.NewCIStr(t.Table))
+		if err != nil {
+			stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get table schema. Fallback to standard mode"))
+			return false
+		}
+		if tbl.Meta().IsView() {
+			stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used on view. Fallback to standard mode"))
+			return false
+		}
+		if tbl.Meta().IsSequence() {
+			stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used on sequence. Fallback to standard mode"))
+			return false
+		}
+		if len(tbl.Meta().ForeignKeys) > 0 && vars.ForeignKeyChecks {
+			stmtCtx.AppendWarning(
+				errors.New(
+					"Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode",
+				),
+			)
+			return false
+		}
+		referredFKs := is.GetTableReferredForeignKeys(t.DB, t.Table)
+		if len(referredFKs) > 0 {
+			return false
+		}
+		if tbl.Meta().TempTableType != model.TempTableNone {
+			stmtCtx.AppendWarning(
+				errors.New(
+					"Pipelined DML can not be used on temporary tables. " +
+						"Fallback to standard mode",
+				),
+			)
+			return false
+		}
+		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+			stmtCtx.AppendWarning(
+				errors.New(
+					"Pipelined DML can not be used on cached tables. " +
+						"Fallback to standard mode",
+				),
+			)
+			return false
+		}
+	}
 
 	// tidb_dml_type=bulk will invalidate the config pessimistic-auto-commit.
 	// The behavior is as if the config is set to false. But we generate a warning for it.

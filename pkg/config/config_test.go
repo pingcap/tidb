@@ -1336,3 +1336,25 @@ func TestAutoScalerConfig(t *testing.T) {
 		conf.UseAutoScaler = false
 	})
 }
+
+func TestInvalidConfigWithDeprecatedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.toml")
+
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+
+	_, err = f.WriteString(`
+[log]
+slow-threshold = 1000
+[performance]
+enforce-mpp = 1
+	`)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+
+	var conf Config
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
+}

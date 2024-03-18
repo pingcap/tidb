@@ -163,7 +163,7 @@ func TestServerIsBusy(t *testing.T) {
 	require.NoError(t, err)
 	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
-	require.Equal(t, rs.RetryTimes(), 1)
+	require.Equal(t, rs.Attempt(), 1)
 }
 
 func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
@@ -204,7 +204,7 @@ func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
 	require.NoError(t, err)
 	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
-	require.Equal(t, rs.RetryTimes(), 0)
+	require.Equal(t, rs.Attempt(), 2)
 }
 
 func printRegion(name string, infos []*split.RegionInfo) {
