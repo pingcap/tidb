@@ -53,8 +53,9 @@ type PartitionedHashJoinCtx struct {
 	SessCtx   sessionctx.Context
 	allocPool chunk.Allocator
 	// concurrency is the number of partition, build and join workers.
-	Concurrency  uint
-	joinResultCh chan *internalutil.HashjoinWorkerResult
+	Concurrency     uint
+	partitionNumber int
+	joinResultCh    chan *internalutil.HashjoinWorkerResult
 	// closeCh add a lock for closing executor.
 	closeCh       chan struct{}
 	finished      atomic.Bool
@@ -213,6 +214,7 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 	}
 	e.prepared = false
 	e.partitionNumber = mathutil.Min(int(e.Concurrency), 16)
+	e.PartitionedHashJoinCtx.partitionNumber = e.partitionNumber
 	if e.RightAsBuildSide {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
 			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, false)
@@ -338,16 +340,17 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (skipProbe bool, err erro
 }
 
 func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) (err error) {
-	partitionNumber := w.HashJoinCtx.joinHashTable.partitionNumber
+	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashTableMeta := w.HashJoinCtx.hashTableMeta
 	w.rowTables = make([]*rowTable, partitionNumber)
 
 	builder := &rowTableBuilder{
 		buildKeyIndex:       w.BuildKeyColIdx,
 		buildSchema:         w.BuildSideExec.Schema(),
-		crrntSizeOfRowTable: make([]int64, w.HashJoinCtx.joinHashTable.partitionNumber),
-		startPosInRawData:   make([][]uint64, w.HashJoinCtx.joinHashTable.partitionNumber),
+		crrntSizeOfRowTable: make([]int64, partitionNumber),
+		startPosInRawData:   make([][]uint64, partitionNumber),
 		hasNullableKey:      w.HasNullableKey,
+		hasFilter:           w.HashJoinCtx.BuildFilter != nil,
 	}
 	if w.HashJoinCtx.RightAsBuildSide {
 		builder.otherConditionColIndex = w.HashJoinCtx.RUsedInOtherCondition
@@ -379,13 +382,14 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 			h.Write(key)
 			hash := h.Sum64()
 			builder.hashValue = append(builder.hashValue, hash)
-			builder.partIdxVector = append(builder.partIdxVector, int(hash)%int(partitionNumber))
+			builder.partIdxVector = append(builder.partIdxVector, int(hash%uint64(partitionNumber)))
 			h.Reset()
 		}
 
 		// 2. build rowtable
 		builder.appendToRowTable(typeCtx, chk, w.rowTables, hashTableMeta)
 	}
+	builder.appendRemainingRowLocations(w.rowTables)
 	return nil
 }
 
@@ -659,49 +663,30 @@ func (w *ProbeWorker) getNewJoinResult() (bool, *internalutil.HashjoinWorkerResu
 // step 1. fetch data from build side child and build a hash table;
 // step 2. fetch data from probe child in a background goroutine and probe the hash table in multiple join workers.
 func (e *PartitionedHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
-	/*
-		if !e.prepared {
-			e.buildFinished = make(chan error, 1)
-			hCtx := &hashContext{
-				allTypes:    e.buildTypes,
-				keyColIdx:   e.BuildWorker.BuildKeyColIdx,
-				naKeyColIdx: e.BuildWorker.buildNAKeyColIdx,
-			}
-			e.rowContainer = newHashRowContainer(e.Ctx(), hCtx, exec.RetTypes(e.BuildWorker.BuildSideExec))
-			// we shallow copies rowContainer for each probe worker to avoid lock contention
-			for i := uint(0); i < e.Concurrency; i++ {
-				if i == 0 {
-					e.ProbeWorkers[i].rowContainerForProbe = e.rowContainer
-				} else {
-					e.ProbeWorkers[i].rowContainerForProbe = e.rowContainer.ShallowCopy()
-				}
-			}
-			for i := uint(0); i < e.concurrency; i++ {
-				e.ProbeWorkers[i].rowIters = chunk.NewIterator4Slice([]chunk.Row{})
-			}
-			e.workerWg.RunWithRecover(func() {
-				defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
-				e.fetchAndBuildHashTable(ctx)
-			}, e.handleFetchAndBuildHashTablePanic)
-			e.fetchAndProbeHashTable(ctx)
-			e.prepared = true
-		}
-		if e.isOuterJoin {
-			atomic.StoreInt64(&e.ProbeSideTupleFetcher.RequiredRows, int64(req.RequiredRows()))
-		}
-		req.Reset()
+	if !e.prepared {
+		e.buildFinished = make(chan error, 1)
+		e.workerWg.RunWithRecover(func() {
+			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
+			e.fetchAndBuildHashTable(ctx)
+		}, e.handleFetchAndBuildHashTablePanic)
+		e.fetchAndProbeHashTable(ctx)
+		e.prepared = true
+	}
+	if e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize() {
+		atomic.StoreInt64(&e.ProbeSideTupleFetcher.RequiredRows, int64(req.RequiredRows()))
+	}
+	req.Reset()
 
-		result, ok := <-e.joinResultCh
-		if !ok {
-			return nil
-		}
-		if result.err != nil {
-			e.finished.Store(true)
-			return result.err
-		}
-		req.SwapColumns(result.chk)
-		result.src <- result.chk
-	*/
+	result, ok := <-e.joinResultCh
+	if !ok {
+		return nil
+	}
+	if result.Err != nil {
+		e.finished.Store(true)
+		return result.Err
+	}
+	req.SwapColumns(result.Chk)
+	result.Src <- result.Chk
 	return nil
 }
 
@@ -751,7 +736,7 @@ func (e *PartitionedHashJoinExec) checkBalance(totalSegmentCnt int) bool {
 
 func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, totalSegmentCnt int) {
 	isBalanced := e.checkBalance(totalSegmentCnt)
-	segStep := totalSegmentCnt / int(e.Concurrency)
+	segStep := mathutil.Max(1, totalSegmentCnt/int(e.Concurrency))
 	subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
 	createBuildTask := func(partIdx int, segStartIdx int, segEndIdx int) *buildTask {
 		return &buildTask{partitionIdx: partIdx, segStartIdx: segStartIdx, segEndIdx: segEndIdx}
@@ -815,6 +800,7 @@ func (e *PartitionedHashJoinExec) fetchBuildSideRows(ctx context.Context, wg *sy
 			if r != nil {
 				errCh <- util.GetRecoverError(r)
 			}
+			wg.Done()
 		},
 	)
 	return srcChkCh
@@ -823,9 +809,10 @@ func (e *PartitionedHashJoinExec) fetchBuildSideRows(ctx context.Context, wg *sy
 func (e *PartitionedHashJoinExec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, wg *sync.WaitGroup, errCh chan error) {
 	for i := uint(0); i < e.Concurrency; i++ {
 		wg.Add(1)
+		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
-				err := e.BuildWorkers[i].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh)
+				err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh)
 				if err != nil {
 					errCh <- err
 				}
@@ -850,6 +837,7 @@ func (e *PartitionedHashJoinExec) createBuildTasks(totalSegmentCnt int, wg *sync
 				errCh <- util.GetRecoverError(r)
 			}
 			close(buildTaskCh)
+			wg.Done()
 		},
 	)
 	return buildTaskCh
@@ -858,9 +846,10 @@ func (e *PartitionedHashJoinExec) createBuildTasks(totalSegmentCnt int, wg *sync
 func (e *PartitionedHashJoinExec) buildHashTable(buildTaskCh chan *buildTask, wg *sync.WaitGroup, errCh chan error) {
 	for i := uint(0); i < e.Concurrency; i++ {
 		wg.Add(1)
+		workID := i
 		e.workerWg.RunWithRecover(
 			func() {
-				err := e.BuildWorkers[i].buildHashTable(buildTaskCh)
+				err := e.BuildWorkers[workID].buildHashTable(buildTaskCh)
 				if err != nil {
 					errCh <- err
 				}
