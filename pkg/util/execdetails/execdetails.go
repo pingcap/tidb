@@ -1017,7 +1017,30 @@ func (context *TiFlashScanContext) String() string {
 			context.disaggReadCacheHitBytes,
 			context.disaggReadCacheMissBytes)
 	}
+	remote_stream_info := ""
+	if context.minRemoteStreamMs != 0 || context.maxRemoteStreamMs != 0 {
+		remote_stream_info = fmt.Sprintf("min_remote_stream:%dms, max_remote_stream:%dms, ", context.minRemoteStreamMs, context.maxRemoteStreamMs)
+	}
+	// note: "tot" is short for "total"
 	return fmt.Sprintf("tiflash_scan:{"+
+		"mvcc_input_rows:%d, "+
+		"mvcc_input_bytes:%d, "+
+		"mvcc_output_rows:%d, "+
+		"lm_skip_rows:%d, "+
+		"local_regions:%d, "+
+		"remote_regions:%d, "+
+		"tot_learner_read:%dms, "+
+		"region_balance:%s, "+
+		"delta_rows:%d, "+
+		"delta_bytes:%d, "+
+		"segments:%d, "+
+		"stale_read_regions:%d, "+
+		"tot_build_snapshot:%dms, "+
+		"tot_build_bitmap:%dms, "+
+		"tot_build_inputstream:%dms, "+
+		"min_local_stream:%dms, "+
+		"max_local_stream:%dms, "+
+		"%s"+ // remote stream info
 		"dtfile:{"+
 		"data_scanned_rows:%d, "+
 		"data_skipped_rows:%d, "+
@@ -1025,28 +1048,28 @@ func (context *TiFlashScanContext) String() string {
 		"mvcc_skipped_rows:%d, "+
 		"lm_filter_scanned_rows:%d, "+
 		"lm_filter_skipped_rows:%d, "+
-		"total_rs_index_check:%dms, "+
-		"total_read:%dms"+
-		"%s}, "+ // Disagg cache info of DMFile
-		"delta_rows:%d, "+
-		"delta_bytes:%d, "+
-		"mvcc_input_rows:%d, "+
-		"mvcc_input_bytes:%d, "+
-		"mvcc_output_rows:%d, "+
-		"lm_skip_rows:%d, "+
-		"segments:%d, "+
-		"total_build_snapshot:%dms, "+
-		"total_build_bitmap:%dms, "+
-		"total_build_inputstream:%dms, "+
-		"min_local_stream:%dms, "+
-		"max_local_stream:%dms, "+
-		"min_remote_stream:%dms, "+
-		"max_remote_stream:%dms, "+
-		"local_regions:%d, "+
-		"remote_regions:%d, "+
-		"stale_read_regions:%d, "+
-		"total_learner_read:%dms, "+
-		"region_balance_info:%s}",
+		"tot_rs_index_check:%dms, "+
+		"tot_read:%dms"+
+		"%s}"+ // Disagg cache info of DMFile
+		"}",
+		context.mvccInputRows,
+		context.mvccInputBytes,
+		context.mvccOutputRows,
+		context.lmSkipRows,
+		context.localRegions,
+		context.remoteRegions,
+		context.totalLearnerReadMs,
+		regionBalanceInfo,
+		context.deltaRows,
+		context.deltaBytes,
+		context.segments,
+		context.staleReadRegions,
+		context.totalBuildSnapshotMs,
+		context.totalBuildBitmapMs,
+		context.totalBuildInputStreamMs,
+		context.minLocalStreamMs,
+		context.maxLocalStreamMs,
+		remote_stream_info,
 		context.dmfileDataScannedRows,
 		context.dmfileDataSkippedRows,
 		context.dmfileMvccScannedRows,
@@ -1056,25 +1079,6 @@ func (context *TiFlashScanContext) String() string {
 		context.totalDmfileRsCheckMs,
 		context.totalDmfileReadMs,
 		dmfile_disagg_info,
-		context.deltaRows,
-		context.deltaBytes,
-		context.mvccInputRows,
-		context.mvccInputBytes,
-		context.mvccOutputRows,
-		context.lmSkipRows,
-		context.segments,
-		context.totalBuildSnapshotMs,
-		context.totalBuildBitmapMs,
-		context.totalBuildInputStreamMs,
-		context.minLocalStreamMs,
-		context.maxLocalStreamMs,
-		context.minRemoteStreamMs,
-		context.maxRemoteStreamMs,
-		context.localRegions,
-		context.remoteRegions,
-		context.staleReadRegions,
-		context.totalLearnerReadMs,
-		regionBalanceInfo,
 	)
 }
 
