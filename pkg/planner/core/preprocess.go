@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"math"
 	"strings"
 
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
-	"go.uber.org/zap"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -1839,6 +1839,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 			return nil, err
 		}
 		if !skipLock {
+			logutil.BgLogger().Info("lock table", zap.Uint64("start ts", sctx.GetSessionVars().TxnCtx.StartTS), zap.Uint64("conn ID", sctx.GetSessionVars().ConnectionID), zap.Int64("schema version", domainSchemaVer), zap.String("table", tableInfo.Name.O))
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
