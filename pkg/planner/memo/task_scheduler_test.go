@@ -53,7 +53,6 @@ func (t *TestTaskImpl2) desc() string {
 }
 
 func TestSimpleTaskScheduler(t *testing.T) {
-
 	testSchedulerContext := &TestSchedulerContext{
 		newTaskStack(),
 	}
