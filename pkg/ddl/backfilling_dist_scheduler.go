@@ -565,7 +565,7 @@ func getRangeSplitter(
 	}
 
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
-		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
+		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
 }
 
 func forEachBackfillSubtaskMeta(

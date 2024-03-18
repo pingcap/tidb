@@ -54,7 +54,6 @@ func testReadAndCompare(
 		math.MaxInt64,
 		4*1024*1024*1024,
 		math.MaxInt64,
-		true,
 	)
 	require.NoError(t, err)
 

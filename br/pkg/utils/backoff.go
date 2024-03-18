@@ -74,6 +74,15 @@ type RetryState struct {
 	nextBackoff time.Duration
 }
 
+// InitialRetryState make the initial state for retrying.
+func InitialRetryState(maxRetryTimes int, initialBackoff, maxBackoff time.Duration) RetryState {
+	return RetryState{
+		maxRetry:    maxRetryTimes,
+		maxBackoff:  maxBackoff,
+		nextBackoff: initialBackoff,
+	}
+}
+
 // Whether in the current state we can retry.
 func (rs *RetryState) ShouldRetry() bool {
 	return rs.retryTimes < rs.maxRetry
@@ -94,39 +103,15 @@ func (rs *RetryState) GiveUp() {
 	rs.retryTimes = rs.maxRetry
 }
 
-// InitialRetryState make the initial state for retrying.
-func InitialRetryState(maxRetryTimes int, initialBackoff, maxBackoff time.Duration) RetryState {
-	return RetryState{
-		maxRetry:    maxRetryTimes,
-		maxBackoff:  maxBackoff,
-		nextBackoff: initialBackoff,
-	}
-}
-
-// RecordRetry simply record retry times, and no backoff
-func (rs *RetryState) RecordRetry() {
-	rs.retryTimes++
-}
-
 // ReduceRetry reduces retry times for 1.
 func (rs *RetryState) ReduceRetry() {
 	rs.retryTimes--
-}
-
-// RetryTimes returns the retry times.
-// usage: unit test.
-func (rs *RetryState) RetryTimes() int {
-	return rs.retryTimes
 }
 
 // Attempt implements the `Backoffer`.
 // TODO: Maybe use this to replace the `exponentialBackoffer` (which is nearly homomorphic to this)?
 func (rs *RetryState) Attempt() int {
 	return rs.maxRetry - rs.retryTimes
-}
-
-func (rs *RetryState) StopRetry() {
-	rs.retryTimes = rs.maxRetry
 }
 
 // NextBackoff implements the `Backoffer`.

@@ -299,6 +299,21 @@ func (mr *MockTargetInfoGetterMockRecorder) CheckRequirements(arg0, arg1 any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckRequirements", reflect.TypeOf((*MockTargetInfoGetter)(nil).CheckRequirements), arg0, arg1)
 }
 
+// FetchRemoteDBModels mocks base method.
+func (m *MockTargetInfoGetter) FetchRemoteDBModels(arg0 context.Context) ([]*model.DBInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchRemoteDBModels", arg0)
+	ret0, _ := ret[0].([]*model.DBInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchRemoteDBModels indicates an expected call of FetchRemoteDBModels.
+func (mr *MockTargetInfoGetterMockRecorder) FetchRemoteDBModels(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchRemoteDBModels", reflect.TypeOf((*MockTargetInfoGetter)(nil).FetchRemoteDBModels), arg0)
+}
+
 // FetchRemoteTableModels mocks base method.
 func (m *MockTargetInfoGetter) FetchRemoteTableModels(arg0 context.Context, arg1 string) ([]*model.TableInfo, error) {
 	m.ctrl.T.Helper()

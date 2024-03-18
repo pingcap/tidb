@@ -1,5 +1,6 @@
 [conflict]
 max-record-rows = 1000
+precheck-conflict-before-import = true
 
 [checkpoint]
 driver = "mysql"

@@ -90,6 +90,8 @@ type PreImportInfoGetter interface {
 
 // TargetInfoGetter defines the operations to get information from target.
 type TargetInfoGetter interface {
+	// FetchRemoteDBModels fetches the database structures from the remote target.
+	FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error)
 	// FetchRemoteTableModels fetches the table structures from the remote target.
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
 	// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
@@ -153,6 +155,11 @@ func NewTargetInfoGetterImpl(
 		backend:   backendTargetInfoGetter,
 		pdHTTPCli: pdHTTPCli,
 	}, nil
+}
+
+// FetchRemoteDBModels implements TargetInfoGetter.
+func (g *TargetInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return g.backend.FetchRemoteDBModels(ctx)
 }
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
@@ -785,6 +792,12 @@ func (p *PreImportInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdh
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
 	return p.targetInfoGetter.IsTableEmpty(ctx, schemaName, tableName)
+}
+
+// FetchRemoteDBModels fetches the database structures from the remote target.
+// It implements the PreImportInfoGetter interface.
+func (p *PreImportInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return p.targetInfoGetter.FetchRemoteDBModels(ctx)
 }
 
 // FetchRemoteTableModels fetches the table structures from the remote target.

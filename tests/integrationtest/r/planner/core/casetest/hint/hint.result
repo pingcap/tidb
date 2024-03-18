@@ -8,12 +8,12 @@ select count(*) /*+ stream_agg() */ from t where a > 1;
 count(*) /*+ stream_agg() 
 0
 Level	Code	Message
-Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
+Warning	8066	Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
 select count(*) from (select count(*) as a /*+ stream_agg() */ from t where b > 1 group by b) t1 where a > 1;
 count(*)
 0
 Level	Code	Message
-Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
+Warning	8066	Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
 set tidb_cost_model_version=2;
 drop table if exists t, t1, th;
 drop view if exists v, v1;

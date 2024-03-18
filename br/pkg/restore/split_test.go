@@ -202,6 +202,10 @@ func (c *TestClient) BatchSplitRegions(
 	return newRegions, err
 }
 
+func (c *TestClient) WaitRegionsSplit(context.Context, []*split.RegionInfo) error {
+	return nil
+}
+
 func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
 	return c.injectInScatter(regionInfo)
 }

@@ -3,8 +3,10 @@ task-info-schema-name = 'lightning_task_info'
 
 [tikv-importer]
 backend = 'local'
-duplicate-resolution = 'replace'
 add-index-by-sql = false
+
+[conflict]
+strategy = "replace"
 
 [checkpoint]
 enable = false

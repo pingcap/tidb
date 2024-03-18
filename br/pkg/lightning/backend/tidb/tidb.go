@@ -138,6 +138,38 @@ func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
 	}
 }
 
+// FetchRemoteDBModels implements the `backend.TargetInfoGetter` interface.
+func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	results := []*model.DBInfo{}
+	logger := log.FromContext(ctx)
+	s := common.SQLWithRetry{
+		DB:     b.db,
+		Logger: logger,
+	}
+	err := s.Transact(ctx, "fetch db models", func(_ context.Context, tx *sql.Tx) error {
+		results = results[:0]
+
+		rows, e := tx.Query("SHOW DATABASES")
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var dbName string
+			if e := rows.Scan(&dbName); e != nil {
+				return e
+			}
+			dbInfo := &model.DBInfo{
+				Name: model.NewCIStr(dbName),
+			}
+			results = append(results, dbInfo)
+		}
+		return rows.Err()
+	})
+	return results, err
+}
+
 // FetchRemoteTableModels obtains the models of all tables given the schema name.
 // It implements the `backend.TargetInfoGetter` interface.
 // TODO: refactor
@@ -270,7 +302,7 @@ type tidbBackend struct {
 	// onDuplicate is the type of INSERT SQL. It may be different with
 	// conflictCfg.Strategy to implement other feature, but the behaviour in caller's
 	// view should be the same.
-	onDuplicate string
+	onDuplicate config.DuplicateResolutionAlgorithm
 	errorMgr    *errormanager.ErrorManager
 	// maxChunkSize and maxChunkRows are the target size and number of rows of each INSERT SQL
 	// statement to be sent to downstream. Sometimes we want to reduce the txn size to avoid
@@ -292,7 +324,7 @@ func NewTiDBBackend(
 	errorMgr *errormanager.ErrorManager,
 ) backend.Backend {
 	conflict := cfg.Conflict
-	var onDuplicate string
+	var onDuplicate config.DuplicateResolutionAlgorithm
 	switch conflict.Strategy {
 	case config.ErrorOnDup:
 		onDuplicate = config.ErrorOnDup

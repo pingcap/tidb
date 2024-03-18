@@ -1,4 +1,5 @@
 [conflict]
+precheck-conflict-before-import = true
 max-record-rows = 50
 
 [tikv-importer]

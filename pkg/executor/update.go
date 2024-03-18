@@ -218,6 +218,9 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		}
 		return err1
 	}
+	if txn, _ := e.Ctx().Txn(false); txn != nil {
+		return txn.MayFlush()
+	}
 	return nil
 }
 

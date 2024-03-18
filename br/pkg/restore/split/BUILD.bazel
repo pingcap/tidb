@@ -50,10 +50,11 @@ go_test(
     ],
     embed = [":split"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/utils",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/pdpb",

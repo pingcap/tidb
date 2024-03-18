@@ -3,9 +3,11 @@ package split
 
 import (
 	"context"
+	goerrors "errors"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -310,8 +312,25 @@ func TestWaitForScatterRegions(t *testing.T) {
 		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
 	}
 	left, err = client.WaitRegionsScattered(ctx, regions)
-	require.ErrorContains(t, err, "wait for scatter region timeout, print the first unfinished region: id:4")
+	require.ErrorContains(t, err, "the first unfinished region: id:4")
 	require.Equal(t, 1, left)
 	checkGetOperatorRespsDrained()
 	checkNoRetry()
+}
+
+func TestBackoffMayNotCountBackoffer(t *testing.T) {
+	b := NewBackoffMayNotCountBackoffer()
+	initVal := b.Attempt()
+
+	b.NextBackoff(ErrBackoffAndDontCount)
+	require.Equal(t, initVal, b.Attempt())
+	// test Annotate, which is the real usage in caller
+	b.NextBackoff(errors.Annotate(ErrBackoffAndDontCount, "caller message"))
+	require.Equal(t, initVal, b.Attempt())
+
+	b.NextBackoff(ErrBackoff)
+	require.Equal(t, initVal-1, b.Attempt())
+
+	b.NextBackoff(goerrors.New("test"))
+	require.Equal(t, 0, b.Attempt())
 }

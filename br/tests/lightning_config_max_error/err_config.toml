@@ -1,8 +1,6 @@
 [conflict]
 threshold = 4
+strategy = "replace"
 
 [mydumper.csv]
 header = true
-
-[tikv-importer]
-duplicate-resolution = 'replace'

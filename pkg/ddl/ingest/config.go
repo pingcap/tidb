@@ -63,10 +63,10 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, r
 	adjustImportMemory(ctx, memRoot, cfg)
 	cfg.Checkpoint.Enable = true
 	if unique {
-		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgErr
+		cfg.Conflict.Strategy = lightning.ErrorOnDup
 		cfg.Conflict.Threshold = math.MaxInt64
 	} else {
-		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgNone
+		cfg.Conflict.Strategy = lightning.NoneOnDup
 	}
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)

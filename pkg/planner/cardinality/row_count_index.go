@@ -59,7 +59,7 @@ func GetRowCountByIndexRanges(sctx context.PlanContext, coll *statistics.HistCol
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
-	if statistics.IndexStatsIsInvalid(idx, sctx, coll, idxID) {
+	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -458,7 +458,7 @@ func expBackoffEstimation(sctx context.PlanContext, idx *statistics.Index, coll 
 					continue
 				}
 				idxStats, ok := coll.Indices[idxID]
-				if !ok || statistics.IndexStatsIsInvalid(idxStats, sctx, coll, idxID) {
+				if !ok || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
 					continue
 				}
 				foundStats = true

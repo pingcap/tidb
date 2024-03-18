@@ -163,10 +163,14 @@ func buildSortExec(ctx *mock.Context, sortCase *testutil.SortCase, dataSource *t
 	return exe
 }
 
-func executeSortExecutor(t *testing.T, exe *sortexec.SortExec) []*chunk.Chunk {
+func executeSortExecutor(t *testing.T, exe *sortexec.SortExec, isParallelSort bool) []*chunk.Chunk {
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
+	if isParallelSort {
+		exe.IsUnparallel = false
+		exe.InitInParallelModeForTest()
+	}
 
 	resultChunks := make([]*chunk.Chunk, 0)
 	chk := exec.NewFirstChunk(exe)
@@ -219,11 +223,12 @@ func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCas
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 1048576)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
+	// TODO use variable to choose parallel mode after system variable is added
+	// ctx.GetSessionVars().EnableParallelSort = false
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-	resultChunks := executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe, false)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, false, exe.IsSpillTriggeredInOnePartitionForTest(0))
@@ -241,14 +246,15 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 50000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
+	// TODO use variable to choose parallel mode after system variable is added
+	// ctx.GetSessionVars().EnableParallelSort = false
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
 
 	// To ensure that spill has been trigger before getting chunk, or we may get chunk from memory.
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(true)`)
-	resultChunks := executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe, false)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(false)`)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
@@ -270,14 +276,16 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
+	// TODO use variable to choose parallel mode after system variable is added
+	// ctx.GetSessionVars().EnableParallelSort = false
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
+	exe.IsUnparallel = true
 	if enableFailPoint {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
 	}
-	resultChunks := executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe, false)
 	if enableFailPoint {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 	}
@@ -309,7 +317,8 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
+	// TODO use variable to choose parallel mode after system variable is added
+	// ctx.GetSessionVars().EnableParallelSort = false
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
@@ -364,7 +373,7 @@ func TestFallBackAction(t *testing.T) {
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-	executeSortExecutor(t, exe)
+	executeSortExecutor(t, exe, false)
 	err := exe.Close()
 	require.NoError(t, err)
 

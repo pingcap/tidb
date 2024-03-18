@@ -39,13 +39,13 @@ func TestV2Basic(t *testing.T) {
 	is.Data.addDB(1, dbInfo)
 	internal.AddDB(t, r.Store(), dbInfo)
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
-	is.Data.add(tableItem{schemaName.L, dbInfo.ID, tableName.L, tblInfo.ID, 2}, internal.MockTable(t, r.Store(), tblInfo))
+	is.Data.add(tableItem{schemaName.L, dbInfo.ID, tableName.L, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	require.Equal(t, 1, len(is.AllSchemas()))
 	require.Equal(t, 0, len(is.SchemaTables(is.AllSchemas()[0].Name)))
 	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	is.schemaVersion = 2
+	is.base().schemaMetaVersion = 2
 	is.ts = ver.Ver
 	require.Equal(t, 1, len(is.AllSchemas()))
 	require.Equal(t, 1, len(is.SchemaTables(is.AllSchemas()[0].Name)))

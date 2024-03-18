@@ -25,6 +25,7 @@ import (
 )
 
 func TestSpecialSchemas(t *testing.T) {
+	t.Skip("This feature is not enabled yet")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))

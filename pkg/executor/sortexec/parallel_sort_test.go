@@ -36,6 +36,8 @@ func executeInFailpoint(t *testing.T, exe *sortexec.SortExec) {
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
+	exe.IsUnparallel = false
+	exe.InitInParallelModeForTest()
 
 	goRoutineWaiter := sync.WaitGroup{}
 	goRoutineWaiter.Add(1)
@@ -77,13 +79,14 @@ func parallelSortTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, s
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = true
+	// TODO use variable to choose parallel mode after system variable is added
+	// ctx.GetSessionVars().EnableParallelSort = true
 
 	if exe == nil {
 		exe = buildSortExec(ctx, sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
-	resultChunks := executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe, true)
 
 	err := exe.Close()
 	require.NoError(t, err)
@@ -96,7 +99,8 @@ func failpointTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sort
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = true
+	// TODO use variable to choose parallel mode after system variable is added
+	// ctx.GetSessionVars().EnableParallelSort = true
 	if exe == nil {
 		exe = buildSortExec(ctx, sortCase, dataSource)
 	}
