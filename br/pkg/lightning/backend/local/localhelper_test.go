@@ -461,9 +461,14 @@ func newCheckScatterClient(inner *testSplitClient) *checkScatterClient {
 	}
 }
 
-func (c *checkScatterClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	c.scatterCounter.Add(1)
-	return nil
+func (c *checkScatterClient) SplitWaitScatter(
+	ctx context.Context,
+	regionInfo *split.RegionInfo,
+	keys [][]byte,
+) (*split.RegionInfo, []*split.RegionInfo, error) {
+	r, rs, err := c.testSplitClient.SplitWaitScatter(ctx, regionInfo, keys)
+	c.scatterCounter.Add(int32(len(rs)))
+	return r, rs, err
 }
 
 func (c *checkScatterClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
