@@ -2597,6 +2597,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	var task base.Task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
+		if ds.Table.Type().IsClusterTable() {
+			// TableScan with cluster table can't keep order.
+			return base.InvalidTask, nil
+		}
 		if ds.TableInfo.GetPartitionInfo() != nil {
 			// TableScan on partition table on TiFlash can't keep order.
 			if ts.StoreType == kv.TiFlash {
