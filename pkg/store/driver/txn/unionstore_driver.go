@@ -68,24 +68,14 @@ func (m *memBuffer) GetFlags(key kv.Key) (kv.KeyFlags, error) {
 }
 
 func (m *memBuffer) Staging() kv.StagingHandle {
-	if m.isPipelinedDML {
-		// 0 stands for staging not supported.
-		return 0
-	}
 	return kv.StagingHandle(m.MemBuffer.Staging())
 }
 
 func (m *memBuffer) Cleanup(h kv.StagingHandle) {
-	if m.isPipelinedDML {
-		return
-	}
 	m.MemBuffer.Cleanup(int(h))
 }
 
 func (m *memBuffer) Release(h kv.StagingHandle) {
-	if m.isPipelinedDML {
-		return
-	}
 	m.MemBuffer.Release(int(h))
 }
 
