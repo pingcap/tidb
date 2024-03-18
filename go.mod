@@ -79,7 +79,11 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
+<<<<<<< HEAD
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
+=======
+	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
+>>>>>>> c5359cad37d (*: update pingcap/errors version (#51854))
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20240208102409-a554af8ee11f

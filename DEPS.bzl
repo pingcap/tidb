@@ -5767,6 +5767,7 @@ def go_deps():
         name = "com_github_pingcap_errors",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/errors",
+<<<<<<< HEAD
         sha256 = "4dadf9dc507b4187a70b78e49d572bc0e8f89a7b4a8974d6a978f72620526996",
         strip_prefix = "github.com/pingcap/errors@v0.11.5-0.20221009092201-b66cddb77c32",
         urls = [
@@ -5774,6 +5775,15 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20221009092201-b66cddb77c32.zip",
             "https://cache.hawkingrei.com/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20221009092201-b66cddb77c32.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20221009092201-b66cddb77c32.zip",
+=======
+        sha256 = "99d36c5e5649442d9923d4b1cd7f1242faaf4071844c2e3c77497230b3f38cd7",
+        strip_prefix = "github.com/pingcap/errors@v0.11.5-0.20240318064555-6bd07397691f",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20240318064555-6bd07397691f.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20240318064555-6bd07397691f.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20240318064555-6bd07397691f.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20240318064555-6bd07397691f.zip",
+>>>>>>> c5359cad37d (*: update pingcap/errors version (#51854))
         ],
     )
     go_repository(
