@@ -303,7 +303,7 @@ type rowTableBuilder struct {
 
 	serializedKeyVectorBuffer [][]byte
 	partIdxVector             []int
-	hashValue                 []uint32
+	hashValue                 []uint64
 	filterVector              []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector             []bool // nullKeyVector[i] = true if any of the key is null
 
@@ -317,7 +317,7 @@ func (b *rowTableBuilder) ResetBuffer() {
 	if b.serializedKeyVectorBuffer == nil {
 		b.serializedKeyVectorBuffer = make([][]byte, MAX_ROW_TABLE_SEGMENT_SIZE)
 		b.partIdxVector = make([]int, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
-		b.hashValue = make([]uint32, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
+		b.hashValue = make([]uint64, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
 		b.filterVector = make([]bool, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
 		if b.hasNullableKey {
 			b.nullKeyVector = make([]bool, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
@@ -365,7 +365,7 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 			rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
 		}
 
-		seg.hashValues = append(seg.hashValues, uint64(builder.hashValue[rowIdx]))
+		seg.hashValues = append(seg.hashValues, builder.hashValue[rowIdx])
 		if !builder.filterVector[rowIdx] && !(builder.hasNullableKey && builder.nullKeyVector[rowIdx]) {
 			seg.validJoinKeyPos[rowIdx] = rowIdx
 		}
