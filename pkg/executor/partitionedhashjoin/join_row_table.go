@@ -372,15 +372,25 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 		startPosInRawData = append(startPosInRawData, uint64(len(seg.rawData)))
 		// next_row_ptr
 		seg.rawData = append(seg.rawData, fakeAddrByte...)
-		// TODO: @XuHuaiyu 补充 null_map
 		if len := rowTableMeta.nullMapLength; len > 0 {
 			seg.rawData = append(seg.rawData, make([]byte, len)...)
 		}
 		// if join_key is not inlined: `key_length + serialized_key`
-		// if join_key is inlined: `join_key` (TODO: @XuHuaiyu use `key_length + join_key` if the key with variable length can be inlined)
+		// if join_key is inlined: `join_key` if the key is fixed length, `key_length + join_key` if the key is variable length
 		if rowTableMeta.isJoinKeysInlined {
 			for _, colIdx := range builder.buildKeyIndex {
-				seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
+				rawData := row.GetRaw(colIdx)
+				var keyLen = 0
+				switch builder.buildSchema.Columns[colIdx].ToInfo().FieldType.GetType() {
+				case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+					keyLen = len(rawData)
+				}
+				if keyLen != 0 {
+					var buf [binary.MaxVarintLen64]byte
+					n := binary.PutUvarint(buf[:], uint64(keyLen))
+					seg.rawData = append(seg.rawData, buf[:n]...)
+				}
+				seg.rawData = append(seg.rawData, rawData...)
 			}
 		} else {
 			var buf [binary.MaxVarintLen64]byte
