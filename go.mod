@@ -88,7 +88,7 @@ require (
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20240305085524-87f5b80908ab
+	github.com/pingcap/tipb v0.0.0-20240318032315-55a7867ddd50
 	github.com/prometheus/client_golang v1.19.0
 	github.com/prometheus/client_model v0.6.0
 	github.com/prometheus/common v0.48.0
@@ -317,8 +317,6 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-
-	github.com/pingcap/tipb => github.com/JinheLin/tipb v0.0.0-20240315153807-15e7c8ae7b33
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
