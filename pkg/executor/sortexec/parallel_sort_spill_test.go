@@ -34,7 +34,7 @@ func oneSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortC
 		exe = buildSortExec(ctx, sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
-	resultChunks := executeSortExecutor(t, exe)
+	resultChunks := executeSortExecutor(t, exe, true)
 
 	require.True(t, exe.IsSpillTriggeredInParallelSortForTest())
 	require.Equal(t, int64(sortCase.Rows), exe.GetSpilledRowNumInParallelSortForTest())
@@ -50,7 +50,7 @@ func inMemoryThenSpill(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, 
 		exe = buildSortExec(ctx, sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
-	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit2, ctx.GetSessionVars().StmtCtx.MemTracker)
+	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit2, ctx.GetSessionVars().StmtCtx.MemTracker, true)
 
 	require.True(t, exe.IsSpillTriggeredInParallelSortForTest())
 	require.Greater(t, int64(sortCase.Rows), exe.GetSpilledRowNumInParallelSortForTest())
@@ -89,7 +89,8 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = true
+	// TODO use variable to choose parallel mode after system variable is added
+	// ctx.GetSessionVars().EnableParallelSort = true
 
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
@@ -122,7 +123,8 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = true
+	// TODO use variable to choose parallel mode after system variable is added
+	// ctx.GetSessionVars().EnableParallelSort = true
 
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)

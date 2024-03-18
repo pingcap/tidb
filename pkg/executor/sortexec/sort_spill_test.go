@@ -185,10 +185,14 @@ func executeSortExecutor(t *testing.T, exe *sortexec.SortExec, isParallelSort bo
 	return resultChunks
 }
 
-func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker) []*chunk.Chunk {
+func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortExec, hardLimit int64, tracker *memory.Tracker, isParallelSort bool) []*chunk.Chunk {
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
+	if isParallelSort {
+		exe.IsUnparallel = false
+		exe.InitInParallelModeForTest()
+	}
 
 	resultChunks := make([]*chunk.Chunk, 0)
 	chk := exec.NewFirstChunk(exe)
@@ -324,7 +328,7 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit, ctx.GetSessionVars().StmtCtx.MemTracker)
+	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit, ctx.GetSessionVars().StmtCtx.MemTracker, false)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
