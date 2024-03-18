@@ -119,7 +119,7 @@ func (m *multiWayMerger) next() chunk.Row {
 	return chunk.Row{}
 }
 
-func processPanicAndLog(errOutputChan chan rowWithError, r interface{}) {
+func processPanicAndLog(errOutputChan chan rowWithError, r any) {
 	err := util.GetRecoverError(r)
 	errOutputChan <- rowWithError{err: err}
 	logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))
