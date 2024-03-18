@@ -1386,7 +1386,7 @@ func TestSQLBinding(t *testing.T) {
 	}
 }
 
-func TestSQLBindingCompability(t *testing.T) {
+func TestSQLBindingCompatibility(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
