@@ -1280,28 +1280,30 @@ func (e *InsertValues) batchCheckAndInsert(
 		rowInserted := false
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
+			if err != nil && !kv.IsErrNotFound(err) {
+				return err
+			}
 			if err == nil {
 				rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
 				if err != nil {
 					return err
 				}
 				break
-			} else if kv.IsErrNotFound(err) {
+			} else {
 				if tablecodec.IsTempIndexKey(uk.newKey) {
 					tablecodec.TempIndexKey2IndexKey(uk.newKey)
 					_, err = txn.Get(ctx, uk.newKey)
+					if err != nil && !kv.IsErrNotFound(err) {
+						return err
+					}
 					if err == nil {
 						rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
 						if err != nil {
 							return err
 						}
 						break
-					} else if !kv.IsErrNotFound(err) {
-						return err
 					}
 				}
-			} else {
-				return err
 			}
 		}
 
