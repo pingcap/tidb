@@ -641,6 +641,10 @@ func (worker *restoreSchemaWorker) makeJobs(
 		worker.quit()
 	}()
 
+	if len(dbMetas) == 0 {
+		return nil
+	}
+
 	// 1. restore databases, execute statements concurrency
 
 	dbs, err := getDBs(worker.ctx)
