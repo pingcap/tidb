@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/tikv/pd/client/errs"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -90,6 +91,10 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	drivererr.ErrTiKVServerTimeout.ID(): {},
 	drivererr.ErrTiKVServerBusy.ID():    {},
 	drivererr.ErrUnknown.ID():           {},
+	// pd client errors
+	errs.ErrClientGetMember.ID():    {},
+	errs.ErrClientGetLeader.ID():    {},
+	errs.ErrClientUpdateMember.ID(): {},
 }
 
 // ErrWriteTooSlow is used to get rid of the gRPC blocking issue.
