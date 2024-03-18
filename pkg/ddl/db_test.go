@@ -1077,26 +1077,20 @@ func TestInsertIgnore(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec("use test")
-
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &callback.TestDDLCallback{}
 
 	onJobUpdatedExportedFunc := func(job *model.Job) {
-		if t.Failed() {
-			return
-		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
-			_, err := tk1.Exec("INSERT INTO t VALUES (-18585,'+zmNHMov7KF~tF*DFb',1), (-18585,'0',1), (-18585,'1',1), (-18585,'duplicatevalue',1);")
+			_, err := tk1.Exec("INSERT INTO t VALUES (-18585,'aaa',1), (-18585,'0',1), (-18585,'1',1), (-18585,'duplicatevalue',1);")
 			assert.NoError(t, err)
 		case model.StateWriteReorganization:
 			idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
 			if idx.BackfillState == model.BackfillStateReadyToMerge {
-				_, err := tk1.Exec("insert ignore into `t`  values ( '06j$GwD*zizDUEEy&*-','duplicatevalue',-2028 );")
+				_, err := tk1.Exec("insert ignore into `t`  values ( 234,'duplicatevalue',-2028 );")
 				assert.NoError(t, err)
 				return
 			}
