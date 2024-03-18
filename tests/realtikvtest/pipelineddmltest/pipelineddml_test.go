@@ -198,6 +198,7 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	// for explain and explain analyze
 	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("explain insert into t values(8, 8)")
+	// this should fail
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
 	tk.MustExec("explain analyze insert into t values(9, 9)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
@@ -762,6 +763,7 @@ func TestRejectUnsupportedTables(t *testing.T) {
 	// test a delete sql that deletes two tables
 	tk.MustExec("insert into parent values(2)")
 	tk.MustExec("delete parent, child from parent left join child on parent.a = child.a")
+	// this should fail
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
 
 	// swap the order of the two tables
