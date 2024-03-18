@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -128,7 +127,6 @@ type ttlJob struct {
 
 // finish turns current job into last job, and update the error message and statistics summary
 func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) {
-	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
 	err := se.RunInTxn(context.TODO(), func() error {

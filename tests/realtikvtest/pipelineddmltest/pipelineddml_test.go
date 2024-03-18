@@ -304,27 +304,104 @@ func TestPipelinedDMLInsertRPC(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int, unique index idx(b))")
-	res := tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-	explain := getExplainResult(res)
-	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
-	// Test with bulk dml.
-	tk.MustExec("set session tidb_dml_type = bulk")
-	// Test normal insert.
-	tk.MustExec("truncate table t1")
-	res = tk.MustQuery("explain analyze insert into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-	explain = getExplainResult(res)
-	// TODO: try to optimize the rpc count, when use bulk dml, insert will send many BufferBatchGet rpc.
-	require.Regexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:10, total_time:.*}}.*", explain)
-	// Test insert ignore.
-	tk.MustExec("truncate table t1")
-	res = tk.MustQuery("explain analyze insert ignore into t1 values (1,1), (2,2), (3,3), (4,4), (5,5)")
-	explain = getExplainResult(res)
-	// TODO: try to optimize the rpc count, when use bulk dml, insert ignore will send 5 BufferBatchGet and  1 BatchGet rpc.
-	// but without bulk dml, it will only use 1 BatchGet rpcs.
-	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:5, total_time:.*}}}.*", explain)
-	require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+	tables := []string{
+		"create table _t1 (a int, b int)",                                  // no index, auto generated handle
+		"create table _t1 (a int primary key, b int)",                      // clustered handle
+		"create table _t1 (a int, b int, unique index idx(b))",             // unique index
+		"create table _t1 (a int primary key, b int, unique index idx(b))", // clustered handle + unique index
+	}
+	for _, table := range tables {
+		for _, tableSource := range []bool{true, false} {
+			hasPK := strings.Contains(table, "primary key")
+			hasUK := strings.Contains(table, "unique index")
+			tk.MustExec("drop table if exists t1, _t1")
+			var values string
+			if tableSource {
+				tk.MustExec("create table t1 (a int, b int)")
+				tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+				values = " select * from t1"
+			} else {
+				values = " values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)"
+			}
+			tk.MustExec(table)
+
+			// Test with standard dml.
+			tk.MustExec("set session tidb_dml_type = standard")
+			res := tk.MustQuery("explain analyze insert ignore into _t1" + values)
+			explain := getExplainResult(res)
+			if hasPK || hasUK {
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+			}
+
+			// Test with bulk dml.
+			tk.MustExec("set session tidb_dml_type = bulk")
+
+			// Test normal insert.
+			tk.MustExec("truncate table _t1")
+			res = tk.MustQuery("explain analyze insert into _t1" + values)
+			explain = getExplainResult(res)
+			// no BufferBatchGet with lazy check
+			require.NotRegexp(t, "Insert.* insert:.*, rpc:{BufferBatchGet:{num_rpc:.*, total_time:.*}}.*", explain)
+
+			// Test insert ignore.
+			tk.MustExec("truncate table _t1")
+			res = tk.MustQuery("explain analyze insert ignore into _t1" + values)
+			explain = getExplainResult(res)
+			// with bulk dml, it will 1 BatchGet and 1 BufferBatchGet RPCs in prefetch phase.
+			// but no need to prefetch when there are no unique indexes and no primary key.
+			if hasPK || hasUK {
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+			}
+			// The ignore takes effect now.
+			res = tk.MustQuery("explain analyze insert ignore into _t1" + values)
+			explain = getExplainResult(res)
+			if hasPK || hasUK {
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+			}
+
+			// Test insert on duplicate key update.
+			res = tk.MustQuery("explain analyze insert into _t1 " + values + " on duplicate key update a = values(a) + 5")
+			explain = getExplainResult(res)
+			if hasUK {
+				// 2 rounds checks are required: read handles by unique keys and read rows by handles
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:2, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:2, total_time:.*}}}.*", explain)
+			} else if hasPK {
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+				require.Regexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:1, total_time:.*}}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BufferBatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+				require.NotRegexp(t, "Insert.* check_insert: {total_time: .* rpc:{.*BatchGet:{num_rpc:.*, total_time:.*}}}.*", explain)
+			}
+
+			// Test replace into. replace checks in the same way with insert on duplicate key update.
+			// However, the format of explain result is little different.
+			res = tk.MustQuery("explain analyze replace into _t1" + values)
+			explain = getExplainResult(res)
+			if hasUK {
+				require.Regexp(t, "Insert.* rpc: {.*BufferBatchGet:{num_rpc:2, total_time:.*}}.*", explain)
+				require.Regexp(t, "Insert.* rpc: {.*BatchGet:{num_rpc:2, total_time:.*}}.*", explain)
+			} else if hasPK {
+				require.Regexp(t, "Insert.* rpc: {.*BufferBatchGet:{num_rpc:1, total_time:.*}}.*", explain)
+				require.Regexp(t, "Insert.* rpc: {.*BatchGet:{num_rpc:1, total_time:.*}}.*", explain)
+			} else {
+				require.NotRegexp(t, "Insert.* rpc: {.*BufferBatchGet:{num_rpc:.*, total_time:.*}}.*", explain)
+				require.NotRegexp(t, "Insert.* rpc: {.*BatchGet:{num_rpc:.*, total_time:.*}}.*", explain)
+			}
+		}
+	}
 }
 
 func getExplainResult(res *testkit.Result) string {
@@ -503,7 +580,6 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	tk.MustExec("drop table if exists t1, _t1")
 	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
 	tk.MustExec("create table _t1 like t1")
@@ -562,7 +638,6 @@ func TestPipelinedDMLDisableRetry(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
-
 	tk1.MustExec("drop table if exists t1")
 	tk1.MustExec("create table t1(a int primary key, b int)")
 	tk1.MustExec("insert into t1 values(1, 1)")
@@ -580,6 +655,30 @@ func TestPipelinedDMLDisableRetry(t *testing.T) {
 	require.True(t, kv.ErrWriteConflict.Equal(err), fmt.Sprintf("error: %s", err))
 }
 
+func TestReplaceRowCheck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t1, _t1")
+	tk1.MustExec("create table t1(a int, b int)")
+	tk1.MustExec("create table _t1(a int primary key, b int)")
+	tk1.MustExec("insert into t1 values(1, 1), (2, 2), (1, 2), (2, 1)")
+	tk1.MustExec("set session tidb_dml_type = bulk")
+	tk1.MustExec("replace into _t1 select * from t1")
+	tk1.MustExec("admin check table _t1")
+	tk1.MustQuery("select a from _t1").Sort().Check(testkit.Rows("1", "2"))
+
+	tk1.MustExec("truncate table _t1")
+	tk1.MustExec("insert ignore into _t1 select * from t1")
+	tk1.MustExec("admin check table _t1")
+	tk1.MustQuery("select a from _t1").Sort().Check(testkit.Rows("1", "2"))
+
+	tk1.MustExec("truncate table _t1")
+	tk1.MustExec("insert into _t1 select * from t1 on duplicate key update b = values(b)")
+	tk1.MustExec("admin check table _t1")
+	tk1.MustQuery("select a from _t1").Sort().Check(testkit.Rows("1", "2"))
+}
+
 func TestDuplicateKeyErrorMessage(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -593,4 +692,96 @@ func TestDuplicateKeyErrorMessage(t *testing.T) {
 	err2 := tk.ExecToErr("insert into t1 values(1, 1)")
 	require.Error(t, err2)
 	require.Equal(t, err1.Error(), err2.Error())
+}
+
+func TestInsertIgnoreOnDuplicateKeyUpdate(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type = bulk")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, unique index u1(a, b), unique index u2(a))")
+	tk.MustExec("insert into t1 values(0, 0), (1, 1)")
+	tk.MustExecToErr("insert ignore into t1 values (0, 2) ,(1, 3) on duplicate key update b = 5, a = 0")
+	// if the statement execute successful, the following check should pass.
+	// tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("0 5", "1 1"))
+}
+
+func TestConflictError(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(128)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(128)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, _t1")
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("create table _t1(a int primary key, b int)")
+	var insert strings.Builder
+	insert.WriteString("insert into t1 values")
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			insert.WriteString(",")
+		}
+		insert.WriteString(fmt.Sprintf("(%d, %d)", i, i))
+	}
+	tk.MustExec(insert.String())
+	tk.MustExec("set session tidb_dml_type = bulk")
+	tk.MustExec("insert into _t1 select * from t1")
+	tk.MustExec("set session tidb_max_chunk_size = 32")
+	err := tk.ExecToErr("insert into _t1 select * from t1 order by rand()")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "Duplicate entry"), err.Error())
+}
+
+func TestRejectUnsupportedTables(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_dml_type = bulk")
+
+	// FKs are not supported if foreign_key_checks=ON
+	tk.MustExec("drop table if exists parent, child")
+	tk.MustExec("create table parent(a int primary key)")
+	tk.MustExec("create table child(a int, foreign key (a) references parent(a))")
+	err := tk.ExecToErr("insert into parent values(1)")
+	require.NoError(t, err)
+	err = tk.ExecToErr("insert into child values(1)")
+	require.NoError(t, err)
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
+	err = tk.ExecToErr("insert into child values(2)")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "foreign key constraint fails"), err.Error())
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
+
+	// test a delete sql that deletes two tables
+	tk.MustExec("insert into parent values(2)")
+	tk.MustExec("delete parent, child from parent left join child on parent.a = child.a")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
+
+	// swap the order of the two tables
+	tk.MustExec("insert into parent values(3)")
+	tk.MustExec("delete child, parent from child left join parent on parent.a = child.a")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode")
+
+	tk.MustExec("set @@foreign_key_checks=false")
+	tk.MustExec("insert into parent values(4)")
+	tk.MustExec("insert into child values(4)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	// temp tables are not supported
+	tk.MustExec("create temporary table temp(a int)")
+	tk.MustExec("insert into temp values(1)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on temporary tables. Fallback to standard mode")
+
+	// cached tables are not supported
+	tk.MustExec("create table cached(a int)")
+	tk.MustExec("alter table cached cache")
+	tk.MustExec("insert into cached values(1)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on cached tables. Fallback to standard mode")
 }

@@ -138,13 +138,15 @@ func (m *memBuffer) SnapshotGetter() kv.Getter {
 	return newKVGetter(m.MemBuffer.SnapshotGetter())
 }
 
-// MayFlush implements kv.MemBuffer.MayFlush interface.
-func (m *memBuffer) MayFlush() error {
-	if !m.isPipelinedDML {
-		return nil
-	}
-	_, err := m.MemBuffer.Flush(false)
-	return err
+// GetLocal implements kv.MemBuffer interface
+func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
+	data, err := m.MemBuffer.GetLocal(ctx, key)
+	return data, derr.ToTiDBErr(err)
+}
+
+func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	data, err := m.MemBuffer.BatchGet(ctx, keys)
+	return data, derr.ToTiDBErr(err)
 }
 
 type tikvGetter struct {
