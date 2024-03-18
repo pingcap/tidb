@@ -922,7 +922,7 @@ func findAvailableStatsForCol(sctx context.PlanContext, coll *statistics.HistCol
 	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
 			idxStats := coll.Indices[idxStatsIdx]
-			if !statistics.IndexStatsIsInvalid(idxStats, sctx, coll, idxStatsIdx) &&
+			if !statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxStatsIdx) &&
 				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
 				idxStats.IsFullLoad() {
 				return true, idxStatsIdx

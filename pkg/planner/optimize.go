@@ -578,7 +578,7 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	if sysVar == nil { // no such a variable
 		return false, plannererrors.ErrUnresolvedHintName.FastGenByArgs(varName, hint)
 	}
-	if !sysVar.IsHintUpdatableVerfied {
+	if !sysVar.IsHintUpdatableVerified {
 		warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
 	}
 	return true, warning

@@ -153,6 +153,10 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 	if intest.InTest && sctx.Value(LoadBindingNothing) != nil {
 		return
 	}
+	defer func(start time.Time) {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("loading binding from storage takes " + time.Since(start).String()))
+	}(time.Now())
+
 	for _, sqlDigest := range missingSQLDigest {
 		start := time.Now()
 		bindings, err := fbc.loadBindingFromStorageFunc(sctx, sqlDigest)
@@ -173,7 +177,7 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 				// When the memory capacity of bing_cache is not enough,
 				// there will be some memory-related errors in multiple places.
 				// Only needs to be handled once.
-				logutil.BindLogger().Warn("BindHandle.Update", zap.Error(err))
+				logutil.BindLogger().Warn("update binding cache error", zap.Error(err))
 			}
 		}
 	}

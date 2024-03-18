@@ -3,3 +3,6 @@ driver = "mysql"
 
 [tikv-importer]
 on-duplicate = "error"
+
+[conflict]
+precheck-conflict-before-import = true
