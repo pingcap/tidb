@@ -205,6 +205,8 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 			e.isSpillTriggeredInStage1ForTest = true
 			break
 		}
+
+		injectTopNRandomFail(1)
 	}
 
 	e.chkHeap.initPtrs()
@@ -238,6 +240,7 @@ func (e *TopNExec) executeTopNNoSpill(ctx context.Context) error {
 				return err
 			}
 		}
+		injectTopNRandomFail(10)
 	}
 
 	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
@@ -295,6 +298,8 @@ func (e *TopNExec) fetchChunksFromChild(ctx context.Context) {
 			return
 		case e.chunkChannel <- chk:
 		}
+
+		injectTopNRandomFail(10)
 
 		err = e.checkSpillAndExecute()
 		if err != nil {
@@ -409,7 +414,7 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 				return err
 			}
 
-			injectTopNRandomFail(1)
+			injectTopNRandomFail(10)
 
 			rowNum := chk.NumRows()
 			for j := 0; j < rowNum; j++ {

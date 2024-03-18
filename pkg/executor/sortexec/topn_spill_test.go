@@ -237,10 +237,10 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	// ctx := mock.NewContext()
 	// sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(false)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/TopNRandomFail", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
 
 	// ctx.GetSessionVars().InitChunkSize = 32
 	// ctx.GetSessionVars().MaxChunkSize = 32

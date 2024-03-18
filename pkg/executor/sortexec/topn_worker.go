@@ -109,7 +109,7 @@ func (t *topNWorker) run() {
 }
 
 func (p *topNWorker) injectFailPointForTopNWorker(triggerFactor int32) {
-	injectParallelSortRandomFail(triggerFactor)
+	injectTopNRandomFail(triggerFactor)
 	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
 		if val.(bool) {
 			if p.workerIDForTest%2 == 0 {

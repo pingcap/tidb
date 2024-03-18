@@ -167,8 +167,6 @@ func (t *topNSpillHelper) spill() (err error) {
 				errChan <- spillErr
 			}
 			t.workers[idx].chkHeap.clear()
-
-			// TODO add random failpoint
 		}(i)
 	}
 
@@ -227,6 +225,8 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	if inDisk.NumChunks() > 0 {
 		t.addInDisk(inDisk)
 	}
+
+	injectTopNRandomFail(200)
 
 	chkHeap.clear()
 	return nil
