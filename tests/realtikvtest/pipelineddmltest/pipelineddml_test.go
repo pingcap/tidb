@@ -741,6 +741,7 @@ func TestConflictError(t *testing.T) {
 }
 
 func TestRejectUnsupportedTables(t *testing.T) {
+	t.Fail() // Does this package really tested?
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
