@@ -17,7 +17,7 @@ package membuf
 import (
 	"sync"
 
-	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -63,7 +63,7 @@ func (l *Limiter) Release(n int) {
 
 	l.limit += n
 	if l.limit > l.initLimit {
-		log.Error(
+		logutil.BgLogger().Error(
 			"limit overflow",
 			zap.Int("limit", l.limit),
 			zap.Int("initLimit", l.initLimit),
