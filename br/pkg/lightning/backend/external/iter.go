@@ -793,7 +793,6 @@ func NewMergePropIter(
 	ctx context.Context,
 	multiStat []MultipleFilesStat,
 	exStorage storage.ExternalStorage,
-	_ bool,
 ) (*MergePropIter, error) {
 	closeReaderFlag := false
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))

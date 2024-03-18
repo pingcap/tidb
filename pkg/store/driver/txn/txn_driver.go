@@ -427,6 +427,15 @@ func (txn *tikvTxn) IsInFairLockingMode() bool {
 	return txn.KVTxn.IsInAggressiveLockingMode()
 }
 
+// MayFlush wraps the flush function and extract the error.
+func (txn *tikvTxn) MayFlush() error {
+	if !txn.IsPipelined() {
+		return nil
+	}
+	_, err := txn.KVTxn.GetMemBuffer().Flush(false)
+	return txn.extractKeyErr(err)
+}
+
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.
 type TiDBKVFilter struct{}
 

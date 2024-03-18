@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
 
 // TxnMode represents using optimistic or pessimistic mode in the transaction
@@ -52,8 +51,6 @@ type Session interface {
 	RunInTxn(ctx context.Context, fn func() error, mode TxnMode) (err error)
 	// ResetWithGlobalTimeZone resets the session time zone to global time zone
 	ResetWithGlobalTimeZone(ctx context.Context) error
-	// GlobalTimeZone returns the global timezone. It is used to compute expire time for TTL
-	GlobalTimeZone(ctx context.Context) (*time.Location, error)
 	// Close closes the session
 	Close()
 	// Now returns the current time in location specified by session var
@@ -169,15 +166,6 @@ func (s *session) ResetWithGlobalTimeZone(ctx context.Context) error {
 
 	_, err := s.ExecuteSQL(ctx, "SET @@time_zone=@@global.time_zone")
 	return err
-}
-
-// GlobalTimeZone returns the global timezone
-func (s *session) GlobalTimeZone(ctx context.Context) (*time.Location, error) {
-	str, err := s.GetSessionVars().GetGlobalSystemVar(ctx, "time_zone")
-	if err != nil {
-		return nil, err
-	}
-	return timeutil.ParseTimeZone(str)
 }
 
 // Close closes the session
