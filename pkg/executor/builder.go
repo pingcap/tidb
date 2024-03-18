@@ -1516,6 +1516,7 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 	e := &partitionedhashjoin.PartitionedHashJoinExec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		ProbeSideTupleFetcher: &partitionedhashjoin.ProbeSideTupleFetcher{},
+		BuildSideTupleFetcher: &partitionedhashjoin.BuildSideTupleFetcher{},
 		ProbeWorkers:          make([]*partitionedhashjoin.ProbeWorker, v.Concurrency),
 		BuildWorkers:          make([]*partitionedhashjoin.BuildWorker, v.Concurrency),
 		PartitionedHashJoinCtx: &partitionedhashjoin.PartitionedHashJoinCtx{
@@ -1531,6 +1532,7 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 	} else if v.InnerChildIdx == 0 && !v.UseOuterToBuild {
 		e.PartitionedHashJoinCtx.RightAsBuildSide = false
 	}
+	e.BuildSideTupleFetcher.HashJoinCtx = e.PartitionedHashJoinCtx
 
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	joinedTypes := make([]*types.FieldType, 0, len(lhsTypes)+len(rhsTypes))
@@ -1561,10 +1563,12 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
 			e.PartitionedHashJoinCtx.BuildFilter = v.LeftConditions
+			e.BuildSideTupleFetcher.BuildSideExec = leftExec
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
 			e.PartitionedHashJoinCtx.BuildFilter = v.RightConditions
+			e.BuildSideTupleFetcher.BuildSideExec = rightExec
 			leftIsBuildSide = false
 		}
 	} else {
@@ -1572,10 +1576,12 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
 			e.PartitionedHashJoinCtx.ProbeFilter = v.RightConditions
+			e.BuildSideTupleFetcher.BuildSideExec = leftExec
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
 			e.PartitionedHashJoinCtx.ProbeFilter = v.LeftConditions
+			e.BuildSideTupleFetcher.BuildSideExec = rightExec
 			leftIsBuildSide = false
 		}
 	}
