@@ -87,6 +87,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	// tk.MustExec(`set @@global.tidb_cloud_storage_uri = ""`)
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
@@ -115,26 +116,26 @@ func TestGlobalSortBasic(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
 	dom.DDL().SetHook(hook)
 
-	// tk.MustExec("alter table t add index idx(a);")
-	// dom.DDL().SetHook(origin)
-	// tk.MustExec("admin check table t;")
-	// <-scheduler.WaitCleanUpFinished
-	// checkFileCleaned(t, jobID, cloudStorageURI)
+	tk.MustExec("alter table t add index idx(a);")
+	tk.MustExec("admin check table t;")
+	<-scheduler.WaitCleanUpFinished
+	checkFileCleaned(t, jobID, cloudStorageURI)
 
-	// require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
-	// tk.MustExec("alter table t add index idx1(a);")
-	dom.DDL().SetHook(origin)
-	// tk.MustExec("admin check table t;")
-	// <-scheduler.WaitCleanUpFinished
-	// checkFileCleaned(t, jobID, cloudStorageURI)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+	tk.MustExec("alter table t add index idx1(a);")
+	tk.MustExec("admin check table t;")
+	<-scheduler.WaitCleanUpFinished
+	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
 	tk.MustExec("admin check table t;")
 	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
+	dom.DDL().SetHook(origin)
+
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
-	// require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
