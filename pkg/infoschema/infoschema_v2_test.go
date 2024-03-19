@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
@@ -38,13 +39,13 @@ func TestV2Basic(t *testing.T) {
 	is.Data.addDB(1, dbInfo)
 	internal.AddDB(t, r.Store(), dbInfo)
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
-	is.Data.add(tableItem{schemaName.L, dbInfo.ID, tableName.L, tblInfo.ID, 2}, internal.MockTable(t, r.Store(), tblInfo))
+	is.Data.add(tableItem{schemaName.L, dbInfo.ID, tableName.L, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	require.Equal(t, 1, len(is.AllSchemas()))
 	require.Equal(t, 0, len(is.SchemaTables(is.AllSchemas()[0].Name)))
 	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	is.schemaVersion = 2
+	is.base().schemaMetaVersion = 2
 	is.ts = ver.Ver
 	require.Equal(t, 1, len(is.AllSchemas()))
 	require.Equal(t, 1, len(is.SchemaTables(is.AllSchemas()[0].Name)))
@@ -79,7 +80,7 @@ func TestMisc(t *testing.T) {
 
 	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
-	is := builder.Build()
+	is := builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 0)
 
 	// test create resource group
@@ -89,7 +90,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 1)
 	getResourceGroupInfo, ok := is.ResourceGroupByName(resourceGroupInfo.Name)
 	require.True(t, ok)
@@ -103,7 +104,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo2.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 2)
 	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo2.Name)
 	require.True(t, ok)
@@ -117,7 +118,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreateOrAlterResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 2)
 	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo.Name)
 	require.True(t, ok)
@@ -129,7 +130,7 @@ func TestMisc(t *testing.T) {
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_ = applyDropResourceGroup(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: resourceGroupInfo.ID})
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 1)
 	getResourceGroupInfo, ok = is.ResourceGroupByName(resourceGroupInfo2.Name)
 	require.True(t, ok)
@@ -143,7 +144,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 1)
 	getPolicyInfo, ok := is.PolicyByName(policyInfo.Name)
 	require.True(t, ok)
@@ -157,7 +158,7 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, err)
 	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo2.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 2)
 	getPolicyInfo, ok = is.PolicyByName(policyInfo2.Name)
 	require.True(t, ok)
@@ -169,9 +170,9 @@ func TestMisc(t *testing.T) {
 	internal.UpdatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	err = applyCreatePolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
+	_, err = applyAlterPolicy(builder, meta.NewMeta(txn), &model.SchemaDiff{SchemaID: policyInfo.ID})
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 2)
 	getPolicyInfo, ok = is.PolicyByName(policyInfo.Name)
 	require.True(t, ok)
@@ -183,10 +184,91 @@ func TestMisc(t *testing.T) {
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
 	_ = applyDropPolicy(builder, policyInfo.ID)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	require.Len(t, is.AllPlacementPolicies(), 1)
 	getPolicyInfo, ok = is.PolicyByName(policyInfo2.Name)
 	require.True(t, ok)
 	require.Equal(t, policyInfo2, getPolicyInfo)
 	require.NoError(t, txn.Rollback())
+}
+
+func TestBundles(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaName := model.NewCIStr("testDB")
+	tableName := model.NewCIStr("test")
+	builder, err := NewBuilder(r, nil, NewData()).InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(t, err)
+	is := builder.Build(math.MaxUint64)
+	require.Equal(t, 2, len(is.AllSchemas()))
+
+	// create database
+	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
+	internal.AddDB(t, r.Store(), dbInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	require.Equal(t, 3, len(is.AllSchemas()))
+	require.NoError(t, txn.Rollback())
+
+	// create table
+	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
+	tblInfo.Partition = &model.PartitionInfo{Definitions: []model.PartitionDefinition{{ID: 1}, {ID: 2}}}
+	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	require.Equal(t, 1, len(is.SchemaTables(dbInfo.Name)))
+	require.NoError(t, txn.Rollback())
+
+	// test create policy
+	policyInfo := internal.MockPolicyInfo(t, r.Store(), "test")
+	internal.CreatePolicy(t, r.Store(), policyInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreatePlacementPolicy, Version: 3, SchemaID: policyInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	require.Len(t, is.AllPlacementPolicies(), 1)
+	getPolicyInfo, ok := is.PolicyByName(policyInfo.Name)
+	require.True(t, ok)
+	require.Equal(t, policyInfo, getPolicyInfo)
+	require.NoError(t, txn.Rollback())
+
+	// markTableBundleShouldUpdate
+	// test alter table placement
+	policyRefInfo := internal.MockPolicyRefInfo(t, r.Store(), "test")
+	tblInfo.PlacementPolicyRef = policyRefInfo
+	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePlacement, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	getTableInfo, err := is.TableByName(schemaName, tableName)
+	require.NoError(t, err)
+	require.Equal(t, policyRefInfo, getTableInfo.Meta().PlacementPolicyRef)
+	require.NoError(t, txn.Rollback())
+
+	// markBundlesReferPolicyShouldUpdate
+	// test alter policy
+	policyInfo.State = model.StatePublic
+	internal.UpdatePolicy(t, r.Store(), policyInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 5, SchemaID: policyInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	getTableInfo, err = is.TableByName(schemaName, tableName)
+	require.NoError(t, err)
+	getPolicyInfo, ok = is.PolicyByName(getTableInfo.Meta().PlacementPolicyRef.Name)
+	require.True(t, ok)
+	require.Equal(t, policyInfo, getPolicyInfo)
 }

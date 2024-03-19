@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -125,7 +126,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 		1,
 	)
 	require.NoError(t, err)
-	is := builder.Build()
+	is := builder.Build(math.MaxUint64)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	for _, policy := range []*model.PolicyInfo{p1, p2, p4, p5} {

@@ -23,13 +23,11 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,14 +45,6 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 	tk.MustHavePlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin")
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
-
-	// Test bindingUsage, which indicates how many times the binding is used.
-	metrics.BindUsageCounter.Reset()
-	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
-	pb := &dto.Metric{}
-	err := metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
-	require.NoError(t, err)
-	require.Equal(t, float64(1), pb.GetCounter().GetValue())
 
 	// Test 'tidb_use_plan_baselines'
 	tk.MustExec("set @@tidb_use_plan_baselines = 0")

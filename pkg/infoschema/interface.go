@@ -36,6 +36,7 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	Misc
+	base() *infoSchema
 }
 
 // Misc contains the methods that are not closely related to InfoSchema.

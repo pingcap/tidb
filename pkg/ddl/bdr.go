@@ -27,27 +27,26 @@ func deniedByBDRWhenAddColumn(options []*ast.ColumnOption) bool {
 		notNull      bool
 		defaultValue bool
 		comment      int
+		generated    int
 	)
 	for _, opt := range options {
-		if opt.Tp == ast.ColumnOptionNull {
+		switch opt.Tp {
+		case ast.ColumnOptionDefaultValue:
+			defaultValue = true
+		case ast.ColumnOptionComment:
+			comment = 1
+		case ast.ColumnOptionGenerated:
+			generated = 1
+		case ast.ColumnOptionNotNull:
+			notNull = true
+		case ast.ColumnOptionNull:
 			nullable = true
 		}
-		if opt.Tp == ast.ColumnOptionNotNull {
-			notNull = true
-		}
-		if opt.Tp == ast.ColumnOptionDefaultValue {
-			defaultValue = true
-		}
-		if opt.Tp == ast.ColumnOptionComment {
-			comment = 1
-		}
 	}
-	tpLen := len(options) - comment
+	tpLen := len(options) - comment - generated
 
-	if tpLen == 0 || (tpLen == 1 && nullable) {
-		return false
-	}
-	if tpLen == 2 && notNull && defaultValue {
+	if tpLen == 0 || (tpLen == 1 && nullable) || (tpLen == 1 && !notNull && defaultValue) ||
+		(tpLen == 2 && notNull && defaultValue) {
 		return false
 	}
 
