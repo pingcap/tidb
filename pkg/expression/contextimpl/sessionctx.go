@@ -122,6 +122,11 @@ func (ctx *ExprCtxExtendedImpl) GetDefaultWeekFormatMode() string {
 	return mode
 }
 
+// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
+func (ctx *ExprCtxExtendedImpl) GetDivPrecisionIncrement() int {
+	return ctx.sctx.GetSessionVars().GetDivPrecisionIncrement()
+}
+
 // GetOptionalPropProvider gets the optional property provider by key
 func (ctx *ExprCtxExtendedImpl) GetOptionalPropProvider(key exprctx.OptionalEvalPropKey) (exprctx.OptionalEvalPropProvider, bool) {
 	return ctx.props.Get(key)

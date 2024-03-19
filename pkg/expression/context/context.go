@@ -51,6 +51,8 @@ type EvalContext interface {
 	GetMaxAllowedPacket() uint64
 	// GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 	GetDefaultWeekFormatMode() string
+	// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
+	GetDivPrecisionIncrement() int
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Value returns the value associated with this context for key.
