@@ -710,7 +710,7 @@ func ExtractEqAndInCondition(sctx planctx.PlanContext, conditions []expression.E
 	return accesses, filters, newConditions, columnValues, false
 }
 
-// detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
+// detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF(Disjunctive Normal Form).
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) (Ranges, []expression.Expression, []*valueInfo, bool, error) {
 	firstColumnChecker := &conditionChecker{
@@ -722,8 +722,10 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	rb := builder{sctx: d.sctx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
-	var totalRanges Ranges
-	var totalRangesMemUsage int64
+	var (
+		totalRanges         Ranges
+		totalRangesMemUsage int64
+	)
 	columnValues := make([]*valueInfo, len(d.cols))
 	hasResidual := false
 	for i, item := range dnfItems {
@@ -735,6 +737,10 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				return nil, nil, nil, false, err
 			}
 			ranges := res.Ranges
+			// If CNF item always false, we can return ignore this CNF item.
+			if len(ranges) == 0 {
+				continue
+			}
 			accesses = res.AccessConds
 			filters = res.RemainedConds
 			if len(accesses) == 0 {

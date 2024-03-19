@@ -2290,3 +2290,43 @@ create table t(
 		require.Equal(t, tt.resultStr, got, fmt.Sprintf("different for expr %s", tt.exprStr))
 	}
 }
+
+func TestIssue40997(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	_, err := tk.Exec(`
+	CREATE TABLE t71706696 (
+		dt char(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+		db_id bigint(20) NOT NULL,
+		tbl_id bigint(20) NOT NULL,
+		db_name varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
+		UNIQUE KEY dt_2 (dt, db_id, tbl_id)
+	);
+	`)
+	require.NoError(t, err)
+	tk.MustQuery(`
+    EXPLAIN
+    SELECT *
+    FROM t71706696 FORCE INDEX(dt_2)
+    WHERE (
+        (
+            dt = '20210112'
+            AND db_id = '62812'
+            AND tbl_id > '228892694'
+        ) OR (
+            dt = '20210112'
+            AND db_id = '62813'
+            AND tbl_id <= '226785696'
+        ) OR (
+            dt = '20210112'
+            AND db_id > '62812'
+            AND db_id < '62813'
+        )
+    )
+	`).Check(testkit.Rows(
+		"IndexLookUp_7 0.67 root  ",
+		"├─IndexRangeScan_5(Build) 0.67 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 0.67 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
+	))
+}
