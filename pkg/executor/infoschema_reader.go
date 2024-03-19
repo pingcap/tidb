@@ -782,14 +782,16 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	e.rows = e.rows[:0]
 	batch := 1024
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
+	for e.dbsIdx < len(e.dbs) {
 		schema := e.dbs[e.dbsIdx]
-		tables := is.SchemaTables(schema)
-		sort.Slice(tables, func(i, j int) bool {
-			return tables[i].Meta().ID < tables[j].Meta().ID
-		})
-		for e.tblIdx < len(tables) {
-			table := tables[e.tblIdx]
+		if len(e.tables) == 0 {
+			e.tables = is.SchemaTables(schema)
+			sort.Slice(e.tables, func(i, j int) bool {
+				return e.tables[i].Meta().ID < e.tables[j].Meta().ID
+			})
+		}
+		for e.tblIdx < len(e.tables) {
+			table := e.tables[e.tblIdx]
 			e.tblIdx++
 			hasPrivs := false
 			var priv mysql.PrivilegeType
@@ -811,6 +813,8 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 			}
 		}
 		e.tblIdx = 0
+		e.dbsIdx++
+		e.tables = e.tables[:0]
 	}
 	return nil
 }
@@ -3078,6 +3082,7 @@ type hugeMemTableRetriever struct {
 	rows               [][]types.Datum
 	dbs                []model.CIStr
 	dbsIdx             int
+	tables             []table.Table
 	tblIdx             int
 	viewMu             syncutil.RWMutex
 	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
