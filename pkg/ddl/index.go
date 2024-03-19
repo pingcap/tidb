@@ -1816,6 +1816,7 @@ func writeChunkToLocal(
 	}()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+		logutil.BgLogger().Info("ywq test pre build hanlde", zap.Any("2", handleDataBuf[1].String()))
 		h, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -1825,7 +1826,16 @@ func writeChunkToLocal(
 			idxDataBuf = extractDatumByOffsets(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			idxData := idxDataBuf[:len(index.Meta().Columns)]
+			logutil.BgLogger().Info("ywq test after build handle", zap.Any("2", handleDataBuf[1].String()))
 			rsData := getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, handleDataBuf)
+			logutil.BgLogger().Info("ywq test restored", zap.Any("2", rsData[1].String()))
+			logutil.BgLogger().Info("ywq test index value0", zap.Any("index", idxData[0].String()))
+			logutil.BgLogger().Info("ywq test index value1", zap.Any("index", idxData[1].String()))
+			logutil.BgLogger().Info("ywq test index value2", zap.Any("index", idxData[2].String()))
+			d, _ := h.Data()
+			logutil.BgLogger().Info("ywq test handle 0", zap.Any("handle", d[0].String()))
+			logutil.BgLogger().Info("ywq test handle 1", zap.Any("handle", d[1].String()))
+
 			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
