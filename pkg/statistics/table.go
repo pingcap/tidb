@@ -617,18 +617,22 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
 func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
 	col, ok := t.Columns[id]
-	// If the column is not in the memory, and we have its stats in the storage. We need to trigger the load.
-	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, false) {
-		return nil, true
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
+
+	// If it's not analyzed yet. Don't need to load it.
+	if !hasAnalyzed {
+		return nil, false
 	}
 
-	// If the col is analyzed but we don't have it in memory or we need a full load but it's not yet.
-	// It's the one to be load.
+	// Restore the condition from the simplified form:
+	// 1. !ok && hasAnalyzed => need load
+	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
+	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
 	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
 		return col, true
 	}
 
-	// Otherwise it's not full loaded yet and we just require a full load or the column is ready full loaded.
+	// Otherwise don't need load it.
 	return col, false
 }
 
