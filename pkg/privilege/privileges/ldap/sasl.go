@@ -17,51 +17,36 @@ package ldap
 import (
 	"context"
 
-	"github.com/go-ldap/ldap/v3"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 )
 
 type ldapSASLAuthImpl struct {
-	*ldapAuthImpl
+	*ldapAuthImplBuilder
 
 	saslAuthMethod string
 }
 
 // AuthLDAPSASL authenticates the user through LDAP SASL
 func (impl *ldapSASLAuthImpl) AuthLDAPSASL(userName string, dn string, clientCred []byte, authConn conn.AuthConn) error {
-	dn, ldapConn, err := func() (string, *ldap.Conn, error) {
-		// It's fine to just `RLock` here, even we're fetching resources from the pool, because the resource pool can be
-		// accessed concurrently. The `RLock` here is to protect the configurations.
-		//
-		// It's a bad idea to lock through the whole function, as this function will write/read to interact with the client.
-		// If the client somehow died and don't send responds, this function will not end for a long time (until connection
-		// timeout) and this lock will not be released. Therefore, we only `RLock` the configurations in the
-		impl.RLock()
-		defer impl.RUnlock()
+	var err error
+	ldapImpl := impl.ldapAuthImplBuilder.build()
 
-		var err error
-		if len(dn) == 0 {
-			dn, err = impl.searchUser(userName)
-			if err != nil {
-				return "", nil, err
-			}
-		} else {
-			dn = impl.canonicalizeDN(userName, dn)
-		}
-
-		ldapConn, err := impl.getConnection()
+	if len(dn) == 0 {
+		dn, err = ldapImpl.searchUser(userName)
 		if err != nil {
-			return "", nil, errors.Wrap(err, "create LDAP connection")
+			return err
 		}
-
-		return dn, ldapConn, nil
-	}()
-	if err != nil {
-		return err
+	} else {
+		dn = ldapImpl.canonicalizeDN(userName, dn)
 	}
 
-	defer impl.putConnection(ldapConn)
+	ldapConn, err := ldapImpl.getConnection()
+	if err != nil {
+		return errors.Wrap(err, "create LDAP connection")
+	}
+	defer ldapImpl.putConnection(ldapConn)
+
 	for {
 		resultCode, serverCred, err := ldapConn.ServerBindStep(clientCred, dn, impl.saslAuthMethod, nil)
 		if err != nil {
@@ -114,6 +99,6 @@ func (impl *ldapSASLAuthImpl) GetSASLAuthMethod() string {
 
 // LDAPSASLAuthImpl is the implementation of authentication with LDAP SASL
 var LDAPSASLAuthImpl = &ldapSASLAuthImpl{
-	&ldapAuthImpl{},
+	&ldapAuthImplBuilder{},
 	"",
 }
