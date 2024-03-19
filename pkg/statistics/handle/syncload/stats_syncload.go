@@ -112,6 +112,7 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
+	cnt := int64(0)
 	var errorMsgs []string
 	defer func() {
 		if len(errorMsgs) > 0 {
@@ -125,7 +126,25 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 		resultCheckMap[col.TableItemID] = struct{}{}
 	}
 	metrics.SyncLoadCounter.Inc()
+	cnt++
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
+	if cnt%10000 == 0 {
+		var tableID, colID int64
+		var isIndex bool
+		tot := 0
+		for _, col := range sc.StatsLoad.NeededItems {
+			tableID = col.TableID
+			colID = col.ID
+			isIndex = col.IsIndex
+			tot++
+		}
+		logutil.BgLogger().Warn("sync load stats",
+			zap.Int64("table id", tableID),
+			zap.Int64("col id", colID),
+			zap.Bool("is index", isIndex),
+			zap.Int("total items", tot),
+		)
+	}
 	defer timer.Stop()
 	for {
 		select {
