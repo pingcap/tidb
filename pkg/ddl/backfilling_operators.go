@@ -136,7 +136,7 @@ func getMergeSortPartSize(concurrency int, idxNum int) (uint64, error) {
 	if err != nil {
 		return 0, nil
 	}
-	return writerMemSize / uint64(concurrency) / 10, nil
+	return writerMemSize / uint64(concurrency) / 10000 * uint64(external.MergeSortOverlapThreshold), nil
 }
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
