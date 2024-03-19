@@ -1799,6 +1799,19 @@ func writeChunkToLocal(
 	}()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+		needRestoreForIndexes := make([]bool, len(indexes))
+		restore := false
+		for i, index := range indexes {
+			needRestore := tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
+			needRestoreForIndexes[i] = needRestore
+			restore = restore || needRestore
+		}
+		if restore {
+			// restoreData should not truncate index values.
+			for i, datum := range handleDataBuf {
+				restoreDataBuf[i] = *datum.Clone()
+			}
+		}
 		h, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -1809,8 +1822,7 @@ func writeChunkToLocal(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			idxData := idxDataBuf[:len(index.Meta().Columns)]
 			var rsData []types.Datum
-			if tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns) {
-				restoreDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, restoreDataBuf)
+			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
 			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
