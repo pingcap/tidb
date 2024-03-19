@@ -125,6 +125,127 @@ func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) pd.TS
 	return &mockTSFuture{c, ctx, false}
 }
 
+<<<<<<< HEAD:store/mockstore/unistore/pd.go
+=======
+func (c *pdClient) GetServiceDiscovery() pd.ServiceDiscovery {
+	return NewMockPDServiceDiscovery(c.addrs)
+}
+
+var (
+	_ pd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
+	_ pd.ServiceClient    = (*mockPDServiceClient)(nil)
+)
+
+type mockPDServiceClient struct {
+	addr string
+}
+
+func newMockPDServiceClient(addr string) pd.ServiceClient {
+	if !strings.HasPrefix(addr, "http") {
+		addr = fmt.Sprintf("%s://%s", "http", addr)
+	}
+	return &mockPDServiceClient{addr: addr}
+}
+
+func (c *mockPDServiceClient) GetAddress() string {
+	return c.addr
+}
+
+func (c *mockPDServiceClient) GetURL() string {
+	return c.addr
+}
+
+func (c *mockPDServiceClient) GetClientConn() *grpc.ClientConn {
+	return nil
+}
+
+func (c *mockPDServiceClient) BuildGRPCTargetContext(ctx context.Context, _ bool) context.Context {
+	return ctx
+}
+
+func (c *mockPDServiceClient) Available() bool {
+	return true
+}
+
+func (c *mockPDServiceClient) NeedRetry(*pdpb.Error, error) bool {
+	return false
+}
+
+func (c *mockPDServiceClient) IsConnectedToLeader() bool {
+	return true
+}
+
+type mockPDServiceDiscovery struct {
+	addrs []string
+	clis  []pd.ServiceClient
+}
+
+// NewMockPDServiceDiscovery returns a mock PD ServiceDiscovery
+func NewMockPDServiceDiscovery(addrs []string) pd.ServiceDiscovery {
+	addresses := make([]string, 0)
+	clis := make([]pd.ServiceClient, 0)
+	for _, addr := range addrs {
+		if check := govalidator.IsURL(addr); !check {
+			continue
+		}
+		addresses = append(addresses, addr)
+		clis = append(clis, newMockPDServiceClient(addr))
+	}
+	return &mockPDServiceDiscovery{addrs: addresses, clis: clis}
+}
+
+func (c *mockPDServiceDiscovery) Init() error {
+	return nil
+}
+
+func (c *mockPDServiceDiscovery) Close() {}
+
+func (c *mockPDServiceDiscovery) GetClusterID() uint64 { return 0 }
+
+func (c *mockPDServiceDiscovery) GetKeyspaceID() uint32 { return 0 }
+
+func (c *mockPDServiceDiscovery) GetKeyspaceGroupID() uint32 { return 0 }
+
+func (c *mockPDServiceDiscovery) GetServiceURLs() []string {
+	return c.addrs
+}
+
+func (c *mockPDServiceDiscovery) GetServingEndpointClientConn() *grpc.ClientConn { return nil }
+
+func (c *mockPDServiceDiscovery) GetClientConns() *sync.Map { return nil }
+
+func (c *mockPDServiceDiscovery) GetServingURL() string { return "" }
+
+func (c *mockPDServiceDiscovery) GetBackupURLs() []string { return nil }
+
+func (c *mockPDServiceDiscovery) GetServiceClient() pd.ServiceClient {
+	if len(c.clis) > 0 {
+		return c.clis[0]
+	}
+	return nil
+}
+
+func (c *mockPDServiceDiscovery) GetAllServiceClients() []pd.ServiceClient {
+	return c.clis
+}
+
+func (c *mockPDServiceDiscovery) GetOrCreateGRPCConn(addr string) (*grpc.ClientConn, error) {
+	return nil, nil
+}
+
+func (c *mockPDServiceDiscovery) ScheduleCheckMemberChanged() {}
+
+func (c *mockPDServiceDiscovery) CheckMemberChanged() error { return nil }
+
+func (c *mockPDServiceDiscovery) AddServingAddrSwitchedCallback(callbacks ...func()) {}
+
+func (c *mockPDServiceDiscovery) AddServiceAddrsSwitchedCallback(callbacks ...func()) {}
+
+func (c *mockPDServiceDiscovery) AddServingURLSwitchedCallback(callbacks ...func()) {}
+
+func (c *mockPDServiceDiscovery) AddServiceURLsSwitchedCallback(callbacks ...func()) {}
+
+>>>>>>> 61eab4304ee (go.mod: upgrade PD client to fix the TSO hang bug (#51892)):pkg/store/mockstore/unistore/pd.go
 type mockTSFuture struct {
 	pdc  *pdClient
 	ctx  context.Context
@@ -139,7 +260,7 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 	return m.pdc.GetTS(m.ctx)
 }
 
-func (c *pdClient) GetLeaderAddr() string { return "mockpd" }
+func (c *pdClient) GetLeaderURL() string { return "mockpd" }
 
 func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
 	c.gcSafePointMu.Lock()
