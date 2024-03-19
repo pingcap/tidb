@@ -166,7 +166,6 @@ func (t *topNSpillHelper) spill() (err error) {
 			if spillErr != nil {
 				errChan <- spillErr
 			}
-			t.workers[idx].chkHeap.clear()
 		}(i)
 	}
 
