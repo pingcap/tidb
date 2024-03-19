@@ -451,7 +451,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		return s.handlePlanErr(err)
 	}
 
-	if err = s.scheduleSubTask(nextStep, metas, eligibleNodes); err != nil {
+	if err = s.scheduleSubTask(&task, nextStep, metas, eligibleNodes); err != nil {
 		return err
 	}
 	task.Step = nextStep
@@ -462,10 +462,10 @@ func (s *BaseScheduler) switch2NextStep() error {
 }
 
 func (s *BaseScheduler) scheduleSubTask(
+	task *proto.Task,
 	subtaskStep proto.Step,
 	metas [][]byte,
 	eligibleNodes []string) error {
-	task := s.GetTask()
 	s.logger.Info("schedule subtasks",
 		zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, subtaskStep)),

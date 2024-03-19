@@ -73,19 +73,6 @@ func TestReplaceOnDup(t *testing.T) {
 	)
 }
 
-func TestIgnoreOnDup(t *testing.T) {
-	runDupHandlerTest(t,
-		func(w extsort.Writer) duplicate.Handler { return &ignoreOnDup{w: w} },
-		[]dupRecord{{
-			exampleHandleKey, [][]byte{[]byte("01"), []byte("02"), []byte("03")}},
-			{exampleIndexKey, [][]byte{[]byte("11"), []byte("12"), []byte("13")}}},
-		map[int64][][]byte{
-			conflictOnHandle: {[]byte("02"), []byte("03")},
-			exampleIndexID:   {[]byte("12"), []byte("13")},
-		},
-	)
-}
-
 type dupRecord struct {
 	key    []byte
 	rowIDs [][]byte

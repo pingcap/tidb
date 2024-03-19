@@ -168,14 +168,14 @@ func (h *Handle) GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid i
 func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl = statistics.PseudoTable(tblInfo, false, false)
 		tbl.PhysicalID = pid
 		return tbl
 	}
 	tbl, ok := h.Get(pid)
 	if !ok {
 		if returnPseudo {
-			tbl = statistics.PseudoTable(tblInfo, false)
+			tbl = statistics.PseudoTable(tblInfo, false, true)
 			tbl.PhysicalID = pid
 			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 				h.UpdateStatsCache([]*statistics.Table{tbl}, nil)

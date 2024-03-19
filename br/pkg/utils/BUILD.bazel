@@ -87,7 +87,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-    shard_count = 34,
+    shard_count = 35,
     deps = [
         "//br/pkg/errors",
         "//pkg/kv",

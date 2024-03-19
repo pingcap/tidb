@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	pd "github.com/tikv/pd/client"
@@ -40,55 +42,61 @@ const (
 	splitRegionMaxRetryTime = 4
 )
 
-// SplitClient is an external client used by RegionSplitter.
-type SplitClient interface {
-	// GetStore gets a store by a store id.
-	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
-	// GetRegion gets a region which includes a specified key.
-	GetRegion(ctx context.Context, key []byte) (*RegionInfo, error)
-	// GetRegionByID gets a region by a region id.
-	GetRegionByID(ctx context.Context, regionID uint64) (*RegionInfo, error)
-	// SplitRegion splits a region from a key, if key is not included in the region, it will return nil.
-	// note: the key should not be encoded
-	SplitRegion(ctx context.Context, regionInfo *RegionInfo, key []byte) (*RegionInfo, error)
-	// BatchSplitRegions splits a region from a batch of keys.
-	// note: the keys should not be encoded
-	BatchSplitRegions(ctx context.Context, regionInfo *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
-	// BatchSplitRegionsWithOrigin splits a region from a batch of keys
-	// and return the original region and split new regions
-	BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *RegionInfo,
-		keys [][]byte) (*RegionInfo, []*RegionInfo, error)
-	// ScatterRegion scatters a specified region.
-	ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error
-	// ScatterRegions scatters regions in a batch.
-	ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error
-	// GetOperator gets the status of operator of the specified region.
-	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
-	// ScanRegions gets a list of regions, starts from the region that contains key.
-	// Limit limits the maximum number of regions returned.
-	ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error)
-	// GetPlacementRule loads a placement rule from PD.
-	GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error)
-	// SetPlacementRule insert or update a placement rule to PD.
-	SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error
-	// DeletePlacementRule removes a placement rule from PD.
-	DeletePlacementRule(ctx context.Context, groupID, ruleID string) error
-	// SetStoresLabel add or update specified label of stores. If labelValue
-	// is empty, it clears the label.
-	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
-	// IsScatterRegionFinished check the latest successful operator and return the
-	// follow status:
-	//
-	//	return (finished, needRescatter, error)
-	//
-	// if the latest operator is not `scatter-operator`, or its status is SUCCESS,
-	// it's likely that the scatter region operator is finished.
-	//
-	// if the latest operator is `scatter-operator` and its status is TIMEOUT or
-	// CANCEL, the needRescatter is true and the function caller needs to scatter
-	// this region again.
-	IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error)
-}
+type (
+	// SplitClient is an external client used by RegionSplitter.
+	SplitClient interface {
+		// GetStore gets a store by a store id.
+		GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+		// GetRegion gets a region which includes a specified key.
+		GetRegion(ctx context.Context, key []byte) (*RegionInfo, error)
+		// GetRegionByID gets a region by a region id.
+		GetRegionByID(ctx context.Context, regionID uint64) (*RegionInfo, error)
+		// SplitRegion splits a region from a key, if key is not included in the region, it will return nil.
+		// note: the key should not be encoded
+		SplitRegion(ctx context.Context, regionInfo *RegionInfo, key []byte) (*RegionInfo, error)
+		// BatchSplitRegions splits a region from a batch of keys.
+		// note: the keys should not be encoded
+		BatchSplitRegions(ctx context.Context, regionInfo *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
+		// BatchSplitRegionsWithOrigin splits a region from a batch of keys
+		// and return the original region and split new regions
+		BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *RegionInfo,
+			keys [][]byte) (*RegionInfo, []*RegionInfo, error)
+		// WaitRegionsSplit waits for an already started split regions action to finish.
+		// It will check each region one by one internally, each region has a timeout of
+		// about 60s.
+		//
+		// To keep compatibility, it always checks all new regions even if error happens.
+		// In that case, it will return the last error.
+		WaitRegionsSplit(ctx context.Context, newRegions []*RegionInfo) error
+		// ScatterRegion scatters a specified region.
+		ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error
+		// ScatterRegions scatters regions in a batch.
+		ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error
+		// GetOperator gets the status of operator of the specified region.
+		GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
+		// ScanRegions gets a list of regions, starts from the region that contains key.
+		// Limit limits the maximum number of regions returned.
+		ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error)
+		// GetPlacementRule loads a placement rule from PD.
+		GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error)
+		// SetPlacementRule insert or update a placement rule to PD.
+		SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error
+		// DeletePlacementRule removes a placement rule from PD.
+		DeletePlacementRule(ctx context.Context, groupID, ruleID string) error
+		// SetStoresLabel add or update specified label of stores. If labelValue
+		// is empty, it clears the label.
+		SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
+		// WaitRegionsScattered waits for an already started scatter region action to
+		// finish. Internally it will backoff and retry at the maximum internal of 2
+		// seconds. If the scatter makes progress during the retry, it will not decrease
+		// the retry counter. If there's always no progress, it will retry for about 1h.
+		// Caller can set the context timeout to control the max waiting time.
+		//
+		// The first return value is always the number of regions that are not finished
+		// scattering no matter what the error is.
+		WaitRegionsScattered(ctx context.Context, regionInfos []*RegionInfo) (notFinished int, err error)
+	}
+)
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
 type pdClient struct {
@@ -486,6 +494,59 @@ func (c *pdClient) BatchSplitRegions(
 	return newRegions, err
 }
 
+// WaitRegionsSplit implements SplitClient.
+func (c *pdClient) WaitRegionsSplit(ctx context.Context, newRegions []*RegionInfo) error {
+	var lastErr error
+	for _, region := range newRegions {
+		regionID := region.Region.GetId()
+		state := utils.InitialRetryState(
+			SplitCheckMaxRetryTimes,
+			SplitCheckInterval,
+			SplitMaxCheckInterval,
+		)
+		err := utils.WithRetry(ctx, func() error { //nolint: errcheck
+			ok, err := c.hasHealthyRegion(ctx, regionID)
+			if err != nil {
+				log.Warn("wait for split failed", zap.Uint64("regionID", regionID), zap.Error(err))
+				return err
+			}
+			if ok {
+				return nil
+			}
+			return errors.Annotate(berrors.ErrPDSplitFailed, "wait region split failed")
+		}, &state)
+		// we only care about whether the last region splitted successfully.
+		// because we are waiting region report status *sequentially*.
+		if err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool, error) {
+	regionInfo, err := c.GetRegionByID(ctx, regionID)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	// the region hasn't get ready.
+	if regionInfo == nil {
+		return false, nil
+	}
+
+	// check whether the region is healthy and report.
+	// TODO: the log may be too verbose. we should use Prometheus metrics once it get ready for BR.
+	for _, peer := range regionInfo.PendingPeers {
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
+	}
+	for _, peer := range regionInfo.DownPeers {
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
+	}
+	// we ignore down peers for they are (normally) hard to be fixed in reasonable time.
+	// (or once there is a peer down, we may get stuck at waiting region get ready.)
+	return len(regionInfo.PendingPeers) == 0, nil
+}
+
 func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
 	stores, err := util.GetAllTiKVStores(ctx, c.client, util.SkipTiFlash)
 	if err != nil {
@@ -624,7 +685,7 @@ func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []
 	}
 }
 
-func (c *pdClient) IsScatterRegionFinished(
+func (c *pdClient) isScatterRegionFinished(
 	ctx context.Context,
 	regionID uint64,
 ) (scatterDone bool, needRescatter bool, scatterErr error) {
@@ -636,13 +697,105 @@ func (c *pdClient) IsScatterRegionFinished(
 		}
 		return false, false, errors.Trace(err)
 	}
-	return IsScatterRegionFinished(resp)
+	return isScatterRegionFinished(resp)
 }
 
-// IsScatterRegionFinished checks whether the scatter region operator is
-// finished. TODO(lance6716): hide this function after scatter logic is unified
-// for BR and lightning.
-func IsScatterRegionFinished(resp *pdpb.GetOperatorResponse) (
+func (c *pdClient) WaitRegionsScattered(ctx context.Context, regions []*RegionInfo) (int, error) {
+	var (
+		backoffer     = NewBackoffMayNotCountBackoffer()
+		retryCnt      = -1
+		needRescatter = make([]*RegionInfo, 0, len(regions))
+		needRecheck   = make([]*RegionInfo, 0, len(regions))
+	)
+
+	err := utils.WithRetryReturnLastErr(ctx, func() error {
+		retryCnt++
+		loggedInThisRound := false
+		needRecheck = needRecheck[:0]
+		needRescatter = needRescatter[:0]
+
+		for i, region := range regions {
+			regionID := region.Region.GetId()
+
+			if retryCnt > 10 && !loggedInThisRound {
+				loggedInThisRound = true
+				resp, err := c.GetOperator(ctx, regionID)
+				brlog.FromContext(ctx).Info(
+					"retried many times to wait for scattering regions, checking operator",
+					zap.Int("retryCnt", retryCnt),
+					zap.Uint64("firstRegionID", regionID),
+					zap.Stringer("response", resp),
+					zap.Error(err),
+				)
+			}
+
+			ok, rescatter, err := c.isScatterRegionFinished(ctx, regionID)
+			if err != nil {
+				if !common.IsRetryableError(err) {
+					brlog.FromContext(ctx).Warn(
+						"wait for scatter region encountered non-retryable error",
+						logutil.Region(region.Region),
+						zap.Error(err),
+					)
+					needRecheck = append(needRecheck, regions[i:]...)
+					return err
+				}
+				// if meet retryable error, recheck this region in next round
+				brlog.FromContext(ctx).Warn(
+					"wait for scatter region encountered error, will retry again",
+					logutil.Region(region.Region),
+					zap.Error(err),
+				)
+				needRecheck = append(needRecheck, region)
+				continue
+			}
+
+			if ok {
+				continue
+			}
+			// not finished scattered, check again in next round
+			needRecheck = append(needRecheck, region)
+
+			if rescatter {
+				needRescatter = append(needRescatter, region)
+			}
+		}
+
+		if len(needRecheck) == 0 {
+			return nil
+		}
+
+		backoffErr := ErrBackoff
+		// if made progress in this round, don't increase the retryCnt
+		if len(needRecheck) < len(regions) {
+			backoffErr = ErrBackoffAndDontCount
+		}
+
+		regions = slices.Clone(needRecheck)
+
+		if len(needRescatter) > 0 {
+			scatterErr := c.ScatterRegions(ctx, needRescatter)
+			if scatterErr != nil {
+				if !common.IsRetryableError(scatterErr) {
+					return scatterErr
+				}
+
+				return errors.Annotate(backoffErr, scatterErr.Error())
+			}
+		}
+		return errors.Annotatef(
+			backoffErr,
+			"scatter region not finished, retryCnt: %d, needRecheck: %d, needRescatter: %d, the first unfinished region: %s",
+			retryCnt, len(needRecheck), len(needRescatter), needRecheck[0].Region.String(),
+		)
+	}, backoffer)
+
+	return len(needRecheck), err
+}
+
+// isScatterRegionFinished checks whether the scatter region operator is
+// finished.
+func isScatterRegionFinished(resp *pdpb.GetOperatorResponse) (
 	scatterDone bool,
 	needRescatter bool,
 	scatterErr error,

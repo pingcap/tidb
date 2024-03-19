@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -194,6 +196,12 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 		}
 
+		if txn.IsPipelined() {
+			// For pipelined DML, disable the untouched optimization to avoid extra RPCs for MemBuffer.Get().
+			// TODO: optimize this.
+			opt.Untouched = false
+		}
+
 		if opt.Untouched {
 			txn, err1 := sctx.Txn(true)
 			if err1 != nil {
@@ -276,10 +284,10 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
-		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() && !keyIsTempIdxKey {
+		} else if (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && !keyIsTempIdxKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
-			value, err = txn.GetMemBuffer().Get(ctx, key)
+			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
 		} else {
 			value, err = txn.Get(ctx, key)
 		}
@@ -296,7 +304,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// The index key value is not found or deleted.
 		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
-			lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
+			lazyCheck := (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && err != nil
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
 				val = tempVal.Encode(value)
@@ -707,4 +715,31 @@ func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *
 		}
 	}
 	return colInfo
+}
+
+// GenIndexValueFromIndex generate index value from index.
+func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) ([]string, error) {
+	idxColLen := len(idxInfo.Columns)
+	colInfos := BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
+	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	valueStr := make([]string, 0, idxColLen)
+	for i, val := range values[:idxColLen] {
+		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		str, err := d.ToString()
+		if err != nil {
+			str = string(val)
+		}
+		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
+			str = util.FmtNonASCIIPrintableCharToHex(str)
+		}
+		valueStr = append(valueStr, str)
+	}
+
+	return valueStr, nil
 }

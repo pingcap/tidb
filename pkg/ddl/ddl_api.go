@@ -1341,7 +1341,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			col.DefaultIsExpr = true
 			return str, false, nil
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), nowFunc.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.Replace:
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
@@ -1371,7 +1372,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.Upper:
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
@@ -1397,7 +1399,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.StrToDate: // STR_TO_DATE()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
@@ -1413,7 +1416,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), fmt.Sprintf("%s with these args", expr.FnName.String()))
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -4603,6 +4607,38 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 	newPartInfo := newMeta.Partition
 
+	for _, index := range newMeta.Indices {
+		if index.Unique {
+			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
+			if err != nil {
+				return err
+			}
+			if !ck {
+				if ctx.GetSessionVars().EnableGlobalIndex {
+					return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
+				}
+				indexTp := "UNIQUE INDEX"
+				if index.Primary {
+					indexTp = "PRIMARY"
+				}
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+			}
+		}
+	}
+	if newMeta.PKIsHandle {
+		indexCols := []*model.IndexColumn{{
+			Name:   newMeta.GetPkName(),
+			Length: types.UnspecifiedLength,
+		}}
+		ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
+		if err != nil {
+			return err
+		}
+		if !ck {
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+		}
+	}
+
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
 	}
@@ -5221,7 +5257,7 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangePartTable.GenWithStackByArgs(nt.Name))
 	}
 
-	if nt.ForeignKeys != nil {
+	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
 

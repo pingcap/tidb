@@ -131,7 +131,7 @@ func (cfg *RestoreCommonConfig) adjust() {
 	if len(cfg.Granularity) == 0 {
 		cfg.Granularity = string(restore.FineGrained)
 	}
-	if cfg.ConcurrencyPerStore.Modified {
+	if !cfg.ConcurrencyPerStore.Modified {
 		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
 	}
 }
@@ -770,7 +770,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader, cfg.LoadStats); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -940,6 +940,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	// preallocate the table id, because any ddl job or database creation also allocates the global ID
+	err = client.AllocTableIDs(ctx, tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// execute DDL first
 	err = client.ExecDDLs(ctx, ddlJobs)
 	if err != nil {
@@ -1070,10 +1076,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 	}
 
-	// pipeline load stats
-	if cfg.LoadStats {
-		postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, postHandleCh, errCh, cfg.StatsConcurrency)
-	}
+	// pipeline update meta and load stats
+	postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, postHandleCh, errCh, cfg.StatsConcurrency, cfg.LoadStats)
 
 	// pipeline wait Tiflash synced
 	if cfg.WaitTiflashReady {

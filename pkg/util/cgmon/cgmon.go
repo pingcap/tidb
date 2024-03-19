@@ -49,9 +49,11 @@ func StartCgroupMonitor() {
 	if started {
 		return
 	}
+	if runtime.GOOS != "linux" {
+		return
+	}
 	started = true
 	// Get configured maxprocs.
-	cfgMaxProcs = runtime.GOMAXPROCS(0)
 	ctx, cancel = context.WithCancel(context.Background())
 	wg.Add(1)
 	go refreshCgroupLoop()
@@ -62,6 +64,9 @@ func StartCgroupMonitor() {
 // WARN: this function is not thread-safe.
 func StopCgroupMonitor() {
 	if !started {
+		return
+	}
+	if runtime.GOOS != "linux" {
 		return
 	}
 	started = false
@@ -80,28 +85,39 @@ func refreshCgroupLoop() {
 	}()
 	defer util.Recover("cgmon", "refreshCgroupLoop", nil, false)
 
-	refreshCgroupCPU()
-	refreshCgroupMemory()
+	err := refreshCgroupCPU()
+	if err != nil {
+		log.Warn("failed to get cgroup cpu quota", zap.Error(err))
+	}
+	err = refreshCgroupMemory()
+	if err != nil {
+		log.Warn("failed to get cgroup memory limit", zap.Error(err))
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			refreshCgroupCPU()
-			refreshCgroupMemory()
+			err = refreshCgroupCPU()
+			if err != nil {
+				log.Debug("failed to get cgroup cpu quota", zap.Error(err))
+			}
+			err = refreshCgroupMemory()
+			if err != nil {
+				log.Debug("failed to get cgroup memory limit", zap.Error(err))
+			}
 		}
 	}
 }
 
-func refreshCgroupCPU() {
+func refreshCgroupCPU() error {
 	// Get the number of CPUs.
 	quota := runtime.NumCPU()
 
 	// Get CPU quota from cgroup.
 	cpuPeriod, cpuQuota, err := cgroup.GetCPUPeriodAndQuota()
 	if err != nil {
-		log.Warn("failed to get cgroup cpu quota", zap.Error(err))
-		return
+		return err
 	}
 	if cpuPeriod > 0 && cpuQuota > 0 {
 		ratio := float64(cpuQuota) / float64(cpuPeriod)
@@ -110,8 +126,7 @@ func refreshCgroupCPU() {
 		}
 	}
 
-	if quota != lastMaxProcs && quota < cfgMaxProcs {
-		runtime.GOMAXPROCS(quota)
+	if quota != lastMaxProcs {
 		log.Info("set the maxprocs", zap.Int("quota", quota))
 		metrics.MaxProcs.Set(float64(quota))
 		lastMaxProcs = quota
@@ -120,18 +135,17 @@ func refreshCgroupCPU() {
 		metrics.MaxProcs.Set(float64(cfgMaxProcs))
 		lastMaxProcs = cfgMaxProcs
 	}
+	return nil
 }
 
-func refreshCgroupMemory() {
+func refreshCgroupMemory() error {
 	memLimit, err := cgroup.GetMemoryLimit()
 	if err != nil {
-		log.Warn("failed to get cgroup memory limit", zap.Error(err))
-		return
+		return err
 	}
 	vmem, err := mem.VirtualMemory()
 	if err != nil {
-		log.Warn("failed to get system memory size", zap.Error(err))
-		return
+		return err
 	}
 	if memLimit > vmem.Total {
 		memLimit = vmem.Total
@@ -141,4 +155,5 @@ func refreshCgroupMemory() {
 		metrics.MemoryLimit.Set(float64(memLimit))
 		lastMemoryLimit = memLimit
 	}
+	return nil
 }
