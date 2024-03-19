@@ -499,12 +499,6 @@ type MemoryIngestData struct {
 var _ common.IngestData = (*MemoryIngestData)(nil)
 
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
-	logutil.BgLogger().Info("firstAndLastKeyIndex",
-		zap.String("lower", hex.EncodeToString(lowerBound)),
-		zap.String("upper", hex.EncodeToString(upperBound)),
-		zap.String("key[0]", hex.EncodeToString(m.keys[0])),
-		zap.String("key[len(key)-1]", hex.EncodeToString(m.keys[len(m.keys)-1])),
-	)
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
 		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
