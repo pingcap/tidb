@@ -270,13 +270,15 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
 	readStart := time.Now()
+	readDtStartKey := e.keyAdapter.Encode(nil, startKey, common.MinRowID)
+	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common.ZeroRowID)
 	err := readAllData(
 		ctx,
 		e.storage,
 		e.dataFiles,
 		e.statsFiles,
-		startKey,
-		endKey,
+		readDtStartKey,
+		readDtEndKey,
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
@@ -407,7 +409,24 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
-	return e.startKey, e.endKey, nil
+	return decodeRangeWithAdaptor(e.keyAdapter, e.startKey, e.endKey)
+}
+
+func decodeRangeWithAdaptor(adapter common.KeyAdapter, start []byte, end []byte) ([]byte, []byte, error) {
+	firstKey, err := adapter.Decode(nil, start)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lastKey := end[:len(end)-1]
+	lastKey, err = adapter.Decode(nil, lastKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	endKey := make([]byte, 0, len(lastKey)+1)
+	endKey = append(endKey, lastKey...)
+	endKey = append(endKey, 0)
+	return firstKey, endKey, nil
 }
 
 // SplitRanges split the ranges by split keys provided by external engine.
@@ -496,9 +515,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 	)
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
-		if !m.mergeSorted {
-			lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
-		}
+		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
 		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
 			return bytes.Compare(lowerBound, m.keys[i]) <= 0
 		})
@@ -509,9 +526,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 
 	lastKeyIdx := len(m.keys) - 1
 	if len(upperBound) > 0 {
-		if !m.mergeSorted {
-			upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
-		}
+		upperBound = m.keyAdapter.Encode(nil, upperBound, common.ZeroRowID)
 		i := sort.Search(len(m.keys), func(i int) bool {
 			reverseIdx := len(m.keys) - 1 - i
 			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
