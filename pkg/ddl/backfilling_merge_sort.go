@@ -96,11 +96,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		sm.DataFiles,
 		store,
 		int64(partSize),
-		64*1024,
 		prefix,
 		external.DefaultBlockSize,
 		external.DefaultMemSizeLimit,
-		8*1024,
 		onClose,
 		int(variable.GetDDLReorgWorkerCounter()), true)
 }

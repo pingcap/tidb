@@ -19,11 +19,9 @@ func MergeOverlappingFiles(
 	paths []string,
 	store storage.ExternalStorage,
 	partSize int64,
-	readBufferSize int,
 	newFilePrefix string,
 	blockSize int,
 	memSizeLimit uint64,
-	writeBatchCount uint64,
 	onClose OnCloseFunc,
 	concurrency int,
 	checkHotspot bool,
@@ -45,12 +43,10 @@ func MergeOverlappingFiles(
 				files,
 				store,
 				partSize,
-				readBufferSize,
 				newFilePrefix,
 				uuid.New().String(),
 				memSizeLimit,
 				blockSize,
-				writeBatchCount,
 				onClose,
 				checkHotspot,
 			)
@@ -109,12 +105,10 @@ func mergeOverlappingFilesInternal(
 	paths []string,
 	store storage.ExternalStorage,
 	partSize int64,
-	readBufferSize int,
 	newFilePrefix string,
 	writerID string,
 	memSizeLimit uint64,
 	blockSize int,
-	writeBatchCount uint64,
 	onClose OnCloseFunc,
 	checkHotspot bool,
 ) (err error) {
@@ -127,7 +121,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
 	if err != nil {
 		return err
 	}
@@ -141,7 +135,6 @@ func mergeOverlappingFilesInternal(
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(memSizeLimit).
 		SetBlockSize(blockSize).
-		SetWriterBatchCount(writeBatchCount).
 		SetOnCloseFunc(onClose).
 		BuildOneFile(store, newFilePrefix, writerID)
 	err = writer.Init(ctx, partSize)

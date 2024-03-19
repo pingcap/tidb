@@ -106,7 +106,6 @@ type WriterBuilder struct {
 	groupOffset     int
 	memSizeLimit    uint64
 	blockSize       int
-	writeBatchCount uint64
 	propSizeDist    uint64
 	propKeysDist    uint64
 	onClose         OnCloseFunc
@@ -116,12 +115,11 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:    DefaultMemSizeLimit,
-		blockSize:       DefaultBlockSize,
-		writeBatchCount: 8 * 1024,
-		propSizeDist:    defaultPropSizeDist,
-		propKeysDist:    defaultPropKeysDist,
-		onClose:         dummyOnCloseFunc,
+		memSizeLimit: DefaultMemSizeLimit,
+		blockSize:    DefaultBlockSize,
+		propSizeDist: defaultPropSizeDist,
+		propKeysDist: defaultPropKeysDist,
+		onClose:      dummyOnCloseFunc,
 	}
 }
 
@@ -131,12 +129,6 @@ func NewWriterBuilder() *WriterBuilder {
 // When the writer is OneFileWriter SetMemorySizeLimit sets the preAllocated memory buffer size.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
-	return b
-}
-
-// SetWriterBatchCount sets the batch count of the writer.
-func (b *WriterBuilder) SetWriterBatchCount(count uint64) *WriterBuilder {
-	b.writeBatchCount = count
 	return b
 }
 
