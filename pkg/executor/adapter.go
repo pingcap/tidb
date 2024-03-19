@@ -504,20 +504,22 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
-	e, err := a.buildExecutor()
-	if err != nil {
-		return nil, err
-	}
-	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
-	ctx = a.observeStmtBeginForTopSQL(ctx)
+	// must set plan according to the `Execute` plan before getting planDigest
+	a.inheritContextFromExecuteStmt()
 	if variable.EnableResourceControl.Load() && domain.GetDomain(sctx).RunawayManager() != nil {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
-		_, digest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
+		_, sqlDigest := stmtCtx.SQLDigest()
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String())
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
+	}
+	ctx = a.observeStmtBeginForTopSQL(ctx)
+
+	e, err := a.buildExecutor()
+	if err != nil {
+		return nil, err
 	}
 
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
@@ -570,6 +572,16 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) inheritContextFromExecuteStmt() {
+	if executePlan, ok := a.Plan.(*plannercore.Execute); ok {
+		a.Ctx.SetValue(sessionctx.QueryString, executePlan.Stmt.Text())
+		a.OutputNames = executePlan.OutputNames()
+		a.isPreparedStmt = true
+		a.Plan = executePlan.Plan
+		a.Ctx.GetSessionVars().StmtCtx.SetPlan(executePlan.Plan)
+	}
 }
 
 func (a *ExecStmt) getSQLForProcessInfo() string {
@@ -1111,6 +1123,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	a.resetPhaseDurations()
 
+	a.inheritContextFromExecuteStmt()
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -1167,11 +1180,6 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.Ctx.SetValue(sessionctx.QueryString, executorExec.stmt.Text())
-		a.OutputNames = executorExec.outputNames
-		a.isPreparedStmt = true
-		a.Plan = executorExec.plan
-		a.Ctx.GetSessionVars().StmtCtx.SetPlan(executorExec.plan)
 		if executorExec.lowerPriority {
 			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 		}
@@ -1990,8 +1998,6 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
-			// This is a special logic prepared for TiKV's SQLExecCount.
-			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
 		}
 		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
