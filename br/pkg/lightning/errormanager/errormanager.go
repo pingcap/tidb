@@ -53,7 +53,7 @@ const (
 	syntaxErrorTableName = "syntax_error_v1"
 	typeErrorTableName   = "type_error_v1"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName = "conflict_error_v2"
+	ConflictErrorTableName = "conflict_error_v3"
 	// DupRecordTable is the table name to record duplicate data that displayed to user.
 	DupRecordTable = "conflict_records"
 

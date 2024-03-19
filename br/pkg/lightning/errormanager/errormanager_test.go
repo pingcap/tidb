@@ -65,7 +65,7 @@ func TestInit(t *testing.T) {
 	em.conflictV1Enabled = true
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`;").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v2.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestInit(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(5, 1))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v1.*").
 		WillReturnResult(sqlmock.NewResult(6, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v2.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_records.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
@@ -284,16 +284,16 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v2.*").
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}))
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
 			AddRow(data1RowKey, data1RowValue).
 			AddRow(data1RowKey, data2RowValue))
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
 
@@ -475,30 +475,30 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v2.*").
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(data1IndexKey, "uni_b", data1IndexValue, data1RowKey).
 			AddRow(data1IndexKey, "uni_b", data2IndexValue, data2RowKey).
 			AddRow(data3IndexKey, "uni_b", data3IndexValue, data3RowKey).
 			AddRow(data3IndexKey, "uni_b", data4IndexValue, data4RowKey))
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v3.*").
 		WithArgs(0, "test", nil, nil, data2RowKey, data2RowValue, 1).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v3.*").
 		WithArgs(0, "test", nil, nil, data4RowKey, data4RowValue, 1).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
 			AddRow(data1RowKey, data1RowValue).
 			AddRow(data1RowKey, data3RowValue))
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
 
@@ -651,7 +651,7 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m|\n" +
 		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m|\n" +
 		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m|\n" +
-		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v2` \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v3` \x1b[0m|\n" +
 		"+---+---------------------+-------------+----------------------------------+\n"
 	require.Equal(t, expected, output)
 
