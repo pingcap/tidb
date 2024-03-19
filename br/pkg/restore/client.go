@@ -667,6 +667,12 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
 	log.Info("download worker pool", zap.Uint("size", c))
+	if rc.granularity == string(CoarseGrained) {
+		count := uint(rc.storeCount) * rc.concurrencyPerStore * 15
+		log.Info("download coarse worker pool", zap.Uint("size", count))
+		rc.workerPool = utils.NewWorkerPool(count, "file")
+		return
+	}
 	rc.workerPool = utils.NewWorkerPool(c, "file")
 }
 
@@ -1544,8 +1550,8 @@ LOOPFORTABLE:
 					// wait for download worker notified
 					rc.fileImporter.cond.Wait()
 				}
-				eg.Go(restoreFn)
 				rc.fileImporter.cond.L.Unlock()
+				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
 			} else {
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
