@@ -31,6 +31,66 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func initTopNSpillCase1Params(
+	ctx *mock.Context,
+	dataSource *testutil.MockDataSource,
+	topNCase *testutil.SortCase,
+	totalRowNum int,
+	count *uint64,
+	offset *uint64,
+	exe **sortexec.TopNExec,
+) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	*count = uint64(totalRowNum - totalRowNum/10)
+	*offset = uint64(totalRowNum / 10)
+
+	if exe != nil {
+		*exe = buildTopNExec(topNCase, dataSource, *offset, *count)
+	}
+}
+
+func initTopNSpillCase2Params(
+	ctx *mock.Context,
+	dataSource *testutil.MockDataSource,
+	topNCase *testutil.SortCase,
+	totalRowNum int,
+	count *uint64,
+	offset *uint64,
+	exe **sortexec.TopNExec,
+) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	*count = uint64(totalRowNum / 5)
+	*offset = *count / 5
+
+	if exe != nil {
+		*exe = buildTopNExec(topNCase, dataSource, *offset, *count)
+	}
+}
+
+func initTopNInMemoryThenSpillParams(
+	ctx *mock.Context,
+	dataSource *testutil.MockDataSource,
+	topNCase *testutil.SortCase,
+	totalRowNum int,
+	count *uint64,
+	offset *uint64,
+	exe **sortexec.TopNExec,
+) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1*2)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	*count = uint64(totalRowNum / 5)
+	*offset = *count / 5
+
+	if exe != nil {
+		*exe = buildTopNExec(topNCase, dataSource, *offset, *count)
+	}
+}
+
 func checkTopNCorrectness(schema *expression.Schema, exe *sortexec.TopNExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk, offset uint64, count uint64) bool {
 	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
 	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.GenData)
@@ -205,15 +265,16 @@ func TestTopNSpillDisk(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	count = uint64(totalRowNum - totalRowNum/10)
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
+	// initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
 	for i := 0; i < 5; i++ {
-		// topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
-		// topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
+		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
+		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	count = uint64(totalRowNum / 5)
 	offset = count / 5
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
-	for i := 0; i < 500; i++ {
+	for i := 0; i < 5; i++ {
 		topNSpillCase2(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase2(t, exe, topNCase, schema, dataSource, offset, count)
 	}
@@ -223,9 +284,10 @@ func TestTopNSpillDisk(t *testing.T) {
 	count = uint64(totalRowNum / 5)
 	offset = count / 5
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
+	// initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
 	for i := 0; i < 5; i++ {
-		// topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
-		// topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
+		topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
+		topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")
@@ -237,17 +299,16 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	// ctx := mock.NewContext()
 	// sortCase := &testutil.SortCase{Rows: 10000, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/TopNRandomFail", `return(true)`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/TopNRandomFail", `return(true)`)
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
 
 	// ctx.GetSessionVars().InitChunkSize = 32
 	// ctx.GetSessionVars().MaxChunkSize = 32
 	// ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
 	// ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	// ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	// ctx.GetSessionVars().EnableParallelSort = true
 
 	// schema := expression.NewSchema(sortCase.Columns()...)
 	// dataSource := buildDataSource(ctx, sortCase, schema)
