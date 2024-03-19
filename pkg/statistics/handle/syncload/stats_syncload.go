@@ -157,10 +157,13 @@ func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.StatsLoadIte
 			continue
 		}
 		if item.IsIndex {
-			remainedItems = append(remainedItems, item)
+			_, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
+			if loadNeeded {
+				remainedItems = append(remainedItems, item)
+			}
 			continue
 		}
-		_, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID)
+		_, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
 		if loadNeeded {
 			remainedItems = append(remainedItems, item)
 		}
@@ -253,7 +256,7 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
 		}
 	} else {
-		col, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID)
+		col, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
 		if !loadNeeded {
 			s.writeToResultChan(task.ResultCh, result)
 			return nil, nil
