@@ -1033,13 +1033,13 @@ func (local *Backend) generateJobForRange(
 
 	jobs := make([]*regionJob, 0, len(regions))
 	for _, region := range regions {
-		log.FromContext(ctx).Info("get region",
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)),
+		log.FromContext(ctx).Debug("get region",
+			zap.Binary("startKey", startKey),
+			zap.Binary("endKey", endKey),
 			zap.Uint64("id", region.Region.GetId()),
 			zap.Stringer("epoch", region.Region.GetRegionEpoch()),
-			zap.String("start", hex.EncodeToString(region.Region.GetStartKey())),
-			zap.String("end", hex.EncodeToString(region.Region.GetEndKey())),
+			zap.Binary("start", region.Region.GetStartKey()),
+			zap.Binary("end", region.Region.GetEndKey()),
 			zap.Reflect("peers", region.Region.GetPeers()))
 
 		jobs = append(jobs, &regionJob{
@@ -1051,11 +1051,6 @@ func (local *Backend) generateJobForRange(
 			regionSplitKeys: regionSplitKeys,
 			metrics:         local.metrics,
 		})
-
-		log.FromContext(ctx).Info("job range",
-			zap.String("jobRange start", hex.EncodeToString(jobs[0].keyRange.Start)),
-			zap.String("jobRange end", hex.EncodeToString(jobs[0].keyRange.End)),
-		)
 	}
 	return jobs, nil
 }
