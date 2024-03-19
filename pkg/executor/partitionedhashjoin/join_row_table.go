@@ -105,7 +105,7 @@ type JoinTableMeta struct {
 	// for example, the build schema maybe [col1, col2, col3], and the column order in row maybe [col2, col1, col3], then this array
 	// is [1, 0, 2]
 	rowColumnsOrder []int
-	// the column size of each column, -1 mean variable column
+	// the column size of each column, -1 mean variable column, the order is the same as rowColumnsOrder
 	columnsSize []int
 	// when serialize integer column, should ignore unsigned flag or not, if the join key is <signed, signed> or <unsigned, unsigned>,
 	// the unsigned flag can be ignored, if the join key is <unsigned, signed> or <signed, unsigned> the unsigned flag can not be ignored
@@ -218,10 +218,10 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	}
 	// nullmap is 8 byte alignment
 	if needUsedFlag {
-		meta.nullMapLength = (savedColumnCount + 1 + 63) / 64
+		meta.nullMapLength = ((savedColumnCount + 1 + 63) / 64) * 8
 		meta.setUsedFlagMask = uint32(1) << 31
 	} else {
-		meta.nullMapLength = (savedColumnCount + 63) / 64
+		meta.nullMapLength = ((savedColumnCount + 63) / 64) * 8
 	}
 
 	meta.isJoinKeysFixedLength = true
@@ -262,8 +262,8 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		meta.isJoinKeysInlined = false
 	}
 	// construct the column order
-	meta.rowColumnsOrder = make([]int, savedColumnCount)
-	meta.columnsSize = make([]int, savedColumnCount)
+	meta.rowColumnsOrder = make([]int, 0, savedColumnCount)
+	meta.columnsSize = make([]int, 0, savedColumnCount)
 	usedColumnMap := make(map[int]struct{}, savedColumnCount)
 
 	updateColumnOrder := func(index int) {
@@ -294,13 +294,13 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 }
 
 type rowTableBuilder struct {
-	buildKeyIndex           []int
-	buildSchema             *expression.Schema
-	otherConditionColIndex  []int
-	columnsNeedConvertToRow []int
-	needUsedFlag            bool
-	hasNullableKey          bool
-	hasFilter               bool
+	buildKeyIndex   []int
+	buildSchema     *expression.Schema
+	rowColumnsOrder []int
+	columnsSize     []int
+	needUsedFlag    bool
+	hasNullableKey  bool
+	hasFilter       bool
 
 	serializedKeyVectorBuffer [][]byte
 	partIdxVector             []int
@@ -400,35 +400,33 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 		if len := rowTableMeta.nullMapLength; len > 0 {
 			seg.rawData = append(seg.rawData, make([]byte, len)...)
 		}
+		var buf [binary.MaxVarintLen64]byte
 		// if join_key is not inlined: `key_length + serialized_key`
-		// if join_key is inlined: `join_key` if the key is fixed length, `key_length + join_key` if the key is variable length
+		// if join_key is inlined: `key_length` if the key is variable length
 		if rowTableMeta.isJoinKeysInlined {
-			for _, colIdx := range builder.buildKeyIndex {
-				rawData := row.GetRaw(colIdx)
-				var keyLen = 0
-				switch builder.buildSchema.Columns[colIdx].ToInfo().FieldType.GetType() {
-				case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-					keyLen = len(rawData)
-				}
-				if keyLen != 0 {
-					var buf [binary.MaxVarintLen64]byte
-					n := binary.PutUvarint(buf[:], uint64(keyLen))
-					seg.rawData = append(seg.rawData, buf[:n]...)
-				}
-				seg.rawData = append(seg.rawData, rawData...)
+			if !rowTableMeta.isJoinKeysFixedLength {
+				// todo maybe need to use fixed length to write the key length
+				n := binary.PutUvarint(buf[:], uint64(len(builder.serializedKeyVectorBuffer[rowIdx])))
+				seg.rawData = append(seg.rawData, buf[:n]...)
 			}
 		} else {
-			var buf [binary.MaxVarintLen64]byte
+			// todo if key length is fixed, don't need to write the key length
 			n := binary.PutUvarint(buf[:], uint64(len(builder.serializedKeyVectorBuffer[rowIdx])))
 			seg.rawData = append(seg.rawData, buf[:n]...)
 			seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[rowIdx]...)
 		}
-		// append the column data used in other condition, and the column data that will be used as join output
-		for _, colIdx := range builder.otherConditionColIndex {
-			seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
-		}
-		for _, colIdx := range builder.columnsNeedConvertToRow {
-			seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
+
+		for index, colIdx := range builder.rowColumnsOrder {
+			if builder.columnsSize[index] > 0 {
+				// fixed size
+				seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
+			} else {
+				// variable size, need write size first
+				raw := row.GetRaw(colIdx)
+				n := binary.PutUvarint(buf[:], uint64(len(raw)))
+				seg.rawData = append(seg.rawData, buf[:n]...)
+				seg.rawData = append(seg.rawData, raw...)
+			}
 		}
 		builder.crrntSizeOfRowTable[partIdx]++
 	}
