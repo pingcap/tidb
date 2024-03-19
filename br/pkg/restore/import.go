@@ -311,6 +311,68 @@ func (ic *importClient) SupportMultiIngest(ctx context.Context, stores []uint64)
 	return true, nil
 }
 
+type storeWorkerMap struct {
+	sync.RWMutex
+	inflightCount map[uint64]*atomic.Int64
+}
+
+func (s *storeWorkerMap) acquireWorker(storeID uint64) *atomic.Int64 {
+	s.RLock()
+	count, ok := s.inflightCount[storeID]
+	// handle the case that the store is new-scaled in the cluster
+	if !ok {
+		s.RUnlock()
+		s.Lock()
+		// Notice: worker channel can't replaced, because it is still used after unlock.
+		if count, ok = s.inflightCount[storeID]; !ok {
+			count = new(atomic.Int64)
+			s.inflightCount[storeID] = count
+		}
+		s.Unlock()
+	} else {
+		s.RUnlock()
+	}
+	return count
+}
+
+func (s *storeWorkerMap) Debug() string {
+	s.RLock()
+	defer s.RUnlock()
+	var ss strings.Builder
+	for id, count := range s.inflightCount {
+		ss.WriteString(fmt.Sprintf("[id: %d, count: %d] ", id, count.Load()))
+	}
+	return ss.String()
+}
+
+func (s *storeWorkerMap) ShouldBlock() bool {
+	s.RLock()
+	defer s.RUnlock()
+	if len(s.inflightCount) == 0 {
+		// never block if there is no store worker pool
+		return false
+	}
+	for _, count := range s.inflightCount {
+		if count.Load() == 0 {
+			// At least one store worker pool has available worker
+			return false
+		}
+	}
+	return true
+}
+
+func newStoreWorkerMap(stores []*metapb.Store) *storeWorkerMap {
+	storeWorkersMap := &storeWorkerMap{
+		sync.RWMutex{},
+		make(map[uint64]*atomic.Int64),
+	}
+	for _, store := range stores {
+		count := new(atomic.Int64)
+		storeWorkersMap.inflightCount[store.Id] = count
+	}
+	return storeWorkersMap
+}
+
 type storeTokenChannelMap struct {
 	sync.RWMutex
 	tokens map[uint64]chan struct{}
@@ -333,22 +395,6 @@ func (s *storeTokenChannelMap) acquireTokenCh(storeID uint64, bufferSize uint) c
 		s.RUnlock()
 	}
 	return tokenCh
-}
-
-func (s *storeTokenChannelMap) ShouldBlock() bool {
-	s.RLock()
-	defer s.RUnlock()
-	if len(s.tokens) == 0 {
-		// never block if there is no store worker pool
-		return false
-	}
-	for _, pool := range s.tokens {
-		if len(pool) > 0 {
-			// At least one store worker pool has available worker
-			return false
-		}
-	}
-	return true
 }
 
 func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeTokenChannelMap {
@@ -375,8 +421,14 @@ type FileImporter struct {
 	downloadTokensMap *storeTokenChannelMap
 	ingestTokensMap   *storeTokenChannelMap
 
+	downloadWorkersMap *storeWorkerMap
+	ingestWorkersMap   *storeWorkerMap
+
 	concurrencyPerStore uint
 	useTokenBucket      bool
+
+	countIngestBlocken   *int64
+	countDownloadBlocken *int64
 
 	kvMode             KvMode
 	rawStartKey        []byte
@@ -410,6 +462,8 @@ func NewFileImporter(
 
 	downloadTokensMap := newStoreTokenChannelMap(stores, 0)
 	ingestTokensMap := newStoreTokenChannelMap(stores, 0)
+	downloadWorkersMap := newStoreWorkerMap(stores)
+	ingestWorkersMap := newStoreWorkerMap(stores)
 
 	if useTokenBucket {
 		downloadTokensMap = newStoreTokenChannelMap(stores, concurrencyPerStore)
@@ -421,24 +475,44 @@ func NewFileImporter(
 		importClient:        importClient,
 		downloadTokensMap:   downloadTokensMap,
 		ingestTokensMap:     ingestTokensMap,
+		downloadWorkersMap:  downloadWorkersMap,
+		ingestWorkersMap:    ingestWorkersMap,
 		kvMode:              kvMode,
 		rewriteMode:         rewriteMode,
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 		concurrencyPerStore: concurrencyPerStore,
 		useTokenBucket:      useTokenBucket,
 		cond:                sync.NewCond(new(sync.Mutex)),
+
+		countIngestBlocken:   new(int64),
+		countDownloadBlocken: new(int64),
+	}
+}
+
+func (importer *FileImporter) StatsLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Second * 5)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			log.Info("stats download/ingest goroutine blocken", zap.Int64("download count", atomic.LoadInt64(importer.countDownloadBlocken)), zap.Int64("ingest count", atomic.LoadInt64(importer.countIngestBlocken)), zap.String("debug", importer.downloadWorkersMap.Debug()))
+		}
 	}
 }
 
 func (importer *FileImporter) ShouldBlock() bool {
 	if importer != nil {
-		return importer.downloadTokensMap.ShouldBlock() || importer.ingestTokensMap.ShouldBlock()
+		return importer.downloadWorkersMap.ShouldBlock() || importer.ingestWorkersMap.ShouldBlock()
 	}
 	return false
 }
 
 func (importer *FileImporter) releaseToken(tokenCh chan struct{}) {
 	tokenCh <- struct{}{}
+}
+
+func (importer *FileImporter) signal() {
 	// finish the task, notify the main goroutine to continue
 	importer.cond.L.Lock()
 	importer.cond.Signal()
@@ -661,14 +735,18 @@ func (importer *FileImporter) ImportKVFiles(
 // All rules must contain encoded keys.
 func (importer *FileImporter) ImportSSTFiles(
 	ctx context.Context,
+	workers chan struct{},
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) error {
+	atomic.AddInt64(importer.countDownloadBlocken, 1)
+	defer func() {
+		atomic.AddInt64(importer.countDownloadBlocken, -1)
+	}()
 	start := time.Now()
 	log.Debug("import file", logutil.Files(files))
-
 	// Rewrite the start key and end key of file to scan regions
 	startKey, endKey, err := importer.getKeyRangeForFiles(files, rewriteRules)
 	if err != nil {
@@ -685,7 +763,21 @@ func (importer *FileImporter) ImportSSTFiles(
 		regionInfos, errScanRegion := split.PaginateScanRegion(
 			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
 		if errScanRegion != nil {
+			if workers != nil {
+				_ = <-workers
+			}
 			return errors.Trace(errScanRegion)
+		}
+
+		if len(regionInfos) > 0 {
+			info := regionInfos[0]
+			for _, peer := range info.Region.Peers {
+				count := importer.downloadWorkersMap.acquireWorker(peer.GetStoreId())
+				count.Add(1)
+			}
+		}
+		if workers != nil {
+			_ = <-workers
 		}
 
 		log.Debug("scan regions", logutil.Files(files), zap.Int("count", len(regionInfos)))
@@ -1113,11 +1205,16 @@ func (importer *FileImporter) downloadSSTV2(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
+			count := importer.downloadWorkersMap.acquireWorker(peer.GetStoreId())
 			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
 			select {
 			case <-ectx.Done():
+				count.Add(-1)
+				importer.signal()
 				return ectx.Err()
 			case <-tokenCh:
+				count.Add(-1)
+				importer.signal()
 			}
 			defer func() {
 				importer.releaseToken(tokenCh)
@@ -1259,11 +1356,21 @@ func (importer *FileImporter) ingest(
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
+	atomic.AddInt64(importer.countIngestBlocken, 1)
+	defer func() {
+		atomic.AddInt64(importer.countIngestBlocken, -1)
+	}()
+	count := importer.ingestWorkersMap.acquireWorker(info.Leader.GetStoreId())
+	count.Add(1)
 	tokenCh := importer.ingestTokensMap.acquireTokenCh(info.Leader.GetStoreId(), importer.concurrencyPerStore)
 	select {
 	case <-ctx.Done():
+		count.Add(-1)
+		importer.signal()
 		return ctx.Err()
 	case <-tokenCh:
+		count.Add(-1)
+		importer.signal()
 	}
 	defer func() {
 		importer.releaseToken(tokenCh)
