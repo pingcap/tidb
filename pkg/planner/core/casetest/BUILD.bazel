@@ -12,7 +12,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 21,
+=======
+    shard_count = 20,
+>>>>>>> f4e366ea0c3 (planner: apply rule_partition_pruning when optimizing CTE under static mode (#51903))
     deps = [
         "//pkg/domain",
         "//pkg/parser",

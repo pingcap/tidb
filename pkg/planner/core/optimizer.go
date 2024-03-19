@@ -349,6 +349,29 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 	return logic, finalPlan, cost, nil
 }
 
+<<<<<<< HEAD
+=======
+func adjustOptimizationFlags(flag uint64, logic LogicalPlan) uint64 {
+	// If there is something after flagPrunColumns, do flagPrunColumnsAgain.
+	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
+		flag |= flagPrunColumnsAgain
+	}
+	if checkStableResultMode(logic.SCtx()) {
+		flag |= flagStabilizeResults
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^flagJoinReOrder
+	}
+	flag |= flagCollectPredicateColumnsPoint
+	flag |= flagSyncWaitStatsLoadPoint
+	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		flag |= flagPartitionProcessor // apply partition pruning under static mode
+	}
+	return flag
+}
+
+>>>>>>> f4e366ea0c3 (planner: apply rule_partition_pruning when optimizing CTE under static mode (#51903))
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
