@@ -87,7 +87,6 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	// tk.MustExec(`set @@global.tidb_cloud_storage_uri = ""`)
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")

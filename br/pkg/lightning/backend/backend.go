@@ -118,7 +118,6 @@ type ExternalEngineConfig struct {
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
 	CheckHotspot bool
-	MergeSorted  bool
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

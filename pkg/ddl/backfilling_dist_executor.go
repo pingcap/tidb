@@ -63,12 +63,6 @@ type BackfillSubTaskMeta struct {
 	// Only used for adding one single index.
 	// Keep this for compatibility with v7.5.
 	external.SortedKVMeta `json:",inline"`
-
-	AddOn *BackfillSubTaskMetaAddOn `json:"addon,omitempty"`
-}
-
-type BackfillSubTaskMetaAddOn struct {
-	MergeSorted bool `json:"merge_sort"`
 }
 
 func decodeBackfillSubTaskMeta(raw []byte) (*BackfillSubTaskMeta, error) {
