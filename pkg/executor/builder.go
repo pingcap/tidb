@@ -1569,7 +1569,6 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		}
 	}
 
-	leftIsBuildSide := true
 	var probeKeys, buildKeys []*expression.Column
 	var buildSideExec exec.Executor
 	if v.UseOuterToBuild {
@@ -1583,7 +1582,6 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
 			e.PartitionedHashJoinCtx.BuildFilter = v.RightConditions
 			e.BuildSideTupleFetcher.BuildSideExec = rightExec
-			leftIsBuildSide = false
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
@@ -1596,14 +1594,13 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
 			e.PartitionedHashJoinCtx.ProbeFilter = v.LeftConditions
 			e.BuildSideTupleFetcher.BuildSideExec = rightExec
-			leftIsBuildSide = false
 		}
 	}
 	var probeColumnTypes []*types.FieldType
-	if leftIsBuildSide {
-		probeColumnTypes = rhsTypes
-	} else {
+	if e.RightAsBuildSide {
 		probeColumnTypes = lhsTypes
+	} else {
+		probeColumnTypes = rhsTypes
 	}
 	probeKeyColIdx := make([]int, len(probeKeys))
 	buildKeyColIdx := make([]int, len(buildKeys))
@@ -1636,7 +1633,7 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		e.ProbeWorkers[i] = &partitionedhashjoin.ProbeWorker{
 			HashJoinCtx: e.PartitionedHashJoinCtx,
 			WorkerID:    i,
-			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, i, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes),
+			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, i, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes, e.RightAsBuildSide),
 		}
 
 		e.BuildWorkers[i] = partitionedhashjoin.NewJoinBuildWorker(e.PartitionedHashJoinCtx, i, buildKeyColIdx, exec.RetTypes(buildSideExec))
