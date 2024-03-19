@@ -405,21 +405,18 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
-	return decodeRangeWithAdaptor(e.keyAdapter, e.startKey, e.endKey)
-}
-
-func decodeRangeWithAdaptor(adapter common.KeyAdapter, start []byte, end []byte) ([]byte, []byte, error) {
-	firstKey, err := adapter.Decode(nil, start)
+	firstKey, err := e.keyAdapter.Decode(nil, e.startKey)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	lastKey := end[:len(end)-1]
-	lastKey, err = adapter.Decode(nil, lastKey)
+	// e.endKey is exclusive, we need to truncate the trailing zero before decoding.
+	lastKey := e.endKey[:len(e.endKey)-1]
+	lastKey, err = e.keyAdapter.Decode(nil, lastKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	endKey := make([]byte, 0, len(lastKey)+1)
+	endKey = make([]byte, 0, len(lastKey)+1)
 	endKey = append(endKey, lastKey...)
 	endKey = append(endKey, 0)
 	return firstKey, endKey, nil
