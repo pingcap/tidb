@@ -314,33 +314,54 @@ type rowTableBuilder struct {
 	startPosInRawData [][]uint64
 }
 
-func (b *rowTableBuilder) ResetBuffer() {
-	if b.serializedKeyVectorBuffer == nil {
-		b.serializedKeyVectorBuffer = make([][]byte, MAX_ROW_TABLE_SEGMENT_SIZE)
-		b.partIdxVector = make([]int, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
-		b.hashValue = make([]uint64, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
-		if b.hasFilter {
-			b.filterVector = make([]bool, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
-		}
-		if b.hasNullableKey {
-			b.nullKeyVector = make([]bool, 0, MAX_ROW_TABLE_SEGMENT_SIZE)
-			for i := 0; i < MAX_ROW_TABLE_SEGMENT_SIZE; i++ {
-				b.nullKeyVector = append(b.nullKeyVector, false)
-			}
-		}
-		return
-	}
-	for i := range b.serializedKeyVectorBuffer {
-		b.serializedKeyVectorBuffer[i] = b.serializedKeyVectorBuffer[i][:0]
-	}
-	b.partIdxVector = b.partIdxVector[:0]
-	b.hashValue = b.hashValue[:0]
+func (b *rowTableBuilder) initBuffer() {
+	b.serializedKeyVectorBuffer = make([][]byte, chunk.InitialCapacity)
+	b.partIdxVector = make([]int, 0, chunk.InitialCapacity)
+	b.hashValue = make([]uint64, 0, chunk.InitialCapacity)
 	if b.hasFilter {
-		b.filterVector = b.filterVector[:0]
+		b.filterVector = make([]bool, 0, chunk.InitialCapacity)
 	}
 	if b.hasNullableKey {
-		b.nullKeyVector = b.nullKeyVector[:0]
-		for i := 0; i < MAX_ROW_TABLE_SEGMENT_SIZE; i++ {
+		b.nullKeyVector = make([]bool, 0, chunk.InitialCapacity)
+		for i := 0; i < chunk.InitialCapacity; i++ {
+			b.nullKeyVector = append(b.nullKeyVector, false)
+		}
+	}
+}
+
+func (b *rowTableBuilder) ResetBuffer(rows int) {
+	if cap(b.serializedKeyVectorBuffer) >= rows {
+		b.serializedKeyVectorBuffer = b.serializedKeyVectorBuffer[:rows]
+		for i := 0; i < rows; i++ {
+			b.serializedKeyVectorBuffer[i] = b.serializedKeyVectorBuffer[i][:0]
+		}
+	} else {
+		b.serializedKeyVectorBuffer = make([][]byte, rows)
+	}
+	if cap(b.partIdxVector) >= rows {
+		b.partIdxVector = b.partIdxVector[:0]
+	} else {
+		b.partIdxVector = make([]int, 0, rows)
+	}
+	if cap(b.hashValue) >= rows {
+		b.hashValue = b.hashValue[:0]
+	} else {
+		b.hashValue = make([]uint64, 0, rows)
+	}
+	if b.hasFilter {
+		if cap(b.filterVector) >= rows {
+			b.filterVector = b.filterVector[:0]
+		} else {
+			b.filterVector = make([]bool, 0, rows)
+		}
+	}
+	if b.hasNullableKey {
+		if cap(b.nullKeyVector) >= rows {
+			b.nullKeyVector = b.nullKeyVector[:0]
+		} else {
+			b.nullKeyVector = make([]bool, 0, rows)
+		}
+		for i := 0; i < rows; i++ {
 			b.nullKeyVector = append(b.nullKeyVector, false)
 		}
 	}
@@ -372,24 +393,25 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 		var (
 			row     = chk.GetRow(rowIdx)
 			partIdx = builder.partIdxVector[rowIdx]
-			//startPosInRawData = builder.startPosInRawData[partIdx]
-			seg *rowTableSegment
+			seg     *rowTableSegment
 		)
 		if rowTables[partIdx] == nil {
 			rowTables[partIdx] = newRowTable(rowTableMeta)
 			seg = newRowTableSegment()
 			rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
-		} else if builder.crrntSizeOfRowTable[partIdx]%MAX_ROW_TABLE_SEGMENT_SIZE == 0 {
-			for _, pos := range builder.startPosInRawData[partIdx] {
-				seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
-			}
-			builder.startPosInRawData[partIdx] = builder.startPosInRawData[partIdx][:]
-			seg = newRowTableSegment()
-			rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
+			builder.startPosInRawData[partIdx] = builder.startPosInRawData[partIdx][:0]
 		} else {
 			seg = rowTables[partIdx].segments[len(rowTables[partIdx].segments)-1]
+			if builder.crrntSizeOfRowTable[partIdx] >= MAX_ROW_TABLE_SEGMENT_SIZE {
+				for _, pos := range builder.startPosInRawData[partIdx] {
+					seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
+				}
+				builder.crrntSizeOfRowTable[partIdx] = 0
+				builder.startPosInRawData[partIdx] = builder.startPosInRawData[partIdx][:0]
+				seg = newRowTableSegment()
+				rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
+			}
 		}
-
 		seg.hashValues = append(seg.hashValues, builder.hashValue[rowIdx])
 		if (!builder.hasFilter || builder.filterVector[rowIdx]) && (!builder.hasNullableKey || !builder.nullKeyVector[rowIdx]) {
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, rowIdx)
@@ -421,7 +443,7 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 				// fixed size
 				seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
 			} else {
-				// variable size, need write size first
+				// length, raw_data
 				raw := row.GetRaw(colIdx)
 				n := binary.PutUvarint(buf[:], uint64(len(raw)))
 				seg.rawData = append(seg.rawData, buf[:n]...)
