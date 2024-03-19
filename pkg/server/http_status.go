@@ -294,14 +294,11 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
 
-	serverMux := http.NewServeMux()
-	serverMux.Handle("/", router)
-
-	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
-	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	serverMux.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
-	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	router.HandleFunc("/debug/pprof/", pprof.Index)
+	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
+	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
@@ -310,9 +307,9 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
 		}
 	}
-	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
+	router.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
 
-	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
@@ -337,7 +334,7 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
 
 		// dump goroutine/heap/mutex
@@ -423,7 +420,7 @@ func (s *Server) startHTTPServer() {
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
 	failpoint.Inject("enableTestAPI", func() {
-		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
+		router.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
@@ -467,6 +464,9 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
+
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
 	s.startStatusServerAndRPCServer(serverMux)
 }
 
