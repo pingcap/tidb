@@ -146,6 +146,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			return err
 		}
 		if change {
+			// Handle the case that the schema is updated for select statement.
 			sctx.GetSessionVars().StmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError("schema changed before adding the metadata lock"))
 			return nil
 		}

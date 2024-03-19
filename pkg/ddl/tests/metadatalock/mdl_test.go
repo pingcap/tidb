@@ -970,9 +970,9 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	tk.MustExec("create table t2(a int);")
 	tk.MustExec("insert into t values(1), (2), (3), (4);")
 
-	tk.MustExec(`prepare stmt_test_1 from 'update t set a = ? where a = ?';`)
-	tk.MustExec(`set @a = 1, @b = 3;`)
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+	tk.MustExec(`prepare stmt_test_1 from 'select * from t where a = ?';`)
+	tk.MustExec(`set @a = 1;`)
+	tk.MustExec(`execute stmt_test_1 using @a;`)
 
 	tk.MustExec("begin")
 	tk.MustQuery("select * from t2")
@@ -986,8 +986,8 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 
 	wg.Wait()
 
-	tk.MustExec(`set @a = 2, @b=4;`)
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+	tk.MustExec(`set @a = 2;`)
+	tk.MustExec(`execute stmt_test_1 using @a;`)
 	// The plan should not be from cache because the schema has changed.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("commit")
