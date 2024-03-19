@@ -496,7 +496,9 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 	)
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
-		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
+		if !m.mergeSorted {
+			lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
+		}
 		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
 			return bytes.Compare(lowerBound, m.keys[i]) <= 0
 		})
@@ -507,7 +509,9 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 
 	lastKeyIdx := len(m.keys) - 1
 	if len(upperBound) > 0 {
-		upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
+		if !m.mergeSorted {
+			upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
+		}
 		i := sort.Search(len(m.keys), func(i int) bool {
 			reverseIdx := len(m.keys) - 1 - i
 			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
