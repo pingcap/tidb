@@ -366,9 +366,9 @@ type StatsReadWriter interface {
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	ToTimeout time.Time
-	ResultCh  chan stmtctx.StatsLoadResult
-	Item      model.StatsLoadItem
+	ToTimeout   time.Time
+	ResultCh    chan stmtctx.StatsLoadResult
+	TableItemID model.TableItemID
 }
 
 // StatsLoad is used to load stats concurrently
@@ -383,7 +383,7 @@ type StatsLoad struct {
 // StatsSyncLoad implement the sync-load feature.
 type StatsSyncLoad interface {
 	// SendLoadRequests sends load requests to the channel.
-	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error
 
 	// SyncWaitStatsLoad will wait for the load requests to finish.
 	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error

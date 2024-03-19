@@ -359,7 +359,7 @@ type StatementContext struct {
 		// Timeout to wait for sync-load
 		Timeout time.Duration
 		// NeededItems stores the columns/indices whose stats are needed for planner.
-		NeededItems []model.StatsLoadItem
+		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
 		ResultCh chan StatsLoadResult
 		// LoadStartTime is to record the load start time to calculate latency
@@ -1255,7 +1255,6 @@ type UsedStatsInfoForTable struct {
 	ModifyCount           int64
 	ColumnStatsLoadStatus map[int64]string
 	IndexStatsLoadStatus  map[int64]string
-	ColAndIdxStatus       any
 }
 
 // FormatForExplain format the content in the format expected to be printed in the execution plan.

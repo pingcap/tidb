@@ -70,7 +70,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	statsTable := statistics.PseudoTable(p.TableInfo, false, false)
+	statsTable := statistics.PseudoTable(p.TableInfo, false)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
@@ -263,12 +263,11 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.physicalTableID)
 	statsRecord.RecordUsedInfo(ds.physicalTableID, &stmtctx.UsedStatsInfoForTable{
-		Name:            name,
-		TblInfo:         tblInfo,
-		Version:         tableStats.StatsVersion,
-		RealtimeCount:   tableStats.HistColl.RealtimeCount,
-		ModifyCount:     tableStats.HistColl.ModifyCount,
-		ColAndIdxStatus: ds.statisticTable.ColAndIdxExistenceMap,
+		Name:          name,
+		TblInfo:       tblInfo,
+		Version:       tableStats.StatsVersion,
+		RealtimeCount: tableStats.HistColl.RealtimeCount,
+		ModifyCount:   tableStats.HistColl.ModifyCount,
 	})
 
 	for _, col := range ds.schema.Columns {
