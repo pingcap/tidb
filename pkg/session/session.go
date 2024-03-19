@@ -4367,16 +4367,7 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used on sequence. Fallback to standard mode"))
 			return false
 		}
-		if len(tbl.Meta().ForeignKeys) > 0 && vars.ForeignKeyChecks {
-			stmtCtx.AppendWarning(
-				errors.New(
-					"Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode",
-				),
-			)
-			return false
-		}
-		referredFKs := is.GetTableReferredForeignKeys(t.DB, t.Table)
-		if len(referredFKs) > 0 && vars.ForeignKeyChecks {
+		if vars.ForeignKeyChecks && (len(tbl.Meta().ForeignKeys) > 0 || len(is.GetTableReferredForeignKeys(t.DB, t.Table)) > 0) {
 			stmtCtx.AppendWarning(
 				errors.New(
 					"Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode",
