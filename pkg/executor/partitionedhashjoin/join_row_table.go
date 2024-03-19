@@ -152,7 +152,7 @@ func (meta *JoinTableMeta) setUsedFlag(rowStart unsafe.Pointer) {
 }
 
 func (meta *JoinTableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
-	return (*(*uint32)(unsafe.Add(rowStart, SizeOfNextPtr)) | meta.setUsedFlagMask) == meta.setUsedFlagMask
+	return (*(*uint32)(unsafe.Add(rowStart, SizeOfNextPtr)) & meta.setUsedFlagMask) == meta.setUsedFlagMask
 }
 
 type rowTable struct {
