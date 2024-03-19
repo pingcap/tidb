@@ -365,6 +365,8 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	defer tk.MustExec("rollback")
+	// bulk mode fallback pessimistic-auto-commit into optimistic, which fail this test.
+	tk.MustExec("set session tidb_dml_type=standard")
 
 	se := tk.Session()
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")

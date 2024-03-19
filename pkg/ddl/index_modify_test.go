@@ -680,6 +680,7 @@ func TestAddIndexWithPK(t *testing.T) {
 func TestAddGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
 	defer func() {

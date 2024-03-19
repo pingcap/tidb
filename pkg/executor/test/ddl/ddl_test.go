@@ -719,6 +719,7 @@ func TestAutoRandomTableOption(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set session tidb_dml_type = standard")
 
 	// test table option is auto-random
 	tk.MustExec("drop table if exists auto_random_table_option")

@@ -1356,6 +1356,7 @@ func TestCollectDMLRuntimeStats(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	//tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, unique index (a))")
@@ -1377,7 +1378,7 @@ func TestCollectDMLRuntimeStats(t *testing.T) {
 	}
 	for _, sql := range testSQLs {
 		tk.MustExec(sql)
-		require.Regexp(t, "time.*loops.*Get.*num_rpc.*total_time.*", getRootStats())
+		require.Regexp(t, "time.*loops.*Get.*num_rpc.*total_time.*", getRootStats(), sql)
 	}
 
 	// Test for lock keys stats.

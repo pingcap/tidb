@@ -337,6 +337,7 @@ func TestUnsignedPK(t *testing.T) {
 func TestIterRecords(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type = standard")
 	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")

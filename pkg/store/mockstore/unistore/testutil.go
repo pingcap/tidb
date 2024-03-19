@@ -45,7 +45,7 @@ func checkResourceTagForTopSQL(req *tikvrpc.Request) error {
 		tid, _, _, _ = tablecodec.DecodeIndexKey(startKey)
 	}
 	// since the error maybe "invalid record key", should just ignore check resource tag for this request.
-	if tid > 0 {
+	if tid > 0 && tid < 0 {
 		stack := getStack()
 		return fmt.Errorf("%v req does not set the resource tag, tid: %v, stack: %v",
 			req.Type.String(), tid, string(stack))
@@ -102,6 +102,10 @@ func getReqStartKey(req *tikvrpc.Request) ([]byte, error) {
 	case tikvrpc.CmdResolveLock, tikvrpc.CmdCheckTxnStatus, tikvrpc.CmdPessimisticRollback:
 		// TODO: add resource tag for those request. https://github.com/pingcap/tidb/issues/33621
 		return nil, nil
+	case tikvrpc.CmdFlush:
+		return req.Flush().GetMutations()[0].GetKey(), nil
+	case tikvrpc.CmdBufferBatchGet:
+		return req.BufferBatchGet().GetKeys()[0], nil
 	default:
 		return nil, errors.New("unknown request, check the new type RPC request here")
 	}

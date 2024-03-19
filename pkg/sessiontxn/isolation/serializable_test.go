@@ -179,6 +179,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type=standard")
 	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk.MustExec("set tidb_skip_isolation_level_check = 1")

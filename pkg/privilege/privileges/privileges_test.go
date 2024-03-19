@@ -1643,6 +1643,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 	dropStmt := "DROP TEMPORARY TABLE IF EXISTS test.tmp"
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec(dropStmt)
 	tk.MustExec("CREATE TABLE test.t(id int primary key)")
 	tk.MustExec("CREATE SEQUENCE test.tmp")

@@ -55,7 +55,7 @@ func checkCases(
 		for _, w := range warnings {
 			fmt.Printf("warnnig: %#v\n", w.Err.Error())
 		}
-		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), warnings)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
 	}

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -56,6 +57,7 @@ func TestIntegrationCopCache(t *testing.T) {
 	require.NoError(t, err)
 	tid := tblInfo.Meta().ID
 	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
+	time.Sleep(time.Second)
 	tableStart := tablecodec.GenTableRecordPrefix(tid)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 6)
 

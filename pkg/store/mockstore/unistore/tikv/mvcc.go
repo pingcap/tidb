@@ -1028,8 +1028,10 @@ func (store *MVCCStore) Flush(reqCtx *requestCtx, req *kvrpcpb.FlushRequest) err
 	}
 
 	dummyPrewriteReq := &kvrpcpb.PrewriteRequest{
-		PrimaryLock:  req.PrimaryKey,
-		StartVersion: startTS,
+		PrimaryLock:    req.PrimaryKey,
+		StartVersion:   startTS,
+		AssertionLevel: req.AssertionLevel,
+		LockTtl:        req.LockTtl,
 	}
 	batch := store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
 	for i, m := range mutations {
