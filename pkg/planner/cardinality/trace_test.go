@@ -233,7 +233,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		testdata.OnRecord(func() {
 			out[i].ResultForV2 = res
 		})
-		require.Equal(t, out[i].ResultForV2, res, sql, fmt.Sprintf("For ver2: test#%d", i))
+		require.Equal(t, out[i].ResultForV2, res, sql, "For ver2")
 	}
 
 	tk.MustExec("set tidb_analyze_version = 1")

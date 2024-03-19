@@ -78,7 +78,7 @@ func Selectivity(
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
-		ret = pseudoSelectivity(ctx, coll, exprs)
+		ret = pseudoSelectivity(coll, exprs)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
@@ -104,7 +104,7 @@ func Selectivity(
 
 		colHist := coll.Columns[c.UniqueID]
 		var sel float64
-		if statistics.ColumnStatsIsInvalid(colHist, ctx, coll, c.ID) {
+		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
 			sel = 1.0 / pseudoEqualRate
 		} else if colHist.Histogram.NDV > 0 {
 			sel = 1 / float64(colHist.Histogram.NDV)
@@ -119,16 +119,12 @@ func Selectivity(
 
 	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
-		return cmp.Compare(a.ID, b.ID)
-	})
-	extractedCols = slices.CompactFunc(extractedCols, func(a, b *expression.Column) bool {
-		return a.ID == b.ID
-	})
-	for _, col := range extractedCols {
-		id := col.UniqueID
-		colStats := coll.Columns[col.UniqueID]
-		if colStats != nil {
+	colIDs := maps.Keys(coll.Columns)
+	slices.Sort(colIDs)
+	for _, id := range colIDs {
+		colStats := coll.Columns[id]
+		col := expression.ColInfo2Col(extractedCols, colStats.Info)
+		if col != nil {
 			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -149,10 +145,6 @@ func Selectivity(
 				return 0, nil, errors.Trace(err)
 			}
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
-		} else if !col.IsHidden {
-			// TODO: We are able to remove this path if we remove the async stats load.
-			statistics.ColumnStatsIsInvalid(nil, ctx, coll, col.ID)
-			recordUsedItemStatsStatus(ctx, (*statistics.Column)(nil), tableID, col.ID)
 		}
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
@@ -915,15 +907,16 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 
 func findAvailableStatsForCol(sctx context.PlanContext, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
 	// try to find available stats in column stats
-	if colStats := coll.Columns[uniqueID]; !statistics.ColumnStatsIsInvalid(colStats, sctx, coll, uniqueID) && colStats.IsFullLoad() {
+	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) && colStats.IsFullLoad() {
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
 	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
-			idxStats := coll.Indices[idxStatsIdx]
-			if !statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxStatsIdx) &&
+			idxStats, ok := coll.Indices[idxStatsIdx]
+			if ok &&
 				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
+				!idxStats.IsInvalid(sctx, coll.Pseudo) &&
 				idxStats.IsFullLoad() {
 				return true, idxStatsIdx
 			}
@@ -1057,28 +1050,29 @@ func crossValidationSelectivity(
 		if i >= usedColsLen {
 			break
 		}
-		col := coll.Columns[colID]
-		if statistics.ColumnStatsIsInvalid(col, sctx, coll, colID) {
-			continue
-		}
-		// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
-		// Otherwise we would get 0.0 estRow from GetColumnRowCount.
-		rang := ranger.Range{
-			LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-			LowExclude:  false,
-			HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-			HighExclude: false,
-			Collators:   []collate.Collator{idxPointRange.Collators[i]},
-		}
+		if col, ok := coll.Columns[colID]; ok {
+			if col.IsInvalid(sctx, coll.Pseudo) {
+				continue
+			}
+			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
+			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
+			rang := ranger.Range{
+				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+				LowExclude:  false,
+				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
+				HighExclude: false,
+				Collators:   []collate.Collator{idxPointRange.Collators[i]},
+			}
 
-		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
-		if err != nil {
-			return 0, 0, err
-		}
-		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
+			rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+			if err != nil {
+				return 0, 0, err
+			}
+			crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 
-		if rowCount < minRowCount {
-			minRowCount = rowCount
+			if rowCount < minRowCount {
+				minRowCount = rowCount
+			}
 		}
 	}
 	return minRowCount, crossValidationSelectivity, nil

@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -4465,7 +4464,7 @@ func getStatsTable(ctx PlanContext, tblInfo *model.TableInfo, pid int64) *statis
 	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
-		return statistics.PseudoTable(tblInfo, false, true)
+		return statistics.PseudoTable(tblInfo, false)
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -4474,7 +4473,6 @@ func getStatsTable(ctx PlanContext, tblInfo *model.TableInfo, pid int64) *statis
 		usePartitionStats = true
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	}
-	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
 
 	allowPseudoTblTriggerLoading := false
 	// In OptObjectiveDeterminate mode, we need to ignore the real-time stats.
@@ -4504,7 +4502,7 @@ func getStatsTable(ctx PlanContext, tblInfo *model.TableInfo, pid int64) *statis
 	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
-		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading, true)
+		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading)
 	}
 
 	// 3. statistics is uninitialized or outdated.
@@ -4790,7 +4788,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				h := domain.GetDomain(b.ctx).StatsHandle()
 				tblStats := h.GetTableStats(tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
-				globalStatsReady := tblStats.IsAnalyzed()
+				globalStatsReady := tblStats.IsInitialized()
 				skipMissingPartition := b.ctx.GetSessionVars().SkipMissingPartitionStats
 				// If we already enabled the tidb_skip_missing_partition_stats, the global stats can be treated as exist.
 				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, skipMissingPartition)

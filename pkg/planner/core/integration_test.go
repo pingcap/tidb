@@ -2227,14 +2227,14 @@ func TestIssue48257(t *testing.T) {
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 		"TableReader 1.00 root  data:TableFullScan",
-		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
 	))
 	tk.MustExec("insert into t1 value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 		"TableReader 2.00 root  data:TableFullScan",
-		"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false",
 	))
 	tk.MustExec("set tidb_opt_objective='determinate'")
 	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(

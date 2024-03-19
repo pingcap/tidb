@@ -307,7 +307,7 @@ id	estRows	task	access object	operator info
 IndexJoin_20	0.80	root		inner join, inner:TableReader_19, outer key:executor__partition__issues.t.txn_account_id, executor__partition__issues.t.serial_id, inner key:executor__partition__issues.c.txt_account_id, executor__partition__issues.c.serial_id, equal cond:eq(executor__partition__issues.t.serial_id, executor__partition__issues.c.serial_id), eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
 ├─TableReader_25(Build)	0.80	root		data:Selection_24
 │ └─Selection_24	0.80	cop[tikv]		eq(executor__partition__issues.t.broker, "0009"), not(isnull(executor__partition__issues.t.serial_id))
-│   └─TableFullScan_23	1.00	cop[tikv]	table:t	keep order:false, stats:partial[serial_id:missing]
+│   └─TableFullScan_23	1.00	cop[tikv]	table:t	keep order:false
 └─TableReader_19(Probe)	0.80	root	partition:all	data:Selection_18
   └─Selection_18	0.80	cop[tikv]		eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)
     └─TableRangeScan_17	0.80	cop[tikv]	table:c	range: decided by [eq(executor__partition__issues.c.txt_account_id, executor__partition__issues.t.txn_account_id) eq(executor__partition__issues.c.serial_id, executor__partition__issues.t.serial_id) eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false
