@@ -75,17 +75,6 @@ func newTestSplitClient(
 	}
 }
 
-// ScatterRegions scatters regions in a batch.
-func (c *testSplitClient) ScatterRegions(ctx context.Context, regionInfo []*split.RegionInfo) error {
-	return nil
-}
-
-func (c *testSplitClient) GetAllRegions() map[uint64]*split.RegionInfo {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.regions
-}
-
 func (c *testSplitClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -190,10 +179,6 @@ func (c *testSplitClient) SplitWaitScatter(
 	}
 
 	return target, newRegions, err
-}
-
-func (c *testSplitClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	return nil
 }
 
 func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
@@ -689,34 +674,6 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 		[]byte("a19"), []byte("a20"), []byte("b"),
 	}
 	checkRegionRanges(t, regions, result)
-}
-
-type reportAfterSplitHook struct {
-	noopHook
-	ch chan<- struct{}
-}
-
-func (h *reportAfterSplitHook) AfterSplitRegion(ctx context.Context, region *split.RegionInfo, keys [][]byte, resultRegions []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
-	h.ch <- struct{}{}
-	return resultRegions, err
-}
-
-func TestBatchSplitByRangeCtxCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan struct{})
-	// cancel ctx after the first region split success.
-	go func() {
-		i := 0
-		for range ch {
-			if i == 0 {
-				cancel()
-			}
-			i++
-		}
-	}()
-
-	doTestBatchSplitRegionByRanges(ctx, t, &reportAfterSplitHook{ch: ch}, "context canceled", defaultHook{})
-	close(ch)
 }
 
 func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
