@@ -285,9 +285,29 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	flag |= flagCollectPredicateColumnsPoint
 	flag |= flagSyncWaitStatsLoadPoint
+<<<<<<< HEAD:planner/core/optimizer.go
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
+=======
+	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		flag |= flagPartitionProcessor // apply partition pruning under static mode
+	}
+	return flag
+}
+
+// DoOptimize optimizes a logical plan to a physical plan.
+func DoOptimize(
+	ctx context.Context,
+	sctx PlanContext,
+	flag uint64,
+	logic LogicalPlan,
+) (PhysicalPlan, float64, error) {
+	sessVars := sctx.GetSessionVars()
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
+>>>>>>> f4e366ea0c3 (planner: apply rule_partition_pruning when optimizing CTE under static mode (#51903)):pkg/planner/core/optimizer.go
 	}
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
