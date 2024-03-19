@@ -160,13 +160,17 @@ func (c *TestClient) SplitWaitScatter(
 		newRegions = append(newRegions, newRegion)
 	}
 	for _, r := range newRegions {
-		_ = c.injectInScatter(r)
+		_ = c.ScatterRegion(ctx, r)
 	}
 	return region, newRegions, nil
 }
 
 func (c *TestClient) WaitRegionsSplit(context.Context, []*split.RegionInfo) error {
 	return nil
+}
+
+func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
+	return c.injectInScatter(regionInfo)
 }
 
 func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
