@@ -90,7 +90,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		for i := range workers {
 			chkHeap := &topNChunkHeap{}
 			// Offset of heap in worker should be 0, as we need to spill all data
-			chkHeap.init(e, e.memTracker, e.Limit.Count, 0, e.greaterRow)
+			chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, 0, e.greaterRow)
 			workers[i] = newTopNWorker(i, e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap, e.memTracker)
 		}
 

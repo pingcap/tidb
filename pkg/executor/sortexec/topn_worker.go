@@ -65,7 +65,7 @@ func (t *topNWorker) setChunkChannel(chunkChannel <-chan *chunk.Chunk) {
 
 func (t *topNWorker) fetchChunksAndProcess() {
 	// Offset of heap in worker should be 0, as we need to spill all data
-	t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Count, 0, t.topn.greaterRow)
+	t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, 0, t.topn.greaterRow)
 	for t.fetchChunksAndProcessImpl() {
 	}
 }
@@ -85,7 +85,7 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 		t.receivedRowNum += chk.NumRows()
 		if uint64(t.chkHeap.rowChunks.Len()) < t.chkHeap.totalLimit {
 			if !t.chkHeap.isInitialized {
-				t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Count, 0, t.topn.greaterRow)
+				t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, 0, t.topn.greaterRow)
 			}
 			t.chkHeap.rowChunks.Add(chk)
 		} else {
