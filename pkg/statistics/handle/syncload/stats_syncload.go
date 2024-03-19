@@ -112,7 +112,6 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
-	cnt := int64(0)
 	var errorMsgs []string
 	defer func() {
 		if len(errorMsgs) > 0 {
@@ -126,9 +125,8 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 		resultCheckMap[col.TableItemID] = struct{}{}
 	}
 	metrics.SyncLoadCounter.Inc()
-	cnt++
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
-	if cnt%10000 == 0 {
+	if rand.Int31n(10000) < 5 {
 		var tableID, colID int64
 		var isIndex bool
 		tot := 0
