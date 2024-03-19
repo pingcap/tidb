@@ -28,7 +28,7 @@ type leftOuterJoinProbe struct {
 	rowIter *rowIter
 }
 
-func (j *leftOuterJoinProbe) setChunkForProbe(chunk *chunk.Chunk) (err error) {
+func (j *leftOuterJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
 	err = j.innerJoinProbe.SetChunkForProbe(chunk)
 	if err != nil {
 		return err
@@ -36,17 +36,17 @@ func (j *leftOuterJoinProbe) setChunkForProbe(chunk *chunk.Chunk) (err error) {
 	if j.rightAsBuildSide {
 		j.isNotMatchedRows = j.isNotMatchedRows[:0]
 		for i := 0; i < j.chunkRows; i++ {
-			j.isNotMatchedRows = append(j.isNotMatchedRows, false)
+			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
 	}
 	return nil
 }
 
-func (j *leftOuterJoinProbe) needScanRowTable() bool {
+func (j *leftOuterJoinProbe) NeedScanRowTable() bool {
 	return !j.rightAsBuildSide
 }
 
-func (j *leftOuterJoinProbe) isScanRowTableDone() bool {
+func (j *leftOuterJoinProbe) IsScanRowTableDone() bool {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
@@ -137,7 +137,7 @@ func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, j
 		for index, result := range j.selected {
 			if result {
 				rowIndexInfo := j.rowIndexInfos[index]
-				j.isNotMatchedRows[rowIndexInfo.probeRowIndex] = true
+				j.isNotMatchedRows[rowIndexInfo.probeRowIndex] = false
 				j.appendBuildRowToChunk(chk, &rowInfo{
 					rowStart:           rowIndexInfo.buildRowStart,
 					rowData:            rowIndexInfo.buildRowData,
@@ -149,7 +149,7 @@ func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, j
 	if !markedJoined {
 		for index, result := range j.selected {
 			if result {
-				j.isNotMatchedRows[j.rowIndexInfos[index].probeRowIndex] = true
+				j.isNotMatchedRows[j.rowIndexInfos[index].probeRowIndex] = false
 			}
 		}
 	}
@@ -188,7 +188,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 	length := 0
 	startProbeRow := j.currentProbeRow
 
-	for remainCap > 0 && j.currentProbeRow < j.currentChunk.NumRows() {
+	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
 			// hash value match
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
@@ -250,7 +250,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
 				} else {
 					// has no other condition, key match means join match
-					meta.setUsedFlag(currentRowData)
+					meta.setUsedFlag(candidateRow)
 				}
 				length++
 				joinedChk.IncNumVirtualRows()
@@ -272,20 +272,34 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			return err
 		}
 		err = j.buildResultAfterOtherCondition(chk, joinedChk)
+		prevSetProbeRowIndex := -1
+		for index, result := range j.selected {
+			if result && prevSetProbeRowIndex != j.rowIndexInfos[index].probeRowIndex {
+				prevSetProbeRowIndex = j.rowIndexInfos[index].probeRowIndex
+				meta.setUsedFlag(j.rowIndexInfos[index].buildRowStart)
+			}
+		}
 	}
 	return
 }
 
-func (j *leftOuterJoinProbe) probe(chk *chunk.Chunk) (err error) {
-	if chk.IsFull() {
-		return nil
+func (j *leftOuterJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, _ *util.HashjoinWorkerResult) {
+	if joinResult.Chk.IsFull() {
+		return true, joinResult
 	}
-	joinedChk, remainCap, err1 := j.prepareForProbe(chk)
-	if err1 != nil {
-		return err1
+	joinedChk, remainCap, err := j.prepareForProbe(joinResult.Chk)
+	if err != nil {
+		joinResult.Err = err
+		return false, joinResult
 	}
 	if j.rightAsBuildSide {
-		return j.probeForRightBuild(chk, joinedChk, remainCap)
+		err = j.probeForRightBuild(joinResult.Chk, joinedChk, remainCap)
+	} else {
+		err = j.probeForLeftBuild(joinResult.Chk, joinedChk, remainCap)
 	}
-	return j.probeForLeftBuild(chk, joinedChk, remainCap)
+	if err != nil {
+		joinResult.Err = err
+		return false, joinResult
+	}
+	return true, joinResult
 }

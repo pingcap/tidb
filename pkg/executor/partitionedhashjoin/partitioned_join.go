@@ -205,6 +205,10 @@ func (e *PartitionedHashJoinExec) Close() error {
 	return err
 }
 
+func (e *PartitionedHashJoinExec) needUsedFlag() bool {
+	return e.JoinType == plannercore.LeftOuterJoin && !e.RightAsBuildSide
+}
+
 // Open implements the Executor Open interface.
 func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
@@ -217,10 +221,10 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 	e.PartitionedHashJoinCtx.partitionNumber = e.partitionNumber
 	if e.RightAsBuildSide {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
-			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, false)
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, e.needUsedFlag())
 	} else {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
-			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, false)
+			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, e.needUsedFlag())
 	}
 	e.PartitionedHashJoinCtx.allocPool = e.AllocPool
 	if e.PartitionedHashJoinCtx.memTracker != nil {
@@ -532,11 +536,13 @@ func (e *PartitionedHashJoinExec) waitJoinWorkersAndCloseResultChan() {
 				e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
 			}, e.handleJoinWorkerPanic)
 		}
+		e.workerWg.Wait()
 	}
 	close(e.joinResultCh)
 }
 
 func (w *ProbeWorker) scanRowTableAfterProbeDone() {
+	w.JoinProbe.InitForScanRowTable()
 	ok, joinResult := w.getNewJoinResult()
 	if !ok {
 		return
