@@ -4750,7 +4750,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
-	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(b.ctx, dbName, tbl, b.is)
+	tbl, _, err = tryLockMDLAndUpdateSchemaIfNecessary(b.ctx, dbName, tbl, b.is)
 	if err != nil {
 		return nil, err
 	}

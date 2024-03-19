@@ -138,6 +138,18 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmtAst.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
+
+	// step 5: add metadata lock
+	for i := 0; i < len(stmt.dbName); i++ {
+		_, change, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		if err != nil {
+			return err
+		}
+		if change {
+			sctx.GetSessionVars().StmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError("schema changed before adding the metadata lock"))
+			return nil
+		}
+	}
 	return nil
 }
 

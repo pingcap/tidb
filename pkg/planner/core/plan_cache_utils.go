@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -182,6 +183,19 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	features := new(PlanCacheQueryFeatures)
 	paramStmt.Accept(features)
 
+	// Collect table information for metadata lock.
+	names := bindinfo.CollectTableNames(paramStmt)
+	dbName := make([]model.CIStr, 0, len(names))
+	tbls := make([]table.Table, 0, len(names))
+	for _, name := range names {
+		dbName = append(dbName, name.Schema)
+		tbl, err := is.TableByName(name.Schema, name.Name)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		tbls = append(tbls, tbl)
+	}
+
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
@@ -194,6 +208,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
+		dbName:              dbName,
+		tbls:                tbls,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -471,6 +487,10 @@ type PlanCacheStmt struct {
 	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
+
+	// dbName and tbls are used to add metadata lock.
+	dbName []model.CIStr
+	tbls   []table.Table
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

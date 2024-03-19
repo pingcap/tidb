@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -893,6 +894,105 @@ func TestMDLPreparePlanCacheInvalid(t *testing.T) {
 
 	tk.MustExec(`set @a = 1;`)
 	tk.MustQuery(`execute stmt_test_1 using @a;`).Check(testkit.Rows("1 <nil>", "2 <nil>", "3 <nil>", "4 <nil>"))
+}
+
+func TestMDLPreparePlanCacheExecute(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("create table t2(a int);")
+	tk.MustExec("insert into t values(1), (2), (3), (4);")
+
+	tk.MustExec(`prepare stmt_test_1 from 'update t set a = ? where a = ?';`)
+	tk.MustExec(`set @a = 1, @b = 3;`)
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+
+	tk.MustExec("begin")
+
+	ch := make(chan struct{})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		select {
+		case <-ch:
+		}
+		tkDDL.MustExec("alter table test.t add index idx(a);")
+		wg.Done()
+	}()
+
+	tk.MustQuery("select * from t2")
+	tk.MustExec(`set @a = 2, @b=4;`)
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	// The plan is from cache, the metadata lock should be added to block the DDL.
+	ch <- struct{}{}
+
+	time.Sleep(5 * time.Second)
+
+	tk.MustExec("commit")
+
+	wg.Wait()
+
+	tk.MustExec("admin check table t")
+}
+
+func TestMDLPreparePlanCacheExecute2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("create table t2(a int);")
+	tk.MustExec("insert into t values(1), (2), (3), (4);")
+
+	tk.MustExec(`prepare stmt_test_1 from 'update t set a = ? where a = ?';`)
+	tk.MustExec(`set @a = 1, @b = 3;`)
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t2")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tkDDL.MustExec("alter table test.t add index idx(a);")
+		wg.Done()
+	}()
+
+	wg.Wait()
+
+	tk.MustExec(`set @a = 2, @b=4;`)
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+	// The plan should not be from cache because the schema has changed.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("commit")
+
+	tk.MustExec("admin check table t")
 }
 
 func TestMDLDisable2Enable(t *testing.T) {
