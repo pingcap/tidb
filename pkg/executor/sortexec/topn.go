@@ -431,7 +431,14 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 		}
 		return nil
 	}
-	return e.generateResultWithMultiWayMerge()
+	return generateResultWithMulWayMerge(
+		e.spillHelper.sortedRowsInDisk,
+		e.resultChannel,
+		e.finishCh,
+		e.lessRow,
+		int64(e.Limit.Offset),
+		int64(e.Limit.Offset+e.Limit.Count),
+	)
 }
 
 func (e *TopNExec) generateTopNResults() {

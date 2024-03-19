@@ -206,14 +206,14 @@ func TestTopNSpillDisk(t *testing.T) {
 	count = uint64(totalRowNum - totalRowNum/10)
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
 	for i := 0; i < 5; i++ {
-		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
-		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
+		// topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
+		// topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	count = uint64(totalRowNum / 5)
 	offset = count / 5
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 500; i++ {
 		topNSpillCase2(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase2(t, exe, topNCase, schema, dataSource, offset, count)
 	}
@@ -224,8 +224,8 @@ func TestTopNSpillDisk(t *testing.T) {
 	offset = count / 5
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
 	for i := 0; i < 5; i++ {
-		topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
-		topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
+		// topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
+		// topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers")

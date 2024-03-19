@@ -195,3 +195,83 @@ func reloadCursor(cursor *dataCursor, inDisk *chunk.DataInDiskByChunks) (bool, e
 	cursor.setChunk(chk, restoredChkID)
 	return true, nil
 }
+
+func generateResultWithMulWayMerge(
+	sortedRowsInDisk []*chunk.DataInDiskByChunks,
+	resultChannel chan<- rowWithError,
+	finishCh <-chan struct{},
+	lessRow func(chunk.Row, chunk.Row) int,
+	offset int64,
+	limit int64,
+) error {
+	outputRowNum := int64(0)
+	inDiskNum := len(sortedRowsInDisk)
+	multiWayMerge := &multiWayMergeImpl{
+		lessRowFunction: lessRow,
+		elements:        make([]rowWithPartition, 0, inDiskNum),
+	}
+
+	cursors := make([]*dataCursor, 0, inDiskNum)
+
+	// Init multiWayMerge
+	for i := 0; i < inDiskNum; i++ {
+		chk, err := sortedRowsInDisk[i].GetChunk(0)
+		if err != nil {
+			return err
+		}
+		cursor := NewDataCursor()
+		cursor.setChunk(chk, 0)
+		cursors = append(cursors, cursor)
+		row := cursor.begin()
+		if row.IsEmpty() {
+			continue
+		}
+		multiWayMerge.elements = append(multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+	}
+	heap.Init(multiWayMerge)
+
+	// multi-way merge the data in disk
+	for multiWayMerge.Len() > 0 {
+		if limit != -1 && outputRowNum >= limit {
+			return nil
+		}
+
+		elem := multiWayMerge.elements[0]
+
+		if outputRowNum >= offset {
+			select {
+			case <-finishCh:
+				return nil
+			case resultChannel <- rowWithError{row: elem.row}:
+			}
+		}
+		outputRowNum++
+
+		partitionID := elem.partitionID
+		newRow := cursors[partitionID].next()
+		if newRow.IsEmpty() {
+			// Try to fetch more data from the disk
+			success, err := reloadCursor(cursors[partitionID], sortedRowsInDisk[partitionID])
+			if err != nil {
+				return err
+			}
+
+			if !success {
+				// All data in this inDisk has been consumed
+				heap.Remove(multiWayMerge, 0)
+				continue
+			}
+
+			// Get new row
+			newRow = cursors[partitionID].begin()
+			if newRow.IsEmpty() {
+				return errors.New("Get an empty row")
+			}
+		}
+		multiWayMerge.elements[0].row = newRow
+		heap.Fix(multiWayMerge, 0)
+
+		injectParallelSortRandomFail(1)
+	}
+	return nil
+}
