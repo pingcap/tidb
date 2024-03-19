@@ -347,18 +347,14 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 	builder := &rowTableBuilder{
 		buildKeyIndex:       w.BuildKeyColIdx,
 		buildSchema:         w.BuildSideExec.Schema(),
+		rowColumnsOrder:     w.HashJoinCtx.hashTableMeta.rowColumnsOrder,
+		columnsSize:         w.HashJoinCtx.hashTableMeta.columnsSize,
 		crrntSizeOfRowTable: make([]int64, partitionNumber),
 		startPosInRawData:   make([][]uint64, partitionNumber),
 		hasNullableKey:      w.HasNullableKey,
 		hasFilter:           w.HashJoinCtx.BuildFilter != nil,
 	}
-	if w.HashJoinCtx.RightAsBuildSide {
-		builder.otherConditionColIndex = w.HashJoinCtx.RUsedInOtherCondition
-		builder.columnsNeedConvertToRow = w.HashJoinCtx.RUsed
-	} else {
-		builder.otherConditionColIndex = w.HashJoinCtx.LUsedInOtherCondition
-		builder.columnsNeedConvertToRow = w.HashJoinCtx.LUsed
-	}
+	builder.rowColumnsOrder = w.HashJoinCtx.hashTableMeta.rowColumnsOrder
 
 	for chk := range srcChkCh {
 		builder.ResetBuffer()

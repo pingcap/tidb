@@ -461,6 +461,7 @@ func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer) unsafe.Pointer {
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
 		rowData = unsafe.Add(rowData, elemLen+8)
 	}
+	dst.length++
 	return rowData
 }
 
