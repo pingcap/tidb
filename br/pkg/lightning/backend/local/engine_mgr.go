@@ -312,6 +312,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
+			externalCfg.MergeSorted,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
