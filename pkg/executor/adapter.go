@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -90,7 +91,7 @@ type recordSet struct {
 	fields     []*ast.ResultField
 	executor   exec.Executor
 	stmt       *ExecStmt
-	lastErr    error
+	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
 }
@@ -156,7 +157,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
-		a.lastErr = err
+		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}
 	numRows := req.NumRows()
@@ -194,7 +195,7 @@ func (a *recordSet) Finish() error {
 		}
 	})
 	if err != nil {
-		a.lastErr = err
+		a.lastErrs = append(a.lastErrs, err)
 	}
 	return err
 }
@@ -204,13 +205,13 @@ func (a *recordSet) Close() error {
 	if err != nil {
 		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
 	}
-	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
 	return err
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
 func (a *recordSet) OnFetchReturned() {
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, true)
+	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -503,20 +504,22 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
-	e, err := a.buildExecutor()
-	if err != nil {
-		return nil, err
-	}
-	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
-	ctx = a.observeStmtBeginForTopSQL(ctx)
+	// must set plan according to the `Execute` plan before getting planDigest
+	a.inheritContextFromExecuteStmt()
 	if variable.EnableResourceControl.Load() && domain.GetDomain(sctx).RunawayManager() != nil {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
-		_, digest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
+		_, sqlDigest := stmtCtx.SQLDigest()
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String())
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
+	}
+	ctx = a.observeStmtBeginForTopSQL(ctx)
+
+	e, err := a.buildExecutor()
+	if err != nil {
+		return nil, err
 	}
 
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
@@ -569,6 +572,16 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) inheritContextFromExecuteStmt() {
+	if executePlan, ok := a.Plan.(*plannercore.Execute); ok {
+		a.Ctx.SetValue(sessionctx.QueryString, executePlan.Stmt.Text())
+		a.OutputNames = executePlan.OutputNames()
+		a.isPreparedStmt = true
+		a.Plan = executePlan.Plan
+		a.Ctx.GetSessionVars().StmtCtx.SetPlan(executePlan.Plan)
+	}
 }
 
 func (a *ExecStmt) getSQLForProcessInfo() string {
@@ -965,7 +978,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
-			stmtText := parser.Normalize(a.OriginText(), sctx.GetSessionVars().EnableRedactNew)
+			stmtText := parser.Normalize(a.OriginText(), sctx.GetSessionVars().EnableRedactLog)
 			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
 				"Note this may not be a uniqueness violation.",
 				zap.Error(err),
@@ -1110,6 +1123,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	a.resetPhaseDurations()
 
+	a.inheritContextFromExecuteStmt()
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -1166,11 +1180,6 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.Ctx.SetValue(sessionctx.QueryString, executorExec.stmt.Text())
-		a.OutputNames = executorExec.outputNames
-		a.isPreparedStmt = true
-		a.Plan = executorExec.plan
-		a.Ctx.GetSessionVars().StmtCtx.SetPlan(executorExec.plan)
 		if executorExec.lowerPriority {
 			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 		}
@@ -1952,7 +1961,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	var sql string
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.EnableRedactLog {
+	rmode := sessVars.EnableRedactLog
+	if rmode == errors.RedactLogEnable {
 		if keepHint {
 			sql = parser.NormalizeKeepHint(sessVars.StmtCtx.OriginalSQL)
 		} else {
@@ -1961,7 +1971,7 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {
-		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PlanCacheParams.String()
+		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
 }
@@ -1988,8 +1998,6 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
-			// This is a special logic prepared for TiKV's SQLExecCount.
-			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
 		}
 		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}

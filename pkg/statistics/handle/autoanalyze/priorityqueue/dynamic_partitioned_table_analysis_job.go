@@ -111,7 +111,9 @@ func (j *DynamicPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the table or partition is valid to analyze.
 // We need to check each partition to determine whether the table is valid to analyze.
-func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
 	if valid, failReason := isValidWeight(j.Weight); !valid {
 		return false, failReason
 	}
@@ -202,6 +204,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 ) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 
+OnlyPickOneIndex:
 	for indexName, partitionNames := range j.PartitionIndexes {
 		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
 		for _, partition := range partitionNames {
@@ -218,6 +221,10 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 			params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
 			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+			// Halt execution after analyzing one index.
+			// This is because analyzing a single index also analyzes all other indexes and columns.
+			// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
+			break OnlyPickOneIndex
 		}
 	}
 }

@@ -113,7 +113,9 @@ func (txn *LazyTxn) initStmtBuf() {
 	}
 	buf := txn.Transaction.GetMemBuffer()
 	txn.initCnt = buf.Len()
-	txn.stagingHandle = buf.Staging()
+	if !txn.IsPipelined() {
+		txn.stagingHandle = buf.Staging()
+	}
 }
 
 // countHint is estimated count of mutations.
@@ -139,7 +141,9 @@ func (txn *LazyTxn) flushStmtBuf() {
 		}
 	}
 
-	buf.Release(txn.stagingHandle)
+	if !txn.IsPipelined() {
+		buf.Release(txn.stagingHandle)
+	}
 	txn.initCnt = buf.Len()
 }
 
@@ -148,7 +152,9 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 		return
 	}
 	buf := txn.Transaction.GetMemBuffer()
-	buf.Cleanup(txn.stagingHandle)
+	if !txn.IsPipelined() {
+		buf.Cleanup(txn.stagingHandle)
+	}
 	txn.initCnt = buf.Len()
 
 	txn.mu.Lock()
@@ -320,7 +326,7 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Co
 }
 
 func (txn *LazyTxn) changeToInvalid() {
-	if txn.stagingHandle != kv.InvalidStagingHandle {
+	if txn.stagingHandle != kv.InvalidStagingHandle && !txn.IsPipelined() {
 		txn.Transaction.GetMemBuffer().Cleanup(txn.stagingHandle)
 	}
 	txn.stagingHandle = kv.InvalidStagingHandle

@@ -502,7 +502,7 @@ func recordExecutionSummariesForTiFlashTasks(sctx *stmtctx.StatementContext, exe
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
 	callee := copStats.CalleeAddress
-	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || (callee == "" && len(copStats.Stats) == 0) {
 		return
 	}
 
@@ -602,6 +602,13 @@ func (r *selectResult) Close() error {
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {
 		r.memConsume(-respSize)
+	}
+	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+		unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
+		for _, copStats := range unconsumedCopStats {
+			_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
+			r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+		}
 	}
 	if r.stats != nil {
 		defer func() {

@@ -1493,12 +1493,27 @@ func (store *MVCCStore) ReadBufferFromLock(startTS uint64, keys ...[]byte) []*kv
 		if lock.StartTS != startTS {
 			continue
 		}
-		val := getValueFromLock(&lock)
-		if len(val) > 0 {
-			pairs = append(pairs, &kvrpcpb.KvPair{
-				Key:   key,
-				Value: safeCopy(val),
-			})
+		switch lock.Op {
+		case uint8(kvrpcpb.Op_Put):
+			val := getValueFromLock(&lock)
+			if val == nil {
+				panic("Op_Put has a nil value")
+			}
+			pairs = append(
+				pairs, &kvrpcpb.KvPair{
+					Key:   key,
+					Value: safeCopy(val),
+				},
+			)
+		case uint8(kvrpcpb.Op_Del):
+			pairs = append(
+				pairs, &kvrpcpb.KvPair{
+					Key:   key,
+					Value: []byte{},
+				},
+			)
+		default:
+			panic("unexpected op. Optimistic txn should only contain put and delete locks")
 		}
 	}
 	return pairs

@@ -91,7 +91,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		if valid, failReason := job.IsValidToAnalyze(
 			sctx,
 		); !valid {
-			statslogutil.StatsLogger().Info(
+			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table is not ready to analyze",
 				zap.String("failReason", failReason),
 				zap.Stringer("job", job),
@@ -116,7 +116,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		// Only analyze one table each time.
 		return true
 	}
-	statslogutil.StatsLogger().Debug(
+	statslogutil.SingletonStatsSamplerLogger().Info(
 		"No table to analyze",
 	)
 	return false
@@ -446,7 +446,7 @@ func CheckIndexesNeedAnalyze(
 	indexes := make([]string, 0, len(tblInfo.Indices))
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := tblStats.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+		if _, ok := tblStats.Indices[idx.ID]; !ok && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			indexes = append(indexes, idx.Name.O)
 		}
 	}
@@ -571,7 +571,7 @@ func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		// Find all the partitions that need to analyze this index.
 		names := make([]string, 0, len(partitionStats))
 		for pIDAndName, tblStats := range partitionStats {
-			if _, ok := tblStats.Indices[idx.ID]; !ok {
+			if _, ok := tblStats.Indices[idx.ID]; !ok && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				names = append(names, pIDAndName.Name)
 			}
 		}

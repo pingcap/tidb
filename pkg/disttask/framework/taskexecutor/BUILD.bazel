@@ -24,6 +24,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/backoff",
+        "//pkg/util/cgroup",
         "//pkg/util/cpu",
         "//pkg/util/gctuner",
         "//pkg/util/intest",

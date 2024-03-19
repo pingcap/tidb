@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
@@ -108,6 +109,7 @@ const (
 	nmLogLevel         = "L"
 	nmLogFile          = "log-file"
 	nmLogSlowQuery     = "log-slow-query"
+	nmLogGeneral       = "log-general"
 	nmReportStatus     = "report-status"
 	nmStatusHost       = "status-host"
 	nmStatusPort       = "status"
@@ -120,6 +122,8 @@ const (
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
 	nmTempDir          = "temp-dir"
+
+	nmRedact = "redact"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -163,6 +167,7 @@ var (
 	logLevel     *string
 	logFile      *string
 	logSlowQuery *string
+	logGeneral   *string
 
 	// Status
 	reportStatus    *bool
@@ -170,6 +175,9 @@ var (
 	statusPort      *string
 	metricsAddr     *string
 	metricsInterval *uint
+
+	// subcommand collect-log
+	redactFlag *bool
 
 	// PROXY Protocol
 	proxyProtocolNetworks      *string
@@ -216,6 +224,7 @@ func initFlagSet() *flag.FlagSet {
 	logLevel = fset.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
 	logFile = fset.String(nmLogFile, "", "log file path")
 	logSlowQuery = fset.String(nmLogSlowQuery, "", "slow query file path")
+	logGeneral = fset.String(nmLogGeneral, "", "general log file path")
 
 	// Status
 	reportStatus = flagBoolean(fset, nmReportStatus, true, "If enable status report HTTP service.")
@@ -223,6 +232,9 @@ func initFlagSet() *flag.FlagSet {
 	statusPort = fset.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr = fset.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
 	metricsInterval = fset.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+
+	// subcommand collect-log
+	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs, if `./tidb-server --redact=xxx collect-log <input> <output>` subcommand is used")
 
 	// PROXY Protocol
 	proxyProtocolNetworks = fset.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
@@ -250,6 +262,16 @@ func initFlagSet() *flag.FlagSet {
 
 func main() {
 	fset := initFlagSet()
+	if args := fset.Args(); len(args) != 0 {
+		if args[0] == "collect-logs" && len(args) > 1 {
+			output := "-"
+			if len(args) > 2 {
+				output = args[2]
+			}
+			terror.MustNil(redact.DeRedactFile(*redactFlag, args[1], output))
+			return
+		}
+	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
 		setVersions()
@@ -579,6 +601,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 	if actualFlags[nmLogSlowQuery] {
 		cfg.Log.SlowQueryFile = *logSlowQuery
+	}
+	if actualFlags[nmLogGeneral] {
+		cfg.Log.GeneralLogFile = *logGeneral
 	}
 
 	// Status
