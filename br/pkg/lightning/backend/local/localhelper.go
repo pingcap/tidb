@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"math"
 	"slices"
 	"sort"
@@ -497,12 +498,20 @@ func intersectRange(region *metapb.Region, rg common.Range) common.Range {
 	if len(region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.StartKey, []byte{})
 	}
+	log.FromContext(context.Background()).Info("region decode start",
+		zap.String("region start", hex.EncodeToString(startKey)),
+		zap.String("range start", hex.EncodeToString(rg.Start)),
+	)
 	if bytes.Compare(startKey, rg.Start) < 0 {
 		startKey = rg.Start
 	}
 	if len(region.EndKey) > 0 {
 		_, endKey, _ = codec.DecodeBytes(region.EndKey, []byte{})
 	}
+	log.FromContext(context.Background()).Info("region decode start",
+		zap.String("region end", hex.EncodeToString(endKey)),
+		zap.String("range end", hex.EncodeToString(rg.End)),
+	)
 	if beforeEnd(rg.End, endKey) {
 		endKey = rg.End
 	}

@@ -347,6 +347,7 @@ func generateGlobalSortIngestPlan(
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	var kvMetaGroups []*external.SortedKVMeta
+	mergeSorted := true
 	for _, step := range []proto.Step{proto.BackfillStepMergeSort, proto.BackfillStepReadIndex} {
 		hasSubtasks := false
 		err := forEachBackfillSubtaskMeta(taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
@@ -369,12 +370,14 @@ func generateGlobalSortIngestPlan(
 		}
 		// If there is no subtask for merge sort step,
 		// it means the merge sort step is skipped.
+		mergeSorted = false
 	}
 
 	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
+	iCnt := int64(len(instanceIDs))
 	metaArr := make([][]byte, 0, 16)
 	for i, g := range kvMetaGroups {
 		if g == nil {
@@ -382,7 +385,7 @@ func generateGlobalSortIngestPlan(
 				zap.Int64("taskID", task.ID))
 			return nil, errors.Errorf("subtask kv group %d is empty", i)
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, cloudStorageURI, int64(len(instanceIDs)), logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, cloudStorageURI, iCnt, mergeSorted, logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -397,6 +400,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	kvMeta *external.SortedKVMeta,
 	cloudStorageURI string,
 	instanceCnt int64,
+	mergeSorted bool,
 	logger *zap.Logger,
 ) (metaArr [][]byte, err error) {
 	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
@@ -444,6 +448,9 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,
 			RangeSplitKeys: rangeSplitKeys,
+		}
+		if mergeSorted {
+			m.AddOn = &BackfillSubTaskMetaAddOn{MergeSorted: true}
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {

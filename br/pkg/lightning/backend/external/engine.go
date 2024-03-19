@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
@@ -125,6 +126,7 @@ type Engine struct {
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
+	mergeSorted     bool
 }
 
 const (
@@ -150,6 +152,7 @@ func NewExternalEngine(
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
+	mergeSorted bool,
 ) common.Engine {
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
@@ -181,6 +184,7 @@ func NewExternalEngine(
 		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
+		mergeSorted:        mergeSorted,
 	}
 }
 
@@ -379,6 +383,7 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 		refCnt:             atomic.NewInt64(0),
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,
+		mergeSorted:        e.mergeSorted,
 	}
 }
 
@@ -468,6 +473,7 @@ type MemoryIngestData struct {
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	dupDetectOpt       common.DupDetectOpt
+	mergeSorted        bool
 
 	keys   [][]byte
 	values [][]byte
@@ -482,6 +488,12 @@ type MemoryIngestData struct {
 var _ common.IngestData = (*MemoryIngestData)(nil)
 
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
+	logutil.BgLogger().Info("firstAndLastKeyIndex",
+		zap.String("lower", hex.EncodeToString(lowerBound)),
+		zap.String("upper", hex.EncodeToString(upperBound)),
+		zap.String("key[0]", hex.EncodeToString(m.keys[0])),
+		zap.String("key[len(key)-1]", hex.EncodeToString(m.keys[len(m.keys)-1])),
+	)
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
 		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)

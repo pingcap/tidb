@@ -93,6 +93,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
+			MergeSorted:   sm.AddOn != nil && sm.AddOn.MergeSorted,
 		},
 	}, engineUUID)
 	if err != nil {
