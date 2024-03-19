@@ -15,6 +15,7 @@
 package sortexec
 
 import (
+	"container/heap"
 	"math/rand"
 	"sync"
 	"time"
@@ -91,6 +92,7 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 		} else {
 			if !t.chkHeap.isRowPtrsInit {
 				t.chkHeap.initPtrs()
+				heap.Init(t.chkHeap)
 			}
 			t.chkHeap.processChkWithSpill(chk)
 		}
