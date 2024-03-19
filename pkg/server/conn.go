@@ -2301,6 +2301,60 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	chkCh := make(chan *chunk.Chunk)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	defer wg.Wait()
+	defer close(chkCh)
+	go func() {
+		defer wg.Done()
+		var err error
+		defer func() {
+			if err != nil {
+				logutil.BgLogger().Error("error", zap.Error(err))
+			}
+		}()
+		for {
+			req, ok := <-chkCh
+			if !ok { // Meet error
+				return
+			}
+			rowCount := req.NumRows()
+			if rowCount == 0 {
+				break
+			}
+			validNextCount++
+			firstNext = false
+			reg := trace.StartRegion(ctx, "WriteClientConn")
+			if stmtDetail != nil {
+				start = time.Now()
+			}
+			for i := 0; i < rowCount; i++ {
+				data = data[0:4]
+				if binary {
+					data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+				} else {
+					data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+				}
+				if err != nil {
+					reg.End()
+					return
+				}
+				if err = cc.writePacket(data); err != nil {
+					reg.End()
+					return
+				}
+			}
+			reg.End()
+			if stmtDetail != nil {
+				stmtDetail.WriteSQLRespDuration += time.Since(start)
+			}
+		}
+	}()
+FOR:
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			//nolint:forcetypeassert
@@ -2343,41 +2397,25 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			}
 			gotColumnInfo = true
 		}
-		rowCount := req.NumRows()
-		if rowCount == 0 {
-			break
-		}
-		validNextCount++
-		firstNext = false
-		reg := trace.StartRegion(ctx, "WriteClientConn")
-		if stmtDetail != nil {
-			start = time.Now()
-		}
-		for i := 0; i < rowCount; i++ {
-			data = data[0:4]
-			if binary {
-				data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
-			} else {
-				data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+	InnerFor:
+		for {
+			select {
+			case chkCh <- req:
+				break InnerFor
+			case <-ctx.Done():
+				break FOR
+			case <-ticker.C:
+				if err = cc.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+					break FOR
+				}
 			}
-			if err != nil {
-				reg.End()
-				return false, err
-			}
-			if err = cc.writePacket(data); err != nil {
-				reg.End()
-				return false, err
-			}
-		}
-		reg.End()
-		if stmtDetail != nil {
-			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
 	if err := rs.Finish(); err != nil {
 		return false, err
 	}
 
+	wg.Wait()
 	if stmtDetail != nil {
 		start = time.Now()
 	}
