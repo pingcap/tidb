@@ -2312,6 +2312,9 @@ func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot == nil {
 		return
 	}
+	if txn, ok := snapshot.(kv.Transaction); ok && txn.IsPipelined() {
+		return
+	}
 	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	if sc.KvExecCounter != nil {
 		snapshot.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
