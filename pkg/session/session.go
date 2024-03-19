@@ -4376,7 +4376,12 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 			return false
 		}
 		referredFKs := is.GetTableReferredForeignKeys(t.DB, t.Table)
-		if len(referredFKs) > 0 {
+		if len(referredFKs) > 0 && vars.ForeignKeyChecks {
+			stmtCtx.AppendWarning(
+				errors.New(
+					"Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode",
+				),
+			)
 			return false
 		}
 		if tbl.Meta().TempTableType != model.TempTableNone {
