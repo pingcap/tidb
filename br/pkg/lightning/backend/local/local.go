@@ -803,7 +803,6 @@ func readAndSplitIntoRange(
 		return ranges, nil
 	}
 
-	// TODO: test this branch.
 	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 	ranges, err := engine.SplitRanges(startKey, endKey, sizeLimit, keysLimit, logger)
 	logger.Info("split engine key ranges",
