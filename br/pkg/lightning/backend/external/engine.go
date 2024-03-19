@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
@@ -405,21 +404,28 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
-	firstKey, err := e.keyAdapter.Decode(nil, e.startKey)
-	if err != nil {
-		return nil, nil, err
-	}
+	return DecodeKeyRangeWithAdapter(e.keyAdapter, e.startKey, e.endKey)
+}
 
-	// e.endKey is exclusive, we need to truncate the trailing zero before decoding.
-	lastKey := e.endKey[:len(e.endKey)-1]
-	lastKey, err = e.keyAdapter.Decode(nil, lastKey)
+// DecodeKeyRangeWithAdapter decodes start key and end key.
+func DecodeKeyRangeWithAdapter(adapter common.KeyAdapter, start, end []byte) ([]byte, []byte, error) {
+	first, err := adapter.Decode(nil, start)
 	if err != nil {
 		return nil, nil, err
 	}
-	endKey = make([]byte, 0, len(lastKey)+1)
-	endKey = append(endKey, lastKey...)
-	endKey = append(endKey, 0)
-	return firstKey, endKey, nil
+	last := end
+	if end[len(end)-1] == 0 {
+		// e.endKey is exclusive, we need to truncate the trailing zero before decoding.
+		last = end[:len(end)-1]
+	}
+	last, err = adapter.Decode(nil, last)
+	if err != nil {
+		return nil, nil, err
+	}
+	newEnd := make([]byte, 0, len(last)+1)
+	newEnd = append(newEnd, last...)
+	newEnd = append(newEnd, 0)
+	return first, newEnd, nil
 }
 
 // SplitRanges split the ranges by split keys provided by external engine.
@@ -429,6 +435,13 @@ func (e *Engine) SplitRanges(
 	_ log.Logger,
 ) ([]common.Range, error) {
 	splitKeys := e.splitKeys
+	for i, k := range e.splitKeys {
+		var err error
+		splitKeys[i], err = e.keyAdapter.Decode(nil, k)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ranges := make([]common.Range, 0, len(splitKeys)+1)
 	ranges = append(ranges, common.Range{Start: startKey})
 	for i := 0; i < len(splitKeys); i++ {
