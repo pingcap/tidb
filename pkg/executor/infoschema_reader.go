@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -784,6 +785,9 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
 		schema := e.dbs[e.dbsIdx]
 		tables := is.SchemaTables(schema)
+		sort.Slice(tables, func(i, j int) bool {
+			return tables[i].Meta().ID < tables[j].Meta().ID
+		})
 		for e.tblIdx < len(tables) {
 			table := tables[e.tblIdx]
 			e.tblIdx++
