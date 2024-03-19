@@ -12,6 +12,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var maxOpenFiles = 2000
+
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(
@@ -62,7 +64,7 @@ func MergeOverlappingFiles(
 // split input data files into max 'concurrency' shares evenly, if there are not
 // enough files, merge at least 2 files in one batch.
 func splitDataFiles(paths []string, concurrency int) [][]string {
-	shares := concurrency
+	shares := max(len(paths)*concurrency/maxOpenFiles, concurrency)
 	if len(paths) < 2*concurrency {
 		shares = max(1, len(paths)/2)
 	}
