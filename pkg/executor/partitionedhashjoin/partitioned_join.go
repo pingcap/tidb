@@ -354,10 +354,10 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		hasNullableKey:      w.HasNullableKey,
 		hasFilter:           w.HashJoinCtx.BuildFilter != nil,
 	}
-	builder.rowColumnsOrder = w.HashJoinCtx.hashTableMeta.rowColumnsOrder
+	builder.initBuffer()
 
 	for chk := range srcChkCh {
-		builder.ResetBuffer()
+		builder.ResetBuffer(chk.NumRows())
 		if w.HashJoinCtx.BuildFilter != nil {
 			builder.filterVector, err = expression.VectorizedFilter(w.HashJoinCtx.SessCtx.GetExprCtx(), w.HashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, w.HashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), builder.filterVector)
 			if err != nil {
@@ -372,7 +372,6 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 			}
 		}
 
-		builder.partIdxVector = builder.partIdxVector[:]
 		h := fnv.New64()
 		for _, key := range builder.serializedKeyVectorBuffer {
 			h.Write(key)
