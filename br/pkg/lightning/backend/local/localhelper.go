@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -319,23 +318,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 			zap.Error(err))
 	}
 	return nil
-}
-
-// ScatterRegion scatter the regions and retry if it fails. It returns error if can not scatter after max_retry.
-func (local *Backend) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	backoffer := split.NewWaitRegionOnlineBackoffer()
-	err := utils.WithRetry(ctx, func() error {
-		var failedErr error
-		err := local.splitCli.ScatterRegion(ctx, regionInfo)
-		if err != nil {
-			failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
-		}
-		return failedErr
-	}, backoffer)
-	if err != nil {
-		log.FromContext(ctx).Warn("scatter region failed", zap.Error(ctx.Err()))
-	}
-	return err
 }
 
 // BatchSplitRegions will split regions by the given split keys and tries to

@@ -126,40 +126,7 @@ func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split
 	return region, nil
 }
 
-func (c *TestClient) SplitRegion(
-	ctx context.Context,
-	regionInfo *split.RegionInfo,
-	key []byte,
-) (*split.RegionInfo, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var target *split.RegionInfo
-	splitKey := codec.EncodeBytes([]byte{}, key)
-	for _, region := range c.regions {
-		if bytes.Compare(splitKey, region.Region.StartKey) >= 0 &&
-			(len(region.Region.EndKey) == 0 || bytes.Compare(splitKey, region.Region.EndKey) < 0) {
-			target = region
-		}
-	}
-	if target == nil {
-		return nil, errors.Errorf("region not found: key=%s", string(key))
-	}
-	newRegion := &split.RegionInfo{
-		Region: &metapb.Region{
-			Peers:    target.Region.Peers,
-			Id:       c.nextRegionID,
-			StartKey: target.Region.StartKey,
-			EndKey:   splitKey,
-		},
-	}
-	c.regions[c.nextRegionID] = newRegion
-	c.nextRegionID++
-	target.Region.StartKey = splitKey
-	c.regions[target.Region.Id] = target
-	return newRegion, nil
-}
-
-func (c *TestClient) BatchSplitRegionsWithOrigin(
+func (c *TestClient) SplitWaitScatter(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
 ) (*split.RegionInfo, []*split.RegionInfo, error) {
 	c.mu.Lock()
@@ -192,22 +159,14 @@ func (c *TestClient) BatchSplitRegionsWithOrigin(
 		region = target
 		newRegions = append(newRegions, newRegion)
 	}
+	for _, r := range newRegions {
+		_ = c.injectInScatter(r)
+	}
 	return region, newRegions, nil
-}
-
-func (c *TestClient) BatchSplitRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) ([]*split.RegionInfo, error) {
-	_, newRegions, err := c.BatchSplitRegionsWithOrigin(ctx, regionInfo, keys)
-	return newRegions, err
 }
 
 func (c *TestClient) WaitRegionsSplit(context.Context, []*split.RegionInfo) error {
 	return nil
-}
-
-func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	return c.injectInScatter(regionInfo)
 }
 
 func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
