@@ -39,7 +39,8 @@ var (
 	TiDBStrictIntegerDisplayWidth bool
 )
 
-// FieldType records field type information.
+// FieldType is the internal structure records field type information, with all elements unexported.
+// todo: move all the GET and SET from core structure of *FieldType to outer *MutableFieldType and *ImmutableFieldType
 type FieldType struct {
 	// tp is type of the field
 	tp byte
@@ -60,7 +61,8 @@ type FieldType struct {
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
-// NewFieldType returns a FieldType,
+// NewFieldType returns a FieldType.
+// todo: change NewFieldType as unexported as newFieldType, and it can only be used inside this pkg.
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
 	return &FieldType{
@@ -68,6 +70,27 @@ func NewFieldType(tp byte) *FieldType {
 		flen:    UnspecifiedLength,
 		decimal: UnspecifiedLength,
 	}
+}
+
+// ImmutableRef implements the mutable interface by returning an immutable reference to current obj.
+func (ft *FieldType) ImmutableRef() ImmutableFieldType {
+	// no-loss upcast
+	return ft
+}
+
+// MutableRef implements the immutable interface by returning the mutable reference to current obj.
+func (ft *FieldType) MutableRef() MutableFieldType {
+	// no-loss downcast
+	// MutableRef return the mutable reference to the current MutableFieldType.
+	return ft
+}
+
+// MutableCopy implements the immutable interface by returning a new copy the basic ft with COW.
+func (ft *FieldType) MutableCopy() MutableFieldType {
+	// when change an immutable fieldType to a mutable one, its kind of COW logic here.
+	// clone the basic element of original ImmutableFieldType it has, downcast it out.
+	newCP := *ft
+	return &newCP
 }
 
 // IsDecimalValid checks whether the decimal is valid.
