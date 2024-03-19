@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"hash/fnv"
 	"math"
 	"runtime/trace"
@@ -119,7 +120,7 @@ type BuildWorker struct {
 	rowTables      []*rowTable
 }
 
-func NewJoinBuildWorker(ctx *PartitionedHashJoinCtx, workID uint, buildSideExec exec.Executor, keyIndex []int, buildTypes []*types.FieldType) *BuildWorker {
+func NewJoinBuildWorker(ctx *PartitionedHashJoinCtx, workID uint, buildSideExec exec.Executor, buildKeyColIdx []int, buildTypes []*types.FieldType) *BuildWorker {
 	hasNullableKey := false
 	for _, idx := range buildKeyColIdx {
 		if !mysql.HasNotNullFlag(buildTypes[idx].GetFlag()) {
@@ -152,11 +153,6 @@ type PartitionedHashJoinExec struct {
 
 	prepared        bool
 	partitionNumber int
-}
-
-func (ctx *PartitionedHashJoinCtx) buildShouldConsiderFilter() bool {
-	return ctx.JoinType == plannercore.LeftOuterJoin && !ctx.RightAsBuildSide ||
-		ctx.JoinType == plannercore.RightOuterJoin && ctx.RightAsBuildSide
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -362,8 +358,8 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 
 	for chk := range srcChkCh {
 		builder.ResetBuffer()
-		if w.HashJoinCtx.Filter != nil && w.HashJoinCtx.buildShouldConsiderFilter() {
-			builder.filterVector, err = expression.VectorizedFilter(w.HashJoinCtx.SessCtx.GetExprCtx(), w.HashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, w.HashJoinCtx.Filter, chunk.NewIterator4Chunk(chk), builder.filterVector)
+		if w.HashJoinCtx.BuildFilter != nil {
+			builder.filterVector, err = expression.VectorizedFilter(w.HashJoinCtx.SessCtx.GetExprCtx(), w.HashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, w.HashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), builder.filterVector)
 			if err != nil {
 				return err
 			}
