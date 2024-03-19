@@ -242,7 +242,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
-		schemaTs = 0
+		schemaTs = startTS
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
@@ -271,11 +271,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 4. No regenrated schema diff.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		schemaTsOrStartTs := schemaTs
-		if schemaTsOrStartTs == 0 {
-			schemaTsOrStartTs = startTS
-		}
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, schemaTsOrStartTs)
+		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, schemaTs)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			do.infoCache.Insert(is, schemaTs)
