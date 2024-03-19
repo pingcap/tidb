@@ -348,6 +348,23 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	}
 }
 
+func TestIssue51873(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE h1 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  position_date date NOT NULL,
+  asset_id varchar(32) DEFAULT NULL,
+  portfolio_code varchar(50) DEFAULT NULL,
+  PRIMARY KEY (id,position_date) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY uidx_posi_asset_balance_key (position_date,portfolio_code,asset_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002
+PARTITION BY RANGE COLUMNS(position_date)
+(PARTITION p202401 VALUES LESS THAN ('2024-02-01'))`)
+	tk.MustExec(``)
+}
+
 func TestIssue50926(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
