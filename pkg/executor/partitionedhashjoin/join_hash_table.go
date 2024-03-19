@@ -136,9 +136,12 @@ func (ri *rowIter) next() {
 	if ri.currentPos.rowIndex == uint64(ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowCount()) {
 		ri.currentPos.rowSegmentIndex++
 		ri.currentPos.rowIndex = 0
-		if ri.currentPos.rowSegmentIndex == len(ri.table.tables[ri.currentPos.subTableIndex].rowData.segments) {
+		for ri.currentPos.rowSegmentIndex == len(ri.table.tables[ri.currentPos.subTableIndex].rowData.segments) {
 			ri.currentPos.subTableIndex++
 			ri.currentPos.rowSegmentIndex = 0
+			if ri.currentPos.subTableIndex == int(ri.table.partitionNumber) {
+				break
+			}
 		}
 	}
 }
