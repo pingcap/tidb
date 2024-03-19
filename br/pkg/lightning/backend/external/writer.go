@@ -41,7 +41,9 @@ import (
 )
 
 var (
-	multiFileStatNum = 500
+	multiFileStatNum           = 500
+	defaultPropSizeDist        = 1 * size.MB
+	defaultPropKeysDist uint64 = 8 * 1024
 
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
@@ -117,8 +119,8 @@ func NewWriterBuilder() *WriterBuilder {
 		memSizeLimit:    DefaultMemSizeLimit,
 		blockSize:       DefaultBlockSize,
 		writeBatchCount: 8 * 1024,
-		propSizeDist:    1 * size.MB,
-		propKeysDist:    8 * 1024,
+		propSizeDist:    defaultPropSizeDist,
+		propKeysDist:    defaultPropKeysDist,
 		onClose:         dummyOnCloseFunc,
 	}
 }
