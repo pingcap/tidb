@@ -20,8 +20,9 @@ mydir=$(dirname "${BASH_SOURCE[0]}")
 
 original_schema_file="${mydir}/original_data/mytest.testtbl-schema.sql"
 original_data_file="${mydir}/original_data/mytest.testtbl.csv"
-schema_file="${original_schema_file/original_data/data}"
-data_file="${original_data_file/original_data/data}"
+mkdir -p "$TEST_DIR/data"
+schema_file="$TEST_DIR/data/mytest.testtbl-schema.sql"
+data_file="$TEST_DIR/data/mytest.testtbl.csv"
 
 # add the BOM header
 printf '\xEF\xBB\xBF' | cat - <( sed '1s/^\xEF\xBB\xBF//' "${original_schema_file}" ) > "${schema_file}"
@@ -40,16 +41,19 @@ fi
 
 row_count=$( sed '1d' "${data_file}" | wc -l | xargs echo )
 
-run_lightning --backend tidb
+run_lightning --backend tidb -d "$TEST_DIR/data"
 
 # Check that everything is correctly imported
 run_sql 'SELECT count(*) FROM mytest.testtbl'
 check_contains "count(*): ${row_count}"
+# Check session variables take effect
+run_sql 'show create table mytest.testtbl'
+check_contains "NONCLUSTERED"
 
 check_cluster_version 4 0 0 'local backend' || exit 0
 run_sql "DROP TABLE mytest.testtbl"
 
-run_lightning --backend local
+run_lightning --backend local -d "$TEST_DIR/data"
 
 # Check that everything is correctly imported
 run_sql 'SELECT count(*) FROM mytest.testtbl'
