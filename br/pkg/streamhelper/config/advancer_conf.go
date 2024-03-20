@@ -18,7 +18,7 @@ const (
 
 	DefaultConsistencyCheckTick = 5
 	DefaultTryAdvanceThreshold  = 4 * time.Minute
-	DefaultCheckPointLagLimit   = 12 * time.Hour
+	DefaultCheckPointLagLimit   = 48 * time.Hour
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4
