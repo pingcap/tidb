@@ -572,7 +572,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 		if item.IsIndex {
 			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
 		} else {
-			_, loadNeeded = tbl.ColumnIsLoadNeeded(item.ID)
+			_, loadNeeded = tbl.ColumnIsLoadNeeded(item.ID, true)
 		}
 		if !loadNeeded {
 			statistics.HistogramNeededItems.Delete(item)
@@ -589,7 +589,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	var colInfo *model.ColumnInfo
-	c, loadNeeded := tbl.ColumnIsLoadNeeded(col.ID)
+	c, loadNeeded := tbl.ColumnIsLoadNeeded(col.ID, true)
 	if !loadNeeded {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
