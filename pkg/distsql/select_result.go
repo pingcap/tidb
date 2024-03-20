@@ -603,11 +603,13 @@ func (r *selectResult) Close() error {
 	if respSize > 0 {
 		r.memConsume(-respSize)
 	}
-	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
-		unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
-		for _, copStats := range unconsumedCopStats {
-			_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
-			r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+	if r.ctx != nil {
+		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
+			for _, copStats := range unconsumedCopStats {
+				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
+				r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+			}
 		}
 	}
 	if r.stats != nil {
