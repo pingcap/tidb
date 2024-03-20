@@ -333,7 +333,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		m.partSize,
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
-		external.DefaultMemSizeLimit,
 		onClose,
 		m.taskMeta.Plan.ThreadCnt,
 		false)

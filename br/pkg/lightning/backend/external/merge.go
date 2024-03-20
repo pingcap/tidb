@@ -26,7 +26,6 @@ func MergeOverlappingFiles(
 	partSize int64,
 	newFilePrefix string,
 	blockSize int,
-	memSizeLimit uint64,
 	onClose OnCloseFunc,
 	concurrency int,
 	checkHotspot bool,
@@ -50,7 +49,6 @@ func MergeOverlappingFiles(
 				partSize,
 				newFilePrefix,
 				uuid.New().String(),
-				memSizeLimit,
 				blockSize,
 				onClose,
 				checkHotspot,
@@ -113,7 +111,6 @@ func mergeOverlappingFilesInternal(
 	partSize int64,
 	newFilePrefix string,
 	writerID string,
-	memSizeLimit uint64,
 	blockSize int,
 	onClose OnCloseFunc,
 	checkHotspot bool,
@@ -139,7 +136,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(memSizeLimit).
+		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onClose).
 		BuildOneFile(store, newFilePrefix, writerID)

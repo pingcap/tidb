@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -28,6 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
+
+// defaultOneWriterMemSizeLimit is the memory size limit for one writer. OneWriter can write
+// data in stream, this memory limit is only used to avoid allocating too many times
+// for each KV pair.
+var defaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
 
 // OneFileWriter is used to write data into external storage
 // with only one file for data and stat.

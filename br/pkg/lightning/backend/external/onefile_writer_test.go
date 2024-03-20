@@ -194,7 +194,11 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		require.NoError(t, writer.WriteRow(ctx, key, val, dbkv.IntHandle(i)))
 	}
 	require.NoError(t, writer.Close(ctx))
-
+	memLimitBak := defaultOneWriterMemSizeLimit
+	t.Cleanup(func() {
+		defaultOneWriterMemSizeLimit = memLimitBak
+	})
+	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
 		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
@@ -202,7 +206,6 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		int64(5*size.MB),
 		"/test2",
 		"mergeID",
-		1000,
 		1000,
 		nil,
 		true,
@@ -295,6 +298,11 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	onClose := func(summary *WriterSummary) {
 		resSummary = summary
 	}
+	memLimitBak := defaultOneWriterMemSizeLimit
+	t.Cleanup(func() {
+		defaultOneWriterMemSizeLimit = memLimitBak
+	})
+	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
 		[]string{"/test/0/one-file"},
@@ -302,7 +310,6 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		int64(5*size.MB),
 		"/test2",
 		"mergeID",
-		1000,
 		1000,
 		onClose,
 		true,

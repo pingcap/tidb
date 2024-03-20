@@ -162,10 +162,13 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	// use random mergeMemSize to test different memLimit of writer.
 	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
 	bufSizeBak := defaultReadBufferSize
+	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
 		defaultReadBufferSize = bufSizeBak
+		defaultOneWriterMemSizeLimit = memLimitBak
 	})
 	defaultReadBufferSize = 100
+	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 	for _, group := range dataGroup {
 		require.NoError(t, MergeOverlappingFiles(
 			ctx,
@@ -174,7 +177,6 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			int64(5*size.MB),
 			"/test2",
 			mergeMemSize,
-			uint64(mergeMemSize),
 			closeFn,
 			1,
 			true,
