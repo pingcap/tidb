@@ -365,8 +365,8 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 			}
 		}
 		// split partition
-		for _, colIdx := range builder.buildKeyIndex {
-			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, builder.filterVector, builder.nullKeyVector, hashTableMeta.ignoreIntegerKeySignFlag[colIdx], builder.serializedKeyVectorBuffer)
+		for index, colIdx := range builder.buildKeyIndex {
+			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, builder.filterVector, builder.nullKeyVector, hashTableMeta.ignoreIntegerKeySignFlag[index], builder.serializedKeyVectorBuffer)
 			if err != nil {
 				return err
 			}
