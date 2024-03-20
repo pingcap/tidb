@@ -83,20 +83,22 @@ const (
 
 	createConflictErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + ConflictErrorTableName + ` (
-			task_id     bigint NOT NULL,
-			create_time datetime(6) NOT NULL DEFAULT now(6),
-			table_name  varchar(261) NOT NULL,
-			index_name  varchar(128) NOT NULL,
-			key_data    text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
-			row_data    text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
-			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
-			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
-			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
-			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
-			is_data_kv  tinyint(1) NOT NULL,
+			task_id              bigint NOT NULL,
+			create_time          datetime(6) NOT NULL DEFAULT now(6),
+			table_name           varchar(261) NOT NULL,
+			index_name           varchar(128) NOT NULL,
+			key_data             text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
+			row_data             text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
+			raw_key              mediumblob NOT NULL COMMENT 'the conflicted key',
+			raw_value            mediumblob NOT NULL COMMENT 'the value of the conflicted key',
+			raw_handle           mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
+			raw_row              mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
+			is_data_kv           tinyint(1) NOT NULL,
+			is_precheck_conflict tinyint(1) NOT NULL DEFAULT 0,
 			INDEX (task_id, table_name),
 			INDEX (index_name),
-			INDEX (table_name, index_name)
+			INDEX (table_name, index_name),
+			INDEX (is_precheck_conflict)
 		);
 	`
 
@@ -122,37 +124,37 @@ const (
 
 	insertIntoConflictErrorData = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv, is_precheck_conflict)
 		VALUES
 	`
 
-	sqlValuesConflictErrorData = "(?,?,'PRIMARY',?,?,?,?,raw_key,raw_value,?)"
+	sqlValuesConflictErrorData = "(?,?,'PRIMARY',?,?,?,?,raw_key,raw_value,?,0)"
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv, is_precheck_conflict)
 		VALUES
 	`
 
-	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
+	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?,0)"
 
 	selectIndexConflictKeysReplace = `
 		SELECT raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND is_data_kv = 0
+		WHERE table_name = ? AND is_data_kv = 0 AND is_precheck_conflict = 0
 		ORDER BY raw_key;
 	`
 
 	selectDataConflictKeysReplace = `
 		SELECT raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND is_data_kv = 1
+		WHERE table_name = ? AND is_data_kv = 1 AND is_precheck_conflict = 0
 		ORDER BY raw_key;
 	`
 
 	deleteNullDataRow = `
 		DELETE FROM %s.` + ConflictErrorTableName + `
-		WHERE key_data = "" and row_data = "";
+		WHERE key_data = "" and row_data = "" AND is_precheck_conflict = 0;
 	`
 
 	insertIntoDupRecord = `
@@ -250,7 +252,7 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
 	}
 	if em.conflictV1Enabled {
-		sqls = append(sqls, [2]string{"create conflict error v2 table", createConflictErrorTable})
+		sqls = append(sqls, [2]string{"create conflict error v3 table", createConflictErrorTable})
 	}
 	if em.conflictV2Enabled {
 		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
@@ -905,11 +907,8 @@ func (em *ErrorManager) LogErrorDetails() {
 		em.logger.Warn(fmtErrMsg(errCnt, "data charset", ""))
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
-		if em.conflictV1Enabled {
+		if em.conflictV1Enabled || em.conflictV2Enabled {
 			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
-		}
-		if em.conflictV2Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTable))
 		}
 	}
 }

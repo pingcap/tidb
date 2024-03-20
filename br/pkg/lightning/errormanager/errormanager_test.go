@@ -286,9 +286,9 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 0 AND is_precheck_conflict = 0 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}))
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 1 AND is_precheck_conflict = 0 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
 			AddRow(data1RowKey, data1RowValue).
 			AddRow(data1RowKey, data2RowValue))
@@ -477,7 +477,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v3.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 0 AND is_precheck_conflict = 0 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(data1IndexKey, "uni_b", data1IndexValue, data1RowKey).
 			AddRow(data1IndexKey, "uni_b", data2IndexValue, data2RowKey).
@@ -493,7 +493,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WithArgs(0, "test", nil, nil, data4RowKey, data4RowValue, 1).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v3 WHERE table_name = ? AND is_data_kv = 1 AND is_precheck_conflict = 0 ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
 			AddRow(data1RowKey, data1RowValue).
 			AddRow(data1RowKey, data3RowValue))
