@@ -190,6 +190,7 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/context",
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/plancodec",
         "//pkg/util/replayer",
         "//pkg/util/sqlkiller",
         "//pkg/util/syncutil",

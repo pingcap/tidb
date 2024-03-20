@@ -137,6 +137,10 @@ func (s *restoreSchemaSuite) SetupTest() {
 	mockTargetInfoGetter := mock.NewMockTargetInfoGetter(s.controller)
 	mockBackend := mock.NewMockBackend(s.controller)
 	mockTargetInfoGetter.EXPECT().
+		FetchRemoteDBModels(gomock.Any()).
+		AnyTimes().
+		Return([]*model.DBInfo{{Name: model.NewCIStr("fakedb")}}, nil)
+	mockTargetInfoGetter.EXPECT().
 		FetchRemoteTableModels(gomock.Any(), gomock.Any()).
 		AnyTimes().
 		Return(s.tableInfos, nil)

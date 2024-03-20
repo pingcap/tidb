@@ -198,7 +198,8 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	// for explain and explain analyze
 	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("explain insert into t values(8, 8)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
+	// explain is read-only, so it doesn't warn.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("explain analyze insert into t values(9, 9)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
 	tk.Session().GetSessionVars().BinlogClient = nil
@@ -702,9 +703,9 @@ func TestInsertIgnoreOnDuplicateKeyUpdate(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, unique index u1(a, b), unique index u2(a))")
 	tk.MustExec("insert into t1 values(0, 0), (1, 1)")
-	tk.MustExecToErr("insert ignore into t1 values (0, 2) ,(1, 3) on duplicate key update b = 5, a = 0")
+	tk.MustExec("insert ignore into t1 values (0, 2) ,(1, 3) on duplicate key update b = 5, a = 0")
 	// if the statement execute successful, the following check should pass.
-	// tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("0 5", "1 1"))
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("0 5", "1 1"))
 }
 
 func TestConflictError(t *testing.T) {

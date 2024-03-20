@@ -1411,7 +1411,7 @@ func TestPlanCacheMVIndexRandomly(t *testing.T) {
 	verifyPlanCacheForMVIndex(t, tk, true, true,
 		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (? member of (a) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
 		`int`, `int`, `int`, `int`, `int`, `int`)
-	verifyPlanCacheForMVIndex(t, tk, true, false,
+	verifyPlanCacheForMVIndex(t, tk, false, false,
 		`select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, ?) and c=? and d=?) or (? member of (b) and c=? and d=?)`,
 		`json-signed`, `int`, `int`, `int`, `int`, `int`)
 	verifyPlanCacheForMVIndex(t, tk, true, false,

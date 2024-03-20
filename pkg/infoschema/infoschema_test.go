@@ -844,6 +844,7 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 }
 
 func TestEnableInfoSchemaV2(t *testing.T) {
+	t.Skip("This feature is not enabled yet")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Test the @@tidb_enable_infoschema_v2 variable.

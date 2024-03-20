@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/driver"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -69,6 +70,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 	gctuner.GlobalMemoryLimitTuner.Stop()
 	tryMakeImage()
 	store, _ := CreateMockStoreAndDomain(t, opts...)
+	_ = store.(helper.Storage)
 	return store
 }
 
@@ -267,7 +269,9 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 		view.Stop()
 		gctuner.GlobalMemoryLimitTuner.Stop()
 	})
-	return schematracker.UnwrapStorage(store), dom
+	store = schematracker.UnwrapStorage(store)
+	_ = store.(helper.Storage)
+	return store, dom
 }
 
 func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {

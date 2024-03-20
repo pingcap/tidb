@@ -58,7 +58,6 @@ go_library(
         "//pkg/util/etcd",
         "//pkg/util/logutil",
         "//pkg/util/promutil",
-        "//pkg/util/size",
         "//pkg/util/sqlexec",
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",

@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -337,8 +336,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		getKVGroupBlockSize(sm.KVGroup),
 		external.DefaultMemSizeLimit,
 		8*1024,
-		1*size.MB,
-		8*1024,
 		onClose,
 		m.taskMeta.Plan.ThreadCnt,
 		false)
@@ -462,6 +459,7 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 type postProcessStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID   int64
+	store    tidbkv.Storage
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
@@ -470,9 +468,10 @@ var _ execute.StepExecutor = &postProcessStepExecutor{}
 
 // NewPostProcessStepExecutor creates a new post process step executor.
 // exported for testing.
-func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.StepExecutor {
+func NewPostProcessStepExecutor(taskID int64, store tidbkv.Storage, taskMeta *TaskMeta, logger *zap.Logger) execute.StepExecutor {
 	return &postProcessStepExecutor{
 		taskID:   taskID,
+		store:    store,
 		taskMeta: taskMeta,
 		logger:   logger,
 	}
@@ -491,7 +490,7 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 	failpoint.Inject("waitBeforePostProcess", func() {
 		time.Sleep(5 * time.Second)
 	})
-	return postProcess(ctx, p.taskMeta, &stepMeta, logger)
+	return postProcess(ctx, p.store, p.taskMeta, &stepMeta, logger)
 }
 
 type importExecutor struct {
@@ -563,7 +562,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task, stepResource *proto.S
 			store:    e.store,
 		}, nil
 	case proto.ImportStepPostProcess:
-		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
+		return NewPostProcessStepExecutor(task.ID, e.store, &taskMeta, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}

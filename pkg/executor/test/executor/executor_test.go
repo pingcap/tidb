@@ -2797,8 +2797,17 @@ func TestIssue38756(t *testing.T) {
 }
 
 func TestIssue50043(t *testing.T) {
+	testIssue50043WithInitSQL(t, "")
+}
+
+func TestIssue50043WithPipelinedDML(t *testing.T) {
+	testIssue50043WithInitSQL(t, "set @@tidb_dml_type=bulk")
+}
+
+func testIssue50043WithInitSQL(t *testing.T, initSQL string) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(initSQL)
 	// Test simplified case by update.
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2),unique key idx2 ( c1 ));")

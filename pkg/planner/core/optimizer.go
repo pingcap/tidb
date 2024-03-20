@@ -362,7 +362,9 @@ func adjustOptimizationFlags(flag uint64, logic LogicalPlan) uint64 {
 	}
 	flag |= flagCollectPredicateColumnsPoint
 	flag |= flagSyncWaitStatsLoadPoint
-
+	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		flag |= flagPartitionProcessor // apply partition pruning under static mode
+	}
 	return flag
 }
 

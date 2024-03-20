@@ -24,24 +24,11 @@ func MergeOverlappingFiles(
 	blockSize int,
 	memSizeLimit uint64,
 	writeBatchCount uint64,
-	propSizeDist uint64,
-	propKeysDist uint64,
 	onClose OnCloseFunc,
 	concurrency int,
 	checkHotspot bool,
 ) error {
-	var dataFilesSlice [][]string
-	batchCount := 1
-	if len(paths) > concurrency {
-		batchCount = len(paths) / concurrency
-	}
-	for i := 0; i < len(paths); i += batchCount {
-		end := i + batchCount
-		if end > len(paths) {
-			end = len(paths)
-		}
-		dataFilesSlice = append(dataFilesSlice, paths[i:end])
-	}
+	dataFilesSlice := splitDataFiles(paths, concurrency)
 
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
@@ -64,14 +51,38 @@ func MergeOverlappingFiles(
 				memSizeLimit,
 				blockSize,
 				writeBatchCount,
-				propSizeDist,
-				propKeysDist,
 				onClose,
 				checkHotspot,
 			)
 		})
 	}
 	return eg.Wait()
+}
+
+// split input data files into max 'concurrency' shares evenly, if there are not
+// enough files, merge at least 2 files in one batch.
+func splitDataFiles(paths []string, concurrency int) [][]string {
+	shares := concurrency
+	if len(paths) < 2*concurrency {
+		shares = max(1, len(paths)/2)
+	}
+	dataFilesSlice := make([][]string, 0, shares)
+	batchCount := len(paths) / shares
+	remainder := len(paths) % shares
+	start := 0
+	for start < len(paths) {
+		end := start + batchCount
+		if remainder > 0 {
+			end++
+			remainder--
+		}
+		if end > len(paths) {
+			end = len(paths)
+		}
+		dataFilesSlice = append(dataFilesSlice, paths[start:end])
+		start = end
+	}
+	return dataFilesSlice
 }
 
 // mergeOverlappingFilesInternal reads from given files whose key range may overlap
@@ -104,8 +115,6 @@ func mergeOverlappingFilesInternal(
 	memSizeLimit uint64,
 	blockSize int,
 	writeBatchCount uint64,
-	propSizeDist uint64,
-	propKeysDist uint64,
 	onClose OnCloseFunc,
 	checkHotspot bool,
 ) (err error) {
@@ -133,8 +142,6 @@ func mergeOverlappingFilesInternal(
 		SetMemorySizeLimit(memSizeLimit).
 		SetBlockSize(blockSize).
 		SetWriterBatchCount(writeBatchCount).
-		SetPropKeysDistance(propKeysDist).
-		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
 		BuildOneFile(store, newFilePrefix, writerID)
 	err = writer.Init(ctx, partSize)
