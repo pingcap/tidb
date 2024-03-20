@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -79,7 +78,7 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, "one-file")
 	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    int64(5 * size.MB)})
+		PartSize:    MinUploadPartSize})
 	if err != nil {
 		w.logger.Info("create stat writer failed",
 			zap.Error(err))

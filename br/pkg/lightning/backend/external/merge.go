@@ -3,19 +3,24 @@ package external
 import (
 	"context"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
-// maxMergingFilesPerThread is the maximum number of files that can be merged by a
-// single thread. This value comes from the fact that 16 threads are ok to merge 4k
-// files in parallel, so we set it to 250.
-var maxMergingFilesPerThread = 250
+var (
+	// MaxMergingFilesPerThread is the maximum number of files that can be merged by a
+	// single thread. This value comes from the fact that 16 threads are ok to merge 4k
+	// files in parallel, so we set it to 250.
+	MaxMergingFilesPerThread = 250
+	// MinUploadPartSize is the minimum size of each part when uploading files to
+	// external storage, which is 5MiB for both S3 and GCS.
+	MinUploadPartSize int64 = 5 * units.MiB
+)
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
@@ -31,14 +36,15 @@ func MergeOverlappingFiles(
 	checkHotspot bool,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
+	partSize = max(MinUploadPartSize, partSize)
 
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
 		zap.Int("file-groups", len(dataFilesSlice)),
-		zap.Int("concurrency", concurrency))
+		zap.Int("concurrency", concurrency),
+		zap.Int64("part-size", partSize))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
-	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
@@ -59,10 +65,10 @@ func MergeOverlappingFiles(
 }
 
 // split input data files into multiple shares evenly, with the max number files
-// in each share maxMergingFilesPerThread, if there are not enough files, merge at
+// in each share MaxMergingFilesPerThread, if there are not enough files, merge at
 // least 2 files in one batch.
 func splitDataFiles(paths []string, concurrency int) [][]string {
-	shares := max(len(paths)/maxMergingFilesPerThread, concurrency)
+	shares := max(len(paths)/MaxMergingFilesPerThread, concurrency)
 	if len(paths) < 2*concurrency {
 		shares = max(1, len(paths)/2)
 	}
