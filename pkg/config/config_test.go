@@ -754,6 +754,7 @@ store-limit=0
 ttl-refreshed-txn-size=8192
 resolve-lock-lite-threshold = 16
 copr-req-timeout = "120s"
+enable-replica-selector-v2 = false
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -804,6 +805,8 @@ max_connections = 200
 	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
 	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
 	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
+	require.Equal(t, false, conf.TiKVClient.EnableReplicaSelectorV2)
+	require.Equal(t, true, defaultConf.TiKVClient.EnableReplicaSelectorV2)
 	require.Equal(t, uint(1000), conf.TokenLimit)
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
@@ -1335,4 +1338,26 @@ func TestAutoScalerConfig(t *testing.T) {
 	UpdateGlobal(func(conf *Config) {
 		conf.UseAutoScaler = false
 	})
+}
+
+func TestInvalidConfigWithDeprecatedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.toml")
+
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+
+	_, err = f.WriteString(`
+[log]
+slow-threshold = 1000
+[performance]
+enforce-mpp = 1
+	`)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+
+	var conf Config
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
 }

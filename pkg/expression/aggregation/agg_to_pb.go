@@ -99,9 +99,10 @@ func (desc *baseFuncDesc) GetTiPBExpr(tryWindowDesc bool) (tp tipb.ExprType) {
 }
 
 // AggFuncToPBExpr converts aggregate function to pb.
-func AggFuncToPBExpr(sctx expression.EvalContext, client kv.Client, aggFunc *AggFuncDesc, storeType kv.StoreType) (*tipb.Expr, error) {
-	pc := expression.NewPBConverter(client, sctx)
+func AggFuncToPBExpr(ctx expression.PushDownContext, aggFunc *AggFuncDesc, storeType kv.StoreType) (*tipb.Expr, error) {
+	pc := ctx.PbConverter()
 	tp := aggFunc.GetTiPBExpr(false)
+	client := ctx.Client()
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil, errors.New("select request is not supported by client")
 	}
@@ -122,14 +123,14 @@ func AggFuncToPBExpr(sctx expression.EvalContext, client kv.Client, aggFunc *Agg
 	if tp == tipb.ExprType_GroupConcat {
 		orderBy := make([]*tipb.ByItem, 0, len(aggFunc.OrderByItems))
 		for _, arg := range aggFunc.OrderByItems {
-			pbArg := expression.SortByItemToPB(sctx, client, arg.Expr, arg.Desc)
+			pbArg := expression.SortByItemToPB(ctx.EvalCtx(), client, arg.Expr, arg.Desc)
 			if pbArg == nil {
 				return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
 			}
 			orderBy = append(orderBy, pbArg)
 		}
 		// encode GroupConcatMaxLen
-		gcMaxLen, err := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
+		gcMaxLen, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
 		if err != nil {
 			return nil, errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen)
 		}

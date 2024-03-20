@@ -96,7 +96,7 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 }
 
 func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.checkPrivileges(ctx); err != nil {
+	if err := checkPrivileges(ctx, &c.funcDef); err != nil {
 		return nil, err
 	}
 
@@ -107,13 +107,18 @@ func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
+
+	// Though currently, `getFunction` does not require too much information that makes it safe to be cached,
+	// we still skip the plan cache for extension functions because there are no strong requirements to do it.
+	// Skipping the plan cache can make the behavior simple.
+	ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("extension function should not be cached"))
 	bf.tp.SetFlen(c.flen)
 	sig := &extensionFuncSig{bf, c.funcDef}
 	return sig, nil
 }
 
-func (c *extensionFuncClass) checkPrivileges(ctx BuildContext) error {
-	fn := c.funcDef.RequireDynamicPrivileges
+func checkPrivileges(ctx EvalContext, fnDef *extension.FunctionDef) error {
+	fn := fnDef.RequireDynamicPrivileges
 	if fn == nil {
 		return nil
 	}
@@ -155,6 +160,10 @@ func (b *extensionFuncSig) Clone() builtinFunc {
 }
 
 func (b *extensionFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	if err := checkPrivileges(ctx, &b.FunctionDef); err != nil {
+		return "", true, err
+	}
+
 	if b.EvalTp == types.ETString {
 		fnCtx := newExtensionFnContext(ctx, b)
 		return b.EvalStringFunc(fnCtx, row)
@@ -163,6 +172,10 @@ func (b *extensionFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 }
 
 func (b *extensionFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	if err := checkPrivileges(ctx, &b.FunctionDef); err != nil {
+		return 0, true, err
+	}
+
 	if b.EvalTp == types.ETInt {
 		fnCtx := newExtensionFnContext(ctx, b)
 		return b.EvalIntFunc(fnCtx, row)

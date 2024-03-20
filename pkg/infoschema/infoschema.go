@@ -59,12 +59,12 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
-
-	// schemaMetaVersion is the version of schema, and we should check version when change schema.
-	schemaMetaVersion int64
 }
 
 type infoSchemaMisc struct {
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
+	schemaMetaVersion int64
+
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
 
@@ -161,10 +161,6 @@ func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bo
 		return
 	}
 	return tableNames.dbInfo, true
-}
-
-func (is *infoSchema) SchemaMetaVersion() int64 {
-	return is.schemaMetaVersion
 }
 
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
@@ -310,6 +306,10 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 // HasTemporaryTable returns whether information schema has temporary table
 func (is *infoSchemaMisc) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
+}
+
+func (is *infoSchemaMisc) SchemaMetaVersion() int64 {
+	return is.schemaMetaVersion
 }
 
 // GetSequenceByName gets the sequence by name.

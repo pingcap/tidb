@@ -105,6 +105,7 @@ func TestLoadBackupMeta(t *testing.T) {
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			}),
+		true,
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
@@ -201,6 +202,7 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			},
 		),
+		true,
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
@@ -287,6 +289,7 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)
@@ -319,6 +322,7 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)
@@ -351,6 +355,7 @@ func BenchmarkLoadBackupMeta10240(b *testing.B) {
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
+			true,
 		)
 		require.NoError(b, err)
 		require.Len(b, dbs, 1)

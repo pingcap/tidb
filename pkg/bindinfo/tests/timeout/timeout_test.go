@@ -20,7 +20,25 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
+
+func TestLoadBindingWarn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int)`)
+	tk.MustExec(`create global binding using select * from t1`)
+	tk.MustExec(`select * from t1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+
+	sctx := tk.Session()
+	sctx.SetValue(bindinfo.GetBindingReturnNilAlways, true)
+	tk.MustExec(`select * from t1`)
+	warnings := tk.MustQuery(`show warnings`)
+	require.True(t, len(warnings.Rows()) == 1)
+	sctx.ClearValue(bindinfo.GetBindingReturnNilAlways)
+}
 
 func TestFuzzyBindingHintsWithSourceReturningTimeout(t *testing.T) {
 	store := testkit.CreateMockStore(t)

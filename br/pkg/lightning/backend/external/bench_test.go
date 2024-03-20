@@ -505,8 +505,6 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		DefaultBlockSize,
 		DefaultMemSizeLimit,
 		8*1024,
-		1*size.MB,
-		8*1024,
 		onClose,
 		s.concurrency,
 		s.mergeIterHotspot,
