@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"slices"
 	"sort"
@@ -41,11 +40,6 @@ import (
 // file reader, read, parse and skip few smaller keys, and then locate the needed
 // data.
 //
-// To avoid potential data loss, it also checks at least one statistic file has a
-// key larger than or equal to the start key. If not, we are afraid that some
-// paths are missing, and the data between [start key, min(first key of
-// statistic files)) are lost.
-//
 // Caller can specify multiple ascending keys and seekPropsOffsets will return
 // the offsets list per file for each key.
 func seekPropsOffsets(
@@ -64,9 +58,7 @@ func seekPropsOffsets(
 	for i := range offsetsPerFile {
 		offsetsPerFile[i] = make([]uint64, len(starts))
 	}
-	// Record first key if it is smaller than first key of "starts" key argument for
-	// each file, and check all files afterward.
-	firstKeyTooSmallCheckers := make([]kv.Key, len(paths))
+
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := range paths {
 		i := i
@@ -80,7 +72,6 @@ func seekPropsOffsets(
 			}
 			defer r.Close()
 
-			moved := false
 			keyIdx := 0
 			curKey := starts[keyIdx]
 
@@ -100,11 +91,6 @@ func seekPropsOffsets(
 				}
 				propKey := kv.Key(p.firstKey)
 				for propKey.Cmp(curKey) > 0 {
-					if !moved {
-						if firstKeyTooSmallCheckers[i] == nil {
-							firstKeyTooSmallCheckers[i] = propKey
-						}
-					}
 					keyIdx++
 					if keyIdx >= len(starts) {
 						return nil
@@ -112,7 +98,6 @@ func seekPropsOffsets(
 					offsetsPerFile[i][keyIdx] = offsetsPerFile[i][keyIdx-1]
 					curKey = starts[keyIdx]
 				}
-				moved = true
 				offsetsPerFile[i][keyIdx] = p.offset
 				p, err3 = r.nextProp()
 			}
@@ -121,27 +106,6 @@ func seekPropsOffsets(
 
 	if err = eg.Wait(); err != nil {
 		return nil, err
-	}
-
-	hasNil := false
-	for _, k := range firstKeyTooSmallCheckers {
-		if k == nil {
-			hasNil = true
-			break
-		}
-	}
-	if !hasNil {
-		minKey := firstKeyTooSmallCheckers[0]
-		for _, k := range firstKeyTooSmallCheckers[1:] {
-			if k.Cmp(minKey) < 0 {
-				minKey = k
-			}
-		}
-		return nil, fmt.Errorf("start key %s is too small for stat files %v, propKey %s",
-			starts[0].String(),
-			paths,
-			minKey.String(),
-		)
 	}
 
 	// TODO(lance6716): change the caller so we don't need to transpose the result
