@@ -66,6 +66,7 @@ type ImmutableFieldType interface {
 	MemoryUsage() (sum int64)
 }
 
+// NewImmutableFieldType create an immutable field type.
 func NewImmutableFieldType(tp byte) ImmutableFieldType {
 	return NewFieldType(tp)
 }

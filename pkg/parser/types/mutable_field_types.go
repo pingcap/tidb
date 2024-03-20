@@ -60,6 +60,7 @@ type MutableFieldType interface {
 	UnmarshalJSON(data []byte) error
 }
 
+// NewMutableFieldType create a mutable field type.
 func NewMutableFieldType(tp byte) MutableFieldType {
 	return NewFieldType(tp)
 }
