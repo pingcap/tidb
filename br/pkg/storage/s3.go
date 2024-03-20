@@ -898,11 +898,11 @@ type s3ObjectReader struct {
 func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
-	if maxCnt > int64(len(p)) {
-		maxCnt = int64(len(p))
-	}
 	if maxCnt == 0 {
 		return 0, io.EOF
+	}
+	if maxCnt > int64(len(p)) {
+		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors

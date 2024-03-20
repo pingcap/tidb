@@ -38,9 +38,13 @@ type Engine interface {
 	KVStatistics() (totalKVSize int64, totalKVCount int64)
 	// ImportedStatistics returns the imported kv size and imported kv count.
 	ImportedStatistics() (importedKVSize int64, importedKVCount int64)
-	// GetKeyRange returns the key range [startKey, endKey) of the engine.
+	// GetKeyRange returns the key range [startKey, endKey) of the engine. If the
+	// duplicate detection is enabled, the keys in engine are encoded by duplicate
+	// detection but the returned keys should not be encoded.
 	GetKeyRange() (startKey []byte, endKey []byte, err error)
-	// SplitRanges splits the range [startKey, endKey) into multiple ranges.
+	// SplitRanges splits the range [startKey, endKey) into multiple ranges. If the
+	// duplicate detection is enabled, the keys in engine are encoded by duplicate
+	// detection but the returned keys should not be encoded.
 	SplitRanges(startKey, endKey []byte, sizeLimit, keysLimit int64, logger log.Logger) ([]Range, error)
 	Close() error
 }

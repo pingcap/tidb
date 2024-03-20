@@ -87,15 +87,17 @@ func TestSeekPropsOffsets(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]uint64{{10, 20}, {30, 20}}, got)
 
-	_, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key0")}, []string{file1, file2}, store)
-	require.ErrorContains(t, err, "start key 6b657930 is too small for stat files [/test1 /test2]")
+	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key0")}, []string{file1, file2}, store)
+	require.NoError(t, err)
+	require.Equal(t, [][]uint64{{0, 0}}, got)
 
 	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key1")}, []string{file1, file2}, store)
 	require.NoError(t, err)
 	require.Equal(t, [][]uint64{{10, 0}}, got)
 
-	_, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key0"), []byte("key1")}, []string{file1, file2}, store)
-	require.ErrorContains(t, err, "start key 6b657930 is too small for stat files [/test1 /test2]")
+	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key0"), []byte("key1")}, []string{file1, file2}, store)
+	require.NoError(t, err)
+	require.Equal(t, [][]uint64{{0, 0}, {10, 0}}, got)
 
 	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key999")}, []string{file1, file2}, store)
 	require.NoError(t, err)
