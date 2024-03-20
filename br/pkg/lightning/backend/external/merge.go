@@ -108,7 +108,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // with current default values, on machine with 2G per core, the estimate max memory
 // usage for import into is:
 //
-//	128 + 250 * (4 + 64/1024) + 4 * (25.6 + 5) ~ 1.24 GiB
+//	128 + 250 * (4 + 64/1024) + 8 * (25.6 + 5) ~ 1.36 GiB
 //	where 25.6 is max part-size when there is only data kv = 1024*250/10000 = 25.6MiB
 //
 // for add-index, it uses more memory as check-hotspot is enabled.
