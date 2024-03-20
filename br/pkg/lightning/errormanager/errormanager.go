@@ -359,6 +359,10 @@ func (em *ErrorManager) RecordDataConflictError(
 		return gerr
 	}
 
+	if em.conflictRecordsRemain.Add(-1) < 0 {
+		return nil
+	}
+
 	exec := common.SQLWithRetry{
 		DB:           em.db,
 		Logger:       logger,
@@ -419,6 +423,10 @@ func (em *ErrorManager) RecordIndexConflictError(
 
 	if em.db == nil {
 		return gerr
+	}
+
+	if em.conflictRecordsRemain.Add(-1) < 0 {
+		return nil
 	}
 
 	exec := common.SQLWithRetry{
@@ -953,11 +961,8 @@ func (em *ErrorManager) Output() string {
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
 		count++
-		if em.conflictV1Enabled {
+		if em.conflictV1Enabled || em.conflictV2Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictErrorTableName)})
-		}
-		if em.conflictV2Enabled {
-			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTable)})
 		}
 	}
 
