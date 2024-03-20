@@ -4179,8 +4179,19 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:PcnOn0jObDWXvEWyAxBm7qrxokAVghEbHWXhK4ZVWNg=",
         version = "v2.0.8-0.20240417121055-7b4535c36317",
+=======
+        sha256 = "56bca932f5be6574490fcaaa4d8a19f13a5e05f576aeea07ac16c86fe1feac09",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240320090330-ab337d6c51d2",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240320090330-ab337d6c51d2.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240320090330-ab337d6c51d2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240320090330-ab337d6c51d2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240320090330-ab337d6c51d2.zip",
+        ],
+>>>>>>> 93b96e9c8f6 (go.mod: upgrade PD client to fix another TSO hang bug (#51952))
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -4194,8 +4205,19 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
+<<<<<<< HEAD
         sum = "h1:BBwUZAaBl7DKdyaduOxXqias4xCtdDgIAGsDBuri3lg=",
         version = "v0.0.0-20231211083919-fe6fd1721aa6",
+=======
+        sha256 = "d2f21afb90ffa49839d6392fa1660865fac285b10580c23b8feba5bbf6bf7191",
+        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20240320081713-c00c42e77b31",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240320081713-c00c42e77b31.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240320081713-c00c42e77b31.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240320081713-c00c42e77b31.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240320081713-c00c42e77b31.zip",
+        ],
+>>>>>>> 93b96e9c8f6 (go.mod: upgrade PD client to fix another TSO hang bug (#51952))
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
