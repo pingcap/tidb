@@ -1288,6 +1288,9 @@ func (e *InsertValues) batchCheckAndInsert(
 				if err != nil {
 					return err
 				}
+				if rowInserted {
+					break
+				}
 				continue
 			}
 			if tablecodec.IsTempIndexKey(uk.newKey) {
@@ -1300,6 +1303,9 @@ func (e *InsertValues) batchCheckAndInsert(
 					rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
 					if err != nil {
 						return err
+					}
+					if rowInserted {
+						break
 					}
 				}
 			}
