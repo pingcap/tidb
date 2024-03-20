@@ -157,20 +157,6 @@ func (mr *MockRowsMockRecorder) Clear() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Clear", reflect.TypeOf((*MockRows)(nil).Clear))
 }
 
-// SplitIntoChunks mocks base method.
-func (m *MockRows) SplitIntoChunks(arg0 int) []encode.Rows {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SplitIntoChunks", arg0)
-	ret0, _ := ret[0].([]encode.Rows)
-	return ret0
-}
-
-// SplitIntoChunks indicates an expected call of SplitIntoChunks.
-func (mr *MockRowsMockRecorder) SplitIntoChunks(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SplitIntoChunks", reflect.TypeOf((*MockRows)(nil).SplitIntoChunks), arg0)
-}
-
 // MockRow is a mock of Row interface.
 type MockRow struct {
 	ctrl     *gomock.Controller
