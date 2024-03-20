@@ -1278,22 +1278,22 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
-	dsCopTask := &copTask{
+	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
-	dsCopTask.physPlanPartInfo = PhysPlanPartInfo{
+	copTask.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   ds.allConds,
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	ts.PlanPartInfo = dsCopTask.physPlanPartInfo
+	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
-	ts.addPushedDownSelection(dsCopTask, selStats)
-	return p.constructIndexJoinInnerSideTask(dsCopTask, ds, nil, wrapper)
+	ts.addPushedDownSelection(copTask, selStats)
+	return p.constructIndexJoinInnerSideTask(copTask, ds, nil, wrapper)
 }
 
 func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *copTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) task {
