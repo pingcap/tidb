@@ -40,11 +40,6 @@ import (
 // file reader, read, parse and skip few smaller keys, and then locate the needed
 // data.
 //
-// To avoid potential data loss, it also checks at least one statistic file has a
-// key larger than or equal to the start key. If not, we are afraid that some
-// paths are missing, and the data between [start key, min(first key of
-// statistic files)) are lost.
-//
 // Caller can specify multiple ascending keys and seekPropsOffsets will return
 // the offsets list per file for each key.
 func seekPropsOffsets(
