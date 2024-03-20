@@ -267,7 +267,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 
 	readStart := time.Now()
 	readDtStartKey := e.keyAdapter.Encode(nil, startKey, common.MinRowID)
-	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common.ZeroRowID)
+	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common.MinRowID)
 	err := readAllData(
 		ctx,
 		e.storage,
@@ -529,7 +529,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 
 	lastKeyIdx := len(m.keys) - 1
 	if len(upperBound) > 0 {
-		upperBound = m.keyAdapter.Encode(nil, upperBound, common.ZeroRowID)
+		upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
 		i := sort.Search(len(m.keys), func(i int) bool {
 			reverseIdx := len(m.keys) - 1 - i
 			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
