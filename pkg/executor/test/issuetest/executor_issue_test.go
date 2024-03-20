@@ -623,7 +623,7 @@ func TestIssue50393(t *testing.T) {
 }
 
 func TestIssue51874(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().AllowProjectionPushDown = true
 
