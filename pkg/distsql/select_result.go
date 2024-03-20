@@ -603,6 +603,15 @@ func (r *selectResult) Close() error {
 	if respSize > 0 {
 		r.memConsume(-respSize)
 	}
+	if r.ctx != nil {
+		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
+			for _, copStats := range unconsumedCopStats {
+				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
+				r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+			}
+		}
+	}
 	if r.stats != nil {
 		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
@@ -614,13 +623,6 @@ func (r *selectResult) Close() error {
 			}
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}()
-		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
-			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
-			for _, copStats := range unconsumedCopStats {
-				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
-				r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
-			}
-		}
 	}
 	return r.resp.Close()
 }
