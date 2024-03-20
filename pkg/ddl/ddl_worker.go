@@ -440,7 +440,6 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		}
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
-		job.InvolvingSchemaInfo = nil
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
