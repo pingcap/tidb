@@ -44,7 +44,7 @@ var (
 	multiFileStatNum           = 500
 	defaultPropSizeDist        = 1 * size.MB
 	defaultPropKeysDist uint64 = 8 * 1024
-	// Tested on GCP 16c/32c node, 32~64 workers uses up all network bandwidth for
+	// Tested on GCP 16c/32c node, 32~64 workers used up all network bandwidth for
 	// part-size in range 5~20M, so 4 workers per thread is a good choice.
 	// TODO need data on AWS and other machine types
 	maxUploadWorkersPerThread = 4
