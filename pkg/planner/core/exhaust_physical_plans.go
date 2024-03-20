@@ -1247,7 +1247,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		KeepOrder:       keepOrder,
 		Desc:            desc,
 		physicalTableID: ds.physicalTableID,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -1334,7 +1334,7 @@ func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *copTask, ds *Da
 			}
 			sctx := p.SCtx()
 			for i, groupbyCol := range groupByCols {
-				if path.IdxColLens[i] != types.UnspecifiedLength || !groupbyCol.EqualByExprAndID(sctx, path.IdxCols[i]) {
+				if path.IdxColLens[i] != types.UnspecifiedLength || !groupbyCol.EqualByExprAndID(sctx.GetExprCtx(), path.IdxCols[i]) {
 					preferStream = false
 				}
 			}
