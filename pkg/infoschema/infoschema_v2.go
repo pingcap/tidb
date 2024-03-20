@@ -723,8 +723,18 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	})
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	b.deleteReferredForeignKeys(dbInfo, tableID)
+	b.deleteReferredForeignKeysV2(dbInfo, tableID)
 	return affected
+}
+
+func (b *Builder) deleteReferredForeignKeysV2(dbInfo *model.DBInfo, tableID int64) {
+	for _, tbl := range b.infoschemaV2.SchemaTables(dbInfo.Name) {
+		tblInfo := tbl.Meta()
+		if tblInfo.ID == tableID {
+			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
+			break
+		}
+	}
 }
 
 func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {
