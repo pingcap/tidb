@@ -366,6 +366,16 @@ func (sf *ScalarFunction) ConstItem(sc *stmtctx.StatementContext) bool {
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false
 	}
+<<<<<<< HEAD
+=======
+
+	if _, ok := sf.Function.(*extensionFuncSig); ok {
+		// we should return `ConstNone` for extension functions for safety, because it may have a side effect.
+		return ConstNone
+	}
+
+	level := ConstStrict
+>>>>>>> 1469e3dbf44 (extension: disable some optimizations for extension function (#51926))
 	for _, arg := range sf.GetArgs() {
 		if !arg.ConstItem(sc) {
 			return false
