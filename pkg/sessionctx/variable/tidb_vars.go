@@ -1482,7 +1482,7 @@ const (
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
-	DefTiDBSchemaCacheSize                            = 0
+	DefTiDBSchemaCacheSize                            = 1000
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefTiDBDMLType                                    = "STANDARD"
 )
