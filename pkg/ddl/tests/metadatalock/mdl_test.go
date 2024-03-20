@@ -927,9 +927,7 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		select {
-		case <-ch:
-		}
+		<-ch
 		tkDDL.MustExec("alter table test.t add index idx(a);")
 		wg.Done()
 	}()
