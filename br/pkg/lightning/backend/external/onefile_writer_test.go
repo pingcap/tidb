@@ -194,10 +194,13 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		require.NoError(t, writer.WriteRow(ctx, key, val, dbkv.IntHandle(i)))
 	}
 	require.NoError(t, writer.Close(ctx))
+	readBufSizeBak := defaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
+		defaultReadBufferSize = readBufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
+	defaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
@@ -298,10 +301,13 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	onClose := func(summary *WriterSummary) {
 		resSummary = summary
 	}
+	readBufSizeBak := defaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
+		defaultReadBufferSize = readBufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
+	defaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,

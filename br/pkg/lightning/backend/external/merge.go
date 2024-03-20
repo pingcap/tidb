@@ -97,19 +97,21 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // accurately, here we only consider the memory used by our code, the estimate max
 // memory usage of this function is:
 //
-//	memSizeLimit
-//	+ 20 * partSize
-//	+ 20 * 5MiB(stat file, we might not use all part, as stat file is quite small)
-//	+ readBufferSize * len(paths)
+//	defaultOneWriterMemSizeLimit
+//	+ MaxMergingFilesPerThread * (X + defaultReadBufferSize)
+//	+ maxUploadWorkersPerThread * (data-part-size + 5MiB(stat-part-size))
 //	+ memory taken by concurrent reading if check-hotspot is enabled
 //
-// memSizeLimit = 256 MiB now.
-// partSize = index-kv-data-file-size / (10000 / MergeSortOverlapThreshold) for import into.
-// readBufferSize = 64 KiB now.
-// len(paths) >= kv-files-in-subtask(suppose MergeSortOverlapThreshold) / concurrency
+// where X is memory used for each read connection, it's http2 for GCP, X might be
+// 4 or more MiB, http1 for S3, it's smaller.
 //
-// TODO: seems it might OOM if partSize = 256 / (10000/4000) = 100 MiB, when write
-// external storage is slow.
+// with current default values, on machine with 2G per core, the estimate max memory
+// usage for import into is:
+//
+//	128 + 250 * (4 + 64/1024) + 4 * (25.6 + 5) ~ 1.24 GiB
+//	where 25.6 is max part-size when there is only data kv = 1024*250/10000 = 25.6MiB
+//
+// for add-index, it uses more memory as check-hotspot is enabled.
 func mergeOverlappingFilesInternal(
 	ctx context.Context,
 	paths []string,
