@@ -124,7 +124,8 @@ const (
 
 	insertIntoConflictErrorData = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv, is_precheck_conflict)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle,
+		raw_row, is_data_kv, is_precheck_conflict)
 		VALUES
 	`
 
@@ -132,7 +133,8 @@ const (
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv, is_precheck_conflict)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle,
+		raw_row, is_data_kv, is_precheck_conflict)
 		VALUES
 	`
 
