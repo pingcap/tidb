@@ -1783,7 +1783,6 @@ func writeChunkToLocal(
 	idxDataBuf := make([]types.Datum, maxIdxColCnt)
 	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
 	var restoreDataBuf []types.Datum
-
 	count := 0
 	var lastHandle kv.Handle
 
@@ -1807,7 +1806,9 @@ func writeChunkToLocal(
 			restore = restore || needRestore
 		}
 		if restore {
-			restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
+			if restoreDataBuf == nil {
+				restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
+			}
 			// restoreData should not truncate index values.
 			for i, datum := range handleDataBuf {
 				restoreDataBuf[i] = *datum.Clone()
