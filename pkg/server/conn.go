@@ -95,6 +95,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	util3 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -2289,11 +2290,6 @@ func (cc *clientConn) writeColumnInfo(columns []*column.Info) error {
 // serverStatus, a flag bit represents server information
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
 func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, binary bool, serverStatus uint16) (bool, error) {
-	data := cc.alloc.AllocWithLen(4, 1024)
-	req := rs.NewChunk(cc.chunkAlloc)
-	gotColumnInfo := false
-	firstNext := true
-	validNextCount := 0
 	var start time.Time
 	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
@@ -2301,37 +2297,52 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
+	cc.writeChunksToConn(ctx, rs, binary, serverStatus, stmtDetail)
+	if stmtDetail != nil {
+		start = time.Now()
+	}
+
+	err := cc.writeEOF(ctx, serverStatus)
+	if stmtDetail != nil {
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
+	}
+	return false, err
+}
+
+func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.ResultSet, binary bool, serverStatus uint16, stmtDetail *execdetails.StmtExecDetails) (firstNext bool, err error) {
+	var (
+		data           = cc.alloc.AllocWithLen(4, 1024)
+		req            = rs.NewChunk(cc.chunkAlloc)
+		gotColumnInfo  = false
+		validNextCount = 0
+		chkCh          = make(chan *chunk.Chunk)
+		errCh          = make(chan error, 1)
+	)
+	firstNext = true
+	var start time.Time
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	chkCh := make(chan *chunk.Chunk)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
+	wg := util3.WaitGroupWrapper{}
 	defer wg.Wait()
 	defer close(chkCh)
-	go func() {
-		defer wg.Done()
+	defer func() {
+		if finErr := rs.Finish(); err != nil {
+			err = finErr
+		}
+	}()
+	wg.Run(func() {
 		var err error
-		defer func() {
-			if err != nil {
-				logutil.BgLogger().Error("error", zap.Error(err))
-			}
-		}()
 		for {
 			req, ok := <-chkCh
-			if !ok { // Meet error
+			if !ok {
 				return
 			}
-			rowCount := req.NumRows()
-			if rowCount == 0 {
-				break
-			}
-			validNextCount++
-			firstNext = false
 			reg := trace.StartRegion(ctx, "WriteClientConn")
 			if stmtDetail != nil {
 				start = time.Now()
 			}
+			rowCount := req.NumRows()
 			for i := 0; i < rowCount; i++ {
 				data = data[0:4]
 				if binary {
@@ -2341,10 +2352,12 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 				}
 				if err != nil {
 					reg.End()
+					errCh <- err
 					return
 				}
 				if err = cc.writePacket(data); err != nil {
 					reg.End()
+					errCh <- err
 					return
 				}
 			}
@@ -2352,9 +2365,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			if stmtDetail != nil {
 				stmtDetail.WriteSQLRespDuration += time.Since(start)
 			}
+			errCh <- nil
 		}
-	}()
-FOR:
+	})
+
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			//nolint:forcetypeassert
@@ -2397,34 +2411,32 @@ FOR:
 			}
 			gotColumnInfo = true
 		}
+
+		rowCount := req.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		validNextCount++
+		firstNext = false
+		chkCh <- req
 	InnerFor:
 		for {
 			select {
-			case chkCh <- req:
+			case err = <-errCh:
+				if err != nil {
+					return false, err
+				}
 				break InnerFor
 			case <-ctx.Done():
-				break FOR
+				return false, ctx.Err()
 			case <-ticker.C:
 				if err = cc.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-					break FOR
+					return false, err
 				}
 			}
 		}
 	}
-	if err := rs.Finish(); err != nil {
-		return false, err
-	}
-
-	wg.Wait()
-	if stmtDetail != nil {
-		start = time.Now()
-	}
-
-	err := cc.writeEOF(ctx, serverStatus)
-	if stmtDetail != nil {
-		stmtDetail.WriteSQLRespDuration += time.Since(start)
-	}
-	return false, err
+	return false, nil
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
