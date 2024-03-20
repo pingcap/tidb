@@ -1091,7 +1091,8 @@ func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
 }
 
 // For https://github.com/pingcap/tidb/issues/51723,
-// This function only supports `CLUSTER_SLOW_QUERY`, it will change
+// This function only supports `CLUSTER_SLOW_QUERY`,
+// it will change plan from
 // TopN -> TableReader -> TopN[cop] -> TableFullScan[cop] to
 // TopN -> TableReader -> Limit[cop] -> TableFullScan[cop] + keepOrder
 func (p *PhysicalTopN) pushPartialTopNDownToTiDBCop(copTsk *CopTask) (base.Task, bool) {
