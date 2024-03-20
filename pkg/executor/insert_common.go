@@ -1288,7 +1288,7 @@ func (e *InsertValues) batchCheckAndInsert(
 				if err != nil {
 					return err
 				}
-				break
+				continue
 			}
 			if tablecodec.IsTempIndexKey(uk.newKey) {
 				tablecodec.TempIndexKey2IndexKey(uk.newKey)
@@ -1301,7 +1301,6 @@ func (e *InsertValues) batchCheckAndInsert(
 					if err != nil {
 						return err
 					}
-					break
 				}
 			}
 		}
