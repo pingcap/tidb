@@ -68,13 +68,45 @@ func TestIsRestrictedPrivilege(t *testing.T) {
 	assert.False(IsRestrictedPrivilege("aa"))
 }
 
-func TestIsInvisibleStatusVar(t *testing.T) {
+func TestGetRestrictedStatusOfStateVariable(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.True(IsInvisibleStatusVar(tidbGCLeaderDesc))
-	assert.False(IsInvisibleStatusVar("server_id"))
-	assert.False(IsInvisibleStatusVar("ddl_schema_version"))
-	assert.False(IsInvisibleStatusVar("Ssl_version"))
+	tidbCfg := config.NewConfig()
+
+	tidbCfg.Security.SEM.RestrictedStatus = []config.RestrictedState{
+		{
+			Name:            "tidb_gc_leader_desc",
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            "server_id",
+			RestrictionType: "replace",
+			Value:           "xxxx",
+		},
+	}
+
+	config.StoreGlobalConfig(tidbCfg)
+
+	var restricted bool
+	var info *config.RestrictedState
+
+	restricted, info = GetRestrictedStatusOfStateVariable(tidbGCLeaderDesc)
+	assert.True(restricted)
+	assert.Equal("tidb_gc_leader_desc", info.Name)
+	assert.Equal("hidden", info.RestrictionType)
+
+	restricted, info = GetRestrictedStatusOfStateVariable("server_id")
+	assert.True(restricted)
+	assert.Equal("server_id", info.Name)
+	assert.Equal("replace", info.RestrictionType)
+	assert.Equal("xxxx", info.Value)
+
+	restricted, info = GetRestrictedStatusOfStateVariable("ddl_schema_version")
+	assert.False(restricted)
+
+	restricted, info = GetRestrictedStatusOfStateVariable("Ssl_version")
+	assert.False(restricted)
 }
 
 func TestIsInvisibleSysVar(t *testing.T) {

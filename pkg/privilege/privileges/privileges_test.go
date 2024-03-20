@@ -1409,6 +1409,53 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	}
 }
 
+func TestSecurityEnhancedModeStatus(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedStatus = []config.RestrictedState{
+		{
+			Name:            "ddl_schema_version",
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            "server_id",
+			RestrictionType: "replace",
+			Value:           "00000000-1111-2222-3333-8ca09832a01c",
+		},
+	}
+	config.StoreGlobalConfig(tidbCfg)
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER svroot1, svroot2")
+	tk.MustExec("GRANT SUPER ON *.* to svroot1")
+	tk.MustExec("GRANT SUPER, RESTRICTED_STATUS_ADMIN ON *.* to svroot2")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// svroot1 has SUPER but in SEM will be restricted
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "svroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	tk.MustQuery(`SHOW STATUS LIKE 'ddl_schema_version';`).Check(testkit.Rows())
+	tk.MustQuery(`SHOW STATUS LIKE 'server_id';`).Check(testkit.Rows("server_id 00000000-1111-2222-3333-8ca09832a01c"))
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "svroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	rows := tk.MustQuery(`SHOW STATUS LIKE 'ddl_schema_version';`).Rows()
+	require.Equal(t, 1, len(rows))
+}
+
 func TestSecurityEnhancedModePrivilege(t *testing.T) {
 	tidbCfg := config.NewConfig()
 	p := make(map[mysql.PrivilegeType]struct{})

@@ -625,8 +625,16 @@ type Security struct {
 type SEM struct {
 	Ver                           string                           `toml:"ver" json:"ver"`
 	TidbMinVer                    string                           `toml:"tidb-min-ver" json:"tidb-min-ver"`
+	RestrictedStatus              []RestrictedState                `toml:"restricted_status" json:"restricted_status"`
 	RestrictedStaticPrivilegesCol []string                         `toml:"restricted_static_privileges_col" json:"restricted_static_privileges_col"`
 	RestrictedStaticPrivileges    map[mysql.PrivilegeType]struct{} `toml:"restricted_static_privileges" json:"restricted_static_privileges"`
+}
+
+// RestrictedState refers to the limitation of status variables in Security Enhanced Mode.
+type RestrictedState struct {
+	Name            string `toml:"name" json:"name"`
+	RestrictionType string `toml:"restriction-type" json:"restriction-type"`
+	Value           string `toml:"value" json:"value"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
