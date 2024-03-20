@@ -27,8 +27,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -127,70 +126,19 @@ func (impl *ldapAuthImpl) initializeCAPool() error {
 	return nil
 }
 
-<<<<<<< HEAD:privilege/privileges/ldap/ldap_common.go
-=======
-func (impl *ldapAuthImpl) tryConnectLDAPThroughStartTLS(address string) (*ldap.Conn, error) {
-	ldapConnection, err := ldap.DialURL("ldap://"+address, ldap.DialWithDialer(&net.Dialer{
-		Timeout: ldapTimeout,
-	}))
-	if err != nil {
-		return nil, err
-	}
-	ldapConnection.SetTimeout(ldapTimeout)
-
-	err = ldapConnection.StartTLS(&tls.Config{
-		RootCAs:    impl.caPool,
-		ServerName: impl.ldapServerHost,
-		MinVersion: tls.VersionTLS12,
-	})
-	if err != nil {
-		ldapConnection.Close()
-
-		return nil, err
-	}
-
-	return ldapConnection, nil
-}
-
-func (impl *ldapAuthImpl) tryConnectLDAPThroughTLS(address string) (*ldap.Conn, error) {
-	tlsConfig := &tls.Config{
-		RootCAs:    impl.caPool,
-		ServerName: impl.ldapServerHost,
-		MinVersion: tls.VersionTLS12,
-	}
-	ldapConnection, err := ldap.DialURL("ldaps://"+address, ldap.DialWithTLSDialer(tlsConfig, &net.Dialer{
-		Timeout: ldapTimeout,
-	}))
-	if err != nil {
-		return nil, err
-	}
-	ldapConnection.SetTimeout(ldapTimeout)
-
-	return ldapConnection, nil
-}
-
->>>>>>> d9406195cc1 (ldap: add timeout and retry-backoff for ldap (#51927)):pkg/privilege/privileges/ldap/ldap_common.go
 func (impl *ldapAuthImpl) connectionFactory() (pools.Resource, error) {
 	address := net.JoinHostPort(impl.ldapServerHost, strconv.FormatUint(uint64(impl.ldapServerPort), 10))
 
 	// It's fine to load these two TLS configurations one-by-one (but not guarded by a single lock), because there isn't
 	// a way to set two variables atomically.
 	if impl.enableTLS {
-		ldapConnection, err := ldap.Dial("tcp", address)
+		ldapConnection, err := ldap.DialURL("ldap://"+address, ldap.DialWithDialer(&net.Dialer{
+			Timeout: ldapTimeout,
+		}))
 		if err != nil {
-<<<<<<< HEAD:privilege/privileges/ldap/ldap_common.go
 			return nil, errors.Wrap(err, "create ldap connection")
-=======
-			if intest.InTest && skipTLSForTest {
-				return nil, err
-			}
-
-			ldapConnection, err = impl.tryConnectLDAPThroughTLS(address)
-			if err != nil {
-				return nil, errors.Wrap(err, "create ldap connection")
-			}
->>>>>>> d9406195cc1 (ldap: add timeout and retry-backoff for ldap (#51927)):pkg/privilege/privileges/ldap/ldap_common.go
 		}
+		ldapConnection.SetTimeout(ldapTimeout)
 
 		err = ldapConnection.StartTLS(&tls.Config{
 			RootCAs:    impl.caPool,
