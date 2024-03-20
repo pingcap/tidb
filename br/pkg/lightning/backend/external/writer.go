@@ -592,15 +592,15 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 ) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
 	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
-		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    2 * MinUploadPartSize,
+		Concurrency: 20,
+		PartSize:    MinUploadPartSize,
 	})
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
-		Concurrency: maxUploadWorkersPerThread,
+		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
 	})
 	if err != nil {
