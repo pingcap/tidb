@@ -101,4 +101,15 @@ func TestSplitDataFiles(t *testing.T) {
 			require.Equal(t, c.result, result)
 		})
 	}
+
+	bak := maxMergingFilesPerThread
+	t.Cleanup(func() {
+		maxMergingFilesPerThread = bak
+	})
+	maxMergingFilesPerThread = 10
+	require.Equal(t, [][]string{
+		allPaths[:10], allPaths[10:20], allPaths[20:30], allPaths[30:40],
+		allPaths[40:50], allPaths[50:60], allPaths[60:70], allPaths[70:80],
+		allPaths[80:90], allPaths[90:100],
+	}, splitDataFiles(allPaths[:100], 8))
 }

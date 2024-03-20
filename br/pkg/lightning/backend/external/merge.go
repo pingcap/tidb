@@ -12,6 +12,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// maxMergingFilesPerThread is the maximum number of files that can be merged by a
+// single thread. This value comes from the fact that 16 threads are ok to merge 4k
+// files in parallel, so we set it to 250.
+var maxMergingFilesPerThread = 250
+
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(
@@ -55,10 +60,11 @@ func MergeOverlappingFiles(
 	return eg.Wait()
 }
 
-// split input data files into max 'concurrency' shares evenly, if there are not
-// enough files, merge at least 2 files in one batch.
+// split input data files into multiple shares evenly, with the max number files
+// in each share maxMergingFilesPerThread, if there are not enough files, merge at
+// least 2 files in one batch.
 func splitDataFiles(paths []string, concurrency int) [][]string {
-	shares := concurrency
+	shares := max(len(paths)/maxMergingFilesPerThread, concurrency)
 	if len(paths) < 2*concurrency {
 		shares = max(1, len(paths)/2)
 	}
