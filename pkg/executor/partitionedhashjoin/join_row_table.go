@@ -15,7 +15,6 @@
 package partitionedhashjoin
 
 import (
-	"encoding/binary"
 	"sync/atomic"
 	"unsafe"
 
@@ -422,19 +421,17 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 		if len := rowTableMeta.nullMapLength; len > 0 {
 			seg.rawData = append(seg.rawData, make([]byte, len)...)
 		}
-		var buf [binary.MaxVarintLen64]byte
+		var sizeBuf [SizeOfKeyLengthField]byte
 		// if join_key is not inlined: `key_length + serialized_key`
 		// if join_key is inlined: `key_length` if the key is variable length
 		if rowTableMeta.isJoinKeysInlined {
 			if !rowTableMeta.isJoinKeysFixedLength {
-				// todo maybe need to use fixed length to write the key length
-				n := binary.PutUvarint(buf[:], uint64(len(builder.serializedKeyVectorBuffer[rowIdx])))
-				seg.rawData = append(seg.rawData, buf[:n]...)
+				*(*uint64)(unsafe.Pointer(&sizeBuf[0])) = uint64(len(builder.serializedKeyVectorBuffer[rowIdx]))
+				seg.rawData = append(seg.rawData, sizeBuf[:]...)
 			}
 		} else {
-			// todo if key length is fixed, don't need to write the key length
-			n := binary.PutUvarint(buf[:], uint64(len(builder.serializedKeyVectorBuffer[rowIdx])))
-			seg.rawData = append(seg.rawData, buf[:n]...)
+			*(*uint64)(unsafe.Pointer(&sizeBuf[0])) = uint64(len(builder.serializedKeyVectorBuffer[rowIdx]))
+			seg.rawData = append(seg.rawData, sizeBuf[:]...)
 			seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[rowIdx]...)
 		}
 
@@ -445,8 +442,8 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 			} else {
 				// length, raw_data
 				raw := row.GetRaw(colIdx)
-				n := binary.PutUvarint(buf[:], uint64(len(raw)))
-				seg.rawData = append(seg.rawData, buf[:n]...)
+				*(*uint64)(unsafe.Pointer(&sizeBuf[0])) = uint64(len(raw))
+				seg.rawData = append(seg.rawData, sizeBuf[:]...)
 				seg.rawData = append(seg.rawData, raw...)
 			}
 		}
