@@ -25,9 +25,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/timer/api"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -614,9 +618,56 @@ func TestTakeSession(t *testing.T) {
 	require.EqualError(t, err, "mockErr")
 	pool.AssertExpectations(t)
 
-	// Get returns a session
+	// init session returns error
 	se := &mockSession{}
 	pool.On("Get").Return(se, nil).Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
+		Return(nil, errors.New("mockErr")).
+		Once()
+	pool.On("Put", se).Once()
+	r, back, err = core.takeSession()
+	require.Nil(t, r)
+	require.Nil(t, back)
+	require.EqualError(t, err, "mockErr")
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+
+	// init session returns error2
+	pool.On("Get").Return(se, nil).Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "SELECT @@time_zone", []any(nil)).
+		Return(nil, errors.New("mockErr2")).
+		Once()
+	pool.On("Put", se).Once()
+	r, back, err = core.takeSession()
+	require.Nil(t, r)
+	require.Nil(t, back)
+	require.EqualError(t, err, "mockErr2")
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+
+	// Get returns a session
+	pool.On("Get").Return(se, nil).Once()
+	rs := &sqlexec.SimpleRecordSet{
+		ResultFields: []*ast.ResultField{{
+			Column: &model.ColumnInfo{
+				FieldType: *types.NewFieldType(mysql.TypeString),
+			},
+		}},
+		MaxChunkSize: 1,
+		Rows:         [][]any{{"tz1"}},
+	}
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "SELECT @@time_zone", []any(nil)).
+		Return(rs, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "SET @@time_zone='UTC'", []any(nil)).
+		Return(nil, nil).
+		Once()
 	r, back, err = core.takeSession()
 	require.Equal(t, r, se)
 	require.NotNil(t, back)
@@ -633,13 +684,37 @@ func TestTakeSession(t *testing.T) {
 	pool.AssertExpectations(t)
 	se.AssertExpectations(t)
 
+	// Put session failed2
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "SET @@time_zone=%?", []any{"tz1"}).
+		Return(nil, errors.New("mockErr2")).
+		Once()
+	se.On("Close").Once()
+	back()
+	pool.AssertExpectations(t)
+	se.AssertExpectations(t)
+
 	// Put session success
 	pool.On("Get").Return(se, nil).Once()
+	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "SELECT @@time_zone", []any(nil)).
+		Return(rs, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "SET @@time_zone='UTC'", []any(nil)).
+		Return(nil, nil).
+		Once()
 	r, back, err = core.takeSession()
 	require.Equal(t, r, se)
 	require.NotNil(t, back)
 	require.Nil(t, err)
 	se.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
+		Return(nil, nil).
+		Once()
+	se.On("ExecuteInternal", matchCtx, "SET @@time_zone=%?", []any{"tz1"}).
 		Return(nil, nil).
 		Once()
 	pool.On("Put", se).Once()

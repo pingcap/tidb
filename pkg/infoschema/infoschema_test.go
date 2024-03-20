@@ -17,6 +17,7 @@ package infoschema_test
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
@@ -100,7 +101,7 @@ func TestBasic(t *testing.T) {
 	dbInfos := []*model.DBInfo{dbInfo}
 	internal.AddDB(t, re.Store(), dbInfo)
 
-	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(re, nil, infoschema.NewData()).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := re.Store().Begin()
@@ -110,7 +111,7 @@ func TestBasic(t *testing.T) {
 	err = txn.Rollback()
 	require.NoError(t, err)
 
-	is := builder.Build()
+	is := builder.Build(math.MaxUint64)
 
 	schemaNames := infoschema.AllSchemaNames(is)
 	require.Len(t, schemaNames, 3)
@@ -186,7 +187,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	err = txn.Rollback()
 	require.NoError(t, err)
-	is = builder.Build()
+	is = builder.Build(math.MaxUint64)
 	schema, ok = is.SchemaByID(dbID)
 	require.True(t, ok)
 	require.Equal(t, 1, len(schema.Tables))
@@ -238,7 +239,7 @@ func TestInfoTables(t *testing.T) {
 
 	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
-	is := builder.Build()
+	is := builder.Build(math.MaxUint64)
 
 	infoTables := []string{
 		"SCHEMATA",
@@ -301,7 +302,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	dbInfos := []*model.DBInfo{dbInfo}
 	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
-	is := builder.Build()
+	is := builder.Build(math.MaxUint64)
 	require.False(t, is.HasTemporaryTable())
 	db, ok := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
@@ -322,7 +323,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 				builder, err := infoschema.NewBuilder(re, nil, nil).InitWithOldInfoSchema(curIs)
 				require.NoError(t, err)
 				change(m, builder)
-				curIs = builder.Build()
+				curIs = builder.Build(math.MaxUint64)
 			}
 			return nil
 		})
@@ -400,7 +401,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.True(t, ok)
 	builder, err = infoschema.NewBuilder(re, nil, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
-	require.True(t, builder.Build().HasTemporaryTable())
+	require.True(t, builder.Build(math.MaxUint64).HasTemporaryTable())
 
 	// create and then drop
 	tbID, err = internal.GenGlobalID(re.Store())
@@ -525,7 +526,7 @@ func TestBuildBundle(t *testing.T) {
 
 	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
 	require.NoError(t, err)
-	is2 := builder.Build()
+	is2 := builder.Build(math.MaxUint64)
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
 	assertBundle(is2, tbl2.Meta().ID, nil)
 	assertBundle(is2, p1.ID, p1Bundle)
@@ -843,6 +844,7 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 }
 
 func TestEnableInfoSchemaV2(t *testing.T) {
+	t.Skip("This feature is not enabled yet")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Test the @@tidb_enable_infoschema_v2 variable.
@@ -900,7 +902,7 @@ func (tc *infoschemaTestContext) createSchema() {
 	// init infoschema
 	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithDBInfos([]*model.DBInfo{}, nil, nil, 1)
 	require.NoError(tc.t, err)
-	tc.is = builder.Build()
+	tc.is = builder.Build(math.MaxUint64)
 }
 
 func (tc *infoschemaTestContext) runCreateSchema() {
@@ -921,6 +923,17 @@ func (tc *infoschemaTestContext) runDropSchema() {
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
 		_, ok := tc.is.SchemaByID(tc.dbInfo.ID)
 		require.False(tc.t, ok)
+	})
+}
+
+func (tc *infoschemaTestContext) runRecoverSchema() {
+	tc.runDropSchema()
+	// recover schema
+	internal.AddDB(tc.t, tc.re.Store(), tc.dbInfo)
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionRecoverSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+		dbInfo, ok := tc.is.SchemaByID(tc.dbInfo.ID)
+		require.True(tc.t, ok)
+		require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
 	})
 }
 
@@ -1076,7 +1089,7 @@ func (tc *infoschemaTestContext) applyDiffAndCheck(diff *model.SchemaDiff, check
 	// applyDiff
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), diff)
 	require.NoError(tc.t, err)
-	tc.is = builder.Build()
+	tc.is = builder.Build(math.MaxUint64)
 	checkFn(tc)
 }
 
@@ -1104,6 +1117,8 @@ func TestApplyDiff(t *testing.T) {
 			ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
 			data: infoschema.NewData(),
 		}
+		tc.runRecoverSchema()
+		tc.clear()
 		tc.runCreateSchema()
 		tc.clear()
 		tc.runDropSchema()

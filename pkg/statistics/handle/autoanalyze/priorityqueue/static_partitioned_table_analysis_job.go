@@ -104,7 +104,9 @@ func (j *StaticPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the partition is valid to analyze.
 // Only the specified static partition is checked.
-func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
+func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
 	if valid, failReason := isValidWeight(j.Weight); !valid {
 		return false, failReason
 	}
@@ -183,10 +185,15 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 ) {
-	for _, index := range j.Indexes {
-		sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(index)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	if len(j.Indexes) == 0 {
+		return
 	}
+	// Only analyze the first index.
+	// This is because analyzing a single index also analyzes all other indexes and columns.
+	// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
+	firstIndex := j.Indexes[0]
+	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
+	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.

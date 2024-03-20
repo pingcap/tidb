@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -84,10 +85,20 @@ func newFuzzyBindingCache(loadBindingFromStorageFunc func(sessionctx.Context, st
 	}
 }
 
+func (fbc *fuzzyBindingCache) shouldMetric() bool {
+	return fbc.loadBindingFromStorageFunc != nil // only metric for GlobalBindingCache, whose loadBindingFromStorageFunc is not nil.
+}
+
 func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
 	matchedBinding, isMatched, missingSQLDigest := fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
 	if len(missingSQLDigest) == 0 {
+		if fbc.shouldMetric() && isMatched {
+			metrics.BindingCacheHitCounter.Inc()
+		}
 		return
+	}
+	if fbc.shouldMetric() {
+		metrics.BindingCacheMissCounter.Inc()
 	}
 	if fbc.loadBindingFromStorageFunc == nil {
 		return
@@ -142,6 +153,10 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 	if intest.InTest && sctx.Value(LoadBindingNothing) != nil {
 		return
 	}
+	defer func(start time.Time) {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("loading binding from storage takes " + time.Since(start).String()))
+	}(time.Now())
+
 	for _, sqlDigest := range missingSQLDigest {
 		start := time.Now()
 		bindings, err := fbc.loadBindingFromStorageFunc(sctx, sqlDigest)
@@ -162,7 +177,7 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 				// When the memory capacity of bing_cache is not enough,
 				// there will be some memory-related errors in multiple places.
 				// Only needs to be handled once.
-				logutil.BindLogger().Warn("BindHandle.Update", zap.Error(err))
+				logutil.BindLogger().Warn("update binding cache error", zap.Error(err))
 			}
 		}
 	}

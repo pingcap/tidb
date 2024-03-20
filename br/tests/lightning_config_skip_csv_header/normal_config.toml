@@ -5,5 +5,5 @@ check-requirements=true
 header = true
 header-schema-match = false
 
-[tikv-importer]
-duplicate-resolution = 'replace'
+[conflict]
+strategy = "replace"

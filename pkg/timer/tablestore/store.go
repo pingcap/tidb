@@ -141,11 +141,28 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 		return nil, err
 	}
 
+	tidbTimeZone, err := sctx.GetSessionVars().GetGlobalSystemVar(ctx, variable.TimeZone)
+	if err != nil {
+		return nil, err
+	}
+
 	timers := make([]*api.TimerRecord, 0, len(rows))
 	for _, row := range rows {
 		var timerData []byte
 		if !row.IsNull(3) {
 			timerData = row.GetBytes(3)
+		}
+
+		tz := row.GetString(4)
+		tzParse := tz
+		// handling value "TIDB" is for compatibility of version 7.3.0
+		if tz == "" || strings.EqualFold(tz, "TIDB") {
+			tzParse = tidbTimeZone
+		}
+
+		loc, err := timeutil.ParseTimeZone(tzParse)
+		if err != nil {
+			loc = timeutil.SystemLocation()
 		}
 
 		var watermark time.Time
@@ -154,6 +171,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 			if err != nil {
 				return nil, err
 			}
+			watermark = watermark.In(loc)
 		}
 
 		var ext timerExt
@@ -175,6 +193,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 			if err != nil {
 				return nil, err
 			}
+			eventStart = eventStart.In(loc)
 		}
 
 		var summaryData []byte
@@ -188,6 +207,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 			if err != nil {
 				return nil, err
 			}
+			createTime = createTime.In(loc)
 		}
 
 		timer := &api.TimerRecord{
@@ -197,7 +217,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 				Key:             row.GetString(2),
 				Tags:            ext.Tags,
 				Data:            timerData,
-				TimeZone:        row.GetString(4),
+				TimeZone:        tz,
 				SchedPolicyType: api.SchedPolicyType(row.GetString(5)),
 				SchedPolicyExpr: row.GetString(6),
 				HookClass:       row.GetString(7),
@@ -211,25 +231,10 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 			EventStart:    eventStart,
 			EventExtra:    ext.Event.ToEventExtra(),
 			SummaryData:   summaryData,
+			Location:      loc,
 			CreateTime:    createTime,
 			Version:       row.GetUint64(18),
 		}
-
-		tz := timer.TimeZone
-		// handling value "TIDB" is for compatibility of version 7.3.0
-		if tz == "" || strings.EqualFold(tz, "TIDB") {
-			if tz, err = sctx.GetSessionVars().GetGlobalSystemVar(ctx, variable.TimeZone); err != nil {
-				return nil, err
-			}
-		}
-
-		loc, err := timeutil.ParseTimeZone(tz)
-		if err == nil {
-			timer.Location = loc
-		} else {
-			timer.Location = timeutil.SystemLocation()
-		}
-
 		timers = append(timers, timer)
 	}
 	return timers, nil
@@ -327,20 +332,47 @@ func (s *tableTimerStoreCore) Close() {
 	s.notifier.Close()
 }
 
-func (s *tableTimerStoreCore) takeSession() (sessionctx.Context, func(), error) {
+func (s *tableTimerStoreCore) takeSession() (_ sessionctx.Context, _ func(), err error) {
 	r, err := s.pool.Get()
 	if err != nil {
 		return nil, nil, err
 	}
 
+	defer func() {
+		if err != nil {
+			s.pool.Put(r)
+		}
+	}()
+
 	sctx, ok := r.(sessionctx.Context)
 	if !ok {
-		s.pool.Put(r)
 		return nil, nil, errors.New("session is not the type sessionctx.Context")
 	}
 
+	ctx := context.Background()
+
+	// rollback first to terminate unexpected transactions
+	if _, err = executeSQL(ctx, sctx, "ROLLBACK"); err != nil {
+		return nil, nil, err
+	}
+
+	// we should force to set time zone to UTC to make sure time operations are consistent.
+	rows, err := executeSQL(ctx, sctx, "SELECT @@time_zone")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(rows) == 0 || rows[0].Len() == 0 {
+		return nil, nil, errors.New("failed to get original time zone of session")
+	}
+
+	if _, err = executeSQL(ctx, sctx, "SET @@time_zone='UTC'"); err != nil {
+		return nil, nil, err
+	}
+
+	originalTimeZone := rows[0].GetString(0)
 	back := func() {
-		if _, err = executeSQL(context.Background(), sctx, "ROLLBACK"); err != nil {
+		if _, err = executeSQL(ctx, sctx, "ROLLBACK"); err != nil {
 			// Though this branch is rarely to be called because "ROLLBACK" will always be successfully, we still need
 			// to handle it here to make sure the code is strong.
 			terror.Log(err)
@@ -348,6 +380,13 @@ func (s *tableTimerStoreCore) takeSession() (sessionctx.Context, func(), error) 
 			r.Close()
 			return
 		}
+
+		if _, err = executeSQL(ctx, sctx, "SET @@time_zone=%?", originalTimeZone); err != nil {
+			terror.Log(err)
+			r.Close()
+			return
+		}
+
 		s.pool.Put(r)
 	}
 
