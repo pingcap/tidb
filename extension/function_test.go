@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:extension/function_test.go
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
@@ -30,19 +29,8 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sem"
-=======
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/sem"
->>>>>>> 1469e3dbf44 (extension: disable some optimizations for extension function (#51926)):pkg/extension/function_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -458,15 +446,13 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 
 	// Test the privilege should also be checked when evaluating especially for when privilege is revoked.
 	// We enable `fixcontrol.Fix49736` to force enable plan cache to make sure `Expression.EvalXXX` will be invoked.
-	tk1.Session().GetSessionVars().OptimizerFixControl[fixcontrol.Fix49736] = "ON"
 	tk1.MustExec("prepare s1 from 'select custom_both_dyn_priv_func()'")
 	tk1.MustExec("prepare s2 from 'select custom_eval_int_func()'")
 	tk1.MustQuery("execute s1").Check(testkit.Rows("ghi"))
 	tk1.MustQuery("execute s2").Check(testkit.Rows("1"))
 	tk.MustExec("REVOKE RESTRICTED_CUSTOM_DYN_PRIV_2 on *.* FROM u4@localhost")
-	require.EqualError(t, tk1.QueryToErr("execute s1"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
-	require.EqualError(t, tk1.QueryToErr("execute s2"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
-	delete(tk1.Session().GetSessionVars().OptimizerFixControl, fixcontrol.Fix49736)
+	require.EqualError(t, tk1.ExecToErr("execute s1"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("execute s2"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 }
 
 func TestShouldNotOptimizeExtensionFunc(t *testing.T) {
@@ -526,11 +512,12 @@ func TestShouldNotOptimizeExtensionFunc(t *testing.T) {
 	} {
 		ctx := mock.NewContext()
 		ctx.GetSessionVars().StmtCtx.UseCache = true
-		expr, err := expression.ParseSimpleExpr(ctx, exprStr)
+		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
 		require.NoError(t, err)
-		scalar, ok := expr.(*expression.ScalarFunction)
+		require.Equal(t, 1, len(exprs))
+		scalar, ok := exprs[0].(*expression.ScalarFunction)
 		require.True(t, ok)
-		require.Equal(t, expression.ConstNone, scalar.ConstLevel())
+		require.False(t, scalar.ConstItem(ctx.GetSessionVars().StmtCtx))
 		require.False(t, ctx.GetSessionVars().StmtCtx.UseCache)
 	}
 }

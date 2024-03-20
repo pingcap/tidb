@@ -157,17 +157,12 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
-<<<<<<< HEAD:expression/constant_fold.go
-		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {
-			return function(x)
-=======
 		if _, ok := x.Function.(*extensionFuncSig); ok {
 			// we should not fold the extension function, because it may have a side effect.
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-			return function(ctx, x)
->>>>>>> 1469e3dbf44 (extension: disable some optimizations for extension function (#51926)):pkg/expression/constant_fold.go
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {
+			return function(x)
 		}
 
 		args := x.GetArgs()
