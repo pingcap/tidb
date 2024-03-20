@@ -32,6 +32,7 @@ type immutable interface {
 	makeMutable() mutable
 }
 
+// ONE is a test structure for interface embedding test.
 type ONE struct {
 }
 
