@@ -139,18 +139,6 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
 
-	// step 5: add metadata lock
-	for i := 0; i < len(stmt.dbName); i++ {
-		_, change, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
-		if err != nil {
-			return err
-		}
-		if change {
-			// Handle the case that the schema is updated for select statement.
-			sctx.GetSessionVars().StmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError("schema changed before adding the metadata lock"))
-			return nil
-		}
-	}
 	return nil
 }
 
@@ -180,6 +168,21 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
 	if stmt.UncacheableReason != "" {
 		stmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError(stmt.UncacheableReason))
+	}
+
+	if stmtCtx.UseCache {
+		// Acquire the metadata lock and update the schema version.
+		for i := 0; i < len(stmt.dbName); i++ {
+			_, change, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+			if err != nil {
+				return nil, nil, err
+			}
+			if change {
+				// Handle the case that the schema is updated for select statement.
+				sctx.GetSessionVars().StmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError("schema changed before adding the metadata lock"))
+				break
+			}
+		}
 	}
 
 	var bindSQL string
