@@ -64,12 +64,16 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 	err error,
 ) {
 	w.dataFile = filepath.Join(w.filenamePrefix, "one-file")
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: partSize})
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{
+		Concurrency: maxUploadWorkersPerThread,
+		PartSize:    partSize})
 	if err != nil {
 		return err
 	}
 	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, "one-file")
-	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: int64(5 * size.MB)})
+	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{
+		Concurrency: maxUploadWorkersPerThread,
+		PartSize:    int64(5 * size.MB)})
 	if err != nil {
 		w.logger.Info("create stat writer failed",
 			zap.Error(err))

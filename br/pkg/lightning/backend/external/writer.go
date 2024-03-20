@@ -44,6 +44,10 @@ var (
 	multiFileStatNum           = 500
 	defaultPropSizeDist        = 1 * size.MB
 	defaultPropKeysDist uint64 = 8 * 1024
+	// Tested on GCP 16c/32c node, 32~64 workers uses up all network bandwidth for
+	// part-size in range 5~20M, so 4 workers per thread is a good choice.
+	// TODO need data on AWS and other machine types
+	maxUploadWorkersPerThread = 4
 
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
@@ -586,12 +590,18 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	err error,
 ) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
+	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
+		Concurrency: maxUploadWorkersPerThread,
+		PartSize:    (int64)(5 * size.MB),
+	})
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
+	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
+		Concurrency: maxUploadWorkersPerThread,
+		PartSize:    (int64)(5 * size.MB),
+	})
 	if err != nil {
 		_ = dataWriter.Close(ctx)
 		return "", "", nil, nil, err
