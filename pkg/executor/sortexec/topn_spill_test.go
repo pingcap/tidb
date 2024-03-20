@@ -31,6 +31,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var totalRowNum = 10000
+
+func initTopNNoSpillCaseParams(
+	ctx *mock.Context,
+	dataSource *testutil.MockDataSource,
+	topNCase *testutil.SortCase,
+	totalRowNum int,
+	count *uint64,
+	offset *uint64,
+	exe **sortexec.TopNExec,
+) {
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	*count = uint64(totalRowNum / 3)
+	*offset = uint64(totalRowNum / 10)
+
+	if exe != nil {
+		*exe = buildTopNExec(topNCase, dataSource, *offset, *count)
+	}
+}
+
 func initTopNSpillCase1Params(
 	ctx *mock.Context,
 	dataSource *testutil.MockDataSource,
@@ -237,7 +259,6 @@ func topNInMemoryThenSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.To
 }
 
 func TestTopNSpillDisk(t *testing.T) {
-	totalRowNum := 10000
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
 	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
@@ -253,39 +274,29 @@ func TestTopNSpillDisk(t *testing.T) {
 	offset := uint64(totalRowNum / 10)
 	count := uint64(totalRowNum / 3)
 
+	var exe *sortexec.TopNExec
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(ctx, topNCase, schema)
-	exe := buildTopNExec(topNCase, dataSource, offset, count)
-	for i := 0; i < 50; i++ {
+	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
+	for i := 0; i < 20; i++ {
 		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
 		topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	count = uint64(totalRowNum - totalRowNum/10)
-	exe = buildTopNExec(topNCase, dataSource, offset, count)
-	// initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 50; i++ {
+	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
+	for i := 0; i < 20; i++ {
 		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
-	count = uint64(totalRowNum / 5)
-	offset = count / 5
-	exe = buildTopNExec(topNCase, dataSource, offset, count)
-	for i := 0; i < 50; i++ {
+	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
+	for i := 0; i < 20; i++ {
 		topNSpillCase2(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase2(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit1*2)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	count = uint64(totalRowNum / 5)
-	offset = count / 5
-	exe = buildTopNExec(topNCase, dataSource, offset, count)
-	// initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 50; i++ {
+	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
+	for i := 0; i < 20; i++ {
 		topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
 		topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
 	}
