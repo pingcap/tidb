@@ -69,6 +69,15 @@ const (
 	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint
 	ErrorOnDup = "error"
 
+<<<<<<< HEAD
+=======
+	KVWriteBatchCount = 32768
+	// KVWriteBatchSize batch size when write to TiKV.
+	// this is the default value of linux send buffer size(net.ipv4.tcp_wmem) too.
+	KVWriteBatchSize        = 16 * units.KiB
+	DefaultRangeConcurrency = 16
+
+>>>>>>> ca629447dff (lightning: add send-kv-size to avoid oom when each kv is large on default config (#43870))
 	defaultDistSQLScanConcurrency     = 15
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
@@ -539,6 +548,7 @@ type FileRouteRule struct {
 
 type TikvImporter struct {
 	// Deprecated: only used to keep the compatibility.
+<<<<<<< HEAD
 	Addr                string                       `toml:"addr" json:"addr"`
 	Backend             string                       `toml:"backend" json:"backend"`
 	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
@@ -551,6 +561,27 @@ type TikvImporter struct {
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
+=======
+	Addr                    string                       `toml:"addr" json:"addr"`
+	Backend                 string                       `toml:"backend" json:"backend"`
+	OnDuplicate             string                       `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs              int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs             int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	SendKVSize              ByteSize                     `toml:"send-kv-size" json:"send-kv-size"`
+	CompressKVPairs         CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
+	RegionSplitSize         ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys         int                          `toml:"region-split-keys" json:"region-split-keys"`
+	RegionSplitBatchSize    int                          `toml:"region-split-batch-size" json:"region-split-batch-size"`
+	RegionSplitConcurrency  int                          `toml:"region-split-concurrency" json:"region-split-concurrency"`
+	RegionCheckBackoffLimit int                          `toml:"region-check-backoff-limit" json:"region-check-backoff-limit"`
+	SortedKVDir             string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
+	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport       bool                         `toml:"incremental-import" json:"incremental-import"`
+	KeyspaceName            string                       `toml:"keyspace-name" json:"keyspace-name"`
+	AddIndexBySQL           bool                         `toml:"add-index-by-sql" json:"add-index-by-sql"`
+>>>>>>> ca629447dff (lightning: add send-kv-size to avoid oom when each kv is large on default config (#43870))
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -733,6 +764,7 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
+<<<<<<< HEAD
 			Backend:             "",
 			OnDuplicate:         ReplaceOnDup,
 			MaxKVPairs:          4096,
@@ -740,6 +772,20 @@ func NewConfig() *Config {
 			RegionSplitSize:     0,
 			DiskQuota:           ByteSize(math.MaxInt64),
 			DuplicateResolution: DupeResAlgNone,
+=======
+			Backend:                 "",
+			OnDuplicate:             ReplaceOnDup,
+			MaxKVPairs:              4096,
+			SendKVPairs:             KVWriteBatchCount,
+			SendKVSize:              KVWriteBatchSize,
+			RegionSplitSize:         0,
+			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
+			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
+			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
+			DiskQuota:               ByteSize(math.MaxInt64),
+			DuplicateResolution:     DupeResAlgNone,
+			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
+>>>>>>> ca629447dff (lightning: add send-kv-size to avoid oom when each kv is large on default config (#43870))
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
