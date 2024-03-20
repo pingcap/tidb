@@ -156,6 +156,10 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
+		if _, ok := x.Function.(*extensionFuncSig); ok {
+			// we should not fold the extension function, because it may have a side effect.
+			return expr, false
+		}
 		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 			return function(ctx, x)
 		}
