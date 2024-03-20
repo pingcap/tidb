@@ -404,28 +404,32 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
-	return DecodeKeyRangeWithAdapter(e.keyAdapter, e.startKey, e.endKey)
-}
+	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
+		return e.startKey, e.endKey, nil
+	}
 
-// DecodeKeyRangeWithAdapter decodes start key and end key.
-func DecodeKeyRangeWithAdapter(adapter common.KeyAdapter, start, end []byte) ([]byte, []byte, error) {
-	first, err := adapter.Decode(nil, start)
+	// when duplicate detection feature is enabled, the end key comes from
+	// DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
+	// error.
+
+	start, err := e.keyAdapter.Decode(nil, e.startKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	last := end
-	if end[len(end)-1] == 0 {
-		// e.endKey is exclusive, we need to truncate the trailing zero before decoding.
-		last = end[:len(end)-1]
+	end, err := e.keyAdapter.Decode(nil, e.endKey)
+	if err == nil {
+		return start, end, nil
 	}
-	last, err = adapter.Decode(nil, last)
+	// handle the case that end key is from Key.Next()
+	if e.endKey[len(e.endKey)-1] != 0 {
+		return nil, nil, err
+	}
+	endEncoded := e.endKey[:len(e.endKey)-1]
+	end, err = e.keyAdapter.Decode(nil, endEncoded)
 	if err != nil {
 		return nil, nil, err
 	}
-	newEnd := make([]byte, 0, len(last)+1)
-	newEnd = append(newEnd, last...)
-	newEnd = append(newEnd, 0)
-	return first, newEnd, nil
+	return start, kv.Key(end).Next(), nil
 }
 
 // SplitRanges split the ranges by split keys provided by external engine.
