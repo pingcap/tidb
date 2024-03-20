@@ -4345,6 +4345,12 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 	}
 	if s.GetSessionVars().ConstraintCheckInPlace {
 		// we enforce that pipelined DML must lazily check key.
+		stmtCtx.AppendWarning(
+			errors.New(
+				"Pipelined DML can not be used when tidb_constraint_check_in_place=ON. " +
+					"Fallback to standard mode",
+			),
+		)
 		return false
 	}
 	is, ok := s.GetDomainInfoSchema().(infoschema.InfoSchema)
