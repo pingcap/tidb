@@ -45,8 +45,6 @@ var (
 	DistTaskStartTimeGauge *prometheus.GaugeVec
 	// DistTaskUsedSlotsGauge is the gauge of used slots on executor node.
 	DistTaskUsedSlotsGauge *prometheus.GaugeVec
-	// ActiveParallelUploadWorkerCount is the gauge of active parallel upload worker count.
-	ActiveParallelUploadWorkerCount prometheus.Gauge
 )
 
 // InitDistTaskMetrics initializes disttask metrics.
@@ -73,13 +71,6 @@ func InitDistTaskMetrics() {
 			Name:      "used_slots",
 			Help:      "Gauge of used slots on a executor node.",
 		}, []string{"service_scope"})
-	ActiveParallelUploadWorkerCount = NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "global_sort",
-			Name:      "upload_worker_cnt",
-			Help:      "Gauge of active parallel upload worker count.",
-		})
 }
 
 // UpdateMetricsForAddTask update metrics when a task is added

@@ -32,7 +32,6 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/go-resty/resty/v2"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"go.uber.org/atomic"
 )
 
@@ -134,8 +133,6 @@ func (w *GCSWriter) init() error {
 	return nil
 }
 
-var activeWorkerCount atomic.Int64
-
 func (w *GCSWriter) readChunk(ch chan chunk) {
 	defer w.wg.Done()
 	for {
@@ -144,8 +141,7 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 			break
 		}
 
-		activeWorkerCount.Inc()
-		metrics.ActiveParallelUploadWorkerCount.Set(float64(activeWorkerCount.Load()))
+		activeUploadWorkerCnt.Add(1)
 		select {
 		case <-w.ctx.Done():
 			data.cleanup()
@@ -166,8 +162,7 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 			w.appendMPUPart(part)
 			data.cleanup()
 		}
-		activeWorkerCount.Dec()
-		metrics.ActiveParallelUploadWorkerCount.Set(float64(activeWorkerCount.Load()))
+		activeUploadWorkerCnt.Add(-1)
 	}
 }
 
