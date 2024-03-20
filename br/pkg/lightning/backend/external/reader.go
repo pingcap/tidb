@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"time"
 
@@ -87,8 +86,6 @@ func readAllData(
 			output.memKVBuffers[readIdx+readConn] = largeBlockBufPool.NewBuffer()
 			smallBlockBuf := output.memKVBuffers[readIdx]
 			largeBlockBuf := output.memKVBuffers[readIdx+readConn]
-			smallBlockBuf.ID = fmt.Sprintf("small-%d", readIdx)
-			largeBlockBuf.ID = fmt.Sprintf("large-%d", readIdx)
 
 			for {
 				select {

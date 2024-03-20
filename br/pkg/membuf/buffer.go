@@ -16,9 +16,6 @@ package membuf
 
 import (
 	"unsafe"
-
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 const (
@@ -192,13 +189,6 @@ const smallObjOverheadBatch = 256 * 1024
 // pool's limiter. The caller will ensure the pool's limiter is not nil.
 func (b *Buffer) recordSmallObjOverhead(n int) {
 	if n > b.smallObjOverheadCache {
-		if b.ID != "" {
-			logutil.BgLogger().Info(
-				"lance test, will recordSmallObjOverhead",
-				zap.String("ID", b.ID),
-				zap.Int("size", smallObjOverheadBatch),
-			)
-		}
 		b.pool.limiter.Acquire(smallObjOverheadBatch)
 		b.smallObjOverheadCache += smallObjOverheadBatch
 		b.smallObjOverhead += smallObjOverheadBatch
@@ -210,13 +200,6 @@ func (b *Buffer) recordSmallObjOverhead(n int) {
 // that are acquired from this Buffer before to the pool's limiter. The caller
 // will ensure the pool's limiter is not nil.
 func (b *Buffer) releaseSmallObjOverhead() {
-	if b.ID != "" {
-		logutil.BgLogger().Info(
-			"lance test, will releaseSmallObjOverhead",
-			zap.String("ID", b.ID),
-			zap.Int("size", b.smallObjOverhead),
-		)
-	}
 	b.pool.limiter.Release(b.smallObjOverhead)
 	b.smallObjOverhead = 0
 	b.smallObjOverheadCache = 0
@@ -243,15 +226,6 @@ func (b *Buffer) Destroy() {
 		b.releaseSmallObjOverhead()
 	}
 	for _, buf := range b.blocks {
-		if b.ID != "" {
-			logutil.BgLogger().Info(
-				"lance test, will release",
-				zap.String("ID", b.ID),
-				zap.Int("size", b.pool.blockSize),
-				zap.Int("bufSize", len(buf)),
-				zap.Int("bufCap", cap(buf)),
-			)
-		}
 		b.pool.release(buf)
 	}
 	b.blocks = nil
@@ -330,13 +304,6 @@ func (b *Buffer) addBlock() {
 		b.curBlockIdx++
 		b.curBlock = b.blocks[b.curBlockIdx]
 	} else {
-		if b.ID != "" {
-			logutil.BgLogger().Info(
-				"lance test, will addBlock",
-				zap.String("ID", b.ID),
-				zap.Int("size", b.pool.blockSize),
-			)
-		}
 		block := b.pool.acquire()
 		b.blocks = append(b.blocks, block)
 		b.curBlock = block
