@@ -30,6 +30,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/store/driver",
+        "//pkg/store/helper",
         "//pkg/store/mockstore",
         "//pkg/testkit/testenv",
         "//pkg/types",

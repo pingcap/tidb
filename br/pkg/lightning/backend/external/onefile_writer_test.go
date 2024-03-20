@@ -172,6 +172,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 }
 
 func TestMergeOverlappingFilesInternal(t *testing.T) {
+	changePropDist(t, defaultPropSizeDist, 2)
 	// 1. Write to 5 files.
 	// 2. merge 5 files into one file.
 	// 3. read one file and check result.
@@ -179,7 +180,6 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	writer := NewWriterBuilder().
-		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
 		SetKeyDuplicationEncoding(true).
 		Build(memStore, "/test", "0")
@@ -206,8 +206,6 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		1000,
 		1000,
 		8*1024,
-		1*size.MB,
-		2,
 		nil,
 		true,
 	))
@@ -256,6 +254,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 }
 
 func TestOnefileWriterManyRows(t *testing.T) {
+	changePropDist(t, defaultPropSizeDist, 2)
 	// 1. write into one file with sorted order.
 	// 2. merge one file.
 	// 3. read kv file and check the result.
@@ -263,7 +262,6 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	writer := NewWriterBuilder().
-		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
 		BuildOneFile(memStore, "/test", "0")
 
@@ -310,8 +308,6 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		1000,
 		1000,
 		8*1024,
-		1*size.MB,
-		2,
 		onClose,
 		true,
 	))

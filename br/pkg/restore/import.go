@@ -431,7 +431,7 @@ func NewFileImporter(
 }
 
 func (importer *FileImporter) ShouldBlock() bool {
-	if importer != nil {
+	if importer != nil && importer.useTokenBucket {
 		return importer.downloadTokensMap.ShouldBlock() || importer.ingestTokensMap.ShouldBlock()
 	}
 	return false
@@ -1113,15 +1113,17 @@ func (importer *FileImporter) downloadSSTV2(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
-			select {
-			case <-ectx.Done():
-				return ectx.Err()
-			case <-tokenCh:
+			if importer.useTokenBucket {
+				tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
+				select {
+				case <-ectx.Done():
+					return ectx.Err()
+				case <-tokenCh:
+				}
+				defer func() {
+					importer.releaseToken(tokenCh)
+				}()
 			}
-			defer func() {
-				importer.releaseToken(tokenCh)
-			}()
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]
 				if !ok {
@@ -1259,15 +1261,17 @@ func (importer *FileImporter) ingest(
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
-	tokenCh := importer.ingestTokensMap.acquireTokenCh(info.Leader.GetStoreId(), importer.concurrencyPerStore)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-tokenCh:
+	if importer.useTokenBucket {
+		tokenCh := importer.ingestTokensMap.acquireTokenCh(info.Leader.GetStoreId(), importer.concurrencyPerStore)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tokenCh:
+		}
+		defer func() {
+			importer.releaseToken(tokenCh)
+		}()
 	}
-	defer func() {
-		importer.releaseToken(tokenCh)
-	}()
 	for {
 		ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		if errIngest != nil {

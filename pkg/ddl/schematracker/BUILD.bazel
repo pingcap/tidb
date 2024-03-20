@@ -24,6 +24,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle",
+        "//pkg/store/helper",
         "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/table/tables",

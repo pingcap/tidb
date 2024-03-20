@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -336,8 +335,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
 		external.DefaultMemSizeLimit,
-		8*1024,
-		1*size.MB,
 		8*1024,
 		onClose,
 		m.taskMeta.Plan.ThreadCnt,

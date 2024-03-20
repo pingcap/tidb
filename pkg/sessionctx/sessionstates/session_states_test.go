@@ -1386,6 +1386,45 @@ func TestSQLBinding(t *testing.T) {
 	}
 }
 
+func TestSQLBindingCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
+
+	tests := []struct {
+		bindingStr     string
+		expectedResult []string
+	}{
+		// db is empty
+		{
+			bindingStr:     "{\"bindings\": \"[{\\\\\"OriginalSQL\\\\\":\\\\\"select * from `test` . `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}]\"}",
+			expectedResult: []string{"select * from `test` . `t1` SELECT * FROM `test`.`t1` USE INDEX (`name`)  enabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 "},
+		},
+		// db is not empty
+		{
+			bindingStr:     "{\"bindings\": \"[{\\\\\"OriginalSQL\\\\\":\\\\\"select * from `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"test\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}]\"}",
+			expectedResult: []string{"select * from `t1` SELECT * FROM `test`.`t1` USE INDEX (`name`) test enabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 "},
+		},
+		// 2 bindings in 2 arrays
+		{
+			bindingStr:     "{\"bindings\": \"[{\\\\\"OriginalSQL\\\\\":\\\\\"select * from `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"test\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}, {\\\\\"OriginalSQL\\\\\":\\\\\"select * from `test` . `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}]\"}",
+			expectedResult: []string{"select * from `t1` SELECT * FROM `test`.`t1` USE INDEX (`name`) test enabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 ", "select * from `test` . `t1` SELECT * FROM `test`.`t1` USE INDEX (`name`)  enabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 "},
+		},
+		// 2 bindings in 1 array, one is enabled while another is disabled
+		{
+			bindingStr:     "{\"bindings\": \"[{\\\\\"OriginalSQL\\\\\":\\\\\"select * from `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"test\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}, {\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`primary`)\\\\\",\\\\\"Status\\\\\":\\\\\"disabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}]\"}",
+			expectedResult: []string{"select * from `t1` SELECT * FROM `test`.`t1` USE INDEX (`primary`) test disabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 "},
+		},
+	}
+
+	for _, test := range tests {
+		setSQL := fmt.Sprintf("set session_states '%s'", test.bindingStr)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(setSQL)
+		tk.MustQuery("show session bindings").Sort().Check(testkit.Rows(test.expectedResult...))
+	}
+}
+
 func TestShowStateFail(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	sv := server.CreateMockServer(t, store)
