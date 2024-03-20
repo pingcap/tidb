@@ -96,8 +96,13 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 	}, nil
 }
 
+<<<<<<< HEAD:expression/extension.go
 func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.checkPrivileges(ctx); err != nil {
+=======
+func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := checkPrivileges(ctx, &c.funcDef); err != nil {
+>>>>>>> 1469e3dbf44 (extension: disable some optimizations for extension function (#51926)):pkg/expression/extension.go
 		return nil, err
 	}
 
@@ -108,13 +113,23 @@ func (c *extensionFuncClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err != nil {
 		return nil, err
 	}
+
+	// Though currently, `getFunction` does not require too much information that makes it safe to be cached,
+	// we still skip the plan cache for extension functions because there are no strong requirements to do it.
+	// Skipping the plan cache can make the behavior simple.
+	ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("extension function should not be cached"))
 	bf.tp.SetFlen(c.flen)
 	sig := &extensionFuncSig{context.TODO(), bf, c.funcDef}
 	return sig, nil
 }
 
+<<<<<<< HEAD:expression/extension.go
 func (c *extensionFuncClass) checkPrivileges(ctx sessionctx.Context) error {
 	fn := c.funcDef.RequireDynamicPrivileges
+=======
+func checkPrivileges(ctx EvalContext, fnDef *extension.FunctionDef) error {
+	fn := fnDef.RequireDynamicPrivileges
+>>>>>>> 1469e3dbf44 (extension: disable some optimizations for extension function (#51926)):pkg/expression/extension.go
 	if fn == nil {
 		return nil
 	}
@@ -156,14 +171,30 @@ func (b *extensionFuncSig) Clone() builtinFunc {
 	return newSig
 }
 
+<<<<<<< HEAD:expression/extension.go
 func (b *extensionFuncSig) evalString(row chunk.Row) (string, bool, error) {
+=======
+func (b *extensionFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	if err := checkPrivileges(ctx, &b.FunctionDef); err != nil {
+		return "", true, err
+	}
+
+>>>>>>> 1469e3dbf44 (extension: disable some optimizations for extension function (#51926)):pkg/expression/extension.go
 	if b.EvalTp == types.ETString {
 		return b.EvalStringFunc(b, row)
 	}
 	return b.baseBuiltinFunc.evalString(row)
 }
 
+<<<<<<< HEAD:expression/extension.go
 func (b *extensionFuncSig) evalInt(row chunk.Row) (int64, bool, error) {
+=======
+func (b *extensionFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	if err := checkPrivileges(ctx, &b.FunctionDef); err != nil {
+		return 0, true, err
+	}
+
+>>>>>>> 1469e3dbf44 (extension: disable some optimizations for extension function (#51926)):pkg/expression/extension.go
 	if b.EvalTp == types.ETInt {
 		return b.EvalIntFunc(b, row)
 	}
