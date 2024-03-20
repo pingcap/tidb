@@ -538,21 +538,20 @@ id	estRows	task	access object	operator info
 Projection	2666.67	root		istrue(or(not(ge(executor__index_merge_reader.t.i, j筧8)), not(eq(executor__index_merge_reader.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(executor__index_merge_reader.t.i)->Column#12
 └─StreamAgg	2666.67	root		group by:executor__index_merge_reader.t.i, funcs:max(executor__index_merge_reader.t.e)->Column#10, funcs:firstrow(executor__index_merge_reader.t.i)->executor__index_merge_reader.t.i
   └─Sort	3333.33	root		executor__index_merge_reader.t.i
-    └─IndexMerge	3333.33	root	partition:all	type: union
-      ├─IndexFullScan(Build)	0.00	cop[tikv]	table:t, index:idx_25(h, i, e)	keep order:false, stats:pseudo
-      ├─TableRangeScan(Build)	3333.33	cop[tikv]	table:t	range:(240817,+inf], keep order:false, stats:pseudo
-      └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader	3333.33	root	partition:all	data:Selection
+      └─Selection	3333.33	cop[tikv]		or(gt(executor__index_merge_reader.t.h, 240817), and(ge(executor__index_merge_reader.t.i, "WVz"), le(executor__index_merge_reader.t.i, "G#駧褉ZC領*lov")))
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
 count(*)
 16
 explain format='brief' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
 id	estRows	task	access object	operator info
 Projection	2666.67	root		istrue(or(not(ge(executor__index_merge_reader.t.i, j筧8)), not(eq(executor__index_merge_reader.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(executor__index_merge_reader.t.i)->Column#12
-└─HashAgg	2666.67	root		group by:executor__index_merge_reader.t.i, funcs:max(executor__index_merge_reader.t.e)->Column#10, funcs:firstrow(executor__index_merge_reader.t.i)->executor__index_merge_reader.t.i
-  └─IndexMerge	3333.33	root	partition:all	type: union
-    ├─IndexFullScan(Build)	0.00	cop[tikv]	table:t, index:idx_25(h, i, e)	keep order:false, stats:pseudo
-    ├─TableRangeScan(Build)	3333.33	cop[tikv]	table:t	range:(240817,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─HashAgg	2666.67	root		group by:executor__index_merge_reader.t.i, funcs:max(Column#15)->Column#10, funcs:firstrow(executor__index_merge_reader.t.i)->executor__index_merge_reader.t.i
+  └─TableReader	2666.67	root	partition:all	data:HashAgg
+    └─HashAgg	2666.67	cop[tikv]		group by:executor__index_merge_reader.t.i, funcs:max(executor__index_merge_reader.t.e)->Column#15
+      └─Selection	3333.33	cop[tikv]		or(gt(executor__index_merge_reader.t.h, 240817), and(ge(executor__index_merge_reader.t.i, "WVz"), le(executor__index_merge_reader.t.i, "G#駧褉ZC領*lov")))
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;
 count(*)
 16
