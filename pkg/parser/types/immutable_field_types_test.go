@@ -56,24 +56,19 @@ func (o *ONE) makeImmutable() immutable {
 }
 
 func TestInterfaceWrapper(t *testing.T) {
-	var one mutable
-	one = &ONE{}
+	var one mutable = &ONE{}
 	one.mutable()
 	one.immutable()
-	var sec immutable
-	sec = one // upcast (no loss)
+	var sec immutable = one // upcast (no loss)
 	sec.immutable()
-	var third mutable
-	third = sec.(mutable) // downcast (no loss)
+	var third = sec.(mutable) // downcast (no loss)
 	third.mutable()
 	third.immutable()
 
 	// use normalized-defined interface access point.
-	var forth immutable
-	forth = third.makeImmutable() // upcast
+	var forth = third.makeImmutable() // upcast
 	forth.immutable()
-	var sixth mutable
-	sixth = forth.makeMutable() // downcast
+	var sixth = forth.makeMutable() // downcast
 	sixth.mutable()
 	sixth.immutable()
 	ft, ok := sixth.(*ONE)
@@ -98,12 +93,10 @@ func TestInterfaceWrapper(t *testing.T) {
 //		        ...                                                     |                   |
 //		        }                                                  <----+            -------+
 func TestMutableAndImmutableFT(t *testing.T) {
-	var immutableFT ImmutableFieldType
-	immutableFT = NewFieldType(1)
+	var immutableFT ImmutableFieldType = NewFieldType(1)
 	// immutable methods
 	require.Equal(t, immutableFT.GetType(), uint8(1))
-	var mutableFT MutableFieldType
-	mutableFT = immutableFT.MutableRef()
+	var mutableFT = immutableFT.MutableRef()
 	mutableFT.SetType(2)
 	// you can call immutable methods directly on mutableFT.
 	require.Equal(t, mutableFT.GetType(), uint8(2))
