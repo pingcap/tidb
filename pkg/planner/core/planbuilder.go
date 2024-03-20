@@ -578,6 +578,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (Plan, error) {
 	privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
+	b.visitInfo = appendVisitInfoForRestrictedStaticPriv(b.visitInfo, mysql.ConfigPriv)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	if _, ok := v.Value.(*ast.DefaultExpr); ok {
 		return nil, errors.New("Unknown DEFAULT for SET CONFIG")
@@ -3178,6 +3179,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	case ast.ShowConfig:
 		privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
+		b.visitInfo = appendVisitInfoForRestrictedStaticPriv(b.visitInfo, mysql.ConfigPriv)
 	case ast.ShowCreateView:
 		var err error
 		user := b.ctx.GetSessionVars().User
@@ -3379,6 +3381,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
+		b.visitInfo = appendVisitInfoForRestrictedStaticPriv(b.visitInfo, mysql.ShutdownPriv)
 	case *ast.BeginStmt:
 		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
@@ -3471,6 +3474,17 @@ func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx PlanContext, us
 		visitInfo = appendDynamicVisitInfo(visitInfo, priv, false, err)
 	}
 	return visitInfo
+}
+
+// appendVisitInfoForRestrictedStaticPriv - Append access control based on static privilege determination
+// The append criteria are to be met when SEM is enabled and the restricted list is matched.
+func appendVisitInfoForRestrictedStaticPriv(visitInfo []visitInfo, priv mysql.PrivilegeType) []visitInfo {
+	if !sem.IsEnabled() || !sem.IsStaticPermissionRestricted(priv) {
+		return visitInfo
+	}
+
+	err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
+	return appendDynamicVisitInfo(visitInfo, "RESTRICTED_PRIV_ADMIN", false, err)
 }
 
 func collectVisitInfoFromGrantStmt(sctx PlanContext, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {

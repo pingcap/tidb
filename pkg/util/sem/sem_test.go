@@ -15,6 +15,7 @@
 package sem
 
 import (
+	"github.com/pingcap/tidb/pkg/config"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -104,4 +105,19 @@ func TestIsInvisibleSysVar(t *testing.T) {
 	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
 	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
 	assert.True(IsInvisibleSysVar(tidbAuditRetractLog))
+}
+
+func TestIsStaticPermissionRestricted(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	p := make(map[mysql.PrivilegeType]struct{})
+	p[mysql.ConfigPriv] = struct{}{}
+	p[mysql.ShutdownPriv] = struct{}{}
+	tidbCfg.Security.SEM.RestrictedStaticPrivileges = p
+	config.StoreGlobalConfig(tidbCfg)
+	assert := assert.New(t)
+	assert.True(IsStaticPermissionRestricted(mysql.ConfigPriv))
+	assert.False(IsStaticPermissionRestricted(mysql.AlterPriv))
+	assert.True(IsStaticPermissionRestricted(mysql.ShutdownPriv))
+	assert.False(IsStaticPermissionRestricted(mysql.CreatePriv))
+	assert.False(IsStaticPermissionRestricted(mysql.AllPriv))
 }

@@ -1409,6 +1409,114 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	}
 }
 
+func TestSecurityEnhancedModePrivilege(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	p := make(map[mysql.PrivilegeType]struct{})
+	p[mysql.ConfigPriv] = struct{}{}
+	p[mysql.ShutdownPriv] = struct{}{}
+	tidbCfg.Security.SEM.RestrictedStaticPrivileges = p
+	config.StoreGlobalConfig(tidbCfg)
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER svroot1, svroot2, user1, user2, user3, user4, user5, c1")
+	tk.MustExec("GRANT SUPER, SHUTDOWN, CONFIG, RESTRICTED_TABLES_ADMIN, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot1 WITH GRANT OPTION")
+	tk.MustExec("GRANT SUPER, SHUTDOWN, CONFIG, RESTRICTED_TABLES_ADMIN, RESTRICTED_PRIV_ADMIN, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2 WITH GRANT OPTION")
+	tk.MustExec("GRANT RESTRICTED_PRIV_ADMIN ON *.* to user3, user4")
+	tk.MustExec("GRANT SHUTDOWN, CONFIG ON *.* to c1")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "svroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	// Restricted Permission Usage Limitation Testing
+	err := tk.ExecToErr("SHUTDOWN;")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("SHOW CONFIG;")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("SET CONFIG tidb `ballast-object-size` = 0;")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.CLUSTER_config;")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	// Restricted Permission Authorization and Revocation Limitation Testing
+	err = tk.ExecToErr("GRANT CONFIG ON *.* TO user1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("GRANT CONFIG ON *.* TO user3")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("GRANT SHUTDOWN ON *.* TO user1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("GRANT SHUTDOWN ON *.* TO user3")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("REVOKE CONFIG ON *.* FROM c1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("REVOKE SHUTDOWN ON *.* FROM c1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO user5")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("REVOKE RESTRICTED_VARIABLES_ADMIN ON *.* FROM user4")
+	require.NoError(t, err)
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "svroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	//err := tk.ExecToErr("SHUTDOWN;")
+	//require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("SHOW CONFIG;")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("SET CONFIG tikv `ballast-object-size` = 0;")
+	require.NoError(t, err)
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.CLUSTER_config;")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("GRANT CONFIG ON *.* TO user2")
+	require.EqualError(t, err, "[planner:8177]Access denied; the recipient needs (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation.")
+
+	err = tk.ExecToErr("GRANT CONFIG ON *.* TO user4")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("GRANT SHUTDOWN ON *.* TO user2")
+	require.EqualError(t, err, "[planner:8177]Access denied; the recipient needs (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation.")
+
+	err = tk.ExecToErr("GRANT SHUTDOWN ON *.* TO user4")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO user5")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("REVOKE CONFIG ON *.* FROM c1")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("REVOKE SHUTDOWN ON *.* FROM c1")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("REVOKE RESTRICTED_VARIABLES_ADMIN ON *.* FROM user5")
+	require.NoError(t, err)
+}
+
 func TestDynamicPrivsRegistration(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 

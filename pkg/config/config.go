@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"io"
 	"math"
 	"os"
 	"os/user"
@@ -97,6 +99,7 @@ const (
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
+	RestrictedPriv     = "RESTRICTED_"
 )
 
 // Valid config maps
@@ -602,7 +605,9 @@ type Security struct {
 	// If set to "plaintext", the spilled files will not be encrypted.
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
-	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	EnableSEM bool   `toml:"enable-sem" json:"enable-sem"`
+	SEMPath   string `toml:"sem-path" json:"sem-path"`
+	SEM       SEM    `toml:"-" json:"sem"`
 	// Allow automatic TLS certificate generation
 	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
@@ -614,6 +619,14 @@ type Security struct {
 	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 	// Disconnect directly when the password is expired
 	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
+}
+
+// SEM is the Security Enhanced Mode configuration.
+type SEM struct {
+	Ver                           string                           `toml:"ver" json:"ver"`
+	TidbMinVer                    string                           `toml:"tidb-min-ver" json:"tidb-min-ver"`
+	RestrictedStaticPrivilegesCol []string                         `toml:"restricted_static_privileges_col" json:"restricted_static_privileges_col"`
+	RestrictedStaticPrivileges    map[mysql.PrivilegeType]struct{} `toml:"restricted_static_privileges" json:"restricted_static_privileges"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -1219,6 +1232,18 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 			os.Exit(1)
 		}
 	}
+
+	// Load Security Enhanced Mode configuration file
+	semConfigPath := cfg.Security.SEMPath
+	if semConfigPath != "" {
+		config, err := loadSEMConfig(semConfigPath)
+		if err != nil {
+			err = fmt.Errorf("sem configuration loading failed: %w", err)
+		}
+		terror.MustNil(err)
+		cfg.Security.SEM = *config
+	}
+
 	enforceCmdArgs(cfg, fset)
 
 	if err := cfg.Valid(); err != nil {
@@ -1235,6 +1260,20 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 		fmt.Println("config check successful")
 		os.Exit(0)
 	}
+
+	if semConfigPath != "" {
+		if err := isValidSEMConfig(cfg.Security.SEM); err != nil {
+			if !filepath.IsAbs(semConfigPath) {
+				if tmp, err := filepath.Abs(semConfigPath); err == nil {
+					semConfigPath = tmp
+				}
+			}
+			fmt.Fprintln(os.Stderr, "load sem config file:", semConfigPath)
+			fmt.Fprintln(os.Stderr, "invalid sem config", err)
+			os.Exit(1)
+		}
+	}
+
 	StoreGlobalConfig(cfg)
 }
 
@@ -1483,6 +1522,54 @@ func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
+}
+
+// Load Security Enhanced Mode configuration via a JSON file.
+func loadSEMConfig(semConfigPath string) (*SEM, error) {
+	var semConfig SEM
+
+	file, err := os.Open(semConfigPath)
+	if err != nil {
+		return &semConfig, err
+	}
+
+	defer file.Close()
+
+	configBytes, err := io.ReadAll(file)
+	if err != nil {
+		return &semConfig, err
+	}
+
+	err = json.Unmarshal(configBytes, &semConfig)
+	if err != nil {
+		return &semConfig, err
+	}
+
+	staticPrivileges := make(map[mysql.PrivilegeType]struct{})
+	privType := mysql.Col2PrivType
+	for _, privName := range semConfig.RestrictedStaticPrivilegesCol {
+		if p, ok := privType[privName]; ok {
+			staticPrivileges[p] = struct{}{}
+		}
+	}
+
+	semConfig.RestrictedStaticPrivileges = staticPrivileges
+	return &semConfig, nil
+}
+
+// Validate the legality of Security Enhanced Mode configuration content.
+func isValidSEMConfig(semConfig SEM) error {
+	restrictedPermissionSet := map[string]struct{}{
+		"Shutdown_priv": {},
+		"Config_priv":   {},
+	}
+	for _, privName := range semConfig.RestrictedStaticPrivilegesCol {
+		if _, ok := restrictedPermissionSet[privName]; !ok {
+			return fmt.Errorf("unrecognized permission %s", privName)
+		}
+	}
+
+	return nil
 }
 
 // hideConfig is used to filter a single line of config for hiding.

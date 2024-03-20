@@ -15,6 +15,7 @@
 package sem
 
 import (
+	"github.com/pingcap/tidb/pkg/config"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -171,4 +172,12 @@ func IsRestrictedPrivilege(privNameInUpper string) bool {
 		return false
 	}
 	return privNameInUpper[:11] == restrictedPriv
+}
+
+// IsStaticPermissionRestricted Returning true when statically permissions are hit first in the list.
+func IsStaticPermissionRestricted(privType mysql.PrivilegeType) bool {
+	cfg := config.GetGlobalConfig()
+	restrictedPrivileges := cfg.Security.SEM.RestrictedStaticPrivileges
+	_, ok := restrictedPrivileges[privType]
+	return ok
 }
