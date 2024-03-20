@@ -112,3 +112,15 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec("update employee set pid=id-1 where id>1 and pid is null")
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
 }
+
+func TestAddUKWithSmallIntHandles(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists small;")
+	tk.MustExec("create database small;")
+	tk.MustExec("use small;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
+	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
+	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
+}

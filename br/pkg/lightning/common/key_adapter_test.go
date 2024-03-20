@@ -34,8 +34,9 @@ func randBytes(n int) []byte {
 func TestNoopKeyAdapter(t *testing.T) {
 	keyAdapter := NoopKeyAdapter{}
 	key := randBytes(32)
-	require.Len(t, key, keyAdapter.EncodedLen(key, ZeroRowID))
-	encodedKey := keyAdapter.Encode(nil, key, ZeroRowID)
+	rowID := randBytes(8)
+	require.Len(t, key, keyAdapter.EncodedLen(key, rowID))
+	encodedKey := keyAdapter.Encode(nil, key, rowID)
 	require.Equal(t, key, encodedKey)
 
 	decodedKey, err := keyAdapter.Decode(nil, encodedKey)

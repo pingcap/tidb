@@ -467,6 +467,7 @@ type KvPair struct {
 	RowID []byte
 }
 
+// TODO(lance6716): remove?
 // EncodeIntRowIDToBuf encodes an int64 row id to a buffer.
 var EncodeIntRowIDToBuf = codec.EncodeComparableVarint
 
