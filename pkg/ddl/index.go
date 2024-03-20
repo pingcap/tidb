@@ -1815,20 +1815,20 @@ func writeChunkToLocal(
 			unlock()
 		}
 	}()
+	needRestoreForIndexes := make([]bool, len(indexes))
+	restore := false
+	for i, index := range indexes {
+		needRestore := tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
+		needRestoreForIndexes[i] = needRestore
+		restore = restore || needRestore
+	}
+	if restore {
+		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
+	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
-		needRestoreForIndexes := make([]bool, len(indexes))
-		restore := false
-		for i, index := range indexes {
-			needRestore := tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
-			needRestoreForIndexes[i] = needRestore
-			restore = restore || needRestore
-		}
 		if restore {
-			if restoreDataBuf == nil {
-				restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
-			}
-			// restoreData should not truncate index values.
+			// restoreDataBuf should not truncate index values.
 			for i, datum := range handleDataBuf {
 				restoreDataBuf[i] = *datum.Clone()
 			}
