@@ -16,8 +16,10 @@ package sortexec
 
 import (
 	"container/heap"
+	"fmt"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
@@ -39,9 +41,13 @@ type topNChunkHeap struct {
 
 	totalLimit uint64
 	idx        int
+
+	droppedRowNum     int64
+	fieldTypes        []*types.FieldType
+	droppedRowsString string
 }
 
-func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, totalLimit uint64, idx int, greaterRow func(chunk.Row, chunk.Row) bool) {
+func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, totalLimit uint64, idx int, greaterRow func(chunk.Row, chunk.Row) bool, fieldTypes []*types.FieldType) {
 	h.memTracker = memTracker
 
 	h.rowChunks = chunk.NewList(exec.RetTypes(topnExec), topnExec.InitCap(), topnExec.MaxChunkSize())
@@ -54,6 +60,8 @@ func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, tot
 	h.totalLimit = totalLimit
 	h.idx = idx
 	h.isInitialized = true
+
+	h.fieldTypes = fieldTypes
 }
 
 func (h *topNChunkHeap) initPtrs() {
@@ -86,7 +94,11 @@ func (h *topNChunkHeap) update(heapMaxRow chunk.Row, newRow chunk.Row) {
 		// Evict heap max, keep the next row.
 		h.rowPtrs[0] = h.rowChunks.AppendRow(newRow)
 		heap.Fix(h, 0)
+		h.droppedRowsString = fmt.Sprintf("%s; %s", h.droppedRowsString, heapMaxRow.ToString(h.fieldTypes))
+	} else {
+		h.droppedRowsString = fmt.Sprintf("%s; %s", h.droppedRowsString, newRow.ToString(h.fieldTypes))
 	}
+	h.droppedRowNum++
 }
 
 func (h *topNChunkHeap) processChkNoSpill(chk *chunk.Chunk) {

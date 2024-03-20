@@ -256,7 +256,7 @@ func TestTopNSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(ctx, topNCase, schema)
 	exe := buildTopNExec(topNCase, dataSource, offset, count)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
 		topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
 	}
@@ -266,7 +266,7 @@ func TestTopNSpillDisk(t *testing.T) {
 	count = uint64(totalRowNum - totalRowNum/10)
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
 	// initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
@@ -274,7 +274,7 @@ func TestTopNSpillDisk(t *testing.T) {
 	count = uint64(totalRowNum / 5)
 	offset = count / 5
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		topNSpillCase2(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase2(t, exe, topNCase, schema, dataSource, offset, count)
 	}
@@ -285,7 +285,7 @@ func TestTopNSpillDisk(t *testing.T) {
 	offset = count / 5
 	exe = buildTopNExec(topNCase, dataSource, offset, count)
 	// initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
 		topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
 	}

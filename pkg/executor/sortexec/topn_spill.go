@@ -162,7 +162,16 @@ func (t *topNSpillHelper) spill() (err error) {
 				workerWaiter.Done()
 			}()
 
-			spillErr := t.spillHeap(t.workers[idx].chkHeap)
+			chkNum := t.workers[idx].chkHeap.rowChunks.NumChunks()
+			rowNum := 0
+			eachChkLen := make([]int, 0)
+			for i := 0; i < chkNum; i++ {
+				chk := t.workers[idx].chkHeap.rowChunks.GetChunk(i)
+				rowNum += chk.NumRows()
+				eachChkLen = append(eachChkLen, chk.NumRows())
+			}
+
+			spillErr := t.spillHeap(t.workers[idx].chkHeap, rowNum, eachChkLen)
 			if spillErr != nil {
 				errChan <- spillErr
 			}
@@ -180,15 +189,16 @@ func (t *topNSpillHelper) spill() (err error) {
 	return nil
 }
 
-func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
+func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap, expectLen int, eachChkLen []int) error {
+	if chkHeap.Len() <= 0 && chkHeap.rowChunks.Len() <= 0 {
+		return nil
+	}
+
 	if !chkHeap.isRowPtrsInit {
+		// Do not consume memory here, as it will hang
 		chkHeap.initPtrsImpl()
 	}
 	slices.SortFunc(chkHeap.rowPtrs, chkHeap.keyColumnsCompare)
-
-	if chkHeap.Len() <= 0 {
-		return nil
-	}
 
 	tmpSpillChunk := <-t.tmpSpillChunksChan
 	tmpSpillChunk.Reset()
@@ -199,9 +209,8 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(t.diskTracker)
 
-	spilledNum := 0
-
-	rowPtrNum := len(chkHeap.rowPtrs)
+	// startIdx := chkHeap.idx
+	rowPtrNum := chkHeap.Len()
 	for ; chkHeap.idx < rowPtrNum; chkHeap.idx++ {
 		if tmpSpillChunk.IsFull() {
 			err := t.spillTmpSpillChunk(inDisk, tmpSpillChunk)
@@ -209,7 +218,6 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 				return err
 			}
 		}
-		spilledNum++
 		tmpSpillChunk.AppendRow(chkHeap.rowChunks.GetRow(chkHeap.rowPtrs[chkHeap.idx]))
 	}
 
@@ -221,10 +229,7 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 		}
 	}
 
-	if inDisk.NumChunks() > 0 {
-		t.addInDisk(inDisk)
-	}
-
+	t.addInDisk(inDisk)
 	injectTopNRandomFail(200)
 
 	chkHeap.clear()

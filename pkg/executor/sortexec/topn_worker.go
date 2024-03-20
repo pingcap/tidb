@@ -37,8 +37,6 @@ type topNWorker struct {
 	topn       *TopNExec
 	chkHeap    *topNChunkHeap
 	memTracker *memory.Tracker
-
-	receivedRowNum int
 }
 
 func newTopNWorker(
@@ -66,7 +64,7 @@ func (t *topNWorker) setChunkChannel(chunkChannel <-chan *chunk.Chunk) {
 
 func (t *topNWorker) fetchChunksAndProcess() {
 	// Offset of heap in worker should be 0, as we need to spill all data
-	t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, 0, t.topn.greaterRow)
+	t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, 0, t.topn.greaterRow, t.topn.RetFieldTypes())
 	for t.fetchChunksAndProcessImpl() {
 	}
 }
@@ -83,10 +81,9 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 
 		t.injectFailPointForTopNWorker(3)
 
-		t.receivedRowNum += chk.NumRows()
 		if uint64(t.chkHeap.rowChunks.Len()) < t.chkHeap.totalLimit {
 			if !t.chkHeap.isInitialized {
-				t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, 0, t.topn.greaterRow)
+				t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, 0, t.topn.greaterRow, t.topn.RetFieldTypes())
 			}
 			t.chkHeap.rowChunks.Add(chk)
 		} else {

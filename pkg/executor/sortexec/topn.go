@@ -90,7 +90,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		for i := range workers {
 			chkHeap := &topNChunkHeap{}
 			// Offset of heap in worker should be 0, as we need to spill all data
-			chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, 0, e.greaterRow)
+			chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, 0, e.greaterRow, e.RetFieldTypes())
 			workers[i] = newTopNWorker(i, e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap, e.memTracker)
 		}
 
@@ -188,7 +188,7 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.initCompareFuncs()
 	e.buildKeyColumns()
-	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow)
+	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
 		// adjust required rows by total limit
@@ -315,7 +315,7 @@ func (e *TopNExec) spillTopNExecHeap() error {
 	defer e.spillHelper.cond.Broadcast()
 	defer e.spillHelper.setNotSpilled()
 
-	err := e.spillHelper.spillHeap(e.chkHeap)
+	err := e.spillHelper.spillHeap(e.chkHeap, -1, nil)
 	if err != nil {
 		return err
 	}
@@ -368,6 +368,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 	for uint64(len(e.chkHeap.rowPtrs)) > e.chkHeap.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
+		e.chkHeap.droppedRowNum++
 	}
 
 	if err := e.executeTopNNoSpill(ctx); err != nil {
@@ -389,7 +390,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 func (e *TopNExec) generateTopNResultsWithNoSpill() bool {
 	rowPtrNum := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < rowPtrNum; e.chkHeap.idx++ {
-		if e.chkHeap.idx%1000 == 0 && e.spillHelper.isSpillNeeded() {
+		if e.chkHeap.idx%10 == 0 && e.spillHelper.isSpillNeeded() {
 			return true
 		}
 		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
