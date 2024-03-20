@@ -1237,7 +1237,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
-	if copTask, ok := t.(*copTask); ok && needPushDown {
+	if copTask, ok := t.(*copTask); ok && needPushDown && len(copTask.rootTaskConds) == 0 {
 		newTask, changed := p.pushPartialTopNDownToTiDBCop(copTask)
 		if changed {
 			return newTask
