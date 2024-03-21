@@ -461,15 +461,15 @@ type KvPair struct {
 	Key []byte
 	// Val is the value of the KV pair
 	Val []byte
-	// RowID identifies a KvPair in case two KvPairs are equal in Key and Val. It's
-	// often set to the file offset of the KvPair in the source file or the record
-	// handle.
+	// RowID identifies a KvPair in case two KvPairs are equal in Key and Val. It has
+	// two sources:
+	//
+	// When the KvPair is generated from ADD INDEX, the RowID is the encoded handle.
+	//
+	// Otherwise, the RowID is related to the row number in the source files, and
+	// encode the number with `codec.EncodeComparableVarint`.
 	RowID []byte
 }
-
-// TODO(lance6716): remove?
-// EncodeIntRowIDToBuf encodes an int64 row id to a buffer.
-var EncodeIntRowIDToBuf = codec.EncodeComparableVarint
 
 // EncodeIntRowID encodes an int64 row id.
 func EncodeIntRowID(rowID int64) []byte {

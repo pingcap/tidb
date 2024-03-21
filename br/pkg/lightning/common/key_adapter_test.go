@@ -22,6 +22,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -158,5 +159,25 @@ func TestDecodeKeyDstIsInsufficient(t *testing.T) {
 		require.False(t, startWithSameMemory(buf, buf2))
 		require.Equal(t, buf[:4], buf2[:4])
 		require.Equal(t, key, buf2[4:])
+	}
+}
+
+func TestMinRowID(t *testing.T) {
+	keyApapter := DupDetectKeyAdapter{}
+	key := []byte("key")
+	val := []byte("val")
+	shouldBeMin := keyApapter.Encode(key, val, MinRowID)
+
+	var rowIDs [][]byte
+	// DDL
+	rowIDs = append(rowIDs, kv.IntHandle(math.MinInt64).Encoded())
+	rowIDs = append(rowIDs, kv.IntHandle(-1).Encoded())
+	rowIDs = append(rowIDs, kv.IntHandle(0).Encoded())
+	rowIDs = append(rowIDs, kv.IntHandle(math.MaxInt64).Encoded())
+	// TODO(lance6716): add more
+
+	for _, id := range rowIDs {
+		bs := keyApapter.Encode(key, val, id)
+		require.True(t, bytes.Compare(bs, shouldBeMin) >= 0)
 	}
 }
