@@ -15,6 +15,7 @@
 package partitionedhashjoin
 
 import (
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"sync/atomic"
 	"unsafe"
 
@@ -26,7 +27,7 @@ import (
 )
 
 const SizeOfNextPtr = int(unsafe.Sizeof(*new(unsafe.Pointer)))
-const SizeOfKeyLengthField = int(unsafe.Sizeof(uint64(1)))
+const SizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 
 type rowTableSegment struct {
 	/*
@@ -106,10 +107,8 @@ type JoinTableMeta struct {
 	rowColumnsOrder []int
 	// the column size of each column, -1 mean variable column, the order is the same as rowColumnsOrder
 	columnsSize []int
-	// when serialize integer column, should ignore unsigned flag or not, if the join key is <signed, signed> or <unsigned, unsigned>,
-	// the unsigned flag can be ignored, if the join key is <unsigned, signed> or <signed, unsigned> the unsigned flag can not be ignored
-	// can if the unsigned flag can not be ignored, the key can not be inlined
-	ignoreIntegerKeySignFlag []bool
+	// the serialize mode for each key
+	serializeModes []codec.SerializeMode
 	// the first n columns in row is used for other condition, if a join has other condition, we only need to extract
 	// first n columns from the RowTable to evaluate other condition
 	columnCountNeededForOtherCondition int
@@ -119,6 +118,8 @@ type JoinTableMeta struct {
 	setUsedFlagMask uint32
 	// column index offset in null map, will be 1 when if there is usedFlag and 0 if there is no usedFlag
 	colOffsetInNullMap int
+	// keyMode is the key mode, it can be OneInt/FixedSerializedKey/VariableSerializedKey
+	keyMode keyMode
 }
 
 func (meta *JoinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
@@ -131,10 +132,13 @@ func (meta *JoinTableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Poin
 		if meta.isJoinKeysFixedLength {
 			return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength)
 		}
-		return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfKeyLengthField)
+		return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfLengthField)
 	}
 	// join key is not inlined
-	return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfKeyLengthField+int(meta.getSerializedKeyLength(rowStart)))
+	if meta.isJoinKeysFixedLength {
+		return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+meta.joinKeysLength)
+	}
+	return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfLengthField+int(meta.getSerializedKeyLength(rowStart)))
 }
 
 func (meta *JoinTableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
@@ -159,17 +163,17 @@ type rowTable struct {
 	segments []*rowTableSegment
 }
 
-func canBeInlinedAsJoinKey(tp *types.FieldType) bool {
+func canBeInlinedAsJoinKey(tp *types.FieldType) (bool, bool) {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear,
 		mysql.TypeDuration:
-		return true
+		return true, false
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		collator := collate.GetCollator(tp.GetCollate())
-		return collate.CanUseRawMemAsKey(collator)
+		return collate.CanUseRawMemAsKey(collator), true
 	// todo check if date/datetime/timestamp can be inlined
 	default:
-		return false
+		return false, false
 	}
 }
 
@@ -227,7 +231,8 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	meta.joinKeysLength = 0
 	meta.isJoinKeysInlined = true
 	keyIndexMap := make(map[int]struct{})
-	meta.ignoreIntegerKeySignFlag = make([]bool, 0, len(buildKeyIndex))
+	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
+	isAllKeyInteger := false
 	for index, keyIndex := range buildKeyIndex {
 		keyType := buildKeyTypes[index]
 		keyLength := chunk.GetFixedLen(keyType)
@@ -236,20 +241,26 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		} else {
 			meta.joinKeysLength += keyLength
 		}
-		if !canBeInlinedAsJoinKey(keyType) {
+		canBeInlined, isStringKey := canBeInlinedAsJoinKey(keyType)
+		if !canBeInlined {
 			meta.isJoinKeysInlined = false
 		}
 		if mysql.IsIntegerType(keyType.GetType()) {
 			buildUnsigned := mysql.HasUnsignedFlag(keyType.GetFlag())
 			probeUnsigned := mysql.HasUnsignedFlag(probeKeyTypes[index].GetFlag())
 			if (buildUnsigned && !probeUnsigned) || (probeUnsigned && !buildUnsigned) {
-				meta.ignoreIntegerKeySignFlag = append(meta.ignoreIntegerKeySignFlag, false)
+				meta.serializeModes = append(meta.serializeModes, codec.None)
 				meta.isJoinKeysInlined = false
 			} else {
-				meta.ignoreIntegerKeySignFlag = append(meta.ignoreIntegerKeySignFlag, true)
+				meta.serializeModes = append(meta.serializeModes, codec.IgnoreIntegerSign)
 			}
 		} else {
-			meta.ignoreIntegerKeySignFlag = append(meta.ignoreIntegerKeySignFlag, true)
+			isAllKeyInteger = false
+			if meta.isJoinKeysInlined && isStringKey {
+				meta.serializeModes = append(meta.serializeModes, codec.KeepStringLength)
+			} else {
+				meta.serializeModes = append(meta.serializeModes, codec.None)
+			}
 		}
 		keyIndexMap[keyIndex] = struct{}{}
 	}
@@ -259,6 +270,13 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	if len(buildKeyIndex) != len(keyIndexMap) {
 		// has duplicated key, can not be inlined
 		meta.isJoinKeysInlined = false
+	}
+	if !meta.isJoinKeysInlined {
+		for i := 0; i < len(buildKeyIndex); i++ {
+			if meta.serializeModes[i] == codec.KeepStringLength {
+				meta.serializeModes[i] = codec.None
+			}
+		}
 	}
 	// construct the column order
 	meta.rowColumnsOrder = make([]int, 0, savedColumnCount)
@@ -288,6 +306,15 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	}
 	for _, index := range outputColumns {
 		updateColumnOrder(index)
+	}
+	if isAllKeyInteger && len(buildKeyIndex) == 1 {
+		meta.keyMode = OneInt64
+	} else {
+		if meta.isJoinKeysFixedLength {
+			meta.keyMode = FixedSerializedKey
+		} else {
+			meta.keyMode = VariableSerializedKey
+		}
 	}
 	return meta
 }
@@ -421,17 +448,14 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 		if len := rowTableMeta.nullMapLength; len > 0 {
 			seg.rawData = append(seg.rawData, make([]byte, len)...)
 		}
-		var sizeBuf [SizeOfKeyLengthField]byte
-		// if join_key is not inlined: `key_length + serialized_key`
-		// if join_key is inlined: `key_length` if the key is variable length
-		if rowTableMeta.isJoinKeysInlined {
-			if !rowTableMeta.isJoinKeysFixedLength {
-				*(*uint64)(unsafe.Pointer(&sizeBuf[0])) = uint64(len(builder.serializedKeyVectorBuffer[rowIdx]))
-				seg.rawData = append(seg.rawData, sizeBuf[:]...)
-			}
-		} else {
-			*(*uint64)(unsafe.Pointer(&sizeBuf[0])) = uint64(len(builder.serializedKeyVectorBuffer[rowIdx]))
-			seg.rawData = append(seg.rawData, sizeBuf[:]...)
+		length := uint64(0)
+		// if join_key is not fixed length: `key_length` need to be written in rawData
+		if !rowTableMeta.isJoinKeysFixedLength {
+			length = uint64(len(builder.serializedKeyVectorBuffer[rowIdx]))
+			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), SizeOfLengthField)...)
+		}
+		if !rowTableMeta.isJoinKeysInlined {
+			// if join_key is not inlined: `serialized_key` need to be written in rawData
 			seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[rowIdx]...)
 		}
 
@@ -442,8 +466,8 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 			} else {
 				// length, raw_data
 				raw := row.GetRaw(colIdx)
-				*(*uint64)(unsafe.Pointer(&sizeBuf[0])) = uint64(len(raw))
-				seg.rawData = append(seg.rawData, sizeBuf[:]...)
+				length = uint64(len(raw))
+				seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), SizeOfLengthField)...)
 				seg.rawData = append(seg.rawData, raw...)
 			}
 		}
