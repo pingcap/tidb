@@ -64,7 +64,7 @@ type Data struct {
 	// For the TableByName API, sorted by {dbName, tableName, schemaVersion} => tableID
 	//
 	// If the schema version +1 but a specific table does not change, the old record is
-	// kept and no new {dbName, tableName, tableID} => schemaVersion+1 record been added.
+	// kept and no new {dbName, tableName, schemaVersion+1} => tableID record been added.
 	//
 	// It means as long as we can find an item in it, the item is available, even through the
 	// schema version maybe smaller than required.
@@ -72,7 +72,7 @@ type Data struct {
 	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	byName *btree.BTreeG[tableItem]
 
-	// For the TableByID API, sorted by {tableID}
+	// For the TableByID API, sorted by {tableID, schemaVersion} => dbID
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
 	// It provides the tableID => databaseID mapping.
 	//
@@ -198,7 +198,6 @@ func compareByID(a, b tableItem) bool {
 		return false
 	}
 
-	// return a.dbID < b.dbID
 	return a.schemaVersion < b.schemaVersion
 }
 
@@ -507,8 +506,6 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	tables = make([]table.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {
 		tbl, ok := is.TableByID(tblInfo.ID)
-		// tbl, err := is.TableByName(dbInfo.Name, tblInfo.Name)
-		// if err != nil {
 		if !ok {
 			// what happen?
 			continue
@@ -711,7 +708,6 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		return nil
 	}
 
-	fmt.Println("apply drop table v2 ===", dbInfo.Name, tableID)
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.deleteReferredForeignKeysV2(dbInfo, tableID)
 
@@ -727,10 +723,8 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 }
 
 func (b *Builder) deleteReferredForeignKeysV2(dbInfo *model.DBInfo, tableID int64) {
-	fmt.Println("deleteReferredForeignKeysV2 ... for ", dbInfo.Name, tableID)
 	for _, tbl := range b.infoschemaV2.SchemaTables(dbInfo.Name) {
 		tblInfo := tbl.Meta()
-		fmt.Println("delete referenced foreign key v2...", tblInfo.Name, tableID)
 		if tblInfo.ID == tableID {
 			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break
