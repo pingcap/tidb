@@ -24,7 +24,7 @@ type AbbreviatedArrayMarshaler []string
 
 // MarshalLogArray implements zapcore.ArrayMarshaler.
 func (abb AbbreviatedArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
-	if len(abb) <= 4 {
+	if len(abb) <= 40 {
 		for _, e := range abb {
 			encoder.AppendString(e)
 		}
