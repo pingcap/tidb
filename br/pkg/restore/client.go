@@ -668,7 +668,11 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 func (rc *Client) SetConcurrency(c uint) {
 	log.Info("download worker pool", zap.Uint("size", c))
 	if rc.granularity == string(CoarseGrained) {
-		count := uint(rc.storeCount) * rc.concurrencyPerStore * 15
+		// we believe 32 is large enough for download worker pool.
+		// it won't reach the limit if sst files distribute evenly.
+		// when restore memory usage is still too high, we should reduce concurrencyPerStore
+		// to sarifice some speed to reduce memory usage.
+		count := uint(rc.storeCount) * rc.concurrencyPerStore * 32
 		log.Info("download coarse worker pool", zap.Uint("size", count))
 		rc.workerPool = utils.NewWorkerPool(count, "file")
 		return
