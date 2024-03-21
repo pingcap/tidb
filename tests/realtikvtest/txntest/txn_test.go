@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -531,4 +532,32 @@ func TestCheckTxnStatusOnOptimisticTxnBreakConsistency(t *testing.T) {
 	tk2.MustQuery("select * from t order by id").Check(testkit.Rows("1 11", "2 21"))
 	tk2.MustExec("admin check table t2")
 	tk2.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 10", "2 11"))
+}
+
+func TestCIRegression(t *testing.T) {
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(1)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(1)`))
+	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(10)`))
+	defer func() {
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushKeys"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBMinFlushSize"))
+		require.Nil(t, failpoint.Disable("tikvclient/pipelinedMemDBForceFlushSizeThreshold"))
+	}()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_dml_type = bulk")
+	tk.MustExec("drop table if exists t, _t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table _t(a int)")
+	var sql strings.Builder
+	sql.WriteString("insert into t values ")
+	for i := 0; i < 10000; i++ {
+		if i != 0 {
+			sql.WriteString(", ")
+		}
+		sql.WriteString(fmt.Sprintf("(%d)", i))
+	}
+	tk.MustExec(sql.String())
+	tk.MustExec("insert into _t select * from t")
 }
