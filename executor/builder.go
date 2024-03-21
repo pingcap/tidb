@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -72,6 +73,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -2215,6 +2217,15 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	e := &UnionExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExecs...),
 		concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
+	}
+	wrongSet := false
+	for _, child := range v.Children() {
+		if proj, ok := child.(*plannercore.PhysicalProjection); ok && !proj.AvoidColumnEvaluator {
+			wrongSet = true
+		}
+	}
+	if wrongSet {
+		logutil.BgLogger().Warn("wrong setting detected", zap.String("union id", v.ExplainID().String()))
 	}
 	return e
 }
