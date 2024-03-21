@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -35,12 +34,11 @@ import (
 type TestClient struct {
 	split.SplitClient
 
-	mu              sync.RWMutex
-	stores          map[uint64]*metapb.Store
-	regions         map[uint64]*split.RegionInfo
-	regionsInfo     *pdtypes.RegionTree // For now it's only used in ScanRegions
-	nextRegionID    uint64
-	injectInScatter func(*split.RegionInfo) error
+	mu           sync.RWMutex
+	stores       map[uint64]*metapb.Store
+	regions      map[uint64]*split.RegionInfo
+	regionsInfo  *pdtypes.RegionTree // For now it's only used in ScanRegions
+	nextRegionID uint64
 
 	scattered   map[uint64]bool
 	InjectErr   bool
@@ -57,35 +55,12 @@ func NewTestClient(
 		regionsInfo.SetRegion(pdtypes.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
 	}
 	return &TestClient{
-		stores:          stores,
-		regions:         regions,
-		regionsInfo:     regionsInfo,
-		nextRegionID:    nextRegionID,
-		scattered:       map[uint64]bool{},
-		injectInScatter: func(*split.RegionInfo) error { return nil },
+		stores:       stores,
+		regions:      regions,
+		regionsInfo:  regionsInfo,
+		nextRegionID: nextRegionID,
+		scattered:    map[uint64]bool{},
 	}
-}
-
-// ScatterRegions scatters regions in a batch.
-func (c *TestClient) ScatterRegions(ctx context.Context, regionInfo []*split.RegionInfo) error {
-	regions := map[uint64]*split.RegionInfo{}
-	for _, region := range regionInfo {
-		regions[region.Region.Id] = region
-	}
-	var err error
-	for i := 0; i < 3; i++ {
-		if len(regions) == 0 {
-			return nil
-		}
-		for id, region := range regions {
-			splitErr := c.ScatterRegion(ctx, region)
-			if splitErr == nil {
-				delete(regions, id)
-			}
-			err = multierr.Append(err, splitErr)
-		}
-	}
-	return nil
 }
 
 func (c *TestClient) GetAllRegions() map[uint64]*split.RegionInfo {
@@ -126,40 +101,7 @@ func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split
 	return region, nil
 }
 
-func (c *TestClient) SplitRegion(
-	ctx context.Context,
-	regionInfo *split.RegionInfo,
-	key []byte,
-) (*split.RegionInfo, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var target *split.RegionInfo
-	splitKey := codec.EncodeBytes([]byte{}, key)
-	for _, region := range c.regions {
-		if bytes.Compare(splitKey, region.Region.StartKey) >= 0 &&
-			(len(region.Region.EndKey) == 0 || bytes.Compare(splitKey, region.Region.EndKey) < 0) {
-			target = region
-		}
-	}
-	if target == nil {
-		return nil, errors.Errorf("region not found: key=%s", string(key))
-	}
-	newRegion := &split.RegionInfo{
-		Region: &metapb.Region{
-			Peers:    target.Region.Peers,
-			Id:       c.nextRegionID,
-			StartKey: target.Region.StartKey,
-			EndKey:   splitKey,
-		},
-	}
-	c.regions[c.nextRegionID] = newRegion
-	c.nextRegionID++
-	target.Region.StartKey = splitKey
-	c.regions[target.Region.Id] = target
-	return newRegion, nil
-}
-
-func (c *TestClient) BatchSplitRegionsWithOrigin(
+func (c *TestClient) SplitWaitAndScatter(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
 ) (*split.RegionInfo, []*split.RegionInfo, error) {
 	c.mu.Lock()
@@ -193,21 +135,6 @@ func (c *TestClient) BatchSplitRegionsWithOrigin(
 		newRegions = append(newRegions, newRegion)
 	}
 	return region, newRegions, nil
-}
-
-func (c *TestClient) BatchSplitRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) ([]*split.RegionInfo, error) {
-	_, newRegions, err := c.BatchSplitRegionsWithOrigin(ctx, regionInfo, keys)
-	return newRegions, err
-}
-
-func (c *TestClient) WaitRegionsSplit(context.Context, []*split.RegionInfo) error {
-	return nil
-}
-
-func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	return c.injectInScatter(regionInfo)
 }
 
 func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
@@ -281,29 +208,6 @@ func TestSplitAndScatter(t *testing.T) {
 		}
 		t.Log("get wrong result")
 		t.Fail()
-	}
-	regionInfos := make([]*split.RegionInfo, 0, len(regions))
-	for _, info := range regions {
-		regionInfos = append(regionInfos, info)
-	}
-	scattered := map[uint64]bool{}
-	const alwaysFailedRegionID = 1
-	client.injectInScatter = func(regionInfo *split.RegionInfo) error {
-		if _, ok := scattered[regionInfo.Region.Id]; !ok || regionInfo.Region.Id == alwaysFailedRegionID {
-			scattered[regionInfo.Region.Id] = false
-			return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionInfo.Region.Id)
-		}
-		scattered[regionInfo.Region.Id] = true
-		return nil
-	}
-	err = regionSplitter.client.ScatterRegions(ctx, regionInfos)
-	require.NoError(t, err)
-	for key := range regions {
-		if key == alwaysFailedRegionID {
-			require.Falsef(t, scattered[key], "always failed region %d was scattered successfully", key)
-		} else if !scattered[key] {
-			t.Fatalf("region %d has not been scattered: %#v", key, regions[key])
-		}
 	}
 }
 
