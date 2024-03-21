@@ -39,7 +39,7 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
-			if isKeyMatched(j.ctx.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// key matched, convert row to column for build side
 				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
 				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)

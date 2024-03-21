@@ -154,7 +154,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 
 	// generate serialized key
 	for index, keyIndex := range j.keyIndex {
-		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.ignoreIntegerKeySignFlag[index], j.serializedKeys)
+		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[index], j.serializedKeys)
 		if err != nil {
 			return err
 		}
@@ -235,7 +235,7 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
 				size := *(*uint64)(rowInfo.rowData)
-				rowInfo.rowData = unsafe.Add(rowInfo.rowData, SizeOfKeyLengthField+int(size))
+				rowInfo.rowData = unsafe.Add(rowInfo.rowData, SizeOfLengthField+int(size))
 			} else {
 				rowInfo.rowData = unsafe.Add(rowInfo.rowData, meta.columnsSize[columnIndex])
 			}
@@ -280,7 +280,7 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 	case FixedSerializedKey:
 		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+SizeOfNextPtr), meta.joinKeysLength))
 	case VariableSerializedKey:
-		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+SizeOfNextPtr+SizeOfKeyLengthField), int(meta.getSerializedKeyLength(rowStart))))
+		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+SizeOfNextPtr+SizeOfLengthField), int(meta.getSerializedKeyLength(rowStart))))
 	default:
 		panic("unknown key match type")
 	}

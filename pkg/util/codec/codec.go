@@ -391,8 +391,22 @@ func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.Field
 	return
 }
 
+// SerializeMode is for some special cases during serialize key
+type SerializeMode int
+
+const (
+	None SerializeMode = iota
+	// IgnoreIntegerSign when serialize integer column, if the join key is <signed, signed> or <unsigned, unsigned>,
+	// the unsigned flag can be ignored, if the join key is <unsigned, signed> or <signed, unsigned>
+	// the unsigned flag can not be ignored, if the unsigned flag can not be ignored, the key can not be inlined
+	IgnoreIntegerSign
+	// KeepStringLength when serialize string column, if the string column can use raw data as the key, then it can be inlined,
+	// in this case, the string length should be included in the serialized key
+	KeepStringLength
+)
+
 // SerializeKeys is used in join
-func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType, colIdx int, filterVector []bool, nullVector []bool, ignoreSign bool, serializedKeysVector [][]byte) (err error) {
+func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType, colIdx int, filterVector []bool, nullVector []bool, serializeMode SerializeMode, serializedKeysVector [][]byte) (err error) {
 	column := chk.Column(colIdx)
 	rows := chk.NumRows()
 	canSkip := func(index int) bool {
@@ -408,7 +422,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if canSkip(i) {
 				continue
 			}
-			if !ignoreSign {
+			if serializeMode == None {
 				if !mysql.HasUnsignedFlag(tp.GetFlag()) && v < 0 {
 					serializedKeysVector[i] = append(serializedKeysVector[i], varintFlag)
 				} else {
@@ -449,7 +463,12 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if canSkip(i) {
 				continue
 			}
-			serializedKeysVector[i] = append(serializedKeysVector[i], ConvertByCollation(column.GetBytes(i), tp)...)
+			data := ConvertByCollation(column.GetBytes(i), tp)
+			size := uint64(len(data))
+			if serializeMode == KeepStringLength {
+				serializedKeysVector[i] = append(serializedKeysVector[i], unsafe.Slice((*byte)(unsafe.Pointer(&size)), sizeUint64)...)
+			}
+			serializedKeysVector[i] = append(serializedKeysVector[i], data...)
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		ts := column.Times()
