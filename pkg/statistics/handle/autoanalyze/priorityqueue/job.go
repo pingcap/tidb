@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -73,18 +72,6 @@ type AnalysisJob interface {
 	GetIndicators() Indicators
 
 	fmt.Stringer
-}
-
-// Usually, we should not put this kind of table into the queue.
-// This is just a double check.
-func isValidWeight(weight float64) (bool, string) {
-	// No need to analyze this table.
-	intest.Assert(weight > 0, "weight is less than or equal to 0")
-	if weight <= 0 {
-		return false, fmt.Sprintf("weight is less than or equal to 0: %.4f", weight)
-	}
-
-	return true, ""
 }
 
 // isValidToAnalyze checks whether the table is valid to analyze.

@@ -469,3 +469,8 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 	}
 	return encodedIdxVals, nil
 }
+
+// GetPushDownCtx creates a PushDownContext from PlanContext
+func GetPushDownCtx(sctx PlanContext) expression.PushDownContext {
+	return expression.NewPushDownContext(sctx.GetExprCtx(), sctx.GetSessionVars(), sctx.GetClient())
+}

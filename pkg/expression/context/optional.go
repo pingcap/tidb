@@ -69,8 +69,15 @@ func (k OptionalEvalPropKey) String() string {
 }
 
 const (
-	// OptPropCurrentUser indicates the current user property
+	// OptPropCurrentUser indicates to provide the current user property.
 	OptPropCurrentUser OptionalEvalPropKey = iota
+	// OptPropSessionVars indicates to provide `variable.SessionVariable`.
+	OptPropSessionVars
+	// OptPropAdvisoryLock indicates to provide advisory lock operations.
+	OptPropAdvisoryLock
+	// OptPropDDLOwnerInfo indicates to provide DDL owner information.
+	OptPropDDLOwnerInfo
+	// optPropsCnt is the count of optional properties. DO NOT use it as a property key.
 	optPropsCnt
 )
 
@@ -101,6 +108,18 @@ var optionalPropertyDescList = []OptionalEvalPropDesc{
 	{
 		key: OptPropCurrentUser,
 		str: "OptPropCurrentUser",
+	},
+	{
+		key: OptPropSessionVars,
+		str: "OptPropSessionVars",
+	},
+	{
+		key: OptPropAdvisoryLock,
+		str: "OptPropAdvisoryLock",
+	},
+	{
+		key: OptPropDDLOwnerInfo,
+		str: "OptPropDDLOwnerInfo",
 	},
 }
 

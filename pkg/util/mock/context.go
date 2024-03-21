@@ -71,6 +71,7 @@ type Context struct {
 	pcache        sessionctx.PlanCache
 	level         kvrpcpb.DiskFullOpt
 	inSandBoxMode bool
+	isDDLOwner    bool
 }
 
 type wrapTxn struct {
@@ -170,9 +171,14 @@ func (*Context) ShowProcess() *util.ProcessInfo {
 	return &util.ProcessInfo{}
 }
 
+// SetIsDDLOwner sets return value of IsDDLOwner.
+func (c *Context) SetIsDDLOwner(isOwner bool) {
+	c.isDDLOwner = isOwner
+}
+
 // IsDDLOwner checks whether this session is DDL owner.
-func (*Context) IsDDLOwner() bool {
-	return true
+func (c *Context) IsDDLOwner() bool {
+	return c.isDDLOwner
 }
 
 // SetValue implements sessionctx.Context SetValue interface.

@@ -142,9 +142,9 @@ func WindowFuncToPBExpr(sctx expression.EvalContext, client kv.Client, desc *Win
 }
 
 // CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
-func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.EvalContext, client kv.Client) bool {
+func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.PushDownContext) bool {
 	// args
-	if !expression.CanExprsPushDown(ctx, s.Args, client, kv.TiFlash) {
+	if !expression.CanExprsPushDown(ctx, s.Args, kv.TiFlash) {
 		return false
 	}
 	// window functions

@@ -33,7 +33,8 @@ func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName strin
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr(dbName))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == tableName {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,

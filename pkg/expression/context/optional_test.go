@@ -31,15 +31,31 @@ func TestOptionalPropKeySet(t *testing.T) {
 	keySet2 := keySet.Add(OptPropCurrentUser)
 	require.True(t, keySet2.Contains(OptPropCurrentUser))
 	require.False(t, keySet2.IsEmpty())
-	require.True(t, keySet2.IsFull())
+	require.False(t, keySet2.IsFull())
 
 	// old key is not affected
 	require.True(t, keySet.IsEmpty())
 
+	// Add second key
+	keySet3 := keySet2.Add(OptPropDDLOwnerInfo)
+	require.True(t, keySet3.Contains(OptPropCurrentUser))
+	require.True(t, keySet3.Contains(OptPropDDLOwnerInfo))
+	require.False(t, keySet3.IsEmpty())
+	require.False(t, keySet3.IsFull())
+	require.False(t, keySet2.Contains(OptPropDDLOwnerInfo))
+
 	// remove one key
-	keySet3 := keySet2.Remove(OptPropCurrentUser)
-	require.True(t, keySet3.IsEmpty())
-	require.False(t, keySet2.IsEmpty())
+	keySet4 := keySet3.Remove(OptPropCurrentUser)
+	require.False(t, keySet4.Contains(OptPropCurrentUser))
+	require.True(t, keySet4.Contains(OptPropDDLOwnerInfo))
+	require.False(t, keySet4.IsFull())
+	require.False(t, keySet4.IsEmpty())
+
+	// add all other keys
+	keySet4 = keySet3.Add(OptPropSessionVars)
+	keySet4 = keySet4.Add(OptPropAdvisoryLock)
+	require.True(t, keySet4.IsFull())
+	require.False(t, keySet4.IsEmpty())
 }
 
 func TestOptionalPropKeySetWithUnusedBits(t *testing.T) {
@@ -49,28 +65,36 @@ func TestOptionalPropKeySetWithUnusedBits(t *testing.T) {
 	bits := full << OptionalEvalPropKeySet(OptPropsCnt)
 	require.True(t, bits.IsEmpty())
 	require.False(t, bits.Contains(OptPropCurrentUser))
+	require.False(t, bits.Contains(OptPropDDLOwnerInfo))
 	bits = bits.Add(OptPropCurrentUser)
 	require.True(t, bits.Contains(OptPropCurrentUser))
 
 	bits = full >> (64 - OptPropsCnt)
 	require.True(t, bits.IsFull())
 	require.True(t, bits.Contains(OptPropCurrentUser))
+	require.True(t, bits.Contains(OptPropDDLOwnerInfo))
 	bits = bits.Remove(OptPropCurrentUser)
 	require.False(t, bits.Contains(OptPropCurrentUser))
 }
 
 func TestOptionalPropKey(t *testing.T) {
-	keySet := OptPropCurrentUser.AsPropKeySet()
-	require.True(t, keySet.Contains(OptPropCurrentUser))
-	keySet = keySet.Remove(OptPropCurrentUser)
-	require.True(t, keySet.IsEmpty())
-}
-
-func TestOptionalPropDescList(t *testing.T) {
-	require.Equal(t, OptPropsCnt, len(optionalPropertyDescList))
 	for i := 0; i < OptPropsCnt; i++ {
 		key := OptionalEvalPropKey(i)
+		keySet := key.AsPropKeySet()
+		// keySet should contain the specified key
+		require.True(t, keySet.Contains(key))
+		// desc in optionalPropertyDescList should be the same with key.Desc()
 		require.Equal(t, key, optionalPropertyDescList[i].Key())
 		require.Same(t, &optionalPropertyDescList[i], key.Desc())
+		// keySet should not contain other keys
+		for j := 0; j < OptPropsCnt; j++ {
+			if i != j {
+				key2 := OptionalEvalPropKey(j)
+				require.False(t, keySet.Contains(key2))
+			}
+		}
+		// If key removed from the keySet, the keySet should be empty
+		keySet = keySet.Remove(key)
+		require.True(t, keySet.IsEmpty())
 	}
 }

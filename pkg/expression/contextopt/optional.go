@@ -38,6 +38,10 @@ func (o *OptionalEvalPropProviders) Contains(key context.OptionalEvalPropKey) bo
 
 // Get gets the provider by key.
 func (o *OptionalEvalPropProviders) Get(key context.OptionalEvalPropKey) (context.OptionalEvalPropProvider, bool) {
+	if key < 0 || int(key) >= context.OptPropsCnt {
+		return nil, false
+	}
+
 	if val := o[key]; val != nil {
 		intest.Assert(key == val.Desc().Key())
 		return val, true
@@ -52,6 +56,15 @@ func (o *OptionalEvalPropProviders) Add(val context.OptionalEvalPropProvider) {
 		switch val.Desc().Key() {
 		case context.OptPropCurrentUser:
 			_, ok := val.(CurrentUserPropProvider)
+			intest.Assert(ok)
+		case context.OptPropSessionVars:
+			_, ok := val.(*SessionVarsPropProvider)
+			intest.Assert(ok)
+		case context.OptPropAdvisoryLock:
+			_, ok := val.(*AdvisoryLockPropProvider)
+			intest.Assert(ok)
+		case context.OptPropDDLOwnerInfo:
+			_, ok := val.(DDLOwnerInfoProvider)
 			intest.Assert(ok)
 		default:
 			intest.Assert(false)
@@ -72,6 +85,12 @@ func (o *OptionalEvalPropProviders) PropKeySet() (set context.OptionalEvalPropKe
 }
 
 func getPropProvider[T context.OptionalEvalPropProvider](ctx context.EvalContext, key context.OptionalEvalPropKey) (p T, _ error) {
+	intest.AssertFunc(func() bool {
+		var stub T
+		intest.Assert(stub.Desc().Key() == key)
+		return true
+	})
+
 	val, ok := ctx.GetOptionalPropProvider(key)
 	if !ok {
 		return p, errors.Errorf("optional property: '%s' not exists in EvalContext", key)

@@ -1439,29 +1439,30 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p.setSchemaAndNames(buildShowSlowSchema())
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
-		ret = &ReloadExprPushdownBlacklist{}
+		return &ReloadExprPushdownBlacklist{}, nil
 	case ast.AdminReloadOptRuleBlacklist:
-		ret = &ReloadOptRuleBlacklist{}
+		return &ReloadOptRuleBlacklist{}, nil
 	case ast.AdminPluginEnable:
-		ret = &AdminPlugins{Action: Enable, Plugins: as.Plugins}
+		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
 	case ast.AdminPluginDisable:
-		ret = &AdminPlugins{Action: Disable, Plugins: as.Plugins}
+		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
 	case ast.AdminFlushBindings:
-		ret = &SQLBindPlan{SQLBindOp: OpFlushBindings}
+		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
 	case ast.AdminCaptureBindings:
-		ret = &SQLBindPlan{SQLBindOp: OpCaptureBindings}
+		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
+		var err error
 		// The 'baseline evolution' only work in the test environment before the feature is GA.
 		if !config.CheckTableBeforeDrop {
-			return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 		}
-		ret = &SQLBindPlan{SQLBindOp: OpEvolveBindings}
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
-		ret = &SQLBindPlan{SQLBindOp: OpReloadBindings}
+		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminReloadStatistics:
-		ret = &Simple{Statement: as}
+		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
-		ret = &Simple{Statement: as}
+		return &Simple{Statement: as}, nil
 	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		ret = &Simple{Statement: as}
 	case ast.AdminShowBDRRole:

@@ -252,6 +252,9 @@ func WithRetryReturnLastErr(
 	retryableFunc RetryableFunc,
 	backoffer Backoffer,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var lastErr error
 	for backoffer.Attempt() > 0 {
 		lastErr = retryableFunc()

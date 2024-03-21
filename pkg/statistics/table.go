@@ -615,16 +615,24 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // The Column should be visible in the table and really has analyzed statistics in the stroage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
-func (t *Table) ColumnIsLoadNeeded(id int64) (*Column, bool) {
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
 	col, ok := t.Columns[id]
-	// If the column is not in the memory, and we have its stats in the storage. We need to trigger the load.
-	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, false) {
-		return nil, true
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
+
+	// If it's not analyzed yet. Don't need to load it.
+	if !hasAnalyzed {
+		return nil, false
 	}
-	// If the column is in the memory, we check its embedded func.
-	if ok && col.StatsAvailable() && !col.IsFullLoad() {
+
+	// Restore the condition from the simplified form:
+	// 1. !ok && hasAnalyzed => need load
+	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
+	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
+	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
 		return col, true
 	}
+
+	// Otherwise don't need load it.
 	return col, false
 }
 
@@ -634,11 +642,11 @@ func (t *Table) ColumnIsLoadNeeded(id int64) (*Column, bool) {
 // We return the Index together with the checking result, to avoid accessing the map multiple times.
 func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	idx, ok := t.Indices[id]
-	// If the column is not in the memory, and we have its stats in the storage. We need to trigger the load.
+	// If the index is not in the memory, and we have its stats in the storage. We need to trigger the load.
 	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, true) {
 		return nil, true
 	}
-	// If the column is in the memory, we check its embedded func.
+	// If the index is in the memory, we check its embedded func.
 	if ok && idx.IsAnalyzed() && !idx.IsFullLoad() {
 		return idx, true
 	}
