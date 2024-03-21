@@ -61,7 +61,7 @@ type versionAndTimestamp struct {
 
 // Data is the core data struct of infoschema V2.
 type Data struct {
-	// For the TableByName API, sorted by {dbName, tableName, tableID} => schemaVersion
+	// For the TableByName API, sorted by {dbName, tableName, schemaVersion} => tableID
 	//
 	// If the schema version +1 but a specific table does not change, the old record is
 	// kept and no new {dbName, tableName, tableID} => schemaVersion+1 record been added.
@@ -215,13 +215,6 @@ func compareByName(a, b tableItem) bool {
 		return false
 	}
 
-	if a.tableID < b.tableID {
-		return true
-	}
-	if a.tableID > b.tableID {
-		return false
-	}
-
 	return a.schemaVersion < b.schemaVersion
 }
 
@@ -347,7 +340,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
-	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, tableID: math.MaxInt64}, eq)
+	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
