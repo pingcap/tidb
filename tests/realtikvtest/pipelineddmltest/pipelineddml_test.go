@@ -706,6 +706,14 @@ func TestInsertIgnoreOnDuplicateKeyUpdate(t *testing.T) {
 	tk.MustExec("insert ignore into t1 values (0, 2) ,(1, 3) on duplicate key update b = 5, a = 0")
 	// if the statement execute successful, the following check should pass.
 	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("0 5", "1 1"))
+
+	tk.MustExec(`create table tbl_2 (col_3 varchar (207),col_4 boolean, primary key (col_4));`)
+	tk.MustExec(`insert into tbl_2 values ( 'bbb', 0 );`)
+	tk.MustExec(`insert into tbl_2 values ( 'ccc', 1 );`)
+	tk.MustExec(
+		`insert ignore into tbl_2 set col_3 = 'ddd',
+		col_4 = 0 on duplicate key update col_4 = 1, col_3 = 'eee';`,
+	)
 }
 
 func TestConflictError(t *testing.T) {

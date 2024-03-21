@@ -1016,7 +1016,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			_, err = txn.Get(ctx, key)
-		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() || txn.IsPipelined() {
+		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 			var v []byte
 			v, err = txn.GetMemBuffer().GetLocal(ctx, key)
 			if err != nil {
