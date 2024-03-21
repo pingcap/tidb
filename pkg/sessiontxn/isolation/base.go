@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -296,6 +297,9 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
 	}
+
+	// set test flag
+	txn.SetOption(kv.InTest, !intest.InTest)
 
 	txn.SetVars(sessVars.KVVars)
 

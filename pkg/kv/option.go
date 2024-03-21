@@ -112,6 +112,8 @@ const (
 	TiKVClientReadTimeout
 	// SizeLimits sets the size limits of membuf
 	SizeLimits
+	// InTest sets the test flag for the transaction.
+	InTest
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option
