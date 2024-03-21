@@ -16,7 +16,6 @@ package isolation
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/table/temptable"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
 )
