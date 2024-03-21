@@ -2431,8 +2431,6 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 					return false, err
 				}
 				break InnerFor
-			case <-ctx.Done():
-				return false, ctx.Err()
 			case <-ticker.C:
 				if err = cc.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 					return false, err
