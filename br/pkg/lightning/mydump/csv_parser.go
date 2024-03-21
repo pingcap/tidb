@@ -17,6 +17,7 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"io"
 	"regexp"
 	"slices"
@@ -668,6 +669,12 @@ func (parser *CSVParser) ReadRow() error {
 		}
 		if isNull {
 			row.Row[i].SetNull()
+		} else if parser.cfg.Base64Encoded {
+			decoded, err := base64.StdEncoding.WithPadding(base64.StdPadding).DecodeString(strings.TrimSpace(unescaped))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			row.Row[i].SetString(string(decoded), "utf8mb4_bin")
 		} else {
 			row.Row[i].SetString(unescaped, "utf8mb4_bin")
 		}
