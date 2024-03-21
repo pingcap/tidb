@@ -784,21 +784,8 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 		for e.tblIdx < len(schema.Tables) {
 			table := schema.Tables[e.tblIdx]
 			e.tblIdx++
-			hasPrivs := false
-			var priv mysql.PrivilegeType
-			if checker != nil {
-				for _, p := range mysql.AllColumnPrivs {
-					if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", p) {
-						hasPrivs = true
-						priv |= p
-					}
-				}
-				if !hasPrivs {
-					continue
-				}
-			}
 
-			e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
+			e.dataForColumnsInTable(ctx, sctx, schema, table, extractor, checker)
 			if len(e.rows) >= batch {
 				return nil
 			}
@@ -808,7 +795,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
+func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, extractor *plannercore.ColumnsTableExtractor, checker privilege.Manager) {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	if tbl.IsView() {
 		e.viewMu.Lock()
@@ -981,6 +968,19 @@ ForColumnsTag:
 		colType := ft.GetType()
 		if colType == mysql.TypeVarString {
 			colType = mysql.TypeVarchar
+		}
+		hasPrivs := false
+		var priv mysql.PrivilegeType
+		if checker != nil {
+			for _, p := range mysql.AllColumnPrivs {
+				if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", p) {
+					hasPrivs = true
+					priv |= p
+				}
+			}
+			if !hasPrivs {
+				continue
+			}
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
