@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -311,6 +312,7 @@ type ingestBackfillScheduler struct {
 	reorgInfo  *reorgInfo
 	sessPool   *sess.Pool
 	tbl        table.PhysicalTable
+	avgRowSize int
 	distribute bool
 
 	closed bool
@@ -329,16 +331,35 @@ type ingestBackfillScheduler struct {
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
+	avgRowSize := estimateAvgRowSize(tbl)
 	return &ingestBackfillScheduler{
 		ctx:        ctx,
 		reorgInfo:  info,
 		sessPool:   sessPool,
 		tbl:        tbl,
+		avgRowSize: avgRowSize,
 		taskCh:     make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
 		poolErr:    make(chan error),
 		distribute: distribute,
 	}
+}
+
+func estimateAvgRowSize(tbl table.PhysicalTable) int {
+	size := 0
+	for _, col := range tbl.Meta().Columns {
+		ft := col.FieldType
+		storeLen := ft.StorageLength()
+		if storeLen != types.VarStorageLen {
+			size += storeLen
+		} else {
+			if types.IsString(ft.GetType()) {
+				maxBytes := charset.CalculateCharOctLength(ft.GetFlen(), ft.GetCharset())
+				size += maxBytes / 2
+			}
+		}
+	}
+	return size
 }
 
 func (b *ingestBackfillScheduler) setupWorkers() error {
@@ -366,6 +387,8 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
 	b.copReqSenderPool.adjustSize(readerCnt)
+	logutil.Logger(b.ctx).Info("setup ingest backfill workers",
+		zap.Int64("jobID", job.ID), zap.Int("reader", readerCnt), zap.Int("writer", writerCnt))
 	return nil
 }
 
@@ -501,15 +524,21 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
-	return expectedIngestWorkerCnt()
+func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+	return expectedIngestWorkerCnt(b.avgRowSize)
 }
 
-func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(avgRowSize int) (readerCnt, writerCnt int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
-	readerCnt = max(readerCnt, 1)
-	writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+	readerRatio := []float64{0.5, 1, 2, 4, 8}
+	rowSize := []int{200, 500, 1000, 3000, 5000}
+	for i, s := range rowSize {
+		if avgRowSize <= s {
+			readerCnt = int(float64(workerCnt) * readerRatio[i])
+			writerCnt = workerCnt
+			break
+		}
+	}
 	return readerCnt, writerCnt
 }
 

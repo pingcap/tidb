@@ -112,11 +112,11 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
-func getWriterMemSize(idxNum int) (uint64, error) {
+func getWriterMemSize(idxNum int, avgRowSize int) (uint64, error) {
 	failpoint.Inject("mockWriterMemSize", func() {
 		failpoint.Return(1*size.GB, nil)
 	})
-	_, writerCnt := expectedIngestWorkerCnt()
+	_, writerCnt := expectedIngestWorkerCnt(avgRowSize)
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return 0, err
@@ -131,8 +131,8 @@ func getWriterMemSize(idxNum int) (uint64, error) {
 	return memSize, nil
 }
 
-func getMergeSortPartSize(concurrency int, idxNum int) (uint64, error) {
-	writerMemSize, err := getWriterMemSize(idxNum)
+func getMergeSortPartSize(concurrency int, idxNum int, avgRowSize int) (uint64, error) {
+	writerMemSize, err := getWriterMemSize(idxNum, avgRowSize)
 	if err != nil {
 		return 0, nil
 	}
@@ -147,6 +147,7 @@ func NewAddIndexIngestPipeline(
 	backendCtx ingest.BackendCtx,
 	engines []ingest.Engine,
 	sessCtx sessionctx.Context,
+	jobID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
@@ -169,7 +170,8 @@ func NewAddIndexIngestPipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt()
+	avgRowSize := estimateAvgRowSize(tbl)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(avgRowSize)
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
@@ -179,6 +181,11 @@ func NewAddIndexIngestPipeline(
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
 	operator.Compose[IndexWriteResult](ingestOp, sinkOp)
+
+	logutil.Logger(ctx).Info("build add index local storage operators",
+		zap.Int64("jobID", jobID),
+		zap.Int("reader", readerCnt),
+		zap.Int("writer", writerCnt))
 
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, ingestOp, sinkOp,
@@ -216,7 +223,8 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt()
+	avgRowSize := estimateAvgRowSize(tbl)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(avgRowSize)
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
@@ -227,7 +235,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	memSize, err := getWriterMemSize(len(indexes))
+	memSize, err := getWriterMemSize(len(indexes), avgRowSize)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +249,11 @@ func NewWriteIndexToExternalStoragePipeline(
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
 	operator.Compose[IndexWriteResult](writeOp, sinkOp)
+
+	logutil.Logger(ctx).Info("build add index cloud storage operators",
+		zap.Int64("jobID", jobID),
+		zap.Int("reader", readerCnt),
+		zap.Int("writer", writerCnt))
 
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, writeOp, sinkOp,
