@@ -127,6 +127,8 @@ go_test(
         "//pkg/store/driver/error",
         "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/codec",
         "//pkg/util/dbutil",
         "//pkg/util/mock",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
