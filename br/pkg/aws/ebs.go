@@ -74,6 +74,13 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		}
 	}
 
+<<<<<<< HEAD
+=======
+	tags := []*ec2.Tag{
+		ec2Tag("TiDBCluster-BR-Snapshot", "new"),
+	}
+
+>>>>>>> b69e5e31083 (ebs br: rename a tag for EBS snapshots (#50870))
 	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
 	for i := range backupInfo.TiKVComponent.Stores {
 		store := backupInfo.TiKVComponent.Stores[i]
