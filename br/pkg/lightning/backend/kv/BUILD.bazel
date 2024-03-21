@@ -34,7 +34,11 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/chunk",
+<<<<<<< HEAD
         "//pkg/util/mathutil",
+=======
+        "//pkg/util/codec",
+>>>>>>> b91a1b3c416 (lightning: change MinRowID because ADD UNIQUE INDEX may be smaller (#51955))
         "//pkg/util/topsql/stmtstats",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
