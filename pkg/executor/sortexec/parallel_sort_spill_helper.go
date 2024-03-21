@@ -135,7 +135,8 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 		totalRows += sortedRowsIters[i].Len()
 	}
 
-	merger := newMultiWayMerger(sortedRowsIters, p.lessRowFunc)
+	source := &memorySource{sortedRowsIters: sortedRowsIters}
+	merger := newMultiWayMerger(source, p.lessRowFunc)
 	merger.init()
 	return p.spillImpl(merger)
 }
@@ -176,7 +177,11 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 		injectParallelSortRandomFail(200)
 
 		for {
-			row := merger.next()
+			row, err := merger.next()
+			if err != nil {
+				p.errOutputChan <- rowWithError{err: err}
+				break
+			}
 			if row.IsEmpty() {
 				break
 			}

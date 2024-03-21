@@ -99,11 +99,13 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() []chunk.Row {
 		totalRowNum += rows.Len()
 	}
 	resultSortedRows := make([]chunk.Row, 0, totalRowNum)
-	p.merger = newMultiWayMerger(p.localSortedRows, p.lessRowFunc)
+	source := &memorySource{sortedRowsIters: p.localSortedRows}
+	p.merger = newMultiWayMerger(source, p.lessRowFunc)
 	p.merger.init()
 
 	for {
-		row := p.merger.next()
+		// It's impossible to return error here as rows are in memory
+		row, _ := p.merger.next()
 		if row.IsEmpty() {
 			break
 		}

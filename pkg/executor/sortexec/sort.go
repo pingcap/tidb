@@ -172,7 +172,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
 		e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
 		e.Parallel.closeSync = make(chan struct{})
-		e.Parallel.merger = newMultiWayMerger(e.Parallel.sortedRowsIters, e.lessRow)
+		e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		for i := range e.Parallel.sortedRowsIters {
@@ -195,7 +195,7 @@ func (e *SortExec) InitInParallelModeForTest() {
 	e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
 	e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
 	e.Parallel.closeSync = make(chan struct{})
-	e.Parallel.merger = newMultiWayMerger(e.Parallel.sortedRowsIters, e.lessRow)
+	e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
 	e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
 	e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 	for i := range e.Parallel.sortedRowsIters {
@@ -433,7 +433,8 @@ func (e *SortExec) generateResultFromMemory() bool {
 	for {
 		resBuf = resBuf[:0]
 		for i := 0; i < maxChunkSize; i++ {
-			row = e.Parallel.merger.next()
+			// It's impossible to return error here as rows are in memory
+			row, _ = e.Parallel.merger.next()
 			if row.IsEmpty() {
 				break
 			}
