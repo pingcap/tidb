@@ -9,7 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 28,
+=======
+    shard_count = 16,
+>>>>>>> 707b0a4e381 (parser: support (Row(..),Row(..))=>(..) in the binding mode (#51319))
     deps = [
         "//pkg/bindinfo",
         "//pkg/bindinfo/internal",
