@@ -917,6 +917,7 @@ github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:
 github.com/yalp/jsonpath v0.0.0-20180802001716-5cc68e5049a0/go.mod h1:/LWChgwKmvncFJFHJ7Gvn9wZArjbV5/FppcK2fKk/tI=
 github.com/you06/client-go/v2 v2.0.0-alpha.0.20240319162018-babfc6da4f65 h1:V5vrUSW1fVst1QSQJvbJYk4exA20WBdF0QMzhgUsneM=
 github.com/you06/client-go/v2 v2.0.0-alpha.0.20240319162018-babfc6da4f65/go.mod h1:bFBqiszy79M/wvhfF2WANGp+QBiUIrswemx+GuiL8ko=
+github.com/you06/client-go/v2 v2.0.0-alpha.0.20240321113143-b1599161e4ca/go.mod h1:+vXk4Aex17GnI8gfSMPxrL0SQLbBYgP3Db4FvHiImwM=
 github.com/yudai/gojsondiff v1.0.0/go.mod h1:AY32+k2cwILAkW1fbgxQ5mUmMiZFgLIV+FBNExI05xg=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82/go.mod h1:lgjkn3NuSvDfVJdfcVVdX+jpBxNmX4rDAzaS45IcYoM=
 github.com/yudai/pp v2.0.1+incompatible/go.mod h1:PuxR/8QJ7cyCkFp/aUDS+JY727OFEZkTdatxwunjIkc=
