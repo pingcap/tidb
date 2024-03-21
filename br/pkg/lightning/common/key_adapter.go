@@ -113,7 +113,6 @@ func (DupDetectKeyAdapter) EncodedLen(key []byte, rowID []byte) int {
 var _ KeyAdapter = DupDetectKeyAdapter{}
 
 var (
-	// MinRowID is the minimum rowID value in byte slice comparison order.
-	// TODO(lance6716): check and explain
+	// MinRowID is the minimum rowID value after DupDetectKeyAdapter.Encode().
 	MinRowID = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0}
 )

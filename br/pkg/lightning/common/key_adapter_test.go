@@ -20,9 +20,12 @@ import (
 	"math"
 	"sort"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -169,12 +172,38 @@ func TestMinRowID(t *testing.T) {
 	shouldBeMin := keyApapter.Encode(key, val, MinRowID)
 
 	var rowIDs [][]byte
+
 	// DDL
+
 	rowIDs = append(rowIDs, kv.IntHandle(math.MinInt64).Encoded())
 	rowIDs = append(rowIDs, kv.IntHandle(-1).Encoded())
 	rowIDs = append(rowIDs, kv.IntHandle(0).Encoded())
 	rowIDs = append(rowIDs, kv.IntHandle(math.MaxInt64).Encoded())
-	// TODO(lance6716): add more
+	handleData := []types.Datum{
+		types.NewIntDatum(math.MinInt64),
+		types.NewIntDatum(-1),
+		types.NewIntDatum(0),
+		types.NewIntDatum(math.MaxInt64),
+		types.NewBytesDatum(make([]byte, 1)),
+		types.NewBytesDatum(make([]byte, 7)),
+		types.NewBytesDatum(make([]byte, 8)),
+		types.NewBytesDatum(make([]byte, 9)),
+		types.NewBytesDatum(make([]byte, 100)),
+	}
+	for _, d := range handleData {
+		encodedKey, err := codec.EncodeKey(time.Local, nil, d)
+		require.NoError(t, err)
+		ch, err := kv.NewCommonHandle(encodedKey)
+		require.NoError(t, err)
+		rowIDs = append(rowIDs, ch.Encoded())
+	}
+
+	// lightning, IMPORT INTO, ...
+
+	numRowIDs := []int64{math.MinInt64, -1, 0, math.MaxInt64}
+	for _, id := range numRowIDs {
+		rowIDs = append(rowIDs, codec.EncodeComparableVarint(nil, id))
+	}
 
 	for _, id := range rowIDs {
 		bs := keyApapter.Encode(key, val, id)
