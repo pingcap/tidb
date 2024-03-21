@@ -97,7 +97,9 @@ type JoinTableMeta struct {
 	isJoinKeysFixedLength bool
 	// the join keys length if it is fixed length
 	joinKeysLength int
-	// is the join key inlined in the row data
+	// is the join key inlined in the row data, the join key can be inlined if and only if
+	// 1. canBeInlinedAsJoinKey(tp) returns true for all the keys
+	// 2. there is no duplicate join keys
 	isJoinKeysInlined bool
 	// the length of null map, the null map include null bit for each column in the row and the used flag for right semi/outer join
 	nullMapLength int
@@ -182,6 +184,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	meta.isFixedLength = true
 	meta.rowLength = 0
 	meta.totalColumnNumber = len(buildTypes)
+
 	columnsNeedToBeSaved := make(map[int]struct{}, len(buildTypes))
 	updateMeta := func(index int) {
 		if _, ok := columnsNeedToBeSaved[index]; !ok {
@@ -211,13 +214,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	}
 	if !meta.isFixedLength {
 		meta.rowLength = 0
-	}
-	// nullmap is 8 byte alignment
-	if needUsedFlag {
-		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 63) / 64) * 8
-		meta.setUsedFlagMask = uint32(1) << 31
-	} else {
-		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 63) / 64) * 8
 	}
 
 	meta.isJoinKeysFixedLength = true
@@ -256,10 +252,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			}
 		}
 		keyIndexMap[keyIndex] = struct{}{}
-		if _, ok := columnsNeedToBeSaved[keyIndex]; !ok {
-			// if join key is not used it can not be inlined
-			meta.isJoinKeysInlined = false
-		}
 	}
 	if !meta.isJoinKeysFixedLength {
 		meta.joinKeysLength = 0
@@ -274,6 +266,17 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 				meta.serializeModes[i] = codec.None
 			}
 		}
+	} else {
+		for _, index := range buildKeyIndex {
+			updateMeta(index)
+		}
+	}
+	// nullmap is 4 byte alignment
+	if needUsedFlag {
+		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
+		meta.setUsedFlagMask = uint32(1) << 31
+	} else {
+		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 31) / 32) * 4
 	}
 	// construct the column order
 	meta.rowColumnsOrder = make([]int, 0, len(columnsNeedToBeSaved))
