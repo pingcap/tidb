@@ -1,4 +1,3 @@
-.git/
 bazel-bin/
 bazel-out/
 bazel-tidb/
