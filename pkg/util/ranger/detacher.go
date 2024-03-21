@@ -737,7 +737,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				return nil, nil, nil, false, err
 			}
 			ranges := res.Ranges
-			// If CNF item always false, we can return ignore this CNF item.
+			// If DNF item always false, we can return ignore this DNF item.
 			if len(ranges) == 0 {
 				continue
 			}
