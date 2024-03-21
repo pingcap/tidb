@@ -2483,7 +2483,7 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	//             JOIN `t2`
 	//             WHERE ISNULL(`t2`.`col_3`) HAVING `t1`.`col_6`>1951988)
 	//     ) ;
-	if resolveFieldsFirst && a.curClause == havingClause {
+	if resolveFieldsFirst && a.curClause == havingClause && a.gbyItems == nil {
 		return -1, nil
 	}
 	sf := &ast.SelectField{
