@@ -991,8 +991,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20231116065855-46811b6ac353 h1:3yZMlIPxpFEepJOJVq64e/ulhyON3cOoRynYGEOGBP8=
-github.com/tikv/client-go/v2 v2.0.8-0.20231116065855-46811b6ac353/go.mod h1:0W23EJEJejgM/75ZhMaRLokR/OMlGymyGrB2/gvfuvs=
 github.com/tikv/pd/client v0.0.0-20231116062916-ef6ba8551e52 h1:wucAo/ks8INgayRVfbrzZ+BSWEwRLETj0XfngDcrZ4k=
 github.com/tikv/pd/client v0.0.0-20231116062916-ef6ba8551e52/go.mod h1:cd6zBqRM9aogxf26K8NnFRPVtq9BnRE59tKEpX8IaWQ=
 github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966 h1:quvGphlmUVU+nhpFa4gg4yJyTRJ13reZMDHrKwYw53M=
@@ -1037,6 +1035,8 @@ github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0 h1:a74
 github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0/go.mod h1:HYhIKsdns7xz80OgkbgJYrtQY7FjHWHKH6cvN7+czGE=
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
 github.com/yalp/jsonpath v0.0.0-20180802001716-5cc68e5049a0/go.mod h1:/LWChgwKmvncFJFHJ7Gvn9wZArjbV5/FppcK2fKk/tI=
+github.com/you06/client-go/v2 v2.0.0-alpha.0.20240321055329-030815331689 h1:a7Pl0iexAPjd9ueb2vjC91Xge3vPRbBarUATW5vmdC4=
+github.com/you06/client-go/v2 v2.0.0-alpha.0.20240321055329-030815331689/go.mod h1:0W23EJEJejgM/75ZhMaRLokR/OMlGymyGrB2/gvfuvs=
 github.com/yudai/gojsondiff v1.0.0/go.mod h1:AY32+k2cwILAkW1fbgxQ5mUmMiZFgLIV+FBNExI05xg=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82/go.mod h1:lgjkn3NuSvDfVJdfcVVdX+jpBxNmX4rDAzaS45IcYoM=
 github.com/yudai/pp v2.0.1+incompatible/go.mod h1:PuxR/8QJ7cyCkFp/aUDS+JY727OFEZkTdatxwunjIkc=
