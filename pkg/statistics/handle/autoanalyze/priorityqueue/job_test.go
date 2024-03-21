@@ -39,7 +39,7 @@ func TestStringer(t *testing.T) {
 					ChangePercentage: 0.5,
 				},
 			},
-			want: "NonPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeTable\n\tIndexes: \n\tSchema: test_schema\n\tTable: test_table\n\tTableID: 1\n\tTableStatsVer: 1\n\tChangePercentage: 0.50\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 2.0000\n",
+			want: "NonPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeTable\n\tIndexes: \n\tSchema: test_schema\n\tTable: test_table\n\tTableID: 1\n\tTableStatsVer: 1\n\tChangePercentage: 0.500000\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 1.999999\n",
 		},
 		{
 			name: "analyze non-partitioned table index",
@@ -54,7 +54,7 @@ func TestStringer(t *testing.T) {
 					ChangePercentage: 0.5,
 				},
 			},
-			want: "NonPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeIndex\n\tIndexes: idx\n\tSchema: test_schema\n\tTable: test_table\n\tTableID: 2\n\tTableStatsVer: 1\n\tChangePercentage: 0.50\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 2.0000\n",
+			want: "NonPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeIndex\n\tIndexes: idx\n\tSchema: test_schema\n\tTable: test_table\n\tTableID: 2\n\tTableStatsVer: 1\n\tChangePercentage: 0.500000\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 1.999999\n",
 		},
 		{
 			name: "analyze dynamic partition",
@@ -69,7 +69,7 @@ func TestStringer(t *testing.T) {
 					ChangePercentage: 0.5,
 				},
 			},
-			want: "DynamicPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeDynamicPartition\n\tPartitions: p0, p1\n\tPartitionIndexes: map[]\n\tSchema: test_schema\n\tGlobal Table: test_table\n\tGlobal TableID: 3\n\tTableStatsVer: 1\n\tChangePercentage: 0.50\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 2.0000\n",
+			want: "DynamicPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeDynamicPartition\n\tPartitions: p0, p1\n\tPartitionIndexes: map[]\n\tSchema: test_schema\n\tGlobal Table: test_table\n\tGlobal TableID: 3\n\tTableStatsVer: 1\n\tChangePercentage: 0.500000\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 1.999999\n",
 		},
 		{
 			name: "analyze dynamic partition's indexes",
@@ -86,7 +86,7 @@ func TestStringer(t *testing.T) {
 					ChangePercentage: 0.5,
 				},
 			},
-			want: "DynamicPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeDynamicPartitionIndex\n\tPartitions: \n\tPartitionIndexes: map[idx:[p0 p1]]\n\tSchema: test_schema\n\tGlobal Table: test_table\n\tGlobal TableID: 4\n\tTableStatsVer: 1\n\tChangePercentage: 0.50\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 2.0000\n",
+			want: "DynamicPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeDynamicPartitionIndex\n\tPartitions: \n\tPartitionIndexes: map[idx:[p0 p1]]\n\tSchema: test_schema\n\tGlobal Table: test_table\n\tGlobal TableID: 4\n\tTableStatsVer: 1\n\tChangePercentage: 0.500000\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 1.999999\n",
 		},
 		{
 			name: "analyze static partition",
@@ -102,7 +102,7 @@ func TestStringer(t *testing.T) {
 					ChangePercentage: 0.5,
 				},
 			},
-			want: "StaticPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeStaticPartition\n\tIndexes: \n\tSchema: test_schema\n\tGlobalTable: test_table\n\tGlobalTableID: 5\n\tStaticPartition: p0\n\tStaticPartitionID: 6\n\tTableStatsVer: 1\n\tChangePercentage: 0.50\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 2.0000\n",
+			want: "StaticPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeStaticPartition\n\tIndexes: \n\tSchema: test_schema\n\tGlobalTable: test_table\n\tGlobalTableID: 5\n\tStaticPartition: p0\n\tStaticPartitionID: 6\n\tTableStatsVer: 1\n\tChangePercentage: 0.500000\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 1.999999\n",
 		},
 		{
 			name: "analyze static partition's index",
@@ -119,7 +119,7 @@ func TestStringer(t *testing.T) {
 					ChangePercentage: 0.5,
 				},
 			},
-			want: "StaticPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeStaticPartitionIndex\n\tIndexes: idx\n\tSchema: test_schema\n\tGlobalTable: test_table\n\tGlobalTableID: 7\n\tStaticPartition: p0\n\tStaticPartitionID: 8\n\tTableStatsVer: 1\n\tChangePercentage: 0.50\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 2.0000\n",
+			want: "StaticPartitionedTableAnalysisJob:\n\tAnalyzeType: analyzeStaticPartitionIndex\n\tIndexes: idx\n\tSchema: test_schema\n\tGlobalTable: test_table\n\tGlobalTableID: 7\n\tStaticPartition: p0\n\tStaticPartitionID: 8\n\tTableStatsVer: 1\n\tChangePercentage: 0.500000\n\tTableSize: 0.00\n\tLastAnalysisDuration: 0s\n\tWeight: 1.999999\n",
 		},
 	}
 	for _, tt := range tests {

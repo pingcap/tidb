@@ -146,10 +146,10 @@ func (j *StaticPartitionedTableAnalysisJob) String() string {
 			"\tStaticPartition: %s\n"+
 			"\tStaticPartitionID: %d\n"+
 			"\tTableStatsVer: %d\n"+
-			"\tChangePercentage: %.2f\n"+
+			"\tChangePercentage: %.6f\n"+
 			"\tTableSize: %.2f\n"+
 			"\tLastAnalysisDuration: %s\n"+
-			"\tWeight: %.4f\n",
+			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
 		strings.Join(j.Indexes, ", "),
 		j.TableSchema, j.GlobalTableName, j.GlobalTableID,
