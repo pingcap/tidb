@@ -202,7 +202,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 						// We apply a penalty to larger tables, which can potentially result in a negative weight.
 						// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
 						if weight <= 0 {
-							statslogutil.StatsLogger().Warn(
+							statslogutil.SingletonStatsSamplerLogger().Warn(
 								"Table gets a negative weight",
 								zap.Float64("weight", weight),
 								zap.Stringer("job", job),
