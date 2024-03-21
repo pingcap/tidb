@@ -24,6 +24,10 @@ import (
 )
 
 func TestInvisibleSchema(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedDatabases = []string{metricsSchema}
+	config.StoreGlobalConfig(tidbCfg)
+
 	assert := assert.New(t)
 
 	assert.True(IsInvisibleSchema(metricsSchema))
@@ -34,6 +38,136 @@ func TestInvisibleSchema(t *testing.T) {
 }
 
 func TestIsInvisibleTable(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedTables = []config.RestrictedTable{
+		{
+			Schema: mysql.SystemDB,
+			Name:   exprPushdownBlacklist,
+		},
+		{
+			Schema: mysql.SystemDB,
+			Name:   gcDeleteRange,
+		},
+		{
+			Schema: mysql.SystemDB,
+			Name:   gcDeleteRangeDone,
+		},
+		{
+			Schema: mysql.SystemDB,
+			Name:   optRuleBlacklist,
+		},
+		{
+			Schema: mysql.SystemDB,
+			Name:   tidb,
+		},
+		{
+			Schema: mysql.SystemDB,
+			Name:   globalVariables,
+		},
+		{
+			Schema: informationSchema,
+			Name:   clusterConfig,
+		},
+		{
+			Schema: informationSchema,
+			Name:   clusterHardware,
+		},
+		{
+			Schema: informationSchema,
+			Name:   clusterLoad,
+		},
+		{
+			Schema: informationSchema,
+			Name:   clusterLog,
+		},
+		{
+			Schema: informationSchema,
+			Name:   clusterSystemInfo,
+		},
+		{
+			Schema: informationSchema,
+			Name:   inspectionResult,
+		},
+		{
+			Schema: informationSchema,
+			Name:   inspectionRules,
+		},
+		{
+			Schema: informationSchema,
+			Name:   inspectionSummary,
+		},
+		{
+			Schema: informationSchema,
+			Name:   metricsSummary,
+		},
+		{
+			Schema: informationSchema,
+			Name:   metricsSummaryByLabel,
+		},
+		{
+			Schema: informationSchema,
+			Name:   metricsTables,
+		},
+		{
+			Schema: informationSchema,
+			Name:   tidbHotRegions,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   pdProfileAllocs,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   pdProfileBlock,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   pdProfileCPU,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   pdProfileGoroutines,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   pdProfileMemory,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   pdProfileMutex,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   tidbProfileAllocs,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   tidbProfileBlock,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   tidbProfileCPU,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   tidbProfileGoroutines,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   tidbProfileMemory,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   tidbProfileMutex,
+		},
+		{
+			Schema: performanceSchema,
+			Name:   tikvProfileCPU,
+		},
+	}
+	tidbCfg.Security.SEM.RestrictedDatabases = []string{metricsSchema}
+	config.StoreGlobalConfig(tidbCfg)
+
 	assert := assert.New(t)
 
 	mysqlTbls := []string{exprPushdownBlacklist, gcDeleteRange, gcDeleteRangeDone, optRuleBlacklist, tidb, globalVariables}

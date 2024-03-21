@@ -163,33 +163,27 @@ func IsEnabled() bool {
 // IsInvisibleSchema returns true if the dbName needs to be hidden
 // when sem is enabled.
 func IsInvisibleSchema(dbName string) bool {
-	return strings.EqualFold(dbName, metricsSchema)
+	cfg := config.GetGlobalConfig()
+	for _, dbn := range cfg.Security.SEM.RestrictedDatabases {
+		if strings.ToLower(dbName) == strings.ToLower(dbn) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsInvisibleTable returns true if the table needs to be hidden
 // when sem is enabled.
 func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
-	switch dbLowerName {
-	case mysql.SystemDB:
-		switch tblLowerName {
-		case exprPushdownBlacklist, gcDeleteRange, gcDeleteRangeDone, optRuleBlacklist, tidb, globalVariables:
-			return true
-		}
-	case informationSchema:
-		switch tblLowerName {
-		case clusterConfig, clusterHardware, clusterLoad, clusterLog, clusterSystemInfo, inspectionResult,
-			inspectionRules, inspectionSummary, metricsSummary, metricsSummaryByLabel, metricsTables, tidbHotRegions:
-			return true
-		}
-	case performanceSchema:
-		switch tblLowerName {
-		case pdProfileAllocs, pdProfileBlock, pdProfileCPU, pdProfileGoroutines, pdProfileMemory,
-			pdProfileMutex, tidbProfileAllocs, tidbProfileBlock, tidbProfileCPU, tidbProfileGoroutines,
-			tidbProfileMemory, tidbProfileMutex, tikvProfileCPU:
-			return true
-		}
-	case metricsSchema:
+	cfg := config.GetGlobalConfig()
+	if IsInvisibleSchema(dbLowerName) {
 		return true
+	}
+
+	for _, tbl := range cfg.Security.SEM.RestrictedTables {
+		if strings.ToLower(dbLowerName) == strings.ToLower(tbl.Schema) && strings.ToLower(tblLowerName) == strings.ToLower(tbl.Name) {
+			return true
+		}
 	}
 	return false
 }

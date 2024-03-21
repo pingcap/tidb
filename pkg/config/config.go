@@ -629,6 +629,14 @@ type SEM struct {
 	RestrictedStaticPrivilegesCol []string                         `toml:"restricted_static_privileges_col" json:"restricted_static_privileges_col"`
 	RestrictedStaticPrivileges    map[mysql.PrivilegeType]struct{} `toml:"restricted_static_privileges" json:"restricted_static_privileges"`
 	RestrictedVariables           []RestrictedVariable             `toml:"restricted_variables" json:"restricted_variables"`
+	RestrictedDatabases           []string                         `toml:"restricted_databases" json:"restricted_databases"`
+	RestrictedTables              []RestrictedTable                `toml:"restricted_tables" json:"restricted_tables"`
+}
+
+// RestrictedTable is a table restricted under Security Enhanced Mode.
+type RestrictedTable struct {
+	Schema string `toml:"schema" json:"schema"`
+	Name   string `toml:"name" json:"name"`
 }
 
 type RestrictedVariable struct {
