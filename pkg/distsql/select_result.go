@@ -612,7 +612,7 @@ func (r *selectResult) Close() error {
 			}
 		}
 	}
-	if r.stats != nil {
+	if r.stats != nil && r.ctx != nil {
 		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
 				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
