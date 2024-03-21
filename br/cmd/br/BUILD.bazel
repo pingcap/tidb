@@ -31,12 +31,22 @@ go_library(
         "//br/pkg/trace",
         "//br/pkg/utils",
         "//br/pkg/version/build",
+<<<<<<< HEAD
         "//config",
         "//parser/model",
         "//session",
         "//util",
         "//util/logutil",
         "//util/metricsutil",
+=======
+        "//pkg/config",
+        "//pkg/parser/model",
+        "//pkg/session",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "//pkg/util/metricsutil",
+>>>>>>> d0d24aeef42 (br, lightning: call memory hook init in main() (#49843))
         "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
