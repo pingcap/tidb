@@ -2321,7 +2321,7 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 	firstNext = true
 	var start time.Time
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	wg := util3.WaitGroupWrapper{}
 	defer wg.Wait()
@@ -2331,6 +2331,7 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 			err = finErr
 		}
 	}()
+	// Using different goroutines to call functions for rs.Next and cc.writePacket, to handling exit signals in time.
 	wg.Run(func() {
 		var err error
 		for {
