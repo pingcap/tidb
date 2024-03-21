@@ -171,7 +171,7 @@ func TestMinRowID(t *testing.T) {
 	val := []byte("val")
 	shouldBeMin := keyApapter.Encode(key, val, MinRowID)
 
-	var rowIDs [][]byte
+	rowIDs := make([][]byte, 0, 20)
 
 	// DDL
 
