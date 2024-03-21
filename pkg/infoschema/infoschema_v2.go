@@ -77,7 +77,7 @@ type Data struct {
 	// It provides the tableID => databaseID mapping.
 	//
 	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
-	// But this mapping should be synced with byName.
+	// But this mapping MUST be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
