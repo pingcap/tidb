@@ -533,32 +533,6 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 	return nil
 }
 
-func fetchColumnsFromStatsCache(table *model.TableInfo) (rowCount uint64, avgRowLength uint64, dataLength uint64, indexLength uint64) {
-	cache := cache.TableRowStatsCache
-	if table.GetPartitionInfo() == nil {
-		rowCount = cache.GetTableRows(table.ID)
-		dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
-	} else {
-		for _, pi := range table.GetPartitionInfo().Definitions {
-			piRowCnt := cache.GetTableRows(pi.ID)
-			rowCount += piRowCnt
-			parDataLen, parIndexLen := cache.GetDataAndIndexLength(table, pi.ID, piRowCnt)
-			dataLength += parDataLen
-			indexLength += parIndexLen
-		}
-	}
-	avgRowLength = uint64(0)
-	if rowCount != 0 {
-		avgRowLength = dataLength / rowCount
-	}
-
-	if table.IsSequence() {
-		// sequence is always 1 row regardless of stats.
-		rowCount = 1
-	}
-	return
-}
-
 func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	for _, col := range e.columns {
 		// only the following columns need stats cahce.
@@ -652,7 +626,7 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 							}
 						}
 					}
-					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table)
+					rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
 				}
 
 				record := types.MakeDatums(
@@ -940,7 +914,7 @@ ForColumnsTag:
 				colLen += (len(ft.GetElems()) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = charset.CalculateCharOctLength(colLen, ft.GetCharset())
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
 		} else if ft.GetType() == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
@@ -952,10 +926,10 @@ ForColumnsTag:
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = charset.CalculateCharOctLength(colLen, ft.GetCharset())
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
 		} else if types.IsString(ft.GetType()) {
 			charMaxLen = colLen
-			charOctLen = charset.CalculateCharOctLength(colLen, ft.GetCharset())
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
 		} else if types.IsTypeFractionable(ft.GetType()) {
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(ft.GetType()) {
@@ -1017,6 +991,14 @@ ForColumnsTag:
 		)
 		e.rows = append(e.rows, record)
 	}
+}
+
+func calcCharOctLength(lenInChar int, cs string) int {
+	lenInBytes := lenInChar
+	if desc, err := charset.GetCharsetInfo(cs); err == nil {
+		lenInBytes = desc.Maxlen * lenInChar
+	}
+	return lenInBytes
 }
 
 func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schemas []model.CIStr) error {
