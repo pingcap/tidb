@@ -313,6 +313,6 @@ func TestSplitCtxCancel(t *testing.T) {
 		client: mockCli,
 	}
 
-	_, _, err := client.SplitWaitScatter(ctx, &RegionInfo{}, [][]byte{{1}})
+	_, _, err := client.SplitWaitAndScatter(ctx, &RegionInfo{}, [][]byte{{1}})
 	require.ErrorIs(t, err, context.Canceled)
 }

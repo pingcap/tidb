@@ -101,7 +101,7 @@ func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split
 	return region, nil
 }
 
-func (c *TestClient) SplitWaitScatter(
+func (c *TestClient) SplitWaitAndScatter(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
 ) (*split.RegionInfo, []*split.RegionInfo, error) {
 	c.mu.Lock()

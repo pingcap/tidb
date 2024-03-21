@@ -332,7 +332,7 @@ func (local *Backend) BatchSplitRegions(
 		failpoint.Return(nil, nil, errors.New("retryable error"))
 	})
 
-	return local.splitCli.SplitWaitScatter(ctx, region, keys)
+	return local.splitCli.SplitWaitAndScatter(ctx, region, keys)
 }
 
 func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, error) {

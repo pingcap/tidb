@@ -51,9 +51,9 @@ type SplitClient interface {
 	GetRegion(ctx context.Context, key []byte) (*RegionInfo, error)
 	// GetRegionByID gets a region by a region id.
 	GetRegionByID(ctx context.Context, regionID uint64) (*RegionInfo, error)
-	// SplitWaitScatter splits a region from a batch of keys, waits for the split is
-	// finished, and scatters the new regions. It will return the
-	// original region, new regions and error. The input keys should not be encoded.
+	// SplitWaitAndScatter splits a region from a batch of keys, waits for the split
+	// is finished, and scatters the new regions. It will return the original region,
+	// new regions and error. The input keys should not be encoded.
 	//
 	// The split step has a few retry times. If it meets error, the error is returned
 	// directly.
@@ -64,7 +64,7 @@ type SplitClient interface {
 	//
 	// The scatter step has a few retry times. If it meets error, it will log a
 	// warning and continue.
-	SplitWaitScatter(ctx context.Context, region *RegionInfo, keys [][]byte) (*RegionInfo, []*RegionInfo, error)
+	SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) (*RegionInfo, []*RegionInfo, error)
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// ScanRegions gets a list of regions, starts from the region that contains key.
@@ -555,7 +555,7 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 	return len(regionInfo.PendingPeers) == 0, nil
 }
 
-func (c *pdClient) SplitWaitScatter(
+func (c *pdClient) SplitWaitAndScatter(
 	ctx context.Context, region *RegionInfo, keys [][]byte,
 ) (*RegionInfo, []*RegionInfo, error) {
 	if len(keys) == 0 {
