@@ -2297,12 +2297,15 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	cc.writeChunksToConn(ctx, rs, binary, serverStatus, stmtDetail)
+	canretry, err := cc.writeChunksToConn(ctx, rs, binary, serverStatus, stmtDetail)
+	if err != nil {
+		return canretry, err
+	}
 	if stmtDetail != nil {
 		start = time.Now()
 	}
 
-	err := cc.writeEOF(ctx, serverStatus)
+	err = cc.writeEOF(ctx, serverStatus)
 	if stmtDetail != nil {
 		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
