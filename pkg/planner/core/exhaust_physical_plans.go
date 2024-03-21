@@ -1216,7 +1216,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
 	return p.constructIndexJoinInnerSideTask(cop, ds, path, wrapper)
-
 }
 
 // constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
