@@ -120,6 +120,8 @@ type JoinTableMeta struct {
 	colOffsetInNullMap int
 	// keyMode is the key mode, it can be OneInt/FixedSerializedKey/VariableSerializedKey
 	keyMode keyMode
+	// offset to rowData, -1 for variable length, non-inlined key
+	rowDataOffset int
 }
 
 func (meta *JoinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
@@ -127,18 +129,12 @@ func (meta *JoinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint6
 }
 
 func (meta *JoinTableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer {
-	if meta.isJoinKeysInlined {
-		// join key is inlined
-		if meta.isJoinKeysFixedLength {
-			return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength)
-		}
-		return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfLengthField)
+	if meta.rowDataOffset == -1 {
+		// variable length, non-inlined key
+		return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfLengthField+int(meta.getSerializedKeyLength(rowStart)))
+	} else {
+		return unsafe.Add(rowStart, meta.rowDataOffset)
 	}
-	// join key is not inlined
-	if meta.isJoinKeysFixedLength {
-		return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+meta.joinKeysLength)
-	}
-	return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfLengthField+int(meta.getSerializedKeyLength(rowStart)))
 }
 
 func (meta *JoinTableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
@@ -185,34 +181,31 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	meta := &JoinTableMeta{}
 	meta.isFixedLength = true
 	meta.rowLength = 0
-	savedColumnCount := 0
 	meta.totalColumnNumber = len(buildTypes)
-	updateMeta := func(colType *types.FieldType) {
-		length := chunk.GetFixedLen(colType)
-		if length == chunk.VarElemLen {
-			meta.isFixedLength = false
-		} else {
-			meta.rowLength += length
+	columnsNeedToBeSaved := make(map[int]struct{}, len(buildTypes))
+	updateMeta := func(index int) {
+		if _, ok := columnsNeedToBeSaved[index]; !ok {
+			columnsNeedToBeSaved[index] = struct{}{}
+			length := chunk.GetFixedLen(buildTypes[index])
+			if length == chunk.VarElemLen {
+				meta.isFixedLength = false
+			} else {
+				meta.rowLength += length
+			}
 		}
-		savedColumnCount++
 	}
 	if outputColumns == nil {
 		// outputColumns = nil means all the column is needed
-		for _, colType := range buildTypes {
-			updateMeta(colType)
+		for index := range buildTypes {
+			updateMeta(index)
 		}
 	} else {
-		usedColumnMap := make(map[int]struct{}, len(outputColumns))
 		for _, index := range outputColumns {
-			updateMeta(buildTypes[index])
-			usedColumnMap[index] = struct{}{}
+			updateMeta(index)
 		}
 		if columnsUsedByOtherCondition != nil {
 			for _, index := range columnsUsedByOtherCondition {
-				if _, ok := usedColumnMap[index]; !ok {
-					updateMeta(buildTypes[index])
-					usedColumnMap[index] = struct{}{}
-				}
+				updateMeta(index)
 			}
 		}
 	}
@@ -221,10 +214,10 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	}
 	// nullmap is 8 byte alignment
 	if needUsedFlag {
-		meta.nullMapLength = ((savedColumnCount + 1 + 63) / 64) * 8
+		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 63) / 64) * 8
 		meta.setUsedFlagMask = uint32(1) << 31
 	} else {
-		meta.nullMapLength = ((savedColumnCount + 63) / 64) * 8
+		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 63) / 64) * 8
 	}
 
 	meta.isJoinKeysFixedLength = true
@@ -232,7 +225,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	meta.isJoinKeysInlined = true
 	keyIndexMap := make(map[int]struct{})
 	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
-	isAllKeyInteger := false
+	isAllKeyInteger := true
 	for index, keyIndex := range buildKeyIndex {
 		keyType := buildKeyTypes[index]
 		keyLength := chunk.GetFixedLen(keyType)
@@ -263,6 +256,10 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			}
 		}
 		keyIndexMap[keyIndex] = struct{}{}
+		if _, ok := columnsNeedToBeSaved[keyIndex]; !ok {
+			// if join key is not used it can not be inlined
+			meta.isJoinKeysInlined = false
+		}
 	}
 	if !meta.isJoinKeysFixedLength {
 		meta.joinKeysLength = 0
@@ -279,9 +276,9 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		}
 	}
 	// construct the column order
-	meta.rowColumnsOrder = make([]int, 0, savedColumnCount)
-	meta.columnsSize = make([]int, 0, savedColumnCount)
-	usedColumnMap := make(map[int]struct{}, savedColumnCount)
+	meta.rowColumnsOrder = make([]int, 0, len(columnsNeedToBeSaved))
+	meta.columnsSize = make([]int, 0, len(columnsNeedToBeSaved))
+	usedColumnMap := make(map[int]struct{}, len(columnsNeedToBeSaved))
 
 	updateColumnOrder := func(index int) {
 		if _, ok := usedColumnMap[index]; !ok {
@@ -314,6 +311,18 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			meta.keyMode = FixedSerializedKey
 		} else {
 			meta.keyMode = VariableSerializedKey
+		}
+	}
+	meta.rowDataOffset = -1
+	if meta.isJoinKeysInlined {
+		if meta.isJoinKeysFixedLength {
+			meta.rowDataOffset = SizeOfNextPtr + meta.nullMapLength
+		} else {
+			meta.rowDataOffset = SizeOfNextPtr + meta.nullMapLength + SizeOfLengthField
+		}
+	} else {
+		if meta.isJoinKeysFixedLength {
+			meta.rowDataOffset = SizeOfNextPtr + meta.nullMapLength + meta.joinKeysLength
 		}
 	}
 	return meta
