@@ -3281,17 +3281,3 @@ func TestOptimizeTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrMsg("optimize table t", "[ddl:8200]OPTIMIZE TABLE is not supported")
 }
-
-func TestYWQ(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(j json);")
-	tk.MustExec("alter table t add index idx1((cast(j as char(10) array)));")
-	tk.MustExec("alter table t rename index idx1 to idx2;")
-	tk.MustExec("alter table t add index idx1((cast(j as char(10) array)));")
-
-	tk.MustExec("alter table t add index IDX3((cast(j as char(10) array)));")
-	tk.MustExec("alter table t rename index IDX3 to IDX4;")
-	tk.MustExec("alter table t add index IDX3((cast(j as char(10) array)));")
-}
