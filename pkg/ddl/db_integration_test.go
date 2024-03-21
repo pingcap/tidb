@@ -3290,4 +3290,8 @@ func TestYWQ(t *testing.T) {
 	tk.MustExec("alter table t add index idx1((cast(j as char(10) array)));")
 	tk.MustExec("alter table t rename index idx1 to idx2;")
 	tk.MustExec("alter table t add index idx1((cast(j as char(10) array)));")
+
+	tk.MustExec("alter table t add index IDX3((cast(j as char(10) array)));")
+	tk.MustExec("alter table t rename index IDX3 to IDX4;")
+	tk.MustExec("alter table t add index IDX3((cast(j as char(10) array)));")
 }

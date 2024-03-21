@@ -412,6 +412,8 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	renameIndexes(tblInfo, from, to)
+	renameHiddenColumns(tblInfo, from, to)
+
 	if ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -2564,9 +2566,10 @@ func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
 	}
 }
 
-// func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
-// 	for _, idx := range tblInfo.Columns {
-
-// 	}
-
-// }
+func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
+	for _, col := range tblInfo.Columns {
+		if strings.Contains(col.Name.O, fmt.Sprintf("%s_%s", expressionIndexPrefix, from)) {
+			col.Name = model.NewCIStr(strings.ReplaceAll(col.Name.O, from.O, to.O))
+		}
+	}
+}
