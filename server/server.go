@@ -215,7 +215,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
-		health:            uatomic.NewBool(true),
+		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
 		printMDLLogTime:   time.Now(),
 	}
@@ -434,6 +434,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
+	s.health.Store(true)
 	err = <-errChan
 	if err != nil {
 		return err

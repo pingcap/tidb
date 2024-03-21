@@ -47,7 +47,7 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.20.11",
+    version = "1.20.14",
 )
 
 go_register_toolchains(
