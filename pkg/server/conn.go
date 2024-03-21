@@ -2330,7 +2330,7 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 	defer wg.Wait()
 	defer close(chkCh)
 	defer func() {
-		if finErr := rs.Finish(); err != nil {
+		if finErr := rs.Finish(); err == nil {
 			err = finErr
 		}
 	}()
