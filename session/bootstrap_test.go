@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+<<<<<<< HEAD:session/bootstrap_test.go
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -31,6 +32,20 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/telemetry"
+=======
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/telemetry"
+>>>>>>> 8ed0d4759bb (ddl: disable fast reorg and dist task execution for system tables (#49542)):pkg/session/bootstrap_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -1834,10 +1849,18 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(ver135), ver)
 
+	MustExec(t, seV135, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX idx_task_key;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgMetaRecordFastReorgDisabled", `return`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgMetaRecordFastReorgDisabled"))
+	})
+	MustExec(t, seV135, "set global tidb_ddl_enable_fast_reorg = 1")
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV135)
 	require.NoError(t, err)
+	require.True(t, ddl.LastReorgMetaFastReorgDisabled)
+
 	require.Less(t, int64(ver135), ver)
 	dom.Close()
 }

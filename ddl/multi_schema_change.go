@@ -51,6 +51,18 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 	}
+<<<<<<< HEAD:ddl/multi_schema_change.go
+=======
+	if containsDistTaskSubJob(subJobs) {
+		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
+		if err != nil {
+			return err
+		}
+	} else {
+		job.ReorgMeta = NewDDLReorgMeta(ctx)
+	}
+
+>>>>>>> 8ed0d4759bb (ddl: disable fast reorg and dist task execution for system tables (#49542)):pkg/ddl/multi_schema_change.go
 	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
 	if err != nil {
 		return errors.Trace(err)
