@@ -27,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -66,6 +67,7 @@ type TopNExec struct {
 
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
+	concurrency := e.Ctx().GetSessionVars().Concurrency.ExecutorConcurrency
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
@@ -76,6 +78,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 	e.finishCh = make(chan struct{}, 1)
 	e.resultChannel = make(chan rowWithError, e.MaxChunkSize())
+	e.chunkChannel = make(chan *chunk.Chunk, concurrency)
 	e.inMemoryThenSpillFlag = false
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
@@ -85,13 +88,12 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 		e.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 
-		concurrency := e.Ctx().GetSessionVars().Concurrency.ExecutorConcurrency
 		workers := make([]*topNWorker, concurrency)
 		for i := range workers {
 			chkHeap := &topNChunkHeap{}
 			// Offset of heap in worker should be 0, as we need to spill all data
 			chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, 0, e.greaterRow, e.RetFieldTypes())
-			workers[i] = newTopNWorker(i, e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap, e.memTracker)
+			workers[i] = newTopNWorker(i, e.chunkChannel, e.fetcherAndWorkerSyncer, e.resultChannel, e.finishCh, e, chkHeap, e.memTracker)
 		}
 
 		e.spillHelper = newTopNSpillerHelper(
@@ -119,11 +121,8 @@ func (e *TopNExec) Close() error {
 		return nil
 	}
 
-	if e.chunkChannel != nil {
-		for range e.chunkChannel {
-			e.fetcherAndWorkerSyncer.Done()
-		}
-	}
+	// Wait for the finish of all tasks
+	channel.Clear(e.resultChannel)
 
 	e.chkHeap = nil
 	e.spillHelper = nil
@@ -176,6 +175,13 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *TopNExec) fetchChunks(ctx context.Context) error {
+	defer func() {
+		if r := recover(); r != nil {
+			processPanicAndLog(e.resultChannel, r)
+			close(e.resultChannel)
+		}
+	}()
+
 	err := e.loadChunksUntilTotalLimit(ctx)
 	if err != nil {
 		close(e.resultChannel)
@@ -294,7 +300,7 @@ func (e *TopNExec) fetchChunksFromChild(ctx context.Context) {
 		e.fetcherAndWorkerSyncer.Add(1)
 		select {
 		case <-e.finishCh:
-			e.Parallel.fetcherAndWorkerSyncer.Done()
+			e.fetcherAndWorkerSyncer.Done()
 			return
 		case e.chunkChannel <- chk:
 		}
@@ -330,8 +336,6 @@ func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
 		return err
 	}
 
-	e.chunkChannel = make(chan *chunk.Chunk, len(e.spillHelper.workers))
-
 	// Wait for the finish of chunk fetcher
 	fetcherWaiter := util.WaitGroupWrapper{}
 	// Wait for the finish of all workers
@@ -344,7 +348,6 @@ func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
 
 	for i := range e.spillHelper.workers {
 		worker := e.spillHelper.workers[i]
-		worker.setChunkChannel(e.chunkChannel)
 		workersWaiter.Run(func() {
 			worker.run()
 		})

@@ -41,6 +41,7 @@ type topNWorker struct {
 
 func newTopNWorker(
 	idForTest int,
+	chunkChannel <-chan *chunk.Chunk,
 	fetcherAndWorkerSyncer *sync.WaitGroup,
 	errOutputChan chan<- rowWithError,
 	finishChan <-chan struct{},
@@ -49,6 +50,7 @@ func newTopNWorker(
 	memTracker *memory.Tracker) *topNWorker {
 	return &topNWorker{
 		workerIDForTest:        idForTest,
+		chunkChannel:           chunkChannel,
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
 		errOutputChan:          errOutputChan,
 		finishChan:             finishChan,
@@ -56,10 +58,6 @@ func newTopNWorker(
 		topn:                   topn,
 		memTracker:             memTracker,
 	}
-}
-
-func (t *topNWorker) setChunkChannel(chunkChannel <-chan *chunk.Chunk) {
-	t.chunkChannel = chunkChannel
 }
 
 func (t *topNWorker) fetchChunksAndProcess() {
@@ -77,7 +75,9 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 		if !ok {
 			return false
 		}
-		defer t.fetcherAndWorkerSyncer.Done()
+		defer func() {
+			t.fetcherAndWorkerSyncer.Done()
+		}()
 
 		t.injectFailPointForTopNWorker(3)
 
@@ -101,6 +101,11 @@ func (t *topNWorker) run() {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(t.errOutputChan, r)
+		}
+
+		// Consume all chunks to avoid hang of fetcher
+		for range t.chunkChannel {
+			t.fetcherAndWorkerSyncer.Done()
 		}
 	}()
 
