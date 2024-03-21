@@ -94,10 +94,6 @@ func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
 	sctx sessionctx.Context,
 ) (bool, string) {
-	if valid, failReason := isValidWeight(j.Weight); !valid {
-		return false, failReason
-	}
-
 	if valid, failReason := isValidToAnalyze(
 		sctx,
 		j.TableSchema,
@@ -134,10 +130,10 @@ func (j *NonPartitionedTableAnalysisJob) String() string {
 			"\tTable: %s\n"+
 			"\tTableID: %d\n"+
 			"\tTableStatsVer: %d\n"+
-			"\tChangePercentage: %.2f\n"+
+			"\tChangePercentage: %.6f\n"+
 			"\tTableSize: %.2f\n"+
 			"\tLastAnalysisDuration: %v\n"+
-			"\tWeight: %.4f\n",
+			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
 		strings.Join(j.Indexes, ", "),
 		j.TableSchema, j.TableName, j.TableID, j.TableStatsVer,
