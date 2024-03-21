@@ -263,7 +263,9 @@ func TestAlterUserStmt(t *testing.T) {
 	// and it can modify semuser3 because RESTRICTED_USER_ADMIN does not also need SYSTEM_USER
 	tk.MustExec("ALTER USER 'semuser1' IDENTIFIED BY ''")
 	tk.MustExec("ALTER USER 'semuser2' IDENTIFIED BY ''")
-	tk.MustExec("ALTER USER 'semuser3' IDENTIFIED BY ''")
+	// It cannot modify semuser3 because RESTRICTED_USER_ADMIN does not replace SYSTEM_USER.
+	err = tk.ExecToErr("ALTER USER 'semuser3' IDENTIFIED BY ''")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
@@ -1366,12 +1368,17 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
+	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3, restricted_user, sys1, creat1 , sys2, restricted_user_2")
 	tk.MustExec("CREATE ROLE notimportant")
 	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
 	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
 	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
+	tk.MustExec("GRANT CREATE USER, RESTRICTED_USER_ADMIN ON *.* to restricted_user")
+	tk.MustExec("GRANT CREATE USER, SYSTEM_USER ON *.* to sys1")
+	tk.MustExec("GRANT CREATE USER  ON *.* to creat1")
+	tk.MustExec("GRANT SYSTEM_USER ON *.* to sys2")
+	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to restricted_user_2")
 
 	sem.Enable()
 	defer sem.Disable()
@@ -1381,6 +1388,17 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 		"REVOKE notimportant FROM ruroot3",
 		"REVOKE SUPER ON *.* FROM ruroot3",
 		"DROP USER ruroot3",
+	}
+
+	sys2Stmts := []string{
+		"RENAME USER 'sys2'@'%' TO 'sys2'@'127.0.0.1'",
+		"DROP USER 'sys2'@'127.0.0.1'",
+	}
+
+	restrictedStmts := []string{
+		"ALTER USER 'restricted_user_2'@'%' IDENTIFIED BY '123456'",
+		"RENAME USER 'restricted_user_2'@'%' TO 'restricted_user_2'@'127.0.0.1'",
+		"DROP USER 'restricted_user_2'@'127.0.0.1'",
 	}
 
 	// ruroot1 has SUPER but in SEM will be restricted
@@ -1394,6 +1412,80 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	for _, stmt := range stmts {
 		_, err := tk.Exec(stmt)
 		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	// Test whether SYSTEM_USER and RESTRICTED_USER_ADMIN can be used interchangeably.
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "restricted_user",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	for _, stmt := range sys2Stmts {
+		_, err := tk.Exec(stmt)
+		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER privilege(s) for this operation")
+	}
+	err := tk.ExecToErr("ALTER USER 'sys2'@'%' IDENTIFIED BY '123456'")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "sys1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	for _, stmt := range restrictedStmts {
+		_, err := tk.Exec(stmt)
+		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	// Whether ordinary CREATE USER permission can be changed to SYSTEM_USER and RESTRICTED_USER_ADMIN users.
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "creat1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	for _, stmt := range sys2Stmts {
+		_, err := tk.Exec(stmt)
+		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER privilege(s) for this operation")
+	}
+	err = tk.ExecToErr("ALTER USER 'sys2'@'%' IDENTIFIED BY '123456'")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	for _, stmt := range restrictedStmts {
+		_, err := tk.Exec(stmt)
+		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	//  Test the correct handling of SYSTEM_USER and RESTRICTED_USER_ADMIN users.
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "restricted_user",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	for _, stmt := range restrictedStmts {
+		_, err := tk.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "sys1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	require.NoError(t, tk.ExecToErr("ALTER USER 'sys2'@'%' IDENTIFIED BY '123456'"))
+
+	for _, stmt := range sys2Stmts {
+		_, err := tk.Exec(stmt)
+		require.NoError(t, err)
 	}
 
 	// Switch to ruroot2, it should be permitted
@@ -1989,7 +2081,7 @@ func TestSkipGrantTable(t *testing.T) {
 	tk.MustExec(`GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test1'@'%';`)
-	tk.MustExec(`GRANT RESTRICTED_CONNECTION_ADMIN, CONNECTION_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN, CONNECTION_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT PROCESS ON *.* TO 'test1'@'%';`)
