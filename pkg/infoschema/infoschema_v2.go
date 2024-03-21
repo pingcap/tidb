@@ -323,6 +323,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found = is.tableCache.Get(oldKey)
 	if found && tbl != nil {
+		is.tableCache.Set(key, tbl)
 		return tbl, true
 	}
 
@@ -370,6 +371,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
 	res, found = is.tableCache.Get(oldKey)
 	if found && res != nil {
+		is.tableCache.Set(key, res)
 		return res, nil
 	}
 
