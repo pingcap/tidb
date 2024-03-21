@@ -2295,7 +2295,7 @@ func TestIssue40997(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	_, err := tk.Exec(`
+	err := tk.ExecToErr(`
 	CREATE TABLE t71706696 (
 		dt char(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
 		db_id bigint(20) NOT NULL,
