@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -27,13 +28,13 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -312,7 +313,6 @@ type ingestBackfillScheduler struct {
 	reorgInfo  *reorgInfo
 	sessPool   *sess.Pool
 	tbl        table.PhysicalTable
-	avgRowSize int
 	distribute bool
 
 	closed bool
@@ -331,35 +331,16 @@ type ingestBackfillScheduler struct {
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
-	avgRowSize := estimateAvgRowSize(tbl)
 	return &ingestBackfillScheduler{
 		ctx:        ctx,
 		reorgInfo:  info,
 		sessPool:   sessPool,
 		tbl:        tbl,
-		avgRowSize: avgRowSize,
 		taskCh:     make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
 		poolErr:    make(chan error),
 		distribute: distribute,
 	}
-}
-
-func estimateAvgRowSize(tbl table.PhysicalTable) int {
-	size := 0
-	for _, col := range tbl.Meta().Columns {
-		ft := col.FieldType
-		storeLen := ft.StorageLength()
-		if storeLen != types.VarStorageLen {
-			size += storeLen
-		} else {
-			if types.IsString(ft.GetType()) {
-				maxBytes := charset.CalculateCharOctLength(ft.GetFlen(), ft.GetCharset())
-				size += maxBytes / 2
-			}
-		}
-	}
-	return size
 }
 
 func (b *ingestBackfillScheduler) setupWorkers() error {
@@ -525,15 +506,24 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 }
 
 func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
-	return expectedIngestWorkerCnt(b.avgRowSize)
+	return expectedIngestWorkerCnt(b.tbl.Meta())
 }
 
-func expectedIngestWorkerCnt(avgRowSize int) (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(tblInfo *model.TableInfo) (readerCnt, writerCnt int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+	rowCount, avgRowLen, _, _ := cache.TableRowStatsCache.EstimateDataLength(tblInfo)
+	if rowCount == 0 {
+		// Statistic data not exist, use default concurrency.
+		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
+		readerCnt = max(readerCnt, 1)
+		writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+		return readerCnt, writerCnt
+	}
+
 	readerRatio := []float64{0.5, 1, 2, 4, 8}
-	rowSize := []int{200, 500, 1000, 3000, 5000}
+	rowSize := []uint64{200, 500, 1000, 3000, math.MaxUint64}
 	for i, s := range rowSize {
-		if avgRowSize <= s {
+		if avgRowLen <= s {
 			readerCnt = int(float64(workerCnt) * readerRatio[i])
 			writerCnt = workerCnt
 			break

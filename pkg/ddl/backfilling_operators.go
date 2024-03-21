@@ -112,11 +112,11 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
-func getWriterMemSize(idxNum int, avgRowSize int) (uint64, error) {
+func getWriterMemSize(tblInfo *model.TableInfo, idxNum int) (uint64, error) {
 	failpoint.Inject("mockWriterMemSize", func() {
 		failpoint.Return(1*size.GB, nil)
 	})
-	_, writerCnt := expectedIngestWorkerCnt(avgRowSize)
+	_, writerCnt := expectedIngestWorkerCnt(tblInfo)
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return 0, err
@@ -131,8 +131,8 @@ func getWriterMemSize(idxNum int, avgRowSize int) (uint64, error) {
 	return memSize, nil
 }
 
-func getMergeSortPartSize(concurrency int, idxNum int, avgRowSize int) (uint64, error) {
-	writerMemSize, err := getWriterMemSize(idxNum, avgRowSize)
+func getMergeSortPartSize(tblInfo *model.TableInfo, concurrency int, idxNum int) (uint64, error) {
+	writerMemSize, err := getWriterMemSize(tblInfo, idxNum)
 	if err != nil {
 		return 0, nil
 	}
@@ -171,8 +171,7 @@ func NewAddIndexIngestPipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	avgRowSize := estimateAvgRowSize(tbl)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(tbl.Meta())
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
@@ -224,8 +223,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	avgRowSize := estimateAvgRowSize(tbl)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(tbl.Meta())
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
@@ -236,7 +234,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	memSize, err := getWriterMemSize(len(indexes), avgRowSize)
+	memSize, err := getWriterMemSize(tbl.Meta(), len(indexes))
 	if err != nil {
 		return nil, err
 	}

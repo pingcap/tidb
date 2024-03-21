@@ -165,15 +165,6 @@ func GetCharsetInfo(cs string) (*Charset, error) {
 	return nil, errors.Errorf("Unknown charset %s", cs)
 }
 
-// CalculateCharOctLength calculates the byte length of a string in a given charset.
-func CalculateCharOctLength(charLen int, cs string) int {
-	lenInBytes := charLen
-	if desc, err := GetCharsetInfo(cs); err == nil {
-		lenInBytes = desc.Maxlen * charLen
-	}
-	return lenInBytes
-}
-
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
 func GetCharsetInfoByID(coID int) (charsetStr string, collateStr string, err error) {
 	if coID == mysql.DefaultCollationID {
