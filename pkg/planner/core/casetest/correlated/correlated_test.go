@@ -65,12 +65,12 @@ WHERE NOT (tlc07c2a51.col_1>=
 		tk.MustQuery(`SELECT 1
 FROM tlc07c2a51
 WHERE NOT (tlc07c2a51.col_1>=
-             (SELECT GROUP_CONCAT(tc4cf4a6b.col_7
+            any (SELECT GROUP_CONCAT(tc4cf4a6b.col_7
                                   ORDER BY tc4cf4a6b.col_7 SEPARATOR ',') AS r0
-              FROM (tlc07c2a51)
+              FROM tlc07c2a51
               JOIN tc4cf4a6b
               WHERE ISNULL(tc4cf4a6b.col_3)
               group by tlc07c2a51.col_6
-              HAVING tlc07c2a51.col_6>1951988)) ;`).Check(testkit.Rows())
+              HAVING tlc07c2a51.col_6>0)) ;`).Check(testkit.Rows())
 	}
 }
