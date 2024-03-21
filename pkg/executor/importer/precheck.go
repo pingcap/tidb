@@ -50,6 +50,13 @@ var GetEtcdClient = getEtcdClient
 // we check them one by one, and return the first error we meet.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
 	if e.DataSourceType == DataSourceTypeFile {
+		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cnt > 0 {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already.")
+		}
 		if err := e.checkTotalFileSize(); err != nil {
 			return err
 		}
