@@ -747,6 +747,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 	if err != nil {
 		return
 	}
+<<<<<<< HEAD
 	defer sess.rollback()
 	txn, err := sess.txn()
 	if err != nil {
@@ -755,6 +756,10 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 	}
 	rh := newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load())
 	err = rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
+=======
+	rh := newReorgHandler(sess)
+	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 	err1 := sess.commit()
 	if err == nil {
 		err = err1
@@ -764,13 +769,13 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
-	m *meta.Meta
 	s *session
 
 	enableConcurrentDDL bool
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
+<<<<<<< HEAD
 func NewReorgHandlerForTest(m *meta.Meta, sess sessionctx.Context) *reorgHandler {
 	return newReorgHandler(m, newSession(sess), variable.EnableConcurrentDDL.Load())
 }
@@ -785,6 +790,14 @@ func (r *reorgHandler) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.
 		return updateDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
 	}
 	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
+=======
+func NewReorgHandlerForTest(sess sessionctx.Context) *reorgHandler {
+	return newReorgHandler(newSession(sess))
+}
+
+func newReorgHandler(sess *session) *reorgHandler {
+	return &reorgHandler{s: sess}
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 }
 
 // InitDDLReorgHandle initializes the job reorganization information.
@@ -824,6 +837,20 @@ func CleanupDDLReorgHandles(job *model.Job, w *worker, t *meta.Meta) {
 	} else {
 		err = t.ClearAllDDLReorgHandle()
 	}
+	if err != nil {
+		// ignore error, cleanup is not that critical
+		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
+	}
+}
+
+// CleanupDDLReorgHandles removes the job reorganization related handles.
+func CleanupDDLReorgHandles(job *model.Job, s *session) {
+	if job != nil && !job.IsFinished() && !job.IsSynced() {
+		// Job is given, but it is neither finished nor synced; do nothing
+		return
+	}
+
+	err := cleanDDLReorgHandles(s, job)
 	if err != nil {
 		// ignore error, cleanup is not that critical
 		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
