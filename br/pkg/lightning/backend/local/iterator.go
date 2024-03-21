@@ -225,6 +225,7 @@ type dupDBIter struct {
 	err        error
 }
 
+<<<<<<< HEAD
 func (d *dupDBIter) Seek(key []byte) bool {
 	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
 	if d.err != nil || !d.iter.SeekGE(rawKey) {
@@ -234,6 +235,8 @@ func (d *dupDBIter) Seek(key []byte) bool {
 	return d.err == nil
 }
 
+=======
+>>>>>>> b91a1b3c416 (lightning: change MinRowID because ADD UNIQUE INDEX may be smaller (#51955))
 func (d *dupDBIter) Error() error {
 	if d.err != nil {
 		return d.err
