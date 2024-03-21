@@ -167,6 +167,7 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create table test.t(a int, t datetime) ttl = `t` + interval 1 day")
 	tk.MustExec("create table test.t2(a int, t datetime) ttl = `t` + interval 3 month")
+	tk.MustExec("set @@time_zone='Asia/Tokyo'")
 
 	tb, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -283,4 +284,19 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2023-01-01 15:00:01.000000", tm.Format("2006-01-02 15:04:05.000000"))
 	require.Same(t, time.UTC, tm.Location())
+
+	// test for string interval format
+	tk.MustExec("create table test.t4(a int, t datetime) ttl = `t` + interval '1:3' hour_minute")
+	tb4, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	require.NoError(t, err)
+	tblInfo4 := tb4.Meta()
+	ttlTbl4, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo4, model.NewCIStr(""))
+	require.NoError(t, err)
+	tm, err = ttlTbl4.EvalExpireTime(context.TODO(), se, time.Unix(0, 0).In(tz2))
+	require.NoError(t, err)
+	require.Equal(t, "1969-12-31 22:57:00", tm.In(time.UTC).Format(time.DateTime))
+	require.Same(t, tz2, tm.Location())
+
+	// session time zone should keep unchanged
+	tk.MustQuery("select @@time_zone").Check(testkit.Rows("Asia/Tokyo"))
 }

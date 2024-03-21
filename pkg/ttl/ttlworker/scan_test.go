@@ -135,7 +135,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
-		ctx: context.Background(),
+		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
 			ExpireTime: time.UnixMilli(0),
@@ -184,7 +184,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
-		ctx: context.Background(),
+		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
 			ExpireTime: time.UnixMilli(0),
@@ -392,6 +392,7 @@ func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk
 
 func TestScanTaskDoScan(t *testing.T) {
 	task := newMockScanTask(t, 3)
+	task.ctx = cache.SetMockExpireTime(task.ctx, time.Now())
 	task.sqlRetry[1] = scanTaskExecuteSQLMaxRetry
 	task.runDoScanForTest(3, "")
 
@@ -412,14 +413,11 @@ func TestScanTaskDoScan(t *testing.T) {
 func TestScanTaskCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	pool := newMockSessionPool(t, tbl)
-	pool.se.now = func() time.Time {
-		// make expire time time.UnixMilli(100)
-		return time.Unix(100, 0).Add(time.Second)
-	}
 	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
+	ctx := cache.SetMockExpireTime(context.Background(), time.Unix(100, 0))
 
 	task := &ttlScanTask{
-		ctx: context.Background(),
+		ctx: ctx,
 		TTLTask: &cache.TTLTask{
 			ExpireTime: time.Unix(101, 0).Add(time.Minute),
 		},
@@ -435,7 +433,7 @@ func TestScanTaskCheck(t *testing.T) {
 	require.Equal(t, "Total Rows: 0, Success Rows: 0, Error Rows: 0", task.statistics.String())
 
 	task = &ttlScanTask{
-		ctx: context.Background(),
+		ctx: ctx,
 		TTLTask: &cache.TTLTask{
 			ExpireTime: time.Unix(100, 0).Add(time.Minute),
 		},

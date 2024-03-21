@@ -271,6 +271,11 @@ func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdHTTPCli pdhttp.Client) b
 	}
 }
 
+// FetchRemoteDBModels implements the `backend.TargetInfoGetter` interface.
+func (g *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return tikv.FetchRemoteDBModelsFromTLS(ctx, g.tls)
+}
+
 // FetchRemoteTableModels obtains the models of all tables given the schema name.
 // It implements the `TargetInfoGetter` interface.
 func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
@@ -1008,9 +1013,16 @@ func (local *Backend) generateJobForRange(
 		return nil, err
 	}
 	if pairStart == nil {
-		log.FromContext(ctx).Info("There is no pairs in range",
+		logFn := log.FromContext(ctx).Info
+		if _, ok := data.(*external.MemoryIngestData); ok {
+			logFn = log.FromContext(ctx).Warn
+		}
+		logFn("There is no pairs in range",
 			logutil.Key("start", start),
 			logutil.Key("end", end))
+		// trigger cleanup
+		data.IncRef()
+		data.DecRef()
 		return nil, nil
 	}
 

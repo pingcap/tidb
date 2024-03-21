@@ -229,80 +229,10 @@ func (rs *RegionSplitter) executeSplitByKeys(
 }
 
 func (rs *RegionSplitter) splitAndScatterRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, isRawKv bool,
+	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, _ bool,
 ) ([]*split.RegionInfo, error) {
-	if len(keys) < 1 {
-		return []*split.RegionInfo{regionInfo}, nil
-	}
-
-	newRegions, err := rs.splitRegions(ctx, regionInfo, keys)
-	if err != nil {
-		if strings.Contains(err.Error(), "no valid key") {
-			for _, key := range keys {
-				// Region start/end keys are encoded. split_region RPC
-				// requires raw keys (without encoding).
-				log.Error("split regions no valid key",
-					logutil.Key("startKey", regionInfo.Region.StartKey),
-					logutil.Key("endKey", regionInfo.Region.EndKey),
-					logutil.Key("key", codec.EncodeBytesExt(nil, key, isRawKv)))
-			}
-		}
-		return nil, errors.Trace(err)
-	}
-	err2 := rs.client.ScatterRegions(ctx, append(newRegions, regionInfo))
-	if err2 != nil {
-		log.Warn("failed to scatter regions", zap.Error(err2))
-	}
-	return newRegions, nil
-}
-
-// splitRegions perform batchSplit on a region by keys
-// and then check the batch split success or not.
-func (rs *RegionSplitter) splitRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) ([]*split.RegionInfo, error) {
-	if len(keys) == 0 {
-		return []*split.RegionInfo{regionInfo}, nil
-	}
-	newRegions, err := rs.client.BatchSplitRegions(ctx, regionInfo, keys)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rs.waitRegionsSplitted(ctx, newRegions)
-	return newRegions, nil
-}
-
-// waitRegionsSplitted check multiple regions have finished the split.
-func (rs *RegionSplitter) waitRegionsSplitted(ctx context.Context, splitRegions []*split.RegionInfo) {
-	// Wait for a while until the regions successfully split.
-	for _, region := range splitRegions {
-		rs.waitRegionSplitted(ctx, region.Region.Id)
-	}
-}
-
-// waitRegionSplitted check single region has finished the split.
-func (rs *RegionSplitter) waitRegionSplitted(ctx context.Context, regionID uint64) {
-	state := utils.InitialRetryState(
-		split.SplitCheckMaxRetryTimes,
-		split.SplitCheckInterval,
-		split.SplitMaxCheckInterval,
-	)
-	err := utils.WithRetry(ctx, func() error { //nolint: errcheck
-		ok, err := rs.hasHealthyRegion(ctx, regionID)
-		if err != nil {
-			log.Warn("wait for split failed", zap.Uint64("regionID", regionID), zap.Error(err))
-			return err
-		}
-		if ok {
-			return nil
-		}
-		return errors.Annotate(berrors.ErrPDSplitFailed, "wait region splitted failed")
-	}, &state)
-	// we only care about whether the last region splitted successfully.
-	// because we are waiting region report status *sequentially*.
-	if err != nil {
-		log.Warn("failed to split regions", zap.Uint64("regionID", regionID))
-	}
+	_, newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
+	return newRegions, err
 }
 
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.
@@ -322,30 +252,6 @@ func (rs *RegionSplitter) waitRegionsScattered(ctx context.Context, scatterRegio
 			zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)))
 	}
-}
-
-// hasHealthyRegion is used to check whether region splitted success
-func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64) (bool, error) {
-	regionInfo, err := rs.client.GetRegionByID(ctx, regionID)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	// the region hasn't get ready.
-	if regionInfo == nil {
-		return false, nil
-	}
-
-	// check whether the region is healthy and report.
-	// TODO: the log may be too verbose. we should use Prometheus metrics once it get ready for BR.
-	for _, peer := range regionInfo.PendingPeers {
-		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
-	}
-	for _, peer := range regionInfo.DownPeers {
-		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
-	}
-	// we ignore down peers for they are (normally) hard to be fixed in reasonable time.
-	// (or once there is a peer down, we may get stuck at waiting region get ready.)
-	return len(regionInfo.PendingPeers) == 0, nil
 }
 
 func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*split.RegionInfo, timeout time.Duration) int {

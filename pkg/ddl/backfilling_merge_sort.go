@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 type mergeSortExecutor struct {
@@ -101,8 +100,6 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		prefix,
 		external.DefaultBlockSize,
 		external.DefaultMemSizeLimit,
-		8*1024,
-		1*size.MB,
 		8*1024,
 		onClose,
 		int(variable.GetDDLReorgWorkerCounter()), true)

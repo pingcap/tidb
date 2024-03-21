@@ -375,6 +375,7 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
+	iCnt := int64(len(instanceIDs))
 	metaArr := make([][]byte, 0, 16)
 	for i, g := range kvMetaGroups {
 		if g == nil {
@@ -382,7 +383,7 @@ func generateGlobalSortIngestPlan(
 				zap.Int64("taskID", task.ID))
 			return nil, errors.Errorf("subtask kv group %d is empty", i)
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, cloudStorageURI, int64(len(instanceIDs)), logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, cloudStorageURI, iCnt, logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -565,7 +566,7 @@ func getRangeSplitter(
 	}
 
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
-		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
+		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
 }
 
 func forEachBackfillSubtaskMeta(

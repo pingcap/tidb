@@ -16,7 +16,6 @@ package executor
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -639,9 +638,19 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 
 				var rowCount, avgRowLength, dataLength, indexLength uint64
 				if useStatsCache {
-					err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-					if err != nil {
-						return err
+					if table.GetPartitionInfo() == nil {
+						err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+						if err != nil {
+							return err
+						}
+					} else {
+						// needs to update all partitions for partition table.
+						for _, pi := range table.GetPartitionInfo().Definitions {
+							err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+							if err != nil {
+								return err
+							}
+						}
 					}
 					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table)
 				}
@@ -780,18 +789,16 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
 	batch := 1024
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
 		schema := e.dbs[e.dbsIdx]
-		tables := is.SchemaTables(schema)
-		for e.tblIdx < len(tables) {
-			table := tables[e.tblIdx]
+		for e.tblIdx < len(schema.Tables) {
+			table := schema.Tables[e.tblIdx]
 			e.tblIdx++
 			hasPrivs := false
 			var priv mysql.PrivilegeType
 			if checker != nil {
 				for _, p := range mysql.AllColumnPrivs {
-					if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Meta().Name.L, "", p) {
+					if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", p) {
 						hasPrivs = true
 						priv |= p
 					}
@@ -801,7 +808,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 				}
 			}
 
-			e.dataForColumnsInTable(ctx, sctx, schema, table.Meta(), priv, extractor)
+			e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
 			if len(e.rows) >= batch {
 				return nil
 			}
@@ -811,7 +818,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema model.CIStr, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
+func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	if tbl.IsView() {
 		e.viewMu.Lock()
@@ -823,7 +830,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				planBuilder, _ := plannercore.NewPlanBuilder().Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 				var err error
-				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema, tbl, nil, nil)
+				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl, nil, nil)
 				return errors.Trace(err)
 			}); err != nil {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -886,7 +893,7 @@ ForColumnsTag:
 			e.viewMu.RUnlock()
 		}
 		if !extractor.SkipRequest {
-			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.L) {
+			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
 				continue
 			}
 			if tableNameFilterEnable && !extractor.TableName.Exist(tbl.Name.L) {
@@ -896,7 +903,7 @@ ForColumnsTag:
 				continue
 			}
 			for _, re := range tableSchemaRegexp {
-				if !re.DoMatch(schema.L) {
+				if !re.DoMatch(schema.Name.L) {
 					continue ForColumnsTag
 				}
 			}
@@ -987,7 +994,7 @@ ForColumnsTag:
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
-			schema.O,              // TABLE_SCHEMA
+			schema.Name.O,         // TABLE_SCHEMA
 			tbl.Name.O,            // TABLE_NAME
 			col.Name.O,            // COLUMN_NAME
 			i,                     // ORDINAL_POSITION
@@ -1724,6 +1731,24 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 	return rows
 }
 
+func ensureSchemaTables(is infoschema.InfoSchema, schemas []*model.DBInfo) []*model.DBInfo {
+	res := schemas[:0]
+	for _, db := range schemas {
+		if len(db.Tables) == 0 {
+			// For infoschema v2, Tables of DBInfo could be missing.
+			dbInfo := db.Clone()
+			tbls := is.SchemaTables(db.Name)
+			for _, tbl := range tbls {
+				dbInfo.Tables = append(dbInfo.Tables, tbl.Meta())
+			}
+			res = append(res, dbInfo)
+		} else {
+			res = append(res, db)
+		}
+	}
+	return res
+}
+
 func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var extractorTableIDs []int64
@@ -1765,7 +1790,9 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			return err
 		}
 	}
-	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is.AllSchemas())
+	schemas := is.AllSchemas()
+	schemas = ensureSchemaTables(is, schemas)
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, schemas)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(regionTableList) == 0 {
@@ -3072,7 +3099,7 @@ type hugeMemTableRetriever struct {
 	retrieved          bool
 	initialized        bool
 	rows               [][]types.Datum
-	dbs                []model.CIStr
+	dbs                []*model.DBInfo
 	dbsIdx             int
 	tblIdx             int
 	viewMu             syncutil.RWMutex
@@ -3088,10 +3115,8 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-		dbs := is.AllSchemaNames()
-		slices.SortFunc(dbs, func(a, b model.CIStr) int {
-			return cmp.Compare(a.L, b.L)
-		})
+		dbs := is.AllSchemas()
+		slices.SortFunc(dbs, model.LessDBInfo)
 		e.dbs = dbs
 		e.initialized = true
 		e.rows = make([][]types.Datum, 0, 1024)

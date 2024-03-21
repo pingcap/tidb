@@ -96,20 +96,20 @@ func getSession(pool sessionPool) (session.Session, error) {
 		}
 
 		if !originalEnable1PC {
-			intest.AssertNoError(err)
 			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=OFF")
+			intest.AssertNoError(err)
 			terror.Log(err)
 		}
 
 		if !originalEnableAsyncCommit {
-			intest.AssertNoError(err)
 			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=OFF")
+			intest.AssertNoError(err)
 			terror.Log(err)
 		}
 
 		if restoreTimeZone {
-			intest.AssertNoError(err)
 			_, err = se.ExecuteSQL(context.Background(), "set @@time_zone=%?", originalTimeZone)
+			intest.AssertNoError(err)
 			terror.Log(err)
 		}
 
@@ -158,13 +158,14 @@ func getSession(pool sessionPool) (session.Session, error) {
 		se.Close()
 		return nil, errors.New("failed to get time_zone variable")
 	}
+	originalTimeZone = rows[0].GetString(0)
 
 	_, err = se.ExecuteSQL(context.Background(), "set @@time_zone='UTC'")
 	if err != nil {
 		se.Close()
 		return nil, err
 	}
-	originalTimeZone, restoreTimeZone = rows[0].GetString(0), true
+	restoreTimeZone = true
 
 	return se, nil
 }

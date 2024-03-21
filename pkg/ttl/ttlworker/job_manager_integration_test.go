@@ -92,13 +92,13 @@ func TestGetSession(t *testing.T) {
 	tz, err := se.GlobalTimeZone(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, "Europe/Berlin", tz.String())
+
 	// session variables should be set
 	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit").
 		Check(testkit.Rows("UTC 0 1 1"))
 
-	se.Close()
-
 	// all session variables should be restored after close
+	se.Close()
 	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit").
 		Check(testkit.Rows("Asia/Shanghai 1 0 0"))
 }

@@ -606,10 +606,8 @@ func TestLockTable(t *testing.T) {
 				sqlCounter += 1
 				return
 			}
-			se.now = func() time.Time {
-				return now
-			}
 
+			m.ctx = cache.SetMockExpireTime(context.Background(), newJobExpireTime)
 			var job *ttlJob
 			if c.isCreate {
 				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval)
