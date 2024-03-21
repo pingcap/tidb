@@ -20,17 +20,19 @@ import (
 
 // Stats metrics.
 var (
-	AutoAnalyzeHistogram   prometheus.Histogram
-	AutoAnalyzeCounter     *prometheus.CounterVec
-	StatsInaccuracyRate    prometheus.Histogram
-	PseudoEstimation       *prometheus.CounterVec
-	SyncLoadCounter        prometheus.Counter
-	SyncLoadTimeoutCounter prometheus.Counter
-	SyncLoadHistogram      prometheus.Histogram
-	ReadStatsHistogram     prometheus.Histogram
-	StatsCacheCounter      *prometheus.CounterVec
-	StatsCacheGauge        *prometheus.GaugeVec
-	StatsHealthyGauge      *prometheus.GaugeVec
+	AutoAnalyzeHistogram      prometheus.Histogram
+	AutoAnalyzeCounter        *prometheus.CounterVec
+	StatsInaccuracyRate       prometheus.Histogram
+	PseudoEstimation          *prometheus.CounterVec
+	SyncLoadCounter           prometheus.Counter
+	SyncLoadTimeoutCounter    prometheus.Counter
+	SyncLoadHistogram         prometheus.Histogram
+	ReadStatsHistogram        prometheus.Histogram
+	StatsCacheCounter         *prometheus.CounterVec
+	StatsCacheGauge           *prometheus.GaugeVec
+	StatsHealthyGauge         *prometheus.GaugeVec
+	StatsDeltaLoadHistogram   prometheus.Histogram
+	StatsDeltaUpdateHistogram prometheus.Histogram
 
 	HistoricalStatsCounter        *prometheus.CounterVec
 	PlanReplayerTaskCounter       *prometheus.CounterVec
@@ -134,4 +136,22 @@ func InitStatsMetrics() {
 		Name:      "register_task",
 		Help:      "gauge of plan replayer registered task",
 	})
+	StatsDeltaLoadHistogram = NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "stats_delta_load_duration_seconds",
+			Help:      "Bucketed histogram of processing time for the background statistics loading job",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24h
+		},
+	)
+	StatsDeltaUpdateHistogram = NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "stats_delta_update_duration_seconds",
+			Help:      "Bucketed histogram of processing time for the background stats_meta update job",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24h
+		},
+	)
 }
