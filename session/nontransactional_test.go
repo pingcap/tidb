@@ -722,7 +722,8 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	err = tk.ExecToErr("batch limit 1 insert into t select 1, 1")
 	require.EqualError(t, err, "table reference is nil")
 	err = tk.ExecToErr("batch limit 1 insert into t select * from (select 1, 2) tmp")
-	require.EqualError(t, err, "Non-transactional DML, table name not found in join")
+	// we tolerance no table name in join now.
+	require.EqualError(t, err, "Non-transactional DML, no tables found in table refs")
 }
 
 func TestNonTransactionalWithOptimizerHints(t *testing.T) {
@@ -1011,4 +1012,25 @@ func TestNameAmbiguity(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("batch on id limit 1 insert into t select * from test2.t")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1", "2 2 2"))
+}
+
+func TestJoinWithAlias(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(id int primary key, v1 int, v2 int)")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("create table t2(id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3), (5, 5), (6, 6), (7, 70)")
+	tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3), (4, 4), (6, 60), (7, 7)")
+	tk.MustExec("batch on test.t1.id limit 1 insert into t " +
+		"select tmp1.id, tmp1.v, tmp2.v from (select * from t1) tmp1 join (select * from t2) tmp2 on tmp1.id = tmp2.id")
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3", "6 6 60", "7 70 7"))
+
+	tk.MustExec("truncate table t")
+
+	tk.MustExec("batch on test.t1.id limit 1 insert into t " +
+		"select tmp1.id, tmp1.v, tmp2.v from (select * from t1 g) tmp1 join (select * from t2 n) tmp2 on tmp1.id = tmp2.id")
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3", "6 6 60", "7 70 7"))
 }

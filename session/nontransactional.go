@@ -18,7 +18,11 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -117,10 +121,13 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	memTracker.AttachTo(se.GetSessionVars().MemTracker)
 	se.GetSessionVars().MemTracker.SetBytesLimit(se.GetSessionVars().MemQuotaQuery)
 	defer memTracker.Detach()
+	buildJobStart := time.Now()
 	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo, memTracker)
 	if err != nil {
 		return nil, err
 	}
+	logutil.Logger(ctx).Warn("Non-transactional DML build job",
+		zap.Int("count", len(jobs)), zap.Duration("duration", time.Since(buildJobStart)))
 
 	splitStmts, err := runJobs(ctx, jobs, stmt, tableName, se, stmt.DMLStmt.WhereExpr())
 	if err != nil {
@@ -128,6 +135,10 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	}
 	if stmt.DryRun == ast.DryRunSplitDml {
 		return buildDryRunResults(stmt.DryRun, splitStmts, se.GetSessionVars().BatchSize.MaxChunkSize)
+	}
+	if stmt.TransferFromInsert {
+		// affected rows will be set in `runJobs`
+		return nil, nil
 	}
 	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
 }
@@ -264,7 +275,90 @@ func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
 
 // single-threaded worker. work on the key range [start, end]
 func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
-	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) ([]string, error) {
+	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) (rs []string, err error) {
+	concurrency := se.GetSessionVars().ETLConcurrency
+	// no concurrency for dry run.
+	if stmt.DryRun != ast.NoDryRun || !stmt.TransferFromInsert {
+		concurrency = 0
+	}
+
+	var (
+		jobCh        chan *job
+		errCh        chan error
+		wg           sync.WaitGroup
+		affectedRows uint64
+	)
+	if concurrency > 0 {
+		// shuffle jobs to avoid hot spot.
+		rand.Shuffle(len(jobs), func(i, j int) {
+			// do not shuffle first job, because it may be (null, null), a large job, run it at the beginning.
+			if i > 0 && j > 0 {
+				jobs[i], jobs[j] = jobs[j], jobs[i]
+			}
+		})
+		var sb strings.Builder
+		err = stmt.DMLStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
+			format.RestoreNameBackQuotes|
+			format.RestoreSpacesAroundBinaryOperation|
+			format.RestoreBracketAroundBinaryOperation|
+			format.RestoreStringWithoutCharset, &sb))
+		if err != nil {
+			logutil.Logger(ctx).Error("Non-transactional DML, failed to restore the DML statement", zap.Error(err))
+			return nil, err
+		}
+		if concurrency > len(jobs) {
+			concurrency = len(jobs)
+		}
+		dmlSQL := sb.String()
+		var originalConditionSQL string
+		if originalCondition != nil {
+			sb = strings.Builder{}
+			originalCondSel := &ast.SelectStmt{
+				SelectStmtOpts: &ast.SelectStmtOpts{},
+				Where:          originalCondition,
+			}
+			err = originalCondSel.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
+				format.RestoreNameBackQuotes|
+				format.RestoreSpacesAroundBinaryOperation|
+				format.RestoreBracketAroundBinaryOperation|
+				format.RestoreStringWithoutCharset, &sb))
+			if err != nil {
+				logutil.Logger(ctx).Error("Non-transactional DML, failed to restore the DML statement", zap.Error(err))
+				return nil, err
+			}
+			originalConditionSQL = sb.String()
+		}
+
+		logutil.Logger(ctx).Warn("Non-transactional DML execute concurrently", zap.Int("concurrency", concurrency))
+		jobCh = make(chan *job, 2*concurrency)
+		errCh = make(chan error, 2*concurrency)
+		wg.Add(concurrency)
+		for i := 0; i < concurrency; i++ {
+			if err = jobWorker(ctx, se, jobCh, errCh, len(jobs), stmt, dmlSQL, tableName, originalConditionSQL, &wg, &affectedRows); err != nil {
+				return nil, err
+			}
+		}
+
+		defer func() {
+			close(jobCh)
+			wg.Wait()
+			// in case all worker is exited with error.
+			for range jobCh {
+			}
+			select {
+			case e := <-errCh:
+				if e != nil {
+					err = e
+				}
+			default:
+			}
+			close(errCh)
+			for range errCh {
+			}
+			se.GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
+		}()
+	}
+
 	// prepare for the construction of statement
 	var shardColumnRefer *ast.ResultField
 	var shardColumnType types.FieldType
@@ -301,6 +395,10 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 					zap.Int("finished", i), zap.Int("total", len(jobs)), zap.Strings("errors found", failedJobs))
 			}
 			return nil, ctx.Err()
+		case e := <-errCh:
+			logutil.Logger(ctx).Warn("Non-transactional DML worker exit because error found",
+				zap.Int("finished", i), zap.Int("total", len(jobs)), zap.Error(e))
+			return nil, e
 		default:
 		}
 
@@ -327,7 +425,12 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 			splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmtBuildInfo, se, true)
 			splitStmts = append(splitStmts, splitStmt)
 		} else {
-			doOneJob(ctx, &jobs[i], len(jobs), stmtBuildInfo, se, false)
+			if concurrency == 0 {
+				doOneJob(ctx, &jobs[i], len(jobs), stmtBuildInfo, se, false)
+			} else {
+				j := jobs[i]
+				jobCh <- &j
+			}
 		}
 
 		// if the first job failed, there is a large chance that all jobs will fail. So return early.
@@ -341,9 +444,114 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 	return splitStmts, nil
 }
 
+func jobWorker(ctx context.Context, s Session, jobCh <-chan *job, errCh chan<- error, totalJobCount int,
+	stmt *ast.NonTransactionalDMLStmt, dmlSQL string, tableName *ast.TableName, originalConditionSQL string, wg *sync.WaitGroup, affectedRows *uint64) error {
+	se, err := CreateSession(s.GetStore())
+	if err != nil {
+		wg.Done()
+		return err
+	}
+	se.GetSessionVars().CurrentDB = s.GetSessionVars().CurrentDB
+	se.GetSessionVars().EnableWindowFunction = true
+	se.GetSessionVars().ETLConcurrency = 0
+
+	var originalCondition ast.ExprNode
+	if originalConditionSQL != "" {
+		originalConditionSel, err := se.ParseWithParams(ctx, originalConditionSQL)
+		if err != nil {
+			se.Close()
+			wg.Done()
+			return err
+		}
+		originalCondition = originalConditionSel.(*ast.SelectStmt).Where
+	}
+	dml, err := se.ParseWithParams(ctx, dmlSQL)
+	if err != nil {
+		se.Close()
+		wg.Done()
+		return err
+	}
+	var dmlStmt ast.ShardableDMLStmt
+	switch v := dml.(type) {
+	case *ast.InsertStmt:
+		dmlStmt = v
+	case *ast.DeleteStmt:
+		dmlStmt = v
+	case *ast.UpdateStmt:
+		dmlStmt = v
+	default:
+		se.Close()
+		wg.Done()
+		return errors.Errorf("unexpected type %T", v)
+	}
+	// copy stmt to avoid race.
+	stmt = &ast.NonTransactionalDMLStmt{
+		DryRun: stmt.DryRun,
+		ShardColumn: &ast.ColumnName{
+			Schema: stmt.ShardColumn.Schema,
+			Table:  stmt.ShardColumn.Table,
+			Name:   stmt.ShardColumn.Name,
+		},
+		Limit:   stmt.Limit,
+		DMLStmt: dmlStmt,
+	}
+
+	// prepare for the construction of statement
+	var shardColumnRefer *ast.ResultField
+	var shardColumnType types.FieldType
+	for _, col := range tableName.TableInfo.Columns {
+		if col.Name.L == stmt.ShardColumn.Name.L {
+			shardColumnRefer = &ast.ResultField{
+				Column:    col,
+				Table:     tableName.TableInfo,
+				DBName:    tableName.Schema,
+				TableName: tableName,
+			}
+			shardColumnType = col.FieldType
+		}
+	}
+	if shardColumnRefer == nil && stmt.ShardColumn.Name.L != model.ExtraHandleName.L {
+		wg.Done()
+		se.Close()
+		return errors.New("Non-transactional DML, shard column not found")
+	}
+
+	go func() {
+		defer func() {
+			se.Close()
+			wg.Done()
+		}()
+		for j := range jobCh {
+			// _tidb_rowid
+			if shardColumnRefer == nil {
+				shardColumnType = *types.NewFieldType(mysql.TypeLonglong)
+				shardColumnRefer = &ast.ResultField{
+					Column:    model.NewExtraHandleColInfo(),
+					Table:     tableName.TableInfo,
+					DBName:    tableName.Schema,
+					TableName: tableName,
+				}
+			}
+			stmtBuildInfo := statementBuildInfo{
+				stmt:              stmt,
+				shardColumnType:   shardColumnType,
+				shardColumnRefer:  shardColumnRefer,
+				originalCondition: originalCondition,
+			}
+			doOneJob(ctx, j, totalJobCount, stmtBuildInfo, se, false)
+			if j.err != nil {
+				errCh <- j.err
+				return
+			}
+			subAffectedRows := se.AffectedRows()
+			atomic.AddUint64(affectedRows, subAffectedRows)
+		}
+	}()
+	return nil
+}
+
 func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se Session, dryRun bool) string {
 	var whereCondition ast.ExprNode
-
 	if job.start.IsNull() {
 		isNullCondition := &ast.IsNullExpr{
 			Expr: &ast.ColumnNameExpr{
@@ -486,7 +694,6 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 	jobs := make([]job, 0)
 	currentSize := 0
 	var currentStart, currentEnd types.Datum
-
 	chk := rs.NewChunk(nil)
 	for {
 		err = rs.Next(ctx, chk)
@@ -537,6 +744,18 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 		currentStart = *currentStart.Clone()
 	}
 
+	// _tidb_rowid may be null in join, handle this case
+	if stmt.ShardColumn.Name.L == "_tidb_rowid" && stmt.TransferFromInsert {
+		var nullStart, nullEnd types.Datum
+		nullStart.SetNull()
+		nullEnd.SetNull()
+		jobs = appendNewJob(jobs, 0, nullStart, nullEnd, 1, memTracker)
+		if len(jobs) > 1 {
+			lastIdx := len(jobs) - 1
+			jobs[0], jobs[lastIdx] = jobs[lastIdx], jobs[0]
+		}
+	}
+
 	return jobs, nil
 }
 
@@ -554,7 +773,8 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
 		return nil, "", nil, nil, errors.New("Non-transactional DML, table source not found")
 	}
 	tableSources := make([]*ast.TableSource, 0)
-	tableSources, err := collectTableSourcesInJoin(join, tableSources)
+	aliases := make(map[string]*ast.TableName)
+	tableSources, aliases, err := collectTableSourcesInJoin(join, tableSources, aliases)
 	if err != nil {
 		return nil, "", nil, nil, err
 	}
@@ -567,7 +787,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
 		return nil, "", nil, nil, errors.New("Non-transactional DML, table name not found")
 	}
 
-	shardColumnInfo, tableName, err := selectShardColumn(stmt, se, tableSources, leftMostTableName, leftMostTableSource)
+	shardColumnInfo, tableName, alias, err := selectShardColumn(stmt, se, tableSources, aliases, leftMostTableName, leftMostTableSource)
 	if err != nil {
 		return nil, "", nil, nil, err
 	}
@@ -589,39 +809,44 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
 	// assure NULL values are placed first
 	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
+	if alias != "" {
+		stmt.ShardColumn.Schema = model.NewCIStr("")
+		stmt.ShardColumn.Table = model.NewCIStr(alias)
+	}
 	return tableName, selectSQL, shardColumnInfo, tableSources, nil
 }
 
-func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSources []*ast.TableSource,
+func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSources []*ast.TableSource, aliases map[string]*ast.TableName,
 	leftMostTableName *ast.TableName, leftMostTableSource *ast.TableSource) (
-	*model.ColumnInfo, *ast.TableName, error) {
+	*model.ColumnInfo, *ast.TableName, string, error) {
 	var indexed bool
 	var shardColumnInfo *model.ColumnInfo
 	var selectedTableName *ast.TableName
+	var alias string
 
 	if len(tableSources) == 1 {
 		// single table
 		leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(leftMostTableName.Schema, leftMostTableName.Name)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 		selectedTableName = leftMostTableName
 		indexed, shardColumnInfo, err = selectShardColumnFromTheOnlyTable(
 			stmt, leftMostTableName, leftMostTableSource.AsName, leftMostTable)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 	} else {
 		// multi table join
 		if stmt.ShardColumn == nil {
 			leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(leftMostTableName.Schema, leftMostTableName.Name)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, "", err
 			}
 			selectedTableName = leftMostTableName
 			indexed, shardColumnInfo, err = selectShardColumnAutomatically(stmt, leftMostTable, leftMostTableName, leftMostTableSource.AsName)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, "", err
 			}
 		} else if stmt.ShardColumn.Schema.L != "" && stmt.ShardColumn.Table.L != "" && stmt.ShardColumn.Name.L != "" {
 			specifiedDbName := stmt.ShardColumn.Schema
@@ -643,9 +868,25 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSourc
 					chosenTableName = tableSourceName.Name
 					break
 				}
+				if tableSourceName.Schema.L == specifiedDbName.L && tableSourceName.Name.L == specifiedTableName.L {
+					tableInJoin = true
+					selectedTableName = tableSourceName
+					chosenTableName = tableSourceName.Name
+					break
+				}
 			}
 			if !tableInJoin {
-				return nil, nil,
+				sources := []string{}
+				for _, table := range tableSources {
+					asName := table.AsName.L
+					if tblName, ok := table.Source.(*ast.TableName); ok {
+						sources = append(sources, tblName.Schema.L+"."+tblName.Name.L+" as "+asName)
+					}
+				}
+				logutil.BgLogger().Error("Non-transactional DML, table not found",
+					zap.String("tbl", specifiedDbName.L+"."+specifiedTableName.L),
+					zap.Strings("tbls", sources))
+				return nil, nil, "",
 					errors.Errorf(
 						"Non-transactional DML, shard column %s.%s.%s is not in the tables involved in the join",
 						specifiedDbName.L, specifiedTableName.L, specifiedColName.L,
@@ -654,49 +895,92 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSourc
 
 			tbl, err := domain.GetDomain(se).InfoSchema().TableByName(specifiedDbName, chosenTableName)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, "", err
 			}
 			indexed, shardColumnInfo, err = selectShardColumnByGivenName(specifiedColName.L, tbl)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, "", err
+			}
+			for a, aliasedTbl := range aliases {
+				if aliasedTbl.Name.L == selectedTableName.Name.L {
+					alias = a
+					break
+				}
 			}
 		} else {
-			return nil, nil, errors.New(
+			return nil, nil, "", errors.New(
 				"Non-transactional DML, shard column must be fully specified (i.e. `BATCH ON dbname.tablename.colname`) when multiple tables are involved",
 			)
 		}
 	}
 	if !indexed {
-		return nil, nil, errors.Errorf("Non-transactional DML, shard column %s is not indexed", stmt.ShardColumn.Name.L)
+		return nil, nil, "", errors.Errorf("Non-transactional DML, shard column %s is not indexed", stmt.ShardColumn.Name.L)
 	}
-	return shardColumnInfo, selectedTableName, nil
+	return shardColumnInfo, selectedTableName, alias, nil
 }
 
-func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.TableSource) ([]*ast.TableSource, error) {
+func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.TableSource, aliases map[string]*ast.TableName) ([]*ast.TableSource, map[string]*ast.TableName, error) {
 	if node == nil {
-		return tableSources, nil
+		return tableSources, aliases, nil
 	}
 	switch x := node.(type) {
 	case *ast.Join:
-		var err error
-		tableSources, err = collectTableSourcesInJoin(x.Left, tableSources)
+		var (
+			err error
+		)
+		tableSources, aliases, err = collectTableSourcesInJoin(x.Left, tableSources, aliases)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		tableSources, err = collectTableSourcesInJoin(x.Right, tableSources)
+		tableSources, aliases, err = collectTableSourcesInJoin(x.Right, tableSources, aliases)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	case *ast.TableSource:
 		// assert it's a table name
-		if _, ok := x.Source.(*ast.TableName); !ok {
-			return nil, errors.New("Non-transactional DML, table name not found in join")
+		switch v := x.Source.(type) {
+		case *ast.TableName:
+			tableSources = append(tableSources, x)
+			if x.AsName.L != "" {
+				aliases[x.AsName.L] = v
+			}
+		case *ast.SelectStmt:
+			var (
+				subSources = make([]*ast.TableSource, 0)
+				err        error
+			)
+			if v.From == nil {
+				return tableSources, aliases, nil
+			}
+			subSources, aliases, err = collectTableSourcesInJoin(v.From.TableRefs, subSources, aliases)
+			if err != nil {
+				return nil, nil, err
+			}
+			tableSources = append(tableSources, subSources...)
+			if x.AsName.L != "" {
+				if ss, ok := v.From.TableRefs.Left.(*ast.TableSource); ok {
+					if st, ok := ss.Source.(*ast.TableName); ok {
+						dupAlias := ""
+						for alias, tbl := range aliases {
+							if tbl == st {
+								dupAlias = alias
+								break
+							}
+						}
+						if dupAlias != "" {
+							delete(aliases, dupAlias)
+						}
+						aliases[x.AsName.L] = st
+					}
+				}
+			}
+		default:
+			// ignore the rest.
 		}
-		tableSources = append(tableSources, x)
 	default:
-		return nil, errors.Errorf("Non-transactional DML, unknown type %T in table refs", node)
+		return nil, nil, errors.Errorf("Non-transactional DML, unknown type %T in table refs", node)
 	}
-	return tableSources, nil
+	return tableSources, aliases, nil
 }
 
 // it attempts to auto-select a shard column from handle if not specified, and fills back the corresponding info in the stmt,
