@@ -36,7 +36,11 @@ func MergeOverlappingFiles(
 	checkHotspot bool,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
-	partSize = max(MinUploadPartSize, partSize)
+	// during encode&sort step, the writer-limit is aligned to block size, so we
+	// need align this too. the max additional written size per file is max-block-size.
+	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
+	// to part-size is enough.
+	partSize = max(MinUploadPartSize, partSize+units.MiB)
 
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
@@ -68,7 +72,7 @@ func MergeOverlappingFiles(
 // in each share MaxMergingFilesPerThread, if there are not enough files, merge at
 // least 2 files in one batch.
 func splitDataFiles(paths []string, concurrency int) [][]string {
-	shares := max(len(paths)/MaxMergingFilesPerThread, concurrency)
+	shares := max((len(paths)+MaxMergingFilesPerThread-1)/MaxMergingFilesPerThread, concurrency)
 	if len(paths) < 2*concurrency {
 		shares = max(1, len(paths)/2)
 	}
