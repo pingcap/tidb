@@ -2877,6 +2877,7 @@ func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
+	tk.MustExec("set @@session.tidb_skip_missing_partition_stats = 0")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
