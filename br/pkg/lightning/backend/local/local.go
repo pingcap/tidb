@@ -1529,7 +1529,7 @@ loopWrite:
 	return errors.Trace(err)
 }
 
-func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
+func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, ranges []Range, regionSplitSize int64, regionSplitKeys int64, pausePdSchedulerScope string) error {
 	if engine.Length.Load() == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
 		log.FromContext(ctx).Info("engine contains no data", zap.Stringer("uuid", engine.UUID))
@@ -1558,26 +1558,33 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				wg.Done()
 			}()
 			var err error
-			// max retry backoff time: 2+4+8+16+30*26=810s
-			backOffTime := time.Second
-			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
-				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
-				if err == nil || common.IsContextCanceledError(err) {
-					return
-				}
-				if !local.isRetryableImportTiKVError(err) {
-					break
-				}
-				log.FromContext(ctx).Warn("write and ingest by range failed",
-					zap.Int("retry time", i+1), log.ShortError(err))
-				backOffTime *= 2
-				if backOffTime > maxRetryBackoffTime {
-					backOffTime = maxRetryBackoffTime
-				}
-				select {
-				case <-time.After(backOffTime):
-				case <-ctx.Done():
-					return
+			var cancel context.CancelFunc
+			if pausePdSchedulerScope == config.PauseRegionInAction && local.pdCtl.CanPauseSchedulerByKeyRange() {
+				err, cancel = local.StopRegionScheduling(ctx, []Range{{start: startKey, end: endKey}})
+				defer cancel()
+			}
+			if err == nil {
+				// max retry backoff time: 2+4+8+16+30*26=810s
+				backOffTime := time.Second
+				for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
+					err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
+					if err == nil || common.IsContextCanceledError(err) {
+						return
+					}
+					if !local.isRetryableImportTiKVError(err) {
+						break
+					}
+					log.FromContext(ctx).Warn("write and ingest by range failed",
+						zap.Int("retry time", i+1), log.ShortError(err))
+					backOffTime *= 2
+					if backOffTime > maxRetryBackoffTime {
+						backOffTime = maxRetryBackoffTime
+					}
+					select {
+					case <-time.After(backOffTime):
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 
@@ -1599,7 +1606,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	return allErr
 }
 
-func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64, pausePdSchedulerScope string) error {
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1631,25 +1638,13 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		return err
 	}
 
-	if len(ranges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
-		subCtx, cancel := context.WithCancel(ctx)
+	var cancel context.CancelFunc
+	if pausePdSchedulerScope == config.PauseRegionByTable && len(ranges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+		err, cancel = local.StopRegionScheduling(ctx, ranges)
 		defer cancel()
-
-		var startKey, endKey []byte
-		if len(ranges[0].start) > 0 {
-			startKey = codec.EncodeBytes(nil, ranges[0].start)
-		}
-		if len(ranges[len(ranges)-1].end) > 0 {
-			endKey = codec.EncodeBytes(nil, ranges[len(ranges)-1].end)
-		}
-		done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer func() {
-			cancel()
-			<-done
-		}()
 	}
 
 	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
@@ -1686,7 +1681,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}
 
 		// start to write to kv and ingest
-		err = local.writeAndIngestByRanges(ctx, lf, unfinishedRanges, regionSplitSize, regionSplitKeys)
+		err = local.writeAndIngestByRanges(ctx, lf, unfinishedRanges, regionSplitSize, regionSplitKeys, pausePdSchedulerScope)
 		if err != nil {
 			log.FromContext(ctx).Error("write and ingest engine failed", log.ShortError(err))
 			return err
@@ -1697,6 +1692,27 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
 		zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
 	return nil
+}
+
+func (local *local) StopRegionScheduling(ctx context.Context, ranges []Range) (error, func()) {
+	subCtx, cancel := context.WithCancel(ctx)
+	var startKey, endKey []byte
+	if len(ranges[0].start) > 0 {
+		startKey = codec.EncodeBytes(nil, ranges[0].start)
+	}
+	if len(ranges[len(ranges)-1].end) > 0 {
+		endKey = codec.EncodeBytes(nil, ranges[len(ranges)-1].end)
+	}
+	log.FromContext(ctx).Info("start pause region", logutil.Key("regionStart", startKey), logutil.Key("end", endKey))
+	done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
+	if err != nil {
+		return errors.Trace(err), cancel
+	}
+	return nil, func() {
+		log.FromContext(ctx).Info("stopping pause region", logutil.Key("regionStart", startKey), logutil.Key("end", endKey))
+		cancel()
+		<-done
+	}
 }
 
 func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {

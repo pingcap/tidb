@@ -99,7 +99,7 @@ func (bc *BackendContext) Flush(indexID int64) error {
 		logutil.BgLogger().Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
 			zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
 			zap.Uint64("max disk quota", bc.diskRoot.MaxQuota()))
-		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys))
+		err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio), int64(config.SplitRegionKeys), config.PauseRegionByTable)
 		if err != nil {
 			logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
 				zap.Error(err), zap.Uint64("current disk usage", bc.diskRoot.CurrentUsage()),
