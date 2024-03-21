@@ -870,12 +870,17 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
+				if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) && sem.IsInvisibleGlobalSysVar(v.Name) {
 					continue
 				}
-				value, err = sessionVars.GetGlobalSystemVar(ctx, v.Name)
-				if err != nil {
-					return errors.Trace(err)
+				checker := privilege.GetPrivilegeManager(e.Ctx())
+				if sem.IsEnabled() && sem.IsReplacedSysVar(v.Name) && checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+					value = sem.GetOrigVar(v.Name)
+				} else {
+					value, err = sessionVars.GetGlobalSystemVar(ctx, v.Name)
+					if err != nil {
+						return errors.Trace(err)
+					}
 				}
 				e.appendRow([]any{v.Name, value})
 			}
@@ -895,12 +900,17 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
+		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) && sem.IsInvisibleSysVar(v.Name) {
 			continue
 		}
-		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
-		if err != nil {
-			return errors.Trace(err)
+		checker := privilege.GetPrivilegeManager(e.Ctx())
+		if sem.IsEnabled() && sem.IsReplacedSysVar(v.Name) && checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+			value = sem.GetOrigVar(v.Name)
+		} else {
+			value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		e.appendRow([]any{v.Name, value})
 	}

@@ -110,6 +110,128 @@ func TestGetRestrictedStatusOfStateVariable(t *testing.T) {
 }
 
 func TestIsInvisibleSysVar(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedVariables = []config.RestrictedVariable{
+		{
+			Name:            variable.Hostname,
+			RestrictionType: "replace",
+			Value:           "localhost",
+		},
+		{
+			Name:            variable.TiDBEnableEnhancedSecurity,
+			RestrictionType: "replace",
+			Value:           "ON",
+		},
+		{
+			Name:            variable.TiDBAllowRemoveAutoInc,
+			RestrictionType: "replace",
+			Value:           "True",
+		},
+		{
+			Name:            variable.TiDBCheckMb4ValueInUTF8,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBConfig,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBEnableSlowLog,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBExpensiveQueryTimeThreshold,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBForcePriority,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBGeneralLog,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBMetricSchemaRangeDuration,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBMetricSchemaStep,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBOptWriteRowID,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBPProfSQLCPU,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBRecordPlanInSlowLog,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBSlowQueryFile,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBSlowLogThreshold,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBEnableCollectExecutionInfo,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBMemoryUsageAlarmRatio,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		// This line is commented out, assuming variable.TiDBEnableTelemetry should be excluded
+		{
+			Name:            variable.TiDBEnableTelemetry,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBRowFormatVersion,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBRedactLog,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            variable.TiDBTopSQLMaxTimeSeriesCount,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		// Assuming tidbAuditRetractLog is a variable, if it's not, you might need to adjust
+		{
+			Name:            tidbAuditRetractLog,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+	}
+
+	config.StoreGlobalConfig(tidbCfg)
 	assert := assert.New(t)
 
 	assert.False(IsInvisibleSysVar(variable.Hostname))                   // changes the value to default, but is not invisible

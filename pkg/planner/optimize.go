@@ -16,6 +16,7 @@ package planner
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"math"
 	"math/rand"
 	"sync"
@@ -164,6 +165,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sessVars.StmtCtx)
+
+	sem.CheckResVarAdmin(sctx)
+	// Check if the user has the RESTRICTED_VARIABLES_ADMIN privilege.
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker, byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
@@ -281,6 +285,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			hint.BindHint(stmtNode, binding.Hint)
+
+			sem.CheckResVarAdmin(sctx)
+			// Check if the user has the RESTRICTED_VARIABLES_ADMIN privilege.
 			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
@@ -580,6 +587,10 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	}
 	if !sysVar.IsHintUpdatableVerified {
 		warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
+	}
+	if sem.IsEnabled() && sem.IsReadOnlySysVar(varName) && !sem.IsResVarAdmin() {
+		warning = plannererrors.ErrSQLInReadOnlyMode.FastGenByArgs(varName)
+		return false, warning
 	}
 	return true, warning
 }

@@ -569,6 +569,17 @@ func (sv *SysVar) SkipSysvarCache() bool {
 var sysVars map[string]*SysVar
 var sysVarsLock sync.RWMutex
 
+// IsVarExists check if sysVar exists
+func IsVarExists(name string) bool {
+	name = strings.ToLower(name)
+	sysVarsLock.RLock()
+	defer sysVarsLock.RUnlock()
+	if sysVars[name] != nil {
+		return true
+	}
+	return false
+}
+
 // RegisterSysVar adds a sysvar to the SysVars list
 func RegisterSysVar(sv *SysVar) {
 	name := strings.ToLower(sv.Name)

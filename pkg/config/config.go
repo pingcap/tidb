@@ -628,6 +628,15 @@ type SEM struct {
 	RestrictedStatus              []RestrictedState                `toml:"restricted_status" json:"restricted_status"`
 	RestrictedStaticPrivilegesCol []string                         `toml:"restricted_static_privileges_col" json:"restricted_static_privileges_col"`
 	RestrictedStaticPrivileges    map[mysql.PrivilegeType]struct{} `toml:"restricted_static_privileges" json:"restricted_static_privileges"`
+	RestrictedVariables           []RestrictedVariable             `toml:"restricted_variables" json:"restricted_variables"`
+}
+
+type RestrictedVariable struct {
+	Name            string `toml:"name" json:"name"`
+	Scope           string `toml:"scope" json:"scope"`
+	RestrictionType string `toml:"restriction-type" json:"restriction-type"`
+	Readonly        bool   `toml:"readonly" json:"readonly"`
+	Value           string `toml:"value" json:"value"`
 }
 
 // RestrictedState refers to the limitation of status variables in Security Enhanced Mode.
