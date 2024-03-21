@@ -359,10 +359,6 @@ func (em *ErrorManager) RecordDataConflictError(
 		return gerr
 	}
 
-	if em.conflictRecordsRemain.Add(-1) < 0 {
-		return nil
-	}
-
 	exec := common.SQLWithRetry{
 		DB:           em.db,
 		Logger:       logger,
@@ -423,10 +419,6 @@ func (em *ErrorManager) RecordIndexConflictError(
 
 	if em.db == nil {
 		return gerr
-	}
-
-	if em.conflictRecordsRemain.Add(-1) < 0 {
-		return nil
 	}
 
 	exec := common.SQLWithRetry{
