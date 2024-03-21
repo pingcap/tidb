@@ -165,6 +165,7 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 
 func (isd *Data) remove(item tableItem) {
 	item.tomb = true
+	isd.byID.Set(item)
 	isd.byName.Set(item)
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
@@ -197,7 +198,8 @@ func compareByID(a, b tableItem) bool {
 		return false
 	}
 
-	return a.dbID < b.dbID
+	// return a.dbID < b.dbID
+	return a.schemaVersion < b.schemaVersion
 }
 
 func compareByName(a, b tableItem) bool {
@@ -299,7 +301,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	}
 
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
-	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
+	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, false
@@ -505,6 +507,8 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	tables = make([]table.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {
 		tbl, ok := is.TableByID(tblInfo.ID)
+		// tbl, err := is.TableByName(dbInfo.Name, tblInfo.Name)
+		// if err != nil {
 		if !ok {
 			// what happen?
 			continue
@@ -707,6 +711,10 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		return nil
 	}
 
+	fmt.Println("apply drop table v2 ===", dbInfo.Name, tableID)
+	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	b.deleteReferredForeignKeysV2(dbInfo, tableID)
+
 	b.infoData.remove(tableItem{
 		dbName:        dbInfo.Name.L,
 		dbID:          dbInfo.ID,
@@ -715,14 +723,14 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		schemaVersion: diff.Version,
 	})
 
-	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	b.deleteReferredForeignKeysV2(dbInfo, tableID)
 	return affected
 }
 
 func (b *Builder) deleteReferredForeignKeysV2(dbInfo *model.DBInfo, tableID int64) {
+	fmt.Println("deleteReferredForeignKeysV2 ... for ", dbInfo.Name, tableID)
 	for _, tbl := range b.infoschemaV2.SchemaTables(dbInfo.Name) {
 		tblInfo := tbl.Meta()
+		fmt.Println("delete referenced foreign key v2...", tblInfo.Name, tableID)
 		if tblInfo.ID == tableID {
 			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break

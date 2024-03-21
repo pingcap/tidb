@@ -2476,3 +2476,13 @@ func TestForeignKeyAndLockView(t *testing.T) {
 	tk.MustGetErrMsg("update t1 set id=2", "[executor:1213]Deadlock found when trying to get lock; try restarting transaction")
 	wg.Wait()
 }
+
+func TestXXX(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t1 (id varchar(10) key, name varchar(10), leader varchar(10),  index(leader), foreign key (leader) references t1(id) ON DELETE SET NULL);")
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key)")
+}

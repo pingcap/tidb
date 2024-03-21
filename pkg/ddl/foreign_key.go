@@ -160,6 +160,7 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	}
 
 	referredFKInfos := is.GetTableReferredForeignKeys(schema, tbInfo.Name.L)
+	fmt.Println("get table reffered foreign keys ==", schema, tbInfo.Name.L, len(referredFKInfos))
 	for _, referredFK := range referredFKInfos {
 		childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
