@@ -572,14 +572,13 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	if !s.txn.IsPipelined() {
 		// to avoid session set overlap the txn set.
 		if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
 			s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
 		}
 		s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
-		//s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+		s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 		s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
 		s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 		if sessVars.StmtCtx.KvExecCounter != nil {
