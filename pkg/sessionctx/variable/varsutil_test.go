@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,6 +93,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, DefTiDBEnableGOGCTuner, gctuner.EnableGOGCTuner.Load())
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
