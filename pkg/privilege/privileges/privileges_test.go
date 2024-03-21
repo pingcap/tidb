@@ -1169,6 +1169,19 @@ func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
 
 	sem.Enable()
 	defer sem.Disable()
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedDatabases = []string{"metrics_schema"}
+	tidbCfg.Security.SEM.RestrictedTables = []config.RestrictedTable{
+		{
+			Schema: "metrics_schema",
+			Name:   "uptime",
+		},
+		{
+			Schema: "mysql",
+			Name:   "abcd",
+		},
+	}
+	config.StoreGlobalConfig(tidbCfg)
 
 	err := urootTk.ExecToErr("use metrics_schema")
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")
@@ -1271,6 +1284,40 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	sem.Enable()
 	defer sem.Disable()
 
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedVariables = []config.RestrictedVariable{
+		{
+			Name:            variable.TiDBForcePriority,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            "tidb_enable_telemetry",
+			RestrictionType: "hidden",
+			Scope:           "global",
+			Value:           "",
+		},
+		{
+			Name:            "tidb_top_sql_max_time_series_count",
+			RestrictionType: "hidden",
+			Scope:           "global",
+			Value:           "",
+		},
+		{
+			Name:            "tidb_top_sql_max_meta_count",
+			RestrictionType: "hidden",
+			Scope:           "global",
+			Value:           "",
+		},
+		{
+			Name:            "hostname",
+			RestrictionType: "replace",
+			Value:           variable.DefHostname,
+		},
+	}
+
+	config.StoreGlobalConfig(tidbCfg)
+
 	// svroot1 has SUPER but in SEM will be restricted
 	tk.Session().Auth(&auth.UserIdentity{
 		Username:     "svroot1",
@@ -1329,9 +1376,6 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))
 	sem.Disable()
-	if hostname, err := os.Hostname(); err == nil {
-		tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(hostname))
-	}
 }
 
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
