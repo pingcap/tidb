@@ -107,9 +107,6 @@ func (j *StaticPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(
 	sctx sessionctx.Context,
 ) (bool, string) {
-	if valid, failReason := isValidWeight(j.Weight); !valid {
-		return false, failReason
-	}
 	// Check whether the partition is valid to analyze.
 	// For static partition table we only need to check the specified static partition.
 	if j.StaticPartitionName != "" {
