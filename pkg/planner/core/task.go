@@ -2371,6 +2371,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		// we have to check it before the content of p has been modified
 		canUse3StageAgg, groupingSets := p.scale3StageForDistinctAgg()
 		proj := p.convertAvgForMPP()
+		oldSchema := p.Schema().Clone()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
 			return invalidTask
@@ -2418,10 +2419,10 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			proj = PhysicalProjection{
 				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
 			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
-			for _, col := range p.Schema().Columns {
+			for _, col := range oldSchema.Columns {
 				proj.Exprs = append(proj.Exprs, col)
 			}
-			proj.SetSchema(p.schema)
+			proj.SetSchema(oldSchema)
 		}
 		attachPlan2Task(proj, newMpp)
 		return newMpp
