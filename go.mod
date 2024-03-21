@@ -314,4 +314,4 @@ replace (
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 )
 
-replace github.com/tikv/client-go/v2 => github.com/you06/client-go/v2 v2.0.0-alpha.0.20240321055329-030815331689
+replace github.com/tikv/client-go/v2 => github.com/you06/client-go/v2 v2.0.0-alpha.0.20240321092050-6e940e837ce4
