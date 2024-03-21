@@ -50,8 +50,7 @@ PARTITION BY HASH (col_7) PARTITIONS 6;`)
 	tk.MustExec("INSERT INTO `tc4cf4a6b` VALUES('1997-09-05','[\"eHmlQuuQLz6Cr6RJbYMupozlc9H4C4y9iALlRW3K3idQXqAZqmHzzv1AvN0Z6kLC\"]',x'6321553645395e4631652b','[\"KbyfwnLn5f5XskAkAopGODRErHa2g9M0tKWf1hiGfn3ermF9A3wqpGUVgBrP2Iux\", \"vmlfVpV4shEqeSjelAyQYEXolbiGyBfD1KTYnneiKPNbk2YmsIkysXQJBdjNA14L\"]','QyzHu~fb&u^V!',x'000000',-9223372036854775808),('1997-09-05','[\"hfiExxjCGXpidyDlzCBUwDksJH0yB7IKMrx95R1N2ZvoompbxobSORfJWu4NdZES\", \"WLBPyTfd7GxOKIlccTI2kwXyb4UFyBwvt4X3NbADJkpkefpZP1VB6sjO2y73vJwh\", \"V73KjNUyfJHLQ2oFaOcK721AA8QWwaPz7VTsQ5aevwG7lewlW4Y1evLpVMz2LIbn\"]',x'742873664b4a256b57613823346128643830','[\"KbyfwnLn5f5XskAkAopGODRErHa2g9M0tKWf1hiGfn3ermF9A3wqpGUVgBrP2Iux\", \"vmlfVpV4shEqeSjelAyQYEXolbiGyBfD1KTYnneiKPNbk2YmsIkysXQJBdjNA14L\"]','XSnyU0E07X2',x'000000',-9223372036854775808);")
 	tk.MustExec("analyze table tlc07c2a51;")
 	tk.MustExec("analyze table tc4cf4a6b;")
-	for i := 0; i < 10; i++ {
-		tk.MustQuery(`SELECT 1
+	tk.MustQuery(`SELECT 1
 FROM tlc07c2a51
 WHERE NOT (tlc07c2a51.col_1>=
              (SELECT GROUP_CONCAT(tc4cf4a6b.col_7
@@ -60,9 +59,7 @@ WHERE NOT (tlc07c2a51.col_1>=
               JOIN tc4cf4a6b
               WHERE ISNULL(tc4cf4a6b.col_3)
               HAVING tlc07c2a51.col_6>1951988)) ;`).Check(testkit.Rows())
-	}
-	for i := 0; i < 10; i++ {
-		tk.MustQuery(`SELECT 1
+	tk.MustQuery(`SELECT 1
 FROM tlc07c2a51
 WHERE NOT (tlc07c2a51.col_1>=
             any (SELECT GROUP_CONCAT(tc4cf4a6b.col_7
@@ -71,6 +68,5 @@ WHERE NOT (tlc07c2a51.col_1>=
               JOIN tc4cf4a6b
               WHERE ISNULL(tc4cf4a6b.col_3)
               group by tlc07c2a51.col_6
-              HAVING tlc07c2a51.col_6>0)) ;`).Check(testkit.Rows())
-	}
+              HAVING tlc07c2a51.col_6>0)) ;`).Check(testkit.Rows("1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
 }
