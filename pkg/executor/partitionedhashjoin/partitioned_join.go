@@ -74,7 +74,6 @@ type PartitionedHashJoinCtx struct {
 	OtherCondition   expression.CNFExprs
 	joinHashTable    *JoinHashTable
 	hashTableMeta    *JoinTableMeta
-	keyMode          keyMode
 
 	LUsed, RUsed                                 []int
 	LUsedInOtherCondition, RUsedInOtherCondition []int
@@ -366,7 +365,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		}
 		// split partition
 		for index, colIdx := range builder.buildKeyIndex {
-			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, builder.filterVector, builder.nullKeyVector, hashTableMeta.ignoreIntegerKeySignFlag[index], builder.serializedKeyVectorBuffer)
+			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, builder.filterVector, builder.nullKeyVector, hashTableMeta.serializeModes[index], builder.serializedKeyVectorBuffer)
 			if err != nil {
 				return err
 			}

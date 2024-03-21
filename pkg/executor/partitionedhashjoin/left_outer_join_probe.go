@@ -192,7 +192,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
 			// hash value match
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
-			if isKeyMatched(j.ctx.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
 				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
 				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)
@@ -242,7 +242,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
 			// hash value match
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
-			if isKeyMatched(j.ctx.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
 				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
 				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)
