@@ -1542,21 +1542,21 @@ select /*+ set_var(tidb_enable_inl_join_inner_multi_pattern=0) */ @@tidb_enable_
 0
 select @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
-0
+1
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
 select @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
-0
+1
 select /*+ set_var(tidb_enable_inl_join_inner_multi_pattern=1) */ @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
 1
 select @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
-0
+1
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
 select @@tidb_enable_inl_join_inner_multi_pattern;
 @@tidb_enable_inl_join_inner_multi_pattern
-0
+1
 select /*+ set_var(tidb_opt_enable_late_materialization=0) */ @@tidb_opt_enable_late_materialization;
 @@tidb_opt_enable_late_materialization
 0
