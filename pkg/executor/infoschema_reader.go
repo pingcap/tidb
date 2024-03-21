@@ -930,7 +930,7 @@ ForColumnsTag:
 				colLen += (len(ft.GetElems()) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+			charOctLen = charset.CalculateCharOctLength(colLen, ft.GetCharset())
 		} else if ft.GetType() == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
@@ -942,10 +942,10 @@ ForColumnsTag:
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+			charOctLen = charset.CalculateCharOctLength(colLen, ft.GetCharset())
 		} else if types.IsString(ft.GetType()) {
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+			charOctLen = charset.CalculateCharOctLength(colLen, ft.GetCharset())
 		} else if types.IsTypeFractionable(ft.GetType()) {
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(ft.GetType()) {
@@ -1007,14 +1007,6 @@ ForColumnsTag:
 		)
 		e.rows = append(e.rows, record)
 	}
-}
-
-func calcCharOctLength(lenInChar int, cs string) int {
-	lenInBytes := lenInChar
-	if desc, err := charset.GetCharsetInfo(cs); err == nil {
-		lenInBytes = desc.Maxlen * lenInChar
-	}
-	return lenInBytes
 }
 
 func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schemas []model.CIStr) error {
