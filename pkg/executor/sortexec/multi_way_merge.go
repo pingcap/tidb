@@ -103,7 +103,30 @@ func (d *diskSource) getPartitionNum() int {
 	return len(d.sortedRowsInDisk)
 }
 
-type partitionSource struct {
+type sortPartitionSource struct {
+	sortPartitions []*sortPartition
+}
+
+func (s *sortPartitionSource) init(multiWayMerge *multiWayMergeImpl) error {
+	partitionNum := s.getPartitionNum()
+	for i := 0; i < partitionNum; i++ {
+		row, err := s.sortPartitions[i].getNextSortedRow()
+		if err != nil {
+			return err
+		}
+
+		multiWayMerge.elements = append(multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+	}
+	heap.Init(multiWayMerge)
+	return nil
+}
+
+func (s *sortPartitionSource) next(partitionID int) (chunk.Row, error) {
+	return s.sortPartitions[partitionID].getNextSortedRow()
+}
+
+func (s *sortPartitionSource) getPartitionNum() int {
+	return len(s.sortPartitions)
 }
 
 type multiWayMergeImpl struct {

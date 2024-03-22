@@ -15,7 +15,6 @@
 package sortexec
 
 import (
-	"container/heap"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -61,7 +60,7 @@ type SortExec struct {
 
 	// multiWayMerge uses multi-way merge for spill disk.
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
-	multiWayMerge *multiWayMergeImpl
+	multiWayMerge *multiWayMerger
 
 	Unparallel struct {
 		Idx int
@@ -470,21 +469,6 @@ func (e *SortExec) spillSortedRowsInMemory() error {
 	return e.Parallel.spillHelper.spillImpl(e.Parallel.merger)
 }
 
-func (e *SortExec) initExternalSorting() error {
-	e.multiWayMerge = &multiWayMergeImpl{e.lessRow, make([]rowWithPartition, 0, len(e.Unparallel.sortPartitions))}
-	for i := 0; i < len(e.Unparallel.sortPartitions); i++ {
-		// We should always get row here
-		row, err := e.Unparallel.sortPartitions[i].getNextSortedRow()
-		if err != nil {
-			return err
-		}
-
-		e.multiWayMerge.elements = append(e.multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
-	}
-	heap.Init(e.multiWayMerge)
-	return nil
-}
-
 func (e *SortExec) onePartitionSorting(req *chunk.Chunk) (err error) {
 	err = e.Unparallel.sortPartitions[0].checkError()
 	if err != nil {
@@ -515,32 +499,22 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	}
 
 	if e.multiWayMerge == nil {
-		err := e.initExternalSorting()
+		e.multiWayMerge = newMultiWayMerger(&sortPartitionSource{sortPartitions: e.Unparallel.sortPartitions}, e.lessRow)
+		err := e.multiWayMerge.init()
 		if err != nil {
 			return err
 		}
 	}
 
-	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
-		// Get and insert data
-		element := e.multiWayMerge.elements[0]
-		req.AppendRow(element.row)
-
-		// Get a new row from that partition which inserted data belongs to
-		partitionID := element.partitionID
-		row, err := e.Unparallel.sortPartitions[partitionID].getNextSortedRow()
+	for !req.IsFull() {
+		row, err := e.multiWayMerge.next()
 		if err != nil {
 			return err
 		}
-
 		if row.IsEmpty() {
-			// All data in this partition have been consumed
-			heap.Remove(e.multiWayMerge, 0)
-			continue
+			return nil
 		}
-
-		e.multiWayMerge.elements[0].row = row
-		heap.Fix(e.multiWayMerge, 0)
+		req.AppendRow(row)
 	}
 	return nil
 }
