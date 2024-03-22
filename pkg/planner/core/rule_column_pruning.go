@@ -415,7 +415,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
 	}
-	if ds.SCtx().GetSessionVars().AllowProjectionPushDown && !addedSpec && ds.schema.Len() > len(parentUsedCols) {
+	if ds.SCtx().GetSessionVars().LimitPushDownThreshold == 101 && !addedSpec && ds.schema.Len() > len(parentUsedCols) {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
