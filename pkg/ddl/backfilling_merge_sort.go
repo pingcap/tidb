@@ -86,8 +86,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
-
-	partSize, err := getMergeSortPartSize(int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
+	partSize, err := getMergeSortPartSize(m.ptbl.Meta(), int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
 	if err != nil {
 		return err
 	}

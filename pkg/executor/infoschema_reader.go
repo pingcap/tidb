@@ -533,32 +533,6 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 	return nil
 }
 
-func fetchColumnsFromStatsCache(table *model.TableInfo) (rowCount uint64, avgRowLength uint64, dataLength uint64, indexLength uint64) {
-	cache := cache.TableRowStatsCache
-	if table.GetPartitionInfo() == nil {
-		rowCount = cache.GetTableRows(table.ID)
-		dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
-	} else {
-		for _, pi := range table.GetPartitionInfo().Definitions {
-			piRowCnt := cache.GetTableRows(pi.ID)
-			rowCount += piRowCnt
-			parDataLen, parIndexLen := cache.GetDataAndIndexLength(table, pi.ID, piRowCnt)
-			dataLength += parDataLen
-			indexLength += parIndexLen
-		}
-	}
-	avgRowLength = uint64(0)
-	if rowCount != 0 {
-		avgRowLength = dataLength / rowCount
-	}
-
-	if table.IsSequence() {
-		// sequence is always 1 row regardless of stats.
-		rowCount = 1
-	}
-	return
-}
-
 func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	for _, col := range e.columns {
 		// only the following columns need stats cahce.
@@ -652,7 +626,7 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 							}
 						}
 					}
-					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table)
+					rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
 				}
 
 				record := types.MakeDatums(
