@@ -21,4 +21,11 @@ alter table pt exchange partition p1 with table nt;
 admin check table pt;
 admin check table nt;
 
+# TestDropDatabase
+create table t (a int);
+drop database infoschema__v2;
+create database infoschema__v2;
+use infoschema__v2;
+create table t (a int, b int, PRIMARY KEY (a));
+
 set @@global.tidb_schema_cache_size = default;

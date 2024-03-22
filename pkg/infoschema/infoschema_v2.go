@@ -682,17 +682,18 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 		return nil
 	}
 
-	b.infoData.deleteDB(di.Name)
 	tableIDs := make([]int64, 0, len(di.Tables))
-	for _, tbl := range di.Tables {
+	tables := b.infoschemaV2.SchemaTables(di.Name)
+	for _, table := range tables {
+		tbl := table.Meta()
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
 	}
 
-	di = di.Clone()
 	for _, id := range tableIDs {
 		b.deleteBundle(b.infoSchema, id)
 		b.applyDropTableV2(diff, di, id, nil)
 	}
+	b.infoData.deleteDB(di.Name)
 	return tableIDs
 }
 
