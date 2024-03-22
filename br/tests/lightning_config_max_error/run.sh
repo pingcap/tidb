@@ -28,7 +28,7 @@ duplicated_row_count=$(( ${total_row_count} - ${uniq_row_count} ))
 remaining_row_count=$(( ${uniq_row_count} + ${duplicated_row_count}/2 ))
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v3'
 
 stderr_file="/tmp/${TEST_NAME}.stderr"
 
@@ -46,7 +46,7 @@ EOF
 cat "${stderr_file}"
 grep -q "${err_msg}" "${stderr_file}"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v3'
 # Although conflict error number exceeds the max-error limit, 
 # all the conflict errors are recorded, 
 # because recording of conflict errors are executed batch by batch (batch size 1024), 
@@ -56,11 +56,11 @@ check_contains "COUNT(*): ${duplicated_row_count}"
 # import a second time
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v3'
 
 run_lightning --backend local --config "${mydir}/normal_config.toml"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v3'
 check_contains "COUNT(*): ${duplicated_row_count}"
 
 # Check remaining records in the target table
@@ -70,11 +70,11 @@ check_contains "COUNT(*): ${remaining_row_count}"
 # import a third time
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v3'
 
 run_lightning --backend local --config "${mydir}/normal_config_old_style.toml"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v3'
 check_contains "COUNT(*): ${duplicated_row_count}"
 
 # Check remaining records in the target table
@@ -99,9 +99,9 @@ check_contains "row_data: ('5','bbb05')"
 # Check max-error-record can limit the size of conflict_records table
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
 run_sql 'DROP DATABASE IF EXISTS mytest'
-run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_records\`" | grep -q "5"
+run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_error_v3\`" | grep -q "5"
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
-check_contains "COUNT(*): 1"
+check_contains "COUNT(*): 5"
 
 # Check conflict.threshold
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'

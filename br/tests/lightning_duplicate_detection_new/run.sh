@@ -77,19 +77,7 @@ if [ "$files_left" -ne "0" ];then
 fi
 rm -rf "$TEST_DIR/$TEST_NAME.sorted"
 
-# 4. Test limit error records.
-cleanup
-run_lightning --backend local --config "$CUR/local-limit-error-records.toml" --log-file "$LOG_FILE"
-run_sql "SELECT count(*) FROM test.dup_detect"
-check_contains "count(*): 174"
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_records"
-check_contains "count(*): 50"
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_records WHERE error LIKE '%PRIMARY%'"
-check_contains "count(*): 49"
-run_sql "SELECT count(*) FROM lightning_task_info.conflict_records WHERE error LIKE '%uniq_col6_col7%'"
-check_contains "count(*): 1"
-
-# 5. Test fail after duplicate detection.
+# 4. Test fail after duplicate detection.
 cleanup
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailAfterDuplicateDetection=return()"

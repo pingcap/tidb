@@ -16,7 +16,6 @@ package ingest
 
 import (
 	"context"
-	"math"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -64,7 +63,7 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, r
 	cfg.Checkpoint.Enable = true
 	if unique {
 		cfg.Conflict.Strategy = lightning.ErrorOnDup
-		cfg.Conflict.Threshold = math.MaxInt64
+		cfg.Conflict.Threshold = lightning.DefaultThreshold
 	} else {
 		cfg.Conflict.Strategy = lightning.NoneOnDup
 	}

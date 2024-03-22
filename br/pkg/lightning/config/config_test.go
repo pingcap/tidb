@@ -1042,16 +1042,21 @@ func TestAdjustMaxRecordRows(t *testing.T) {
 
 	cfg := NewConfig()
 	assignMinimalLegalValue(cfg)
-	cfg.Conflict.Threshold = 9999
 
 	cfg.Conflict.MaxRecordRows = -1
+	cfg.Conflict.Strategy = ReplaceOnDup
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, int64(10000), cfg.Conflict.MaxRecordRows)
+
+	cfg.Conflict.MaxRecordRows = -1
+	cfg.Conflict.Threshold = 9999
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, int64(9999), cfg.Conflict.MaxRecordRows)
+
+	cfg.Conflict.MaxRecordRows = 1000
+	cfg.Conflict.Threshold = 100
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(100), cfg.Conflict.MaxRecordRows)
-
-	cfg.Conflict.MaxRecordRows = -1
-	cfg.App.MaxError.Syntax.Store(1000)
-	require.NoError(t, cfg.Adjust(ctx))
-	require.Equal(t, int64(1000), cfg.Conflict.MaxRecordRows)
 }
 
 func TestRemoveAllowAllFiles(t *testing.T) {
@@ -1291,7 +1296,7 @@ func TestAdjustConflict(t *testing.T) {
 	require.NoError(t, dra.FromStringValue("REPLACE"))
 	cfg.Conflict.Strategy = dra
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
-	require.Equal(t, int64(math.MaxInt64), cfg.Conflict.Threshold)
+	require.Equal(t, int64(10000), cfg.Conflict.Threshold)
 
 	require.NoError(t, dra.FromStringValue("IGNORE"))
 	cfg.Conflict.Strategy = dra
@@ -1312,13 +1317,15 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.MaxRecordRows = 1
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
 	cfg.Conflict.MaxRecordRows = 2
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.max-record-rows (2) cannot be larger than conflict.threshold (1)`)
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
+	require.Equal(t, int64(1), cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
+	require.Equal(t, int64(0), cfg.Conflict.MaxRecordRows)
 }
 
 func TestAdjustBlockSize(t *testing.T) {
