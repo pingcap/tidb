@@ -2312,6 +2312,7 @@ func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot == nil {
 		return
 	}
+	// pipelined dml may already flush in background, don't touch it to avoid race.
 	if txn, ok := snapshot.(kv.Transaction); ok && txn.IsPipelined() {
 		return
 	}
