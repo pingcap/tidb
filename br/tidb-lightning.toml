@@ -102,10 +102,10 @@ driver = "file"
 strategy = ""
 # Controls whether TiDB Lightning checks conflicts before the import. The default value is false, which means that TiDB Lightning only checks conflicts after the import. If it is set to true, TiDB Lightning checks conflicts both before and after the import. This parameter can be used only in the physical import mode (`tikv-importer.backend = "local"`).
 # precheck-conflict-before-import = false
-# Controls the maximum number of conflict errors that can be handled when strategy is "replace" or "ignore". You can set it only when strategy is "replace" or "ignore". The default value is 9223372036854775807, which means that almost all errors are tolerant. In physical import mode, this parameter takes effect only when `precheck-conflict-before-import` is enabled.
-# threshold = 9223372036854775807
-# Controls the maximum number of records in the conflict_records table. The default value is 100. If the strategy is "ignore", the conflict records that are ignored are recorded; if the strategy is "replace", the conflict records that are overwritten are recorded. However, the "replace" strategy cannot record the conflict records in the logical import mode. In physical import mode, this parameter takes effect only when `precheck-conflict-before-import` is enabled.
-# max-record-rows = 100
+# Controls the maximum number of conflict errors that can be handled when strategy is "replace" or "ignore". You can set it only when strategy is "replace" or "ignore". The default value is 10000, which means that almost all errors are tolerant. In physical import mode, this parameter takes effect only when `precheck-conflict-before-import` is enabled.
+# threshold = 10000
+# Controls the maximum number of records in the conflict_records table. The default value is 10000. If the strategy is "ignore", the conflict records that are ignored are recorded; if the strategy is "replace", the conflict records that are overwritten are recorded. However, the "replace" strategy cannot record the conflict records in the logical import mode. In physical import mode, this parameter takes effect only when `precheck-conflict-before-import` is enabled.
+# max-record-rows = 10000
 
 [tikv-importer]
 # Delivery backend, can be "importer", "local" or "tidb".
